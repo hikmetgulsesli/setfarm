@@ -158,6 +158,46 @@ function publishTask4ParentFailureV1(root:string,executionId:string,first:Task4F
     writeTask4PrivateBytesV1(path.join(root,"parent/originals"),"parent-failure.json",bytes);
   }catch{/* Preserve the first core failure and continue the original finalizer. */}
 }
+function task4BackendFailureCanonicalV1(value:Readonly<RecordV1>):string {
+  // Keep the shared 1MiB canonical guard unchanged; only this fixed base64 field may be larger.
+  const encoded=value.original.stdoutBase64;
+  requireV1(typeof encoded==="string"&&encoded.length<=1398104&&/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded));
+  const bytes=Buffer.from(encoded,"base64");requireV1(bytes.length<=1048576&&bytes.length===value.original.stdoutBytes&&bytes.toString("base64")===encoded&&hashV1(bytes)===value.original.stdoutHash);
+  const marker='"stdoutBase64":""',base=task4CanonicalV1({...value,original:{...value.original,stdoutBase64:""}});requireV1(base.split(marker).length===2);
+  const result=base.replace(marker,'"stdoutBase64":'+JSON.stringify(encoded));requireV1(Buffer.byteLength(result+"\n")<=2097152);return result;
+}
+type Task4BackendDiagnosticV1={predicate:string;origin?:"main"|"watcher";failure?:Readonly<RecordV1>|null};
+function task4BackendFailureSnapshotV1(setup:Readonly<RecordV1>,ready:Readonly<RecordV1>,owner:Readonly<RecordV1>,origin:unknown,
+  invocationStartedAt:string,rows:ReadonlyArray<RecordV1>,raw:RecordV1,parser:Task4SocketDiagnosticV1):Readonly<RecordV1>|null {
+  // Every operation here is diagnostic-only; construction failure preserves the original parser rejection.
+  try {
+    hexV1(ready.executionId,32);processV1(owner);timeV1(invocationStartedAt);integerV1(setup.postgres.port,1024,65535);
+    requireV1(origin==="main"||origin==="watcher");requireV1(ready.database.role==="mc_task4_"+ready.executionId&&/^setfarm_p3_[a-f0-9]{24}_clone_[a-f0-9]{12}$/.test(ready.database.name));
+    requireV1(Array.isArray(rows)&&rows.length<=64&&typeof raw.stdout==="string"&&Buffer.byteLength(raw.stdout)<=1048576
+      &&!raw.error&&raw.status===0&&raw.signal===null&&raw.stderr==="");
+    requireV1(TASK4_SOCKET_PREDICATES_V1.includes(parser.predicate));integerV1(parser.line,0,1048577);integerV1(parser.endpointLine,0,parser.line);
+    const field=(value:unknown,valid:boolean)=>{let sha256:string|null=null;
+      if(value===null||typeof value==="boolean"||(typeof value==="number"&&Number.isFinite(value))||(typeof value==="string"&&Buffer.byteLength(value)<=4096))sha256=hashV1(task4CanonicalV1(value));
+      return {valid,value:valid?value:null,sha256};};
+    const selected=rows.map(row=>{requireV1(row!==null&&typeof row==="object"&&!Array.isArray(row));return {
+      pid:field(row.pid,Number.isSafeInteger(row.pid)&&row.pid>0),
+      startedAt:field(row.startedAt,typeof row.startedAt==="string"&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(row.startedAt)),
+      role:field(row.role,row.role===ready.database.role),database:field(row.database,row.database===ready.database.name),
+      applicationName:field(row.applicationName,["task4_mc_","task4_observer_","task4_probe_"].some(prefix=>row.applicationName===prefix+ready.executionId)),
+      host:field(row.host,row.host==="127.0.0.1"),port:field(row.port,Number.isSafeInteger(row.port)&&row.port>=1024&&row.port<=65535),
+    };});
+    const stdout=Buffer.from(raw.stdout,"utf8"),value={schema:"setfarm.task4-backend-census-failure.v1",executionId:ready.executionId,fixtureOwner:{...owner},origin,
+      invocationStartedAt,observedAt:new Date().toISOString(),postgresPort:setup.postgres.port,parser:{predicate:parser.predicate,line:parser.line,endpointLine:parser.endpointLine},rows:selected,
+      original:{executable:"/usr/sbin/lsof",argv:["-nP","-iTCP:"+setup.postgres.port,"-F","pfnT"],status:raw.status,signal:raw.signal,
+        stdoutBase64:stdout.toString("base64"),stdoutBytes:stdout.length,stdoutHash:hashV1(stdout),stderrBytes:0,stderrHash:hashV1("")}};
+    task4BackendFailureCanonicalV1(value);return freezeV1(value);
+  }catch{return null;}
+}
+function publishTask4BackendFailureV1(root:string,value:Readonly<RecordV1>|null):void {
+  try {if(!value)return;const bytes=Buffer.from(task4BackendFailureCanonicalV1(value)+"\n");
+    writeTask4PrivateBytesV1(path.join(root,"parent/originals"),"backend-census-failure.json",bytes);
+  }catch{/* Preserve the same original failure and the existing finalizer. */}
+}
 async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4ContextV1,adminUrl:string):Promise<void> {
   const root=setup.resourceRoot.path,id=setup.executionId,sourceSha=setup.setfarm.source.sourceSha;
   let fixture:any=null,ready:Readonly<RecordV1>|null=null,projection:Readonly<RecordV1>|null=null,innerOwner:Readonly<RecordV1>|null=null,
@@ -165,7 +205,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
   let observer:any=null,probe:any=null,observerConnection:any=null,probeConnection:any=null,admin:any=null,originalChild:Promise<Readonly<RecordV1>|null>|null=null;
   let watcher:Promise<void>|null=null,stopWatcher=false,watchFailure=false,capture:ReturnType<typeof pinTask4PgAppendV1>|null=null;
   let cleanupAttempted=false;
-  let stage="initialization",predicate="none",firstFailure:Task4FailureDetailV1|null=null,watcherFailure:Task4FailureDetailV1|null=null;
+  let stage="initialization",predicate="none",firstFailure:Task4FailureDetailV1|null=null,watcherFailure:Task4FailureDetailV1|null=null,backendFailure:Readonly<RecordV1>|null=null,backendFailureLatched=false;
   let databaseAbsent:boolean|null=null,roleAbsent:boolean|null=null,auditComplete=false,sqlComplete=false,networkComplete=false,failed=false,code="TASK4_INTEGRITY_FAILED";
   const pins:Array<{check():void;close():void}>=[],published=new Map<string,Task4RefV1>(),issued:Task4IssuedV1[]=[],backends=new Map<number,RecordV1>(),censuses:RecordV1[]=[],probeResults:RecordV1[]=[],parentCalls:RecordV1[]=[];
   let finalAudit:RecordV1|null=null;
@@ -188,7 +228,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     await client.end({timeout:5});readers.closed++;
   }catch(error){firstFailure??=task4FailureDetailV1(stage,predicate,error);failed=true;code="TASK4_CLEANUP_UNKNOWN";}};
   let observerPort:QueryPortV1|null=null,probePort:QueryPortV1|null=null;
-  const observeBackends=async(diagnostic={predicate:"none"})=>{
+  const observeBackends=async(diagnostic:Task4BackendDiagnosticV1={predicate:"none"})=>{
     if(!ready||!admin)return;const at=new Date().toISOString();
     diagnostic.predicate="census_query";const rows=await admin.unsafe(`SELECT pid,to_char(backend_start AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "startedAt",
       usename AS role,datname AS database,application_name AS "applicationName",host(client_addr) AS host,client_port AS port
@@ -196,7 +236,10 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     diagnostic.predicate="census_cap";requireV1(rows.length<=64&&censuses.length<4096,"TASK4_SQL_ORIGINALS_UNKNOWN");
     diagnostic.predicate="census_lsof";const raw=spawnSync("/usr/sbin/lsof",["-nP","-iTCP:"+setup.postgres.port,"-F","pfnT"],{encoding:"utf8",timeout:5000,maxBuffer:1048576,env:{PATH:"/usr/bin:/bin:/usr/sbin:/sbin",LANG:"C",LC_ALL:"C",TZ:"UTC"}});
     requireV1(!raw.error&&raw.signal===null&&raw.status===0&&raw.stderr==="","TASK4_SQL_ORIGINALS_UNKNOWN");
-    diagnostic.predicate="census_socket_parse";const sockets=parseTask4SocketsV1(raw.stdout,setup.postgres.port),owners=new Map<number,Readonly<RecordV1>>();
+    diagnostic.predicate="census_socket_parse";const parser:Task4SocketDiagnosticV1={predicate:"port",line:0,endpointLine:0};let sockets:ReturnType<typeof parseTask4SocketsV1>;
+    try{sockets=parseTask4SocketsV1(raw.stdout,setup.postgres.port,parser);}catch(error){
+      try{diagnostic.failure=task4BackendFailureSnapshotV1(setup,ready,context.owner,diagnostic.origin,at,rows,raw,parser);}catch{/* Preserve the same original parser rejection. */}throw error;
+    }const owners=new Map<number,Readonly<RecordV1>>();
     for(const row of rows){diagnostic.predicate="census_socket_unique";const matches=sockets.filter(s=>s.port===row.port);requireV1(matches.length===1,"TASK4_SQL_ORIGINALS_UNKNOWN");const pid=matches[0]!.pid;
       diagnostic.predicate="census_process";let owner=owners.get(pid);if(!owner){owner=observeTask4ProcessV1(pid).pin;owners.set(pid,owner!);}
       if(row.applicationName==="task4_mc_"+id){diagnostic.predicate="census_server_identity";requireV1(innerOwner!==null&&owner!.ppid===innerOwner.pid&&owner!.executable===context.owner.executable
@@ -210,8 +253,8 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     censuses.push({at,rows,sockets,stdoutHash:hashV1(raw.stdout),exit:{code:raw.status,signal:raw.signal}});
   };
   const observeMainBackends=async()=>{
-    const diagnostic={predicate:"none"};
-    try{await observeBackends(diagnostic);}catch(error){predicate=diagnostic.predicate;throw error;}
+    const diagnostic:Task4BackendDiagnosticV1={predicate:"none",origin:"main"};
+    try{await observeBackends(diagnostic);}catch(error){if(!backendFailureLatched){backendFailureLatched=true;backendFailure=diagnostic.failure??null;}predicate=diagnostic.predicate;throw error;}
   };
   const observeAudit=async(phase:"Before"|"After")=>{
     check();requireV1(observerPort!==null,"TASK4_DATABASE_REFUSED");let grants:Readonly<RecordV1>;
@@ -285,7 +328,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
       requireV1(innerOwner!.ppid===context.owner.pid&&innerOwner!.executable===node&&innerOwner!.executableHash===context.owner.executableHash
         &&innerOwner!.commandHash===hashV1([node,entry,"--owned-fixture-ready-v1"].join(" ")),"TASK4_BINDING_REFUSED");check();
       for(const recipe of queryRecipes)issued.push({queryId:"inner_"+recipe.queryId,statement:recipe.statement,kind:"inner_observer",applicationName:"task4_observer_"+id,clientPid:innerOwner!.pid});
-      watcher=(async()=>{while(!stopWatcher){const diagnostic={predicate:"none"};try{await observeBackends(diagnostic);}catch(error){watcherFailure??=task4FailureDetailV1("backend_census",diagnostic.predicate,error);watchFailure=true;stopWatcher=true;}if(!stopWatcher)await new Promise(resolve=>setTimeout(resolve,100));}})();
+      watcher=(async()=>{while(!stopWatcher){const diagnostic:Task4BackendDiagnosticV1={predicate:"none",origin:"watcher"};try{await observeBackends(diagnostic);}catch(error){if(!backendFailureLatched){backendFailureLatched=true;backendFailure=diagnostic.failure??null;}watcherFailure??=task4FailureDetailV1("backend_census",diagnostic.predicate,error);watchFailure=true;stopWatcher=true;}if(!stopWatcher)await new Promise(resolve=>setTimeout(resolve,100));}})();
       writer.end(Buffer.from(task4CanonicalV1(ready)+"\n"));
     }catch(error){deliveryError=true;if(!writer.destroyed&&!writer.writableEnded)writer.end();throw error;}
     finally {await delivered;innerExit=await originalChild;originalChild=null;for(const output of outputs)writeTask4PrivateBytesV1(path.join(root,"parent/originals"),output.name,Buffer.concat(output.chunks));}
@@ -361,7 +404,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     if(fixture&&!cleanupAttempted){stage="finalizer_fixture_close";try{await fixture.db.pgClose();readers.closed++;}catch(error){firstFailure??=task4FailureDetailV1(stage,predicate,error);failed=true;code="TASK4_CLEANUP_UNKNOWN";}}
     stage="finalizer_admin_end";await closeReader(admin,null);capture?.close();
     readers.pending=readers.opened-readers.closed;
-    if(firstFailure)publishTask4ParentFailureV1(root,id,firstFailure,watcherFailure);
+    if(firstFailure){publishTask4ParentFailureV1(root,id,firstFailure,watcherFailure);publishTask4BackendFailureV1(root,backendFailure);}
     try {if(ready&&projection&&fixture){check();const outcome=failed?"unknown":innerResult?.outcome??"unknown";
       const value={schema:"setfarm.task4-parent-result.v1",executionId:id,setupDescriptorHash:ready.setupDescriptorHash,readyDescriptorHash:hashV1(task4CanonicalV1(ready)+"\n"),fixtureOwner:context.owner,
         outcome,code:outcome==="pass"?null:failed?code:innerResult!.code,integrity:failed?"failed":"verified",projection,database:{name:fixture.database,role:ready.database.role},
@@ -405,21 +448,27 @@ function task4ParentCleanupSafeV1(value:Readonly<RecordV1>):boolean {
     &&value.auditComplete===true&&value.sqlComplete===true&&value.networkComplete===true
     &&value.readers?.pending===0&&Number.isSafeInteger(value.readers?.opened)&&value.readers.opened===value.readers.closed;
 }
-function parseTask4SocketsV1(text:string,postgresPort:number):ReadonlyArray<Readonly<{pid:number;port:number}>> {
+const TASK4_SOCKET_PREDICATES_V1=Object.freeze(["port","input_size_or_termination","pid","fd_owner","endpoint_owner_or_duplicate","state_duplicate","client_established","client_port","endpoint_shape","field_tag","row_cap"]);
+type Task4SocketDiagnosticV1={predicate:string;line:number;endpointLine:number};
+function parseTask4SocketsV1(text:string,postgresPort:number,diagnostic?:Task4SocketDiagnosticV1):ReadonlyArray<Readonly<{pid:number;port:number}>> {
   try {
-    integerV1(postgresPort,1024,65535);requireV1(Buffer.byteLength(text)<=1048576&&(!text||text.endsWith("\n")));
+    let lineNumber=0,endpointLine=0;
+    const note=(predicate:string)=>{if(diagnostic){diagnostic.predicate=predicate;diagnostic.line=lineNumber;diagnostic.endpointLine=endpointLine;}};
+    note("port");integerV1(postgresPort,1024,65535);note("input_size_or_termination");requireV1(Buffer.byteLength(text)<=1048576&&(!text||text.endsWith("\n")));
     const rows:Array<{pid:number;port:number}>=[];let pid=0,endpoint:string|null=null,state:string|null=null;
     const flush=()=>{if(endpoint!==null){const match=/^127\.0\.0\.1:([1-9][0-9]*)->127\.0\.0\.1:([1-9][0-9]*)$/.exec(endpoint);
-      if(match&&Number(match[2])===postgresPort){requireV1(state==="ESTABLISHED");const port=Number(match[1]);integerV1(port,1024,65535);rows.push({pid,port});}
-      else requireV1(endpoint===`127.0.0.1:${postgresPort}`||new RegExp(`^127\\.0\\.0\\.1:${postgresPort}->127\\.0\\.0\\.1:[1-9][0-9]*$`).test(endpoint));}
-      endpoint=null;state=null;};
-    for(const line of text.split("\n").filter(Boolean)){
-      if(/^p[1-9][0-9]*$/.test(line)){flush();pid=Number(line.slice(1));integerV1(pid);}
-      else if(/^f[0-9]+[a-z]*$/.test(line)){flush();requireV1(pid>0);}
-      else if(line.startsWith("n")){requireV1(endpoint===null&&pid>0);endpoint=line.slice(1);}
-      else if(line.startsWith("TST=")){requireV1(state===null);state=line.slice(4);}
-      else requireV1(/^T(?:QR|QS|SO|SS)=/.test(line));
-    }flush();requireV1(rows.length<=64);return freezeV1(rows);
+      if(match&&Number(match[2])===postgresPort){note("client_established");requireV1(state==="ESTABLISHED");const port=Number(match[1]);note("client_port");integerV1(port,1024,65535);rows.push({pid,port});}
+      else {note("endpoint_shape");requireV1(endpoint===`127.0.0.1:${postgresPort}`||new RegExp(`^127\\.0\\.0\\.1:${postgresPort}->127\\.0\\.0\\.1:[1-9][0-9]*$`).test(endpoint));}}
+      endpoint=null;state=null;endpointLine=0;};
+    const lines=text.split("\n");
+    for(const entry of lines.map((line,index)=>({line,index})).filter(entry=>Boolean(entry.line))){
+      const {line,index}=entry;lineNumber=index+1;
+      if(/^p[1-9][0-9]*$/.test(line)){flush();pid=Number(line.slice(1));note("pid");integerV1(pid);}
+      else if(/^f[0-9]+[a-z]*$/.test(line)){flush();note("fd_owner");requireV1(pid>0);}
+      else if(line.startsWith("n")){note("endpoint_owner_or_duplicate");requireV1(endpoint===null&&pid>0);endpoint=line.slice(1);endpointLine=lineNumber;}
+      else if(line.startsWith("TST=")){note("state_duplicate");requireV1(state===null);state=line.slice(4);}
+      else {note("field_tag");requireV1(/^T(?:QR|QS|SO|SS)=/.test(line));}
+    }lineNumber=lines.length;flush();note("row_cap");requireV1(rows.length<=64);return freezeV1(rows);
   }catch{return refuseV1("TASK4_SQL_ORIGINALS_UNKNOWN");}
 }
 function bindTask4BackendV1(row:Readonly<RecordV1>,ready:Readonly<RecordV1>,parent:Readonly<RecordV1>,inner:Readonly<RecordV1>|null,server:Readonly<RecordV1>|null,
@@ -2362,7 +2411,7 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     const root=fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(),"task4-private-diagnostic-")));fs.chmodSync(root,0o700);
     fs.mkdirSync(path.join(root,"parent/originals"),{recursive:true,mode:0o700});const file=path.join(root,"parent/originals/parent-failure.json"),id="a".repeat(32);
     const first=task4FailureDetailV1("pg_parse","parse_candidate_unique",new Error("TASK4_SQL_ORIGINALS_UNKNOWN")),watcher=task4FailureDetailV1("backend_census","census_socket_unique",new Error("TASK4_SQL_ORIGINALS_UNKNOWN"));
-    let finalized=0;const invoke=(failure:Task4FailureDetailV1|null)=>{try{new Function("readers","firstFailure","publishTask4ParentFailureV1","root","id","watcherFailure",js)({opened:5,closed:4,pending:0},failure,publishTask4ParentFailureV1,root,id,watcher);}finally{finalized++;}};
+    let finalized=0;const invoke=(failure:Task4FailureDetailV1|null)=>{try{new Function("readers","firstFailure","publishTask4ParentFailureV1","root","id","watcherFailure","publishTask4BackendFailureV1","backendFailure",js)({opened:5,closed:4,pending:0},failure,publishTask4ParentFailureV1,root,id,watcher,publishTask4BackendFailureV1,null);}finally{finalized++;}};
     try {
       invoke(null);assert.equal(fs.existsSync(file),false);invoke(first);assert.equal(finalized,2);
       const bytes=fs.readFileSync(file),value=JSON.parse(bytes.toString());assert.equal(bytes.toString(),task4CanonicalV1(value)+"\n");assert.ok(bytes.length<=2048);
@@ -2382,9 +2431,86 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     const outcome=await new Function("ready","admin","setup","requireV1","spawnSync","censuses",js)({database:{role:"component",name:"component"}}, {unsafe:async()=>[]},{postgres:{port:15432}},requireV1,()=>({error:undefined,signal:null,status:1,stderr:""}),[]);
     assert.equal(outcome.error.message,"TASK4_SQL_ORIGINALS_UNKNOWN");assert.equal(outcome.predicate,"census_lsof");
     const catchJs=ts.transpileModule(watcherCatch!.block.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-    const retain=new Function("task4FailureDetailV1","first","second",'let watcherFailure=null,watchFailure=false,stopWatcher=false;const diagnostic={predicate:"census_lsof"};let error=first;'+catchJs+';const retained=watcherFailure;diagnostic.predicate="census_socket_unique";error=second;'+catchJs+';return {retained,watcherFailure,watchFailure,stopWatcher};');
+    const retain=new Function("task4FailureDetailV1","first","second",'let watcherFailure=null,backendFailure=null,backendFailureLatched=false,watchFailure=false,stopWatcher=false;const diagnostic={predicate:"census_lsof"};let error=first;'+catchJs+';const retained=watcherFailure;diagnostic.predicate="census_socket_unique";error=second;'+catchJs+';return {retained,watcherFailure,watchFailure,stopWatcher};');
     const state=retain(task4FailureDetailV1,outcome.error,new Error("postgres://private"));assert.equal(state.retained,state.watcherFailure);assert.equal(Object.isFrozen(state.watcherFailure),true);
     assert.deepEqual(state.watcherFailure,{stage:"backend_census",predicate:"census_lsof",cause:"TASK4_SQL_ORIGINALS_UNKNOWN"});assert.equal(state.watchFailure,true);assert.equal(state.stopWatcher,true);
+  });
+  test("descriptor socket parser retains exact original line predicates without widening acceptance",()=>{
+    const port=15432,prefix="p41\n\nf3u\nn127.0.0.1:49152->127.0.0.1:15432\n";
+    const cases=[
+      {text:prefix+"TST=SYN_SENT\n",predicate:"client_established",line:6,endpointLine:4},
+      {text:"p41\nf3u\nn127.0.0.2:49152->127.0.0.1:15432\nTST=ESTABLISHED\n",predicate:"endpoint_shape",line:5,endpointLine:3},
+      {text:"p41\n\nxunexpected\n",predicate:"field_tag",line:3,endpointLine:0},
+      {text:prefix+"TST=ESTABLISHED\nTST=ESTABLISHED\n",predicate:"state_duplicate",line:6,endpointLine:4},
+      {text:"p41",predicate:"input_size_or_termination",line:0,endpointLine:0},
+    ];
+    for(const row of cases){const diagnostic={predicate:"none",line:0,endpointLine:0};
+      assert.throws(()=>Reflect.apply(parseTask4SocketsV1,null,[row.text,port,diagnostic]),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+      assert.deepEqual(diagnostic,{predicate:row.predicate,line:row.line,endpointLine:row.endpointLine});}
+    assert.deepEqual(parseTask4SocketsV1(prefix+"TST=ESTABLISHED\n",port),[{pid:41,port:49152}]);
+  });
+  test("descriptor socket failure snapshot redacts unsafe rows and publishes only private first failure",async()=>{
+    const ready=JSON.parse(GOLDEN_READY_V1),parser={predicate:"field_tag",line:1,endpointLine:0},raw={error:undefined,status:0,signal:null,stderr:"",stdout:"xunknown\n"},at="2026-10-19T10:00:00.000Z";
+    const secret="postgres://private:credential@unowned SELECT secret",row={pid:NaN,startedAt:secret,role:secret,database:secret,applicationName:secret,host:secret,port:secret};
+    const make=(rows:any=[row],input:any=raw)=>task4BackendFailureSnapshotV1(ready.setup,ready,ready.fixtureOwner,"watcher",at,rows,input,parser);
+    const record=make();assert.ok(record);assert.deepEqual(Object.keys(record).sort(),"schema executionId fixtureOwner origin invocationStartedAt observedAt postgresPort parser rows original".split(" ").sort());
+    for(const value of Object.values(record.rows[0]) as any[]){assert.equal(value.valid,false);assert.equal(value.value,null);}
+    assert.equal(record.rows[0].pid.sha256,null);assert.equal(record.rows[0].applicationName.sha256,hashV1(task4CanonicalV1(secret)));
+    assert.doesNotMatch(task4CanonicalV1(record),/credential|SELECT|postgres:|restrictedUrl/);assert.equal(Object.isFrozen(record.rows[0].applicationName),true);
+    assert.equal(make([null]),null);assert.equal(make(Array(65).fill(row)),null);assert.equal(make([], {...raw,stdout:"x".repeat(1048577)}),null);
+    assert.equal(make([], {...raw,stderr:secret}),null);assert.equal(make([], {...raw,get stdout(){throw new Error(secret);}}),null);
+    const largest=make([], {...raw,stdout:"x".repeat(1048576)});assert.ok(largest);assert.ok(Buffer.byteLength(task4BackendFailureCanonicalV1(largest)+"\n")<=2097152);
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),start=source.indexOf('    readers.pending=readers.opened-readers.closed;'),end=source.indexOf('    try {if(ready&&projection&&fixture)',start);
+    assert.ok(start>0&&end>start);const js=ts.transpileModule(source.slice(start,end),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const root=fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(),"task4-census-diagnostic-")));fs.chmodSync(root,0o700);fs.mkdirSync(path.join(root,"parent/originals"),{recursive:true,mode:0o700});
+    const file=path.join(root,"parent/originals/backend-census-failure.json"),first=task4FailureDetailV1("watcher_success","watcher_success",new Error("TASK4_SQL_ORIGINALS_UNKNOWN"));let finalized=0;
+    const invoke=(failure:Task4FailureDetailV1|null)=>{try{new Function("readers","firstFailure","publishTask4ParentFailureV1","root","id","watcherFailure","publishTask4BackendFailureV1","backendFailure",js)(
+      {opened:5,closed:4,pending:0},failure,publishTask4ParentFailureV1,root,ready.executionId,first,publishTask4BackendFailureV1,record);}finally{finalized++;}};
+    try {
+      publishTask4BackendFailureV1(root,{...record,padding:"x".repeat(2097152)});assert.equal(fs.existsSync(file),false);
+      invoke(null);assert.equal(fs.existsSync(file),false);invoke(first);assert.equal(finalized,2);
+      const bytes=fs.readFileSync(file);assert.equal(bytes.toString(),task4CanonicalV1(record)+"\n");assert.ok(bytes.length<=2097152);
+      const stat=fs.lstatSync(file);assert.equal(stat.mode&0o777,0o600);assert.equal(stat.nlink,1);assert.equal(stat.uid,process.getuid!());
+      publishTask4BackendFailureV1(root,{...record,origin:"main"});assert.deepEqual(fs.readFileSync(file),bytes);
+      assert.doesNotThrow(()=>publishTask4BackendFailureV1(path.join(root,"missing"),record));assert.equal(fs.existsSync(path.join(root,"missing")),false);
+      const original=new Error("TASK4_SQL_ORIGINALS_UNKNOWN");let caught:unknown;try{try{throw original;}finally{invoke(first);}}catch(error){caught=error;}
+      assert.equal(caught,original);assert.equal(finalized,3);assert.deepEqual(fs.readFileSync(file),bytes);
+    }finally{fs.rmSync(root,{recursive:true,force:true});}
+  });
+  test("descriptor failed socket census retains its original input across overlapping main and watcher calls",async(t)=>{
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),ast=ts.createSourceFile("fixture.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+    const fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="runTask4OwnedFixtureV1") as import("typescript").FunctionDeclaration;
+    const snapshot=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="task4BackendFailureSnapshotV1");
+    const declarations=new Map<string,string>();let watcher:import("typescript").BinaryExpression|undefined;
+    const visit=(node:import("typescript").Node)=>{if(ts.isVariableDeclaration(node)&&["observeBackends","observeMainBackends"].includes(node.name.getText(ast)))declarations.set(node.name.getText(ast),node.getText(ast));
+      if(ts.isBinaryExpression(node)&&node.left.getText(ast)==="watcher"&&node.right.getText(ast).includes("while(!stopWatcher)"))watcher=node;ts.forEachChild(node,visit);};visit(fn);
+    assert.equal(declarations.size,2);assert.ok(watcher);
+    const formatter=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="task4BackendFailureCanonicalV1");
+    const body=(formatter?formatter.getText(ast):"")+(snapshot?snapshot.getText(ast):"")+';return (async()=>{let predicate="none",watcher=null,watcherFailure=null,backendFailure=null,backendFailureLatched=false,watchFailure=false,stopWatcher=false;'+
+      'const setTimeout=(resolve)=>{stopWatcher=true;resolve();};const '+declarations.get("observeBackends")+';const '+declarations.get("observeMainBackends")+';'+
+      watcher!.getText(ast)+';const other=observeMainBackends().then(()=>null,error=>error);release();const error=await other;await watcher;return {error,backendFailure,watcherFailure};})();';
+    const js=ts.transpileModule(body,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    for(const mode of ["watcher","main","both","construction_throw","first_construction_throw","first_malformed_row"])await t.test(mode,async()=>{
+      const ready=JSON.parse(GOLDEN_READY_V1),pending:Array<(rows:unknown[])=>void>=[],originals:Error[]=[],raws:string[]=[],censuses:unknown[]=[];let calls=0,constructionThrows=0;
+      const rows=[1,2].map(n=>({pid:400+n,startedAt:"2026-10-19T10:00:00.000001Z",role:ready.database.role,database:ready.database.name,applicationName:"task4_observer_"+ready.executionId,host:"127.0.0.1",port:49000+n}));
+      const fails=(n:number)=>(mode==="both"||mode==="construction_throw"||mode==="first_construction_throw"||mode==="first_malformed_row")||n===(mode==="watcher"?1:2);
+      const ports={ready,context:{owner:ready.fixtureOwner},admin:{unsafe:()=>new Promise(resolve=>pending.push(resolve))},setup:ready.setup,
+        requireV1,integerV1,hexV1,processV1,timeV1,hashV1,task4CanonicalV1,TASK4_SOCKET_PREDICATES_V1,
+        freezeV1:(value:unknown)=>{if((mode==="construction_throw"||(mode==="first_construction_throw"&&(value as any)?.origin==="watcher"))&&(value as any)?.schema==="setfarm.task4-backend-census-failure.v1"){constructionThrows++;throw new Error("private construction failure");}return freezeV1(value);},
+        spawnSync:()=>{calls++;const stdout=fails(calls)?"p"+(40+calls)+"\n\nf3u\nn127.0.0.1:"+(49000+calls)+"->127.0.0.1:"+ready.setup.postgres.port+"\nTST=SYN_SENT\n":"";raws.push(stdout);return {error:undefined,signal:null,status:0,stderr:"",stdout};},
+        parseTask4SocketsV1:(...args:unknown[])=>{try{return Reflect.apply(parseTask4SocketsV1,null,args);}catch(error){originals.push(error as Error);throw error;}},
+        censuses,backends:new Map(),task4FailureDetailV1,release:()=>{assert.equal(pending.length,2);pending[0]!(fails(1)?[mode==="first_malformed_row"?null:rows[0]]:[]);pending[1]!(fails(2)?[rows[1]]:[]);}};
+      const result=await new Function(...Object.keys(ports),js)(...Object.values(ports));
+      assert.equal(calls,2);assert.equal(originals.length,fails(1)&&fails(2)?2:1);
+      if(fails(2))assert.equal(result.error,originals.at(-1));else assert.equal(result.error,null);
+      if(mode==="construction_throw"||mode==="first_construction_throw"||mode==="first_malformed_row"){if(mode!=="first_malformed_row")assert.equal(constructionThrows,mode==="construction_throw"?2:1);assert.equal(result.backendFailure,null);assert.equal(result.watcherFailure.cause,"TASK4_SQL_ORIGINALS_UNKNOWN");return;}
+      assert.ok(result.backendFailure,"first original failed parser input must be retained");const record=result.backendFailure,index=mode==="main"?1:0;
+      assert.equal(record.origin,mode==="main"?"main":"watcher");assert.deepEqual(record.parser,{predicate:"client_established",line:6,endpointLine:4});
+      assert.equal(Buffer.from(record.original.stdoutBase64,"base64").toString("utf8"),raws[index]);assert.equal(record.original.stdoutHash,hashV1(raws[index]!));
+      assert.equal(record.original.stdoutBytes,Buffer.byteLength(raws[index]!));assert.equal(record.original.status,0);assert.equal(record.original.signal,null);
+      assert.equal(record.rows[0].pid.value,rows[index]!.pid);assert.equal(Object.isFrozen(record),true);assert.equal(Object.isFrozen(record.rows[0]),true);
+      rows[index]!.pid=999;assert.notEqual(record.rows[0].pid.value,999);
+    });
   });
   test("descriptor concurrent census rejection keeps its own original watcher and main predicate",async(t)=>{
     const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),ast=ts.createSourceFile("fixture.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
@@ -2395,7 +2521,7 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
       if(ts.isBinaryExpression(node)&&node.left.getText(ast)==="watcher"&&node.right.getText(ast).includes("while(!stopWatcher)"))watcher=node;
       ts.forEachChild(node,visit);};visit(fn);assert.ok(census&&watcher);
     // Execute the original census and watcher. Only SQL/OS ports and the timer are component inputs.
-    const body='return (async()=>{let backendPredicate="none",predicate="none",watcher=null,watcherFailure=null,watchFailure=false,stopWatcher=false;'+
+    const body='return (async()=>{let backendPredicate="none",predicate="none",watcher=null,watcherFailure=null,backendFailure=null,backendFailureLatched=false,watchFailure=false,stopWatcher=false;'+
       'const setTimeout=(resolve)=>{stopWatcher=true;resolve();};const '+census!.getText(ast)+';'+
       (main?'const '+main.getText(ast)+';':'const observeMainBackends=observeBackends;')+
       watcher!.getText(ast)+';const second=observeMainBackends().then(()=>({error:null,predicate}),error=>({error,predicate}));'+
