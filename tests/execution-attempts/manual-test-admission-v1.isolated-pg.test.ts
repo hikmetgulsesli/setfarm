@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, lstatSync, realpathSync, rmSync } from "node:fs";
+import { randomUUID, createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, lstatSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,6 +15,7 @@ import { ContentAddressedEvalResultStore } from "../../src/evals/report.js";
 import { loadConvergenceSuite, convergenceCaseHash } from "../../src/evals/suite-schema.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { seedCanonicalSetupBuildCompilerStoryAdmissionFixture } from "./helpers/compiler-story-admission-fixture.js";
+import { observeProcessIdentity } from "../../src/execution/process-identity.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 const SOURCE_SHA = "b".repeat(40);
@@ -32,7 +33,14 @@ async function fixture(t: TestContext) {
   const runtime = path.join(root, "runtime");
   const evals = path.join(runtime, "evals");
   for (const directory of [runtime, evals, path.join(evals, "results")]) mkdirSync(directory, { mode: 0o700 });
-  const fixtureId = randomUUID();
+  const fixtureId = randomUUID(), jobId = randomUUID();
+  const identity = observeProcessIdentity(process.pid);
+  assert.ok(identity && identity.source === "observed_os" && identity.processGroupId);
+  const { schema: _schema, ...osIdentity } = identity;
+  const owner = Object.freeze({ ...osIdentity, executable: realpathSync(process.execPath),
+    script: path.join(SOURCE_ROOT, "dist/cli/control-test-worker-v1.js"),
+    commandHash: createHash("sha256").update(`${realpathSync(process.execPath)} ${path.join(SOURCE_ROOT, "dist/cli/control-test-worker-v1.js")} --job-id ${jobId}`).digest("hex") });
+  const workerArgv = [owner.executable, owner.script, "--job-id", jobId];
   const faults = { rollbackAfterCallback: false, censusOverlay: null as Record<string, unknown> | null };
   const faultKey = `setfarm.manual-test-fault.${fixtureId}`;
   Reflect.set(globalThis, Symbol.for(faultKey), faults);
@@ -79,6 +87,8 @@ async function fixture(t: TestContext) {
     })}
   `;
   const faultUrl = `data:text/javascript;base64,${Buffer.from(faultSource).toString("base64")}`;
+  const processUrl = `data:text/javascript;base64,${Buffer.from(`import real from 'node:process';export default new Proxy(real,{get(target,key){if(key==='argv')return Object.freeze(${JSON.stringify(workerArgv)});if(key==='execArgv')return Object.freeze([]);const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}})`).toString("base64")}`;
+  const entryUrl = `data:text/javascript;base64,${Buffer.from(`import {assertFreshInstallationSelectionUnchangedV1} from ${JSON.stringify(selectionUrl)};export function assertFreshInstallationOperationalEntryV1(){assertFreshInstallationSelectionUnchangedV1()}`).toString("base64")}`;
   const hooks = registerHooks({
     resolve(specifier, context, nextResolve) {
       const parent = context.parentURL ?? "";
@@ -86,13 +96,36 @@ async function fixture(t: TestContext) {
         && /fresh-installation-selection-v1\.[jt]s$/.test(specifier)) {
         return { url: selectionUrl, shortCircuit: true };
       }
+      if (parent.includes("manual-test-admission-v1.") && parent.includes(`manual-fixture=${fixtureId}`)) {
+        if (specifier === "node:process") return { url: processUrl, shortCircuit: true };
+        if (/fresh-installation-entry-v1\.[jt]s$/.test(specifier)) return { url: entryUrl, shortCircuit: true };
+      }
       if (parent.includes("manual-test-admission-v1.") && parent.includes(`manual-fixture=${fixtureId}`)
         && /(?:^|\/)db-pg\.[jt]s$/.test(specifier)) return { url: faultUrl, shortCircuit: true };
-      if (parent.includes("run-persistence.") && parent.endsWith(`?manual-fixture=${fixtureId}`)
+      if (parent.includes("run-persistence.") && parent.includes(`manual-fixture=${fixtureId}`)
         && /manual-test-admission-v1\.[jt]s$/.test(specifier)) {
-        return nextResolve(`${specifier}?manual-fixture=${fixtureId}`, context);
+        return nextResolve(`${specifier}?manual-fixture=${fixtureId}${parent.includes("pre-worker") ? "&pre-worker" : ""}`, context);
       }
       return nextResolve(specifier, context);
+    },
+    load(url, context, nextLoad) {
+      const loaded = nextLoad(url, context);
+      if (!url.includes("/manual-test-admission-v1.") || !url.includes(`manual-fixture=${fixtureId}`)) return loaded;
+      const source = typeof loaded.source === "string" ? loaded.source : new TextDecoder().decode(loaded.source!);
+      const tree = ts.createSourceFile("observation-component.ts", source, ts.ScriptTarget.Latest, true);
+      // These three complete observation functions alone receive immutable
+      // component facts. Neither admission, persistence nor SQL is substituted.
+      const replacements: Record<string, string> = {
+        entryV1: `function entryV1(kind){if(kind!=='worker')throw new Error('FIXTURE_ENTRY_REFUSED');return Object.freeze(${JSON.stringify(owner)})}`,
+        processOwnerV1: `function processOwnerV1(pid,script,executable){const owner=Object.freeze(${JSON.stringify(owner)});if(pid!==owner.pid||script!==owner.script||executable!==owner.executable)throw new Error('FIXTURE_OS_OBSERVATION_UNKNOWN');return owner}`,
+        psV1: `function psV1(args){if(JSON.stringify(args)!==JSON.stringify(['-ww','-axo','pid=,ppid=,pgid=,command=']))throw new Error('FIXTURE_PS_OBSERVATION_UNKNOWN');return ${JSON.stringify(url.includes("pre-worker") ? "" : `${owner.pid} ${process.ppid} ${owner.processGroupId} ${owner.executable} ${owner.script} --job-id ${jobId}\n`)}}`,
+      };
+      const edits = tree.statements.filter(ts.isFunctionDeclaration).filter(node => node.name && replacements[node.name.text])
+        .map(node => ({ start: node.getStart(tree), end: node.end, text: replacements[node.name!.text]! }));
+      assert.equal(edits.length, 3);
+      let changed = source;
+      for (const edit of edits.sort((a, b) => b.start - a.start)) changed = changed.slice(0, edit.start) + edit.text + changed.slice(edit.end);
+      return { ...loaded, source: changed };
     },
   });
   t.after(() => {
@@ -116,8 +149,27 @@ async function fixture(t: TestContext) {
   await db.initializeInternalProductionCurrentEntryDatabaseV1();
   t.after(() => db.pgClose());
   const suite = await loadConvergenceSuite(path.join(SOURCE_ROOT, "evals/suites/product-convergence-codex-v1.json"));
-  const input = () => ({ jobId: randomUUID(), kind: "convergence_full8" as const,
+  const input = () => ({ jobId, kind: "convergence_full8" as const,
     selectionHash, sourceSha: SOURCE_SHA, suiteHash: suite.suiteHash });
+  const nonce = "test_private_nonce_".repeat(4);
+  let enrolled = false;
+  async function acquire() {
+    if (!enrolled) {
+      const jobDirectory = path.join(runtime, "mission-control", "controls", "jobs", jobId);
+      mkdirSync(jobDirectory, { recursive: true, mode: 0o700 });
+      const now = new Date().toISOString();
+      writeFileSync(path.join(jobDirectory, "intent.json"), JSON.stringify({ schema: "mission-control.control-intent.v1",
+        receipt: { schema: "mission-control.control-job.v1", ...input(), revision: 1, mcSourceSha: "c".repeat(40), mcBuildHash: "d".repeat(64),
+          state: "accepted", requestedAt: now, startedAt: null, updatedAt: now, finishedAt: null, phase: "accepted", code: null,
+          currentCaseId: null, ownedRunId: null, completedCases: 0, plannedCases: 8, reportRefs: {}, cancelRequested: false },
+        installationDir: root, releaseDir: SOURCE_ROOT, nonceDigest: createHash("sha256").update(nonce).digest("hex"),
+        fixedSuiteRelativePath: "evals/suites/product-convergence-codex-v1.json" }) + "\n", { mode: 0o600, flag: "wx" });
+      enrolled = true;
+    }
+    await manual.registerSelectedManualWorkerCustodyV1({ schema: "mission-control.control-custody.v1", jobId, selectionHash, sourceSha: SOURCE_SHA,
+      mcBuildHash: "d".repeat(64), nonce });
+    return manual.acquireSelectedManualEvaluationV1(input());
+  }
   const ordinaryRunInput: PersistWorkflowRunInputV1 = {
     run: {
       id: randomUUID(), runNumber: 8101, workflowId: "feature-dev", task: suite.suite.cases[0]!.task,
@@ -151,7 +203,7 @@ async function fixture(t: TestContext) {
     return Math.max(...matches);
   }
   const restart = async (): Promise<typeof manual> => import(`${MANUAL_URL.href}?manual-fixture=${fixtureId}&restart=${randomUUID()}`);
-  return { manual, persistence, database, db, root, evals, suite, input, ordinaryRunInput, revision, faults, restart };
+  return { manual, persistence, database, db, root, evals, suite, input, ordinaryRunInput, revision, faults, restart, acquire, preWorkerPersistence: () => import(`${PERSISTENCE_URL.href}?manual-fixture=${fixtureId}&pre-worker`) as Promise<typeof persistence> };
 }
 
 function exactPrivateRecoveryComponent(bindings: Record<string, unknown>) {
@@ -169,7 +221,7 @@ function exactPrivateRecoveryComponent(bindings: Record<string, unknown>) {
 
 test("reservation-first denies the actual ordinary INSERT and private recovery INSERT before downstream authority", async t => {
   const f = await fixture(t);
-  const held = await f.manual.acquireSelectedManualEvaluationV1(f.input());
+  const held = await f.acquire();
   await assert.rejects(() => f.database.sql.begin(sql => f.persistence.persistWorkflowRunInTransaction(
     sql as PgTransactionSql, f.ordinaryRunInput)), /MANUAL_EVALUATION_RESERVED/);
   let downstreamAuthorityReads = 0;
@@ -198,8 +250,8 @@ test("reservation-first denies the actual ordinary INSERT and private recovery I
 test("two acquisitions have one durable owner and a fresh module observes that same reservation", async t => {
   const f = await fixture(t);
   const results = await Promise.allSettled([
-    f.manual.acquireSelectedManualEvaluationV1(f.input()),
-    f.manual.acquireSelectedManualEvaluationV1(f.input()),
+    f.acquire(),
+    f.acquire(),
   ]);
   const winners = results.filter(result => result.status === "fulfilled");
   assert.equal(winners.length, 1);
@@ -209,7 +261,7 @@ test("two acquisitions have one durable owner and a fresh module observes that s
   const observed = await f.database.sql.begin(sql => restarted.observeSelectedManualEvaluationInTransactionV1(sql as PgTransactionSql));
   assert.equal(observed?.jobId, held.jobId);
   assert.equal(await f.revision(held.jobId), held.revision);
-  await assert.rejects(() => f.manual.acquireSelectedManualEvaluationV1(f.input()), /MANUAL_EVALUATION_RESERVED|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/);
+  await assert.rejects(() => f.acquire(), /MANUAL_EVALUATION_RESERVED|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/);
 });
 
 test("insertion-first commits under the real fence before evaluator readiness and refuses acquisition", async t => {
@@ -218,14 +270,16 @@ test("insertion-first commits under the real fence before evaluator readiness an
   let locked!: () => void;
   const atFence = new Promise<void>(resolve => { locked = resolve; });
   const hold = new Promise<void>(resolve => { unlock = resolve; });
+  const beforeWorker = await f.preWorkerPersistence();
   const insertion = f.database.sql.begin(async sql => {
     await f.db.lockInternalProductionWorkflowRunInsertionFenceV1(sql as PgTransactionSql);
+    const inserted = await beforeWorker.persistWorkflowRunInTransaction(sql as PgTransactionSql, f.ordinaryRunInput);
     locked();
     await hold;
-    return f.persistence.persistWorkflowRunInTransaction(sql as PgTransactionSql, f.ordinaryRunInput);
+    return inserted;
   });
   await atFence;
-  const acquiring = f.manual.acquireSelectedManualEvaluationV1(f.input());
+  const acquiring = f.acquire();
   // Attach rejection handling before releasing the competing transaction.
   const refused = assert.rejects(acquiring, /MANUAL_EVALUATION_ACTIVITY|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/);
   unlock();
@@ -244,7 +298,7 @@ test("canonical compiler fixture exposes real live run claim and runtime activit
     setupBuildClaimAgentId: "feature-dev_setup-build", releaseSha: SOURCE_SHA,
   });
   assert.ok(fixtureRun.claimId > 0);
-  await assert.rejects(() => f.manual.acquireSelectedManualEvaluationV1(f.input()),
+  await assert.rejects(() => f.acquire(),
     /MANUAL_EVALUATION_ACTIVITY|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/);
   const rows = await f.database.sql`SELECT outcome FROM claim_log WHERE id=${fixtureRun.claimId}`;
   assert.equal(rows[0]?.outcome, null);
@@ -256,10 +310,10 @@ test("all nonterminal run states block acquisition including cancellation and fa
     const runId = randomUUID();
     await f.database.insertRun(runId);
     await f.database.sql`UPDATE runs SET status=${status} WHERE id=${runId}`;
-    await assert.rejects(() => f.manual.acquireSelectedManualEvaluationV1(f.input()),
+    await assert.rejects(() => f.acquire(),
       /MANUAL_EVALUATION_ACTIVITY|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/, status);
-    const observed = await f.database.sql.begin(sql => f.manual.observeSelectedManualEvaluationInTransactionV1(sql as PgTransactionSql));
-    assert.equal(observed, null, "failed readiness must not create an evaluator owner");
+    assert.equal(existsSync(path.join(f.evals, "manual-controls", "reservation.json")), false,
+      "failed readiness must not create a reservation; the enrolled worker remains owned");
     // Fixture-only rows in this exact private DB, never canonical live owners.
     await f.database.sql`DELETE FROM runs WHERE id=${runId}`;
   }
@@ -269,17 +323,17 @@ test("complete activity census refuses every nonzero family and missing invalid 
   const f = await fixture(t);
   const families = [
     "active_runs", "open_claims", "active_attempts", "active_attempt_binding_conflicts",
-    "active_runtimes", "active_runtime_completions", "active_recovery_cases",
-    "active_recovery_deliveries", "active_termination_requests", "active_evaluator_owners",
-    "active_build_owners", "active_publication_owners",
+    "active_runtimes", "active_runtime_completions", "active_completion_effects", "active_recovery_cases",
+    "active_recovery_deliveries", "active_termination_requests", "active_compilations",
+    "active_publications", "active_publication_batches", "active_outbox", "active_operational_deliveries", "active_owner_reservations",
   ];
   for (const family of families) {
     for (const value of [1, undefined, -1, 0.5, "0", null]) {
       f.faults.censusOverlay = { [family]: value };
-      await assert.rejects(() => f.manual.acquireSelectedManualEvaluationV1(f.input()),
+      await assert.rejects(() => f.acquire(),
         /MANUAL_EVALUATION_ACTIVITY|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/,
         `${family}:${String(value)}`);
-      assert.equal(await f.database.sql.begin(sql => f.manual.observeSelectedManualEvaluationInTransactionV1(sql as PgTransactionSql)), null);
+      assert.equal(existsSync(path.join(f.evals, "manual-controls", "reservation.json")), false);
     }
   }
   f.faults.censusOverlay = null;
@@ -289,7 +343,7 @@ test("rollback after durable publication retains a pending or unknown reservatio
   const f = await fixture(t);
   const input = f.input();
   f.faults.rollbackAfterCallback = true;
-  await assert.rejects(() => f.manual.acquireSelectedManualEvaluationV1(input), /INJECTED_MANUAL_TRANSACTION_ROLLBACK|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/);
+  await assert.rejects(() => f.acquire(), /INJECTED_MANUAL_TRANSACTION_ROLLBACK|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/);
   f.faults.rollbackAfterCallback = false;
   const restarted = await f.restart();
   const observed = await f.database.sql.begin(sql => restarted.observeSelectedManualEvaluationInTransactionV1(sql as PgTransactionSql));
@@ -297,7 +351,7 @@ test("rollback after durable publication retains a pending or unknown reservatio
   assert.equal(observed.jobId, input.jobId);
   assert.ok(["pending", "ownership_unknown"].includes(observed.phase));
   assert.equal(await f.revision(input.jobId), observed.revision);
-  await assert.rejects(() => restarted.acquireSelectedManualEvaluationV1(f.input()), /MANUAL_EVALUATION_RESERVED|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/);
+  await assert.rejects(() => restarted.acquireSelectedManualEvaluationV1(f.input()), /MANUAL_EVALUATION_RESERVED|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN|MANUAL_EVALUATION_CUSTODY_REQUIRED/);
   await assert.rejects(() => f.database.sql.begin(sql => f.persistence.persistWorkflowRunInTransaction(sql as PgTransactionSql, f.ordinaryRunInput)),
     /MANUAL_EVALUATION_RESERVED|MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/);
   await assert.rejects(() => restarted.releaseSelectedManualEvaluationV1(observed));
@@ -306,7 +360,7 @@ test("rollback after durable publication retains a pending or unknown reservatio
 
 test("exact stored canary admits once and canonical terminal settlement remains usable under reservation", async t => {
   const f = await fixture(t);
-  const held = await f.manual.acquireSelectedManualEvaluationV1(f.input());
+  const held = await f.acquire();
   const entry = f.suite.suite.cases[0]!;
   const repository = createV3ReleaseAdmissionRepository(f.database.sql, new ContentAddressedEvalResultStore(path.join(f.evals, "results")));
   const canary = await repository.createCanary({
@@ -314,11 +368,12 @@ test("exact stored canary admits once and canonical terminal settlement remains 
     slots: [{ caseHash: convergenceCaseHash(entry), taskHash: hashCanonicalJson(entry.task), repetition: 1, slotToken: "test_private_selector_".repeat(3) }],
   });
   const context = canary.contexts[0]!;
-  await f.manual.bindSelectedManualCanaryV1({ reservation: held, admissionHash: canary.admission.admissionHash,
-    slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: context.repetition }] });
+  assert.equal(context.repetition, 1);
+  const bound = await f.manual.bindSelectedManualCanaryV1({ reservation: held, admissionHash: canary.admission.admissionHash,
+    slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: 1 }] });
   await assert.rejects(() => f.manual.bindSelectedManualCanaryV1({ reservation: held,
     admissionHash: canary.admission.admissionHash,
-    slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: context.repetition }] }),
+    slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: 1 }] }),
   /MANUAL_EVALUATION_REVISION|MANUAL_EVALUATION_CONFLICT/);
   const input: PersistWorkflowRunInputV1 = {
     ...f.ordinaryRunInput,
@@ -344,7 +399,7 @@ test("exact stored canary admits once and canonical terminal settlement remains 
   const claim = await f.database.sql`SELECT run_id,consumed_at FROM v3_canary_admission_claims WHERE slot_hash=${context.slotHash}`;
   assert.equal(claim[0]?.run_id, inserted.run.id);
   assert.ok(claim[0]?.consumed_at);
-  await assert.rejects(() => f.manual.releaseSelectedManualEvaluationV1(held));
+  await assert.rejects(() => f.manual.releaseSelectedManualEvaluationV1(bound), /MANUAL_EVALUATION_ACTIVITY/);
   const terminal = await import("../../src/execution/run-terminal-transition.js");
   await terminal.transitionRunToTerminal(f.database.sql, {
     runId: inserted.run.id, status: "failed", diagnostic: "Manual admission isolated pre-claim test",
@@ -354,13 +409,33 @@ test("exact stored canary admits once and canonical terminal settlement remains 
   assert.ok(current);
   await assert.rejects(() => f.database.sql.begin(sql => f.persistence.persistWorkflowRunInTransaction(sql as PgTransactionSql,
     { ...input, run: { ...input.run, id: randomUUID(), runNumber: 8102 } })), /CANARY|MANUAL_EVALUATION/);
+  await assert.rejects(() => f.manual.releaseSelectedManualEvaluationV1(current), /MANUAL_EVALUATION_ACTIVITY/);
+  // Canonical terminal SQL creates real outbox work. Drain only this pristine
+  // owned fixture through its existing repositories; do not zero the census.
+  const { createOperationalOutboxRepository } = await import("../../src/execution/operational-outbox-repository.js");
+  const { createOperationalEventDeliveryRepository } = await import("../../src/execution/operational-event-delivery-repository.js");
+  const outbox = createOperationalOutboxRepository(f.database.sql), deliveries = createOperationalEventDeliveryRepository(f.database.sql);
+  const ownerInstanceId = "manual-admission-owned-fixture";
+  for (let count = 0; ; count++) {
+    assert.ok(count < 20);
+    const item = await outbox.claimNext({ ownerInstanceId }); if (!item) break;
+    await outbox.publish({ outboxId: item.outboxId, ownerInstanceId, leaseToken: item.leaseToken! });
+  }
+  for (const consumer of ["jsonl", "webhook"] as const) for (let count = 0; ; count++) {
+    assert.ok(count < 40);
+    const item = await deliveries.claimNext({ consumer, ownerInstanceId }); if (!item) break;
+    await deliveries.settle({ eventKey: item.eventKey, consumer, ownerInstanceId, leaseToken: item.leaseToken!, outcome: "skipped", result: { reason: "private test fixture has no external consumer" } });
+  }
   await f.manual.releaseSelectedManualEvaluationV1(current);
-  assert.equal(await f.database.sql.begin(sql => f.manual.observeSelectedManualEvaluationInTransactionV1(sql as PgTransactionSql)), null);
+  // The immutable enrolled-worker snapshot still observes that process alive;
+  // release is recorded, but public owner observation may not pretend it exited.
+  assert.equal(await f.manual.observeSelectedEvaluatorOwnersV1(), "owned");
+  assert.equal(await f.revision(current.jobId), current.revision + 1);
 });
 
 test("a bound canary that expires before insertion cannot consume its real stored claim", async t => {
   const f = await fixture(t);
-  const held = await f.manual.acquireSelectedManualEvaluationV1(f.input());
+  const held = await f.acquire();
   const entry = f.suite.suite.cases[0]!;
   const repository = createV3ReleaseAdmissionRepository(f.database.sql, new ContentAddressedEvalResultStore(path.join(f.evals, "results")));
   const canary = await repository.createCanary({ releaseSha: SOURCE_SHA,
@@ -368,8 +443,9 @@ test("a bound canary that expires before insertion cannot consume its real store
     slots: [{ caseHash: convergenceCaseHash(entry), taskHash: hashCanonicalJson(entry.task), repetition: 1, slotToken: "expiry_private_selector_".repeat(3) }],
   });
   const context = canary.contexts[0]!;
+  assert.equal(context.repetition, 1);
   await f.manual.bindSelectedManualCanaryV1({ reservation: held, admissionHash: context.admissionHash,
-    slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: context.repetition }] });
+    slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: 1 }] });
   await f.database.sql`SELECT pg_sleep(1.1)`;
   await assert.rejects(() => f.database.sql.begin(sql => f.persistence.persistWorkflowRunInTransaction(sql as PgTransactionSql, {
     ...f.ordinaryRunInput,

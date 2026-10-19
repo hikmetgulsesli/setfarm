@@ -1,3 +1,4 @@
+import { observeSelectedManualEvaluationInTransactionV1, assertSelectedManualRunInsertionV1, assertNoSelectedManualRecoveryInsertionV1 } from "./manual-test-admission-v1.js";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -334,6 +335,12 @@ export async function persistWorkflowRunInTransaction(
     throw new Error("RUN_PERSISTENCE_CALLER_TIME_INVALID");
   }
   await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+  const manualReservation = await observeSelectedManualEvaluationInTransactionV1(sql);
+  if (manualReservation && (manualReservation.phase !== "active"
+    || manualReservation.kind !== "convergence_full8" || run.protocol.releaseAdmissionKind !== "convergence_canary"
+    || !run.protocol.canaryAdmission || run.protocol.compilerReleaseSha !== manualReservation.sourceSha)) {
+    throw new Error("MANUAL_EVALUATION_RESERVED");
+  }
   const ownerBegin = await beginWorkflowRunOwnerForPersistenceV1(sql, run.id);
   const { reservation } = ownerBegin;
   const existingRows = await sql.unsafe<PersistedWorkflowRunRowV1[]>(
@@ -391,6 +398,7 @@ export async function persistWorkflowRunInTransaction(
     throw new Error("RUN_ACTIVATION_PREFLIGHT_IDENTITY_MISSING");
   }
   const persistedAt = await lockAndVerifyReleaseAdmission(sql, run, existing?.created_at ?? null);
+  await assertSelectedManualRunInsertionV1(sql, manualReservation, run);
   if (existing) {
     const createdAt = new Date(existing.created_at).toISOString();
     if (
@@ -733,6 +741,7 @@ async function persistRecoverySourceBootstrapRunInTransactionV1(
     sql,
     candidate.operation,
   );
+  await assertNoSelectedManualRecoveryInsertionV1(sql);
   if (
     authority.runId !== candidate.runId
     || authority.operationRef !== candidate.operation.operationRef

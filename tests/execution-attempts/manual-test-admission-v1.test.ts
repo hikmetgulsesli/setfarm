@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import ts from "typescript";
 import { test } from "node:test";
 
 // These tests stay on the raw runner: parsing must not open a database,
@@ -119,7 +124,7 @@ test("private intent binds the fixed recipe and keeps custody separate from publ
 test("shared selection hash uses exactly the strict captured identity record", async () => {
   const { ControlSelectionIdentityV1Schema, hashControlSelectionIdentityV1 } = await schemas();
   const identity = {
-    schema: "setfarm.manual-control-selection.v1",
+    schema: "setfarm.manual-control-selection.v1" as const,
     installationId: JOB_ID, sourceSha: SOURCE,
     installationDir: "/owned/installation", releaseDir: "/owned/release", catalogHash: HASH,
     activationPreparedHash: "e".repeat(64), activationAcknowledgedHash: "f".repeat(64),
@@ -134,4 +139,80 @@ test("shared selection hash uses exactly the strict captured identity record", a
   ] as const) {
     assert.equal(ControlSelectionIdentityV1Schema.safeParse({ ...identity, [key]: value }).success, false, key);
   }
+});
+
+function privateFileComponent() {
+  const locator = new URL("../../src/execution/manual-test-admission-v1.ts", import.meta.url);
+  const source = fs.readFileSync(locator, "utf8");
+  const tree = ts.createSourceFile("manual.ts", source, ts.ScriptTarget.Latest, true);
+  const names = ["refuseV1", "sameStatV1", "pinParentsV1", "assertParentsV1", "readPrivateFileV1", "syncDirectoryV1", "publishExclusiveV1", "sameOwnerV1", "parseProcessTableV1", "hasOwnedChildrenV1"];
+  const declarations = names.map(name => {
+    const node = tree.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(node, `complete production ${name} required`);
+    return node.getText(tree);
+  }).join("\n");
+  const compiled = ts.transpileModule(declarations, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  const factory = `${compiled};return {readPrivateFileV1,publishExclusiveV1,sameOwnerV1,parseProcessTableV1,hasOwnedChildrenV1};`;
+  return { factory, ...new Function("fs", "path", factory)(fs, path) };
+}
+
+test("private intent reader refuses symlinks hardlinks unsafe modes ancestor swaps and oversized files", () => {
+  const api = privateFileComponent();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-private-read-")));
+  try {
+    const parent = path.join(root, "jobs"); fs.mkdirSync(parent, { mode: 0o700 });
+    const file = path.join(parent, "intent.json");
+    fs.writeFileSync(file, "{}\n", { mode: 0o600 });
+    const pin = api.readPrivateFileV1(file, 32, root);
+    assert.equal(pin.bytes.toString(), "{}\n");
+    fs.chmodSync(file, 0o644); assert.throws(() => api.readPrivateFileV1(file, 32, root)); fs.chmodSync(file, 0o600);
+    fs.linkSync(file, path.join(parent, "alias.json")); assert.throws(() => api.readPrivateFileV1(file, 32, root)); fs.unlinkSync(path.join(parent, "alias.json"));
+    fs.renameSync(file, `${file}.real`); fs.symlinkSync(`${file}.real`, file); assert.throws(() => api.readPrivateFileV1(file, 32, root)); fs.unlinkSync(file); fs.renameSync(`${file}.real`, file);
+    fs.writeFileSync(file, "x".repeat(33)); assert.throws(() => api.readPrivateFileV1(file, 32, root));
+    fs.renameSync(parent, `${parent}.old`); fs.symlinkSync(`${parent}.old`, parent); assert.throws(() => api.readPrivateFileV1(file, 64, root));
+  } finally { fs.rmSync(root, { recursive: true }); }
+});
+
+test("exclusive publication never replaces an existing owner or removes a crashed child's durable record", () => {
+  const api = privateFileComponent();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-private-crash-")));
+  try {
+    const file = path.join(root, "reservation.json");
+    const bytes = Buffer.from('{"phase":"pending","revision":1}\n');
+    const script = `const fs=require('node:fs'),path=require('node:path');const api=new Function('fs','path',${JSON.stringify(api.factory)})(fs,path);api.publishExclusiveV1(${JSON.stringify(file)},Buffer.from(${JSON.stringify(bytes.toString())}),${JSON.stringify(root)});process.exit(23);`;
+    const child = spawnSync(process.execPath, ["-e", script], { env: { PATH: process.env.PATH }, encoding: "utf8", timeout: 10_000 });
+    assert.equal(child.status, 23);
+    assert.deepEqual(api.readPrivateFileV1(file, 1024, root).bytes, bytes);
+    assert.throws(() => api.publishExclusiveV1(file, Buffer.from("replacement"), root));
+    assert.deepEqual(fs.readFileSync(file), bytes);
+  } finally { fs.rmSync(root, { recursive: true }); }
+});
+
+test("exact evaluator process identity refuses reused PID changed group or legacy provenance", () => {
+  const { sameOwnerV1 } = privateFileComponent();
+  const owner = { pid: 123, processStartedAt: "2026-10-19T00:00:00.000Z", processGroupId: 123, source: "observed_os", executable: "/fixed/node", script: "/fixed/release/dist/cli/control-test-worker-v1.js", commandHash: "a".repeat(64) };
+  assert.equal(sameOwnerV1(owner, { ...owner }), true);
+  for (const altered of [{ processStartedAt: "2026-10-19T00:00:01.000Z" }, { processGroupId: 124 }, { source: "tracked_child" }, { executable: "/other/node" }, { script: "/other/worker.js" }, { commandHash: "b".repeat(64) }]) {
+    assert.equal(sameOwnerV1(owner, { ...owner, ...altered }), false);
+  }
+});
+
+test("production custody ingress refuses unselected source entry before any operational effect", async () => {
+  const api = await import("../../src/execution/manual-test-admission-v1.js");
+  await assert.rejects(() => api.registerSelectedManualWorkerCustodyV1({
+    schema: "mission-control.control-custody.v1", jobId: JOB_ID, selectionHash: HASH,
+    sourceSha: SOURCE, mcBuildHash: HASH, nonce: "f".repeat(64),
+  }));
+  await assert.rejects(() => api.prepareSelectedDirectEvaluationIntentV1());
+});
+
+
+test("process census refuses malformed rows and retains descendants or orphan group children", () => {
+  const { parseProcessTableV1, hasOwnedChildrenV1 } = privateFileComponent();
+  const owner = { pid: 123, processGroupId: 123 };
+  const one = "123 1 123 /fixed/node /fixed/worker.js\n";
+  assert.equal(hasOwnedChildrenV1(parseProcessTableV1(one), owner), false);
+  assert.equal(hasOwnedChildrenV1(parseProcessTableV1(one + "124 123 124 /fixed/child\n125 124 125 /fixed/grandchild\n"), owner), true);
+  assert.equal(hasOwnedChildrenV1(parseProcessTableV1(one + "126 1 123 /fixed/orphan\n"), owner), true);
+  for (const text of ["bad\n", one + one, "0 1 2 bad\n", "123 -1 123 bad\n"]) assert.throws(() => parseProcessTableV1(text));
 });
