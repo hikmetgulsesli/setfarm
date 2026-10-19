@@ -50,7 +50,9 @@ function validateTask4PolicyOutcomesV1(original:Readonly<RecordV1>):void {
     requireV1(original.allowed.outcome==="connected"&&original.allowed.errno===null&&original.denied.outcome==="denied"&&["EPERM","EACCES"].includes(original.denied.errno));
     keysV1(original.exit,"code signal exitObserved closeObserved");requireV1(original.exit.code===0&&original.exit.signal===null&&original.exit.exitObserved===true&&original.exit.closeObserved===true);
     requireV1(typeof original.stdout==="string"&&Buffer.byteLength(original.stdout)<=1024&&original.stderr===""&&original.stdoutHash===hashV1(original.stdout)&&original.stderrHash===hashV1(""));
-    requireV1(original.stdout===JSON.stringify({schema:"mission-control.task4-policy-probe-output.v1",allowed:original.allowed,denied:original.denied})+"\n");
+    requireV1(original.stdout===JSON.stringify({schema:"mission-control.task4-policy-probe-output.v1",
+      allowed:{startedAt:original.allowed.startedAt,finishedAt:original.allowed.finishedAt,outcome:original.allowed.outcome,errno:original.allowed.errno},
+      denied:{startedAt:original.denied.startedAt,finishedAt:original.denied.finishedAt,outcome:original.denied.outcome,errno:original.denied.errno}})+"\n");
   }catch{return refuseV1("TASK4_NETWORK_REFUSED");}
 }
 async function validateTask4PolicyProbeV1(root:string,ready:Readonly<RecordV1>,innerOwner:Readonly<RecordV1>,network:Readonly<RecordV1>,artifacts:ReadonlyMap<string,Readonly<RecordV1>>):Promise<void> {
@@ -1768,6 +1770,28 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     for(const change of [(v:any)=>{v.denied.errno="ECONNREFUSED";},(v:any)=>{v.denied.outcome="unknown";},(v:any)=>{v.exit.closeObserved=false;},(v:any)=>{v.stderr="unexpected";},(v:any)=>{v.stdoutHash="0".repeat(64);}]){
       const value=structuredClone(original);change(value);assert.throws(()=>validateTask4PolicyOutcomesV1(value),{message:"TASK4_NETWORK_REFUSED"});
     }
+  });
+  test("descriptor policy stdout preserves fixed program bytes after canonical receipt roundtrip",async(t)=>{
+    const make=(errno="EPERM")=>{
+      const stdout='{"schema":"mission-control.task4-policy-probe-output.v1","allowed":{"startedAt":"2026-10-19T10:00:00.000Z","finishedAt":"2026-10-19T10:00:00.001Z","outcome":"connected","errno":null},"denied":{"startedAt":"2026-10-19T10:00:00.000Z","finishedAt":"2026-10-19T10:00:00.001Z","outcome":"denied","errno":"'+errno+'"}}\n';
+      const output=JSON.parse(stdout);
+      return JSON.parse(task4CanonicalV1({allowed:output.allowed,denied:output.denied,stdout,stderr:"",stdoutHash:hashV1(stdout),stderrHash:hashV1(""),
+        exit:{code:0,signal:null,exitObserved:true,closeObserved:true}})+"\n");
+    };
+    for(const errno of ["EPERM","EACCES"])await t.test("canonical receipt retains "+errno+" program stdout",()=>{
+      const value=make(errno);assert.deepEqual(Object.keys(value.allowed),["errno","finishedAt","outcome","startedAt"]);
+      validateTask4PolicyOutcomesV1(value);
+    });
+    const changes:ReadonlyArray<readonly [string,(v:any)=>void]>=[
+      ["canonicalized raw stdout",v=>{v.stdout=task4CanonicalV1(JSON.parse(v.stdout))+"\n";v.stdoutHash=hashV1(v.stdout);}],
+      ["reordered nested raw stdout",v=>{v.stdout=JSON.stringify({schema:"mission-control.task4-policy-probe-output.v1",allowed:v.allowed,denied:v.denied})+"\n";v.stdoutHash=hashV1(v.stdout);}],
+      ["changed stdout hash",v=>{v.stdoutHash="0".repeat(64);}],
+      ["extra nested key",v=>{v.allowed.extra=true;}],
+      ["missing nested key",v=>{delete v.allowed.errno;}],
+      ["receipt time drift",v=>{v.allowed.finishedAt="2026-10-19T10:00:00.002Z";}],
+      ["raw value drift with matching hash",v=>{v.stdout=v.stdout.replace('"errno":"EPERM"','"errno":"EACCES"');v.stdoutHash=hashV1(v.stdout);}],
+    ];
+    for(const [name,change] of changes)await t.test(name,()=>{const value=make();change(value);assert.throws(()=>validateTask4PolicyOutcomesV1(value),{message:"TASK4_NETWORK_REFUSED"});});
   });
   test("descriptor fd4 deadline refuses without inventing an unobserved socket close",async()=>{
     const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),ast=ts.createSourceFile("fixture.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
