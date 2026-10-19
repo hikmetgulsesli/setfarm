@@ -35,6 +35,13 @@ function childTableObservationSource(owner: {pid:number;processGroupId:number}, 
 }
 
 type SafeStartDiagnostic = { name: string; code: string | null; frames: string[] };
+function exactContextForEntry(contexts: readonly import("../../src/execution/v3-release-admission.js").InternalCanaryAdmissionContextV1[],
+  entry: Parameters<typeof convergenceCaseHash>[0]) {
+  const matching = contexts.filter(context => context.caseHash === convergenceCaseHash(entry)
+    && context.taskHash === hashCanonicalJson(entry.task) && context.repetition === 1);
+  assert.equal(matching.length, 1, "The intended case must have exactly one matching stored canary context");
+  return matching[0]!;
+}
 function safeStartDiagnostic(error: unknown): SafeStartDiagnostic {
   const value = error as {name?:unknown;message?:unknown;code?:unknown;stack?:unknown} | null;
   const names = ["Error", "TypeError", "RangeError", "ZodError", "ControlWorkerFatalErrorV1"];
@@ -584,7 +591,7 @@ test("actual default child consumes exact stored canary once and canonical settl
     releaseSha: SOURCE_SHA, suiteHash: f.suite.suiteHash, preflightHash: "d".repeat(64), ttlMs: 60_000,
     slots: f.suite.suite.cases.map(value=>({caseHash:convergenceCaseHash(value),taskHash:hashCanonicalJson(value.task),repetition:1,slotToken:randomUUID()+randomUUID()})),
   });
-  const context = canary.contexts[0]!;
+  const context = exactContextForEntry(canary.contexts, entry);
   assert.equal(context.repetition, 1);
   const bound = await f.manual.bindSelectedManualCanaryV1({ reservation: held, admissionHash: canary.admission.admissionHash,
     slots: canary.contexts.map(({admissionHash,slotHash,caseHash,taskHash,repetition})=>({admissionHash,slotHash,caseHash,taskHash,repetition})) });
@@ -842,7 +849,7 @@ test("terminal status without the actual canonical closed run owner cannot relea
   const repository = createV3ReleaseAdmissionRepository(f.database.sql, new ContentAddressedEvalResultStore(path.join(f.evals, "results")));
   const created = await repository.createCanary({ releaseSha: SOURCE_SHA, suiteHash: f.suite.suiteHash, preflightHash: "d".repeat(64), ttlMs: 60_000,
     slots: f.suite.suite.cases.map(value=>({caseHash:convergenceCaseHash(value),taskHash:hashCanonicalJson(value.task),repetition:1,slotToken:randomUUID()+randomUUID()})) });
-  const context = created.contexts[0]!;
+  const context = exactContextForEntry(created.contexts, entry);
   held = await f.manual.bindSelectedManualCanaryV1({ reservation: held, admissionHash: context.admissionHash,
     slots: created.contexts.map(({admissionHash,slotHash,caseHash,taskHash,repetition})=>({admissionHash,slotHash,caseHash,taskHash,repetition})) });
   const input = { ...f.ordinaryRunInput, run: { ...f.ordinaryRunInput.run, protocol: { ...f.ordinaryRunInput.run.protocol,
@@ -862,7 +869,7 @@ for(const fault of ["proof_drift","foreign_child"] as const)test(`actual default
   const repository=createV3ReleaseAdmissionRepository(f.database.sql,new ContentAddressedEvalResultStore(path.join(f.evals,"results")));
   const created=await repository.createCanary({releaseSha:SOURCE_SHA,suiteHash:f.suite.suiteHash,preflightHash:"d".repeat(64),ttlMs:60_000,slots:f.suite.suite.cases.map(value=>({caseHash:convergenceCaseHash(value),taskHash:hashCanonicalJson(value.task),repetition:1,slotToken:randomUUID()+randomUUID()}))});
   held=await f.manual.bindSelectedManualCanaryV1({reservation:held,admissionHash:created.admission.admissionHash,slots:created.contexts.map(({admissionHash,slotHash,caseHash,taskHash,repetition})=>({admissionHash,slotHash,caseHash,taskHash,repetition}))});
-  const context=created.contexts[0]!;
+  const context=exactContextForEntry(created.contexts,f.suite.suite.cases[0]!);
   const input={...f.ordinaryRunInput,run:{...f.ordinaryRunInput.run,protocol:{...f.ordinaryRunInput.run.protocol,releaseAdmissionKind:"convergence_canary" as const,releaseAdmissionHash:context.admissionHash,canaryAdmission:context}}};
   const before=await f.database.sql`SELECT reservation_ref,state FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`;
   await assert.rejects(()=>startActualDefaultChild(f,input,held,created.contexts,fault), (error: unknown) => {
