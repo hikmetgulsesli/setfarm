@@ -14,6 +14,7 @@ import { computeRunOperationalSnapshotHash } from "../../src/server/run-operatio
 import { RunOperationalSnapshotV2Schema } from "../../src/server/schemas/run-operational-snapshot-v2.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
+  type ConvergenceJobControlV1,
   type ConvergenceArtifactPort,
   type ConvergenceAdmissionPort,
   type ConvergenceClock,
@@ -1449,5 +1450,104 @@ describe("content-addressed convergence results", () => {
     } finally {
       await database.cleanup();
     }
+  });
+});
+
+function controlHarness(overrides: Partial<ConvergenceJobControlV1> = {}): ConvergenceJobControlV1 {
+  return {
+    beforeCase: async () => {}, onRunStarted: async () => {}, onRunResult: async () => {},
+    cancellationRequested: async () => false, requestOwnedRunStop: async () => "requested",
+    onPhase: async () => {}, onPublication: async () => {}, beforeFinalization: async () => "continue",
+    ...overrides,
+  };
+}
+
+describe("manual control runner boundaries", () => {
+  for (const version of [1, 2]) {
+    it(`retains all actual v${version} runs and immutable candidate when cancellation wins finalization`, async () => {
+      const loaded = version === 1 ? await suite() : await suiteV2();
+      const h = harness(loaded);
+      const publications: any[] = [];
+      const control = controlHarness({
+        onPublication: async value => { publications.push(value); },
+        beforeFinalization: async value => { assert.equal(value.gateDecision, "go"); return "cancel"; },
+      });
+      const output = await runConvergenceSuite(loaded, {releaseSha: SHA, execute: true, control}, h.ports);
+      assert.equal(output.result.status, "blocked");
+      assert.equal(output.result.runs.length, 8);
+      assert.equal(output.result.runs.every(run => run.passed), true);
+      assert.deepEqual(output.result.blockerCodes, ["EVAL_CANCEL_REQUESTED"]);
+      assert.equal(output.gate.decision, "no_go");
+      assert.deepEqual(output.gate.codes, ["CONVERGENCE_CANCEL_REQUESTED"]);
+      assert.equal(output.gate.resultHash, output.result.resultHash);
+      assert.equal(h.promotions.length, 0);
+      assert.deepEqual(publications.map(value => value.stage), ["candidate", "cancelled_final"]);
+      assert.notEqual(publications[0].resultHash, output.result.resultHash);
+      assert.ok(h.artifacts.some(value => value.hash === publications[0].resultHash));
+    });
+  }
+  it("suppresses canary and run starts when cancelled before preflight", async () => {
+    const loaded = await suite(); const h = harness(loaded);
+    const output = await runConvergenceSuite(loaded, {releaseSha: SHA, execute: true,
+      control: controlHarness({cancellationRequested: async () => true})}, h.ports);
+    assert.equal(output.result.status, "blocked");
+    assert.ok(output.result.blockerCodes.includes("EVAL_CANCEL_REQUESTED"));
+    assert.equal(h.canaryCreations.length, 0); assert.equal(h.starts(), 0);
+    assert.equal(output.result.preflight.checks.length, 8);
+  });
+  it("stops between stored case results without fabricating the remaining seven", async () => {
+    const loaded = await suite(); const h = harness(loaded); let cancelled = false;
+    const output = await runConvergenceSuite(loaded, {releaseSha: SHA, execute: true,
+      control: controlHarness({cancellationRequested: async () => cancelled,
+        onRunResult: async value => { assert.ok(h.artifacts.some(a => a.hash === value.resultHash)); cancelled = true; }})}, h.ports);
+    assert.equal(output.result.runs.length, 1); assert.equal(h.starts(), 1);
+    assert.equal(output.result.status, "blocked"); assert.equal(h.promotions.length, 0);
+  });
+  it("does not call any awaited hook between continue boundary and promotion", async () => {
+    const loaded = await suite(); const h = harness(loaded); const events: string[] = [];
+    h.ports.admissions.promoteReleaseGo = async () => { events.push("promote"); };
+    const output = await runConvergenceSuite(loaded, {releaseSha: SHA, execute: true,
+      control: controlHarness({ beforeFinalization: async () => { events.push("boundary"); return "continue"; },
+        onPublication: async value => {events.push(value.stage);},
+        cancellationRequested: async () => {events.push("cancel_check"); return false;} })}, h.ports);
+    assert.equal(output.result.status, "pass");
+    assert.deepEqual(events.slice(events.indexOf("boundary")), ["boundary", "promote", "promotion_confirmed"]);
+  });
+});
+
+describe("manual control polling and fatal boundaries",()=>{
+  it("uses the committed fixed codex full8 suite without changing its budgets",async()=>{
+    const {loadConvergenceSuiteVersioned}=await import("../../src/evals/suite-schema-v2.js");
+    const loaded=await loadConvergenceSuiteVersioned(path.resolve("evals/suites/product-convergence-codex-v1.json"));
+    assert.deepEqual(loaded.suite.cases.map(c=>c.caseId),["utility-status-baseline","utility-preference-compositional","operations-work-baseline","operations-queue-paraphrase","game-start-baseline","game-restart-compositional","negative-ambiguous-product","negative-unsupported-kernel"]);
+    assert.equal(loaded.suite.repetitionsPerCase,1);assert.equal(loaded.suite.protocol,"v3");assert.equal(loaded.suite.rootCauseRepeatLimit,3);assert.deepEqual(loaded.suite.timeout,{runMs:21600000,pollMs:15000});
+    const h=harness(loaded);
+    const inspect=h.ports.process.inspectRelease;
+    h.ports.process.inspectRelease=async()=>({...await inspect(),...loaded.suite.cases[0]!.executionProfile});
+    const result=await runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness()},h.ports);
+    assert.equal(result.result.schema,"setfarm.product-convergence-result.v1");assert.equal(result.result.runs.length,8);assert.equal(result.result.status,"pass");
+  });
+  it("requests exactly one owned stop during polling and preserves the real terminal run",async()=>{
+    const loaded=await suite();const h=harness(loaded);let requested=false,polls=0;const stops:string[]=[];
+    const read=h.ports.sql.readRun;
+    h.ports.sql.readRun=async runId=>{polls++;const value=await read(runId);return {...value,status:requested?"cancelled":"running",terminal:requested};};
+    const output=await runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness({cancellationRequested:async()=>polls>0,requestOwnedRunStop:async value=>{stops.push(value.runId);requested=true;return "requested";}})},h.ports);
+    assert.deepEqual(stops,["run-1"]);assert.equal(h.starts(),1);assert.equal(output.result.runs.length,1);assert.equal(output.result.runs[0]!.disposition,"cancelled");assert.equal(output.result.status,"blocked");
+  });
+  it("propagates source-owned journal failures instead of manufacturing admission or start blockers",async()=>{
+    const {ControlWorkerFatalErrorV1}=await import("../../src/execution/schemas/manual-control-worker-channel-v1.js");
+    for(const boundary of ["createCanary","startRun"] as const) {
+      const loaded=await suite();const h=harness(loaded);const error=new ControlWorkerFatalErrorV1("CONTROL_JOURNAL_FAILED");
+      if(boundary==="createCanary") h.ports.admissions.createCanary=async()=>{throw error;};else h.ports.process.startRun=async()=>{throw error;};
+      await assert.rejects(()=>runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness()},h.ports),value=>value===error);
+      assert.equal(h.promotions.length,0);assert.equal(h.artifacts.length,0);
+    }
+  });
+  it("stops project synchronization after cancellation arrives during the first sync",async()=>{
+    const loaded=await suite();const h=harness(loaded,{projectionMismatch:true});let cancelled=false,syncs=0;
+    const sync=h.ports.http.syncProject;
+    h.ports.http.syncProject=async id=>{syncs++;cancelled=true;return sync(id);};
+    const output=await runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness({cancellationRequested:async()=>cancelled})},h.ports);
+    assert.equal(syncs,1);assert.equal(h.starts(),1);assert.equal(output.result.status,"blocked");
   });
 });

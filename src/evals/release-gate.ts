@@ -9,6 +9,7 @@ import {
 
 const GateCodeSchema = z.enum([
   "CONVERGENCE_EXECUTION_REQUIRED",
+  "CONVERGENCE_CANCEL_REQUESTED",
   "CONVERGENCE_PREFLIGHT_FAILED",
   "CONVERGENCE_RUN_COUNT_INCOMPLETE",
   "CONVERGENCE_PRODUCT_CLASS_COVERAGE_INCOMPLETE",
@@ -53,6 +54,7 @@ export function evaluateConvergenceReleaseGate(value: ConvergenceEvalResultVersi
     negative: result.runs.filter((item) => item.productClass === "negative").length,
   };
   const codes: z.infer<typeof GateCodeSchema>[] = [];
+  if (result.blockerCodes.includes("EVAL_CANCEL_REQUESTED")) codes.push("CONVERGENCE_CANCEL_REQUESTED");
   if (result.executionMode !== "execute") codes.push("CONVERGENCE_EXECUTION_REQUIRED");
   if (result.preflight.status !== "pass") codes.push("CONVERGENCE_PREFLIGHT_FAILED");
   if (result.runs.length !== result.plannedRuns) codes.push("CONVERGENCE_RUN_COUNT_INCOMPLETE");

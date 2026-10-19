@@ -1,0 +1,254 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
+import { test } from "node:test";
+import ts from "typescript";
+// Source component extraction adds test exports only. Actual function bodies,
+// filesystem operations and pure schemas remain production code. No activated
+// compiled entry, selected role, DB, service or provider is fabricated here.
+async function journalComponent(replacements: Record<string, string> = {}) {
+    const locator = path.resolve("src/execution/manual-test-worker-v1.ts");
+    let source = fs.readFileSync(locator, "utf8");
+    source = source.replace(/from "(\.[^"]+)"/g, (_, specifier) => `from ${JSON.stringify(replacements[specifier] ?? pathToFileURL(path.resolve(path.dirname(locator), specifier.replace(/\.js$/, ".ts"))).href)}`);
+    source += "\nexport { WorkerJournalV1, WorkerExecutionV1, resolveConsumedClaim };\n";
+    const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+    return import(`data:text/javascript;base64,${Buffer.from(compiled + "\n//# sourceURL=manual-worker-component.mjs").toString("base64")}`);
+}
+const owner = { pid: 123, processStartedAt: "2026-10-19T00:00:00.000Z", processGroupId: 123, source: "observed_os", executable: "/usr/bin/node", script: "/release/dist/cli/control-test-worker-v1.js", commandHash: "a".repeat(64) };
+const acquired = { type: "acquired", kind: "activation_preflight", selectionHash: "b".repeat(64), sourceSha: "c".repeat(40), suiteHash: null, executionMode: "preflight", owner, origin: "mission_control", reservationRevision: 1 };
+test("journal retains immutable chained records and refuses head drift without next publication", async () => {
+    const { WorkerJournalV1 } = await journalComponent();
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-worker-journal-")));
+    fs.chmodSync(root, 0o700);
+    try {
+        const journal = new WorkerJournalV1(root, "11111111-1111-4111-8111-111111111111", "d".repeat(64), owner);
+        const first = journal.append(acquired);
+        const second = journal.append({ type: "phase", phase: "preflight", currentCaseId: null, completedCases: 0 });
+        assert.equal(first.revision, 1);
+        assert.equal(second.revision, 2);
+        const directory = path.join(root, "manual-control-journals", "11111111-1111-4111-8111-111111111111");
+        const records = path.join(directory, "records");
+        const firstBytes = fs.readFileSync(path.join(records, "00000000000000000001.json"));
+        const record = JSON.parse(fs.readFileSync(path.join(records, "00000000000000000002.json"), "utf8"));
+        assert.equal(record.previousHash, first.hash);
+        fs.writeFileSync(path.join(directory, "head.json"), "{}\n");
+        assert.throws(() => journal.append({ type: "phase", phase: "settling", currentCaseId: null, completedCases: 0 }), /CONTROL_JOURNAL_FAILED/);
+        assert.deepEqual(fs.readFileSync(path.join(records, "00000000000000000001.json")), firstBytes);
+        assert.equal(fs.readdirSync(records).length, 2);
+    }
+    finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+test("journal refuses existing job directories and hostile links without adoption", async () => {
+    const { WorkerJournalV1 } = await journalComponent();
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-worker-journal-")));
+    fs.chmodSync(root, 0o700);
+    try {
+        const job = "11111111-1111-4111-8111-111111111111";
+        new WorkerJournalV1(root, job, "d".repeat(64), owner);
+        assert.throws(() => new WorkerJournalV1(root, job, "d".repeat(64), owner), /CONTROL_JOURNAL_FAILED/);
+        const other = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-worker-foreign-")));
+        try {
+            fs.symlinkSync(other, path.join(root, "manual-control-journals", "22222222-2222-4222-8222-222222222222"));
+            assert.throws(() => new WorkerJournalV1(root, "22222222-2222-4222-8222-222222222222", "d".repeat(64), owner), /CONTROL_JOURNAL_FAILED/);
+            assert.deepEqual(fs.readdirSync(other), []);
+        }
+        finally {
+            fs.rmSync(other, { recursive: true, force: true });
+        }
+    }
+    finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+test("injected effects cannot mint worker custody or reach preflight", async () => {
+    const { runSelectedManualControlJobV1 } = await import("../../src/execution/manual-test-worker-v1.js");
+    let effects = 0;
+    const effect = async () => { effects++; throw new Error("unexpected"); };
+    await assert.rejects(() => runSelectedManualControlJobV1({} as never, {} as never, { runPreflight: effect, loadSuite: effect, createConvergencePorts: effect, stopOwnedRun: effect }), /CONTROL_CUSTODY_UNCERTAIN/);
+    assert.equal(effects, 0);
+});
+for (const cancelAt of ["never", "before", "during", "after"] as const)
+    test(`activation worker preserves actual report and closure when cancel is ${cancelAt}`, async () => {
+        const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-worker-activation-")));
+        fs.chmodSync(root, 0o700);
+        try {
+            for (const directory of ["runtime", "runtime/evals", "runtime/evals/manual-controls", "runtime/evals/manual-controls/closures"])
+                fs.mkdirSync(path.join(root, directory), { mode: 0o700 });
+            const fixturePath = path.join(root, "component.mjs");
+            const job = "11111111-1111-4111-8111-111111111111";
+            const receipt = { schema: "mission-control.control-job.v1", jobId: job, kind: "activation_preflight", revision: 1, selectionHash: "b".repeat(64), sourceSha: "c".repeat(40), mcSourceSha: "d".repeat(40), mcBuildHash: "e".repeat(64), suiteHash: null, state: "accepted", requestedAt: "2026-10-19T00:00:00.000Z", startedAt: null, updatedAt: "2026-10-19T00:00:00.000Z", finishedAt: null, phase: "accepted", code: null, currentCaseId: null, ownedRunId: null, completedCases: 0, plannedCases: 0, reportRefs: {}, cancelRequested: false };
+            const intent = { schema: "mission-control.control-intent.v1", receipt, installationDir: root, releaseDir: root, nonceDigest: "f".repeat(64), fixedSuiteRelativePath: null };
+            const custody = { schema: "mission-control.control-custody.v1", jobId: job, selectionHash: receipt.selectionHash, sourceSha: receipt.sourceSha, mcBuildHash: receipt.mcBuildHash, nonce: "n".repeat(32) };
+            fs.writeFileSync(fixturePath, `import fs from 'node:fs';export const events=[];export const frames=[];
+export const intent=Object.freeze(${JSON.stringify(intent)}),custody=Object.freeze(${JSON.stringify(custody)}),owner=Object.freeze(${JSON.stringify(owner)});
+export const freshInstallationSelectionV1=Object.freeze({directory:${JSON.stringify(root)},paths:Object.freeze({root:${JSON.stringify(path.join(root, "runtime"))},repository:${JSON.stringify(root)},evals:${JSON.stringify(path.join(root, "runtime/evals/results"))}}),activation:Object.freeze({acknowledged:true,activatedPin:{}}),assertUnchanged(){}});
+export function assertFreshInstallationSelectionUnchangedV1(){}
+export let cancellation=${cancelAt === 'before' ? JSON.stringify({ requestId: '33333333-3333-4333-8333-333333333333', unavailable: false }) : 'null'};export function requestCancel(){cancellation={requestId:'33333333-3333-4333-8333-333333333333',unavailable:false};}
+const channel=Object.freeze({intent,custody,owner,intentHash:'${"f".repeat(64)}',assertUnchanged(){},cancellation(){return cancellation;},async send(frame){frames.push(frame);events.push('frame:'+frame.type);if(frame.type==='progress'&&frame.phase==='settling'&&${JSON.stringify(cancelAt)}==='after')requestCancel();return {...intent.receipt,state:frame.type==='final_closed'?frame.outcome:'running',revision:frames.length+1,reportRefs:frame.reportRefs??{}};}});
+export function selectedManualWorkerChannelV1(){return channel;}
+export async function registerSelectedManualWorkerCustodyV1(){events.push('register');}
+export async function acquireSelectedManualEvaluationV1(input){events.push('acquire');return {...input,revision:7,phase:'active'};}
+export async function bindSelectedManualCanaryV1(){throw new Error('unexpected canary');}
+export async function releaseSelectedManualEvaluationV1(reservation){if(reservation.revision!==7)throw new Error('revision');events.push('release');}
+export async function closeSelectedManualWorkerCustodyV1(){events.push('close');fs.writeFileSync(${JSON.stringify(path.join(root, "runtime/evals/manual-controls/closures", job + ".json"))},JSON.stringify({jobId:intent.receipt.jobId,intentHash:channel.intentHash,owner})+'\\n',{mode:0o600,flag:'wx'});}
+export async function prepareSelectedDirectEvaluationIntentV1(){throw new Error('unexpected direct');}
+`, { mode: 0o600 });
+            const url = pathToFileURL(fixturePath).href;
+            const fixture = await import(url);
+            const component = await journalComponent({ "../installation/fresh-installation-selection-v1.js": url, "./manual-test-worker-channel-v1.js": url, "./manual-test-admission-v1.js": url });
+            let preflights = 0;
+            const output = await component.runSelectedManualControlJobV1(fixture.intent, fixture.custody, {
+                runPreflight: async (input: any) => { preflights++; assert.deepEqual(input, { protocol: "v3", compilerReleaseSha: "c".repeat(40) }); fixture.events.push("preflight"); if (cancelAt === "during")
+                    fixture.requestCancel(); return { stored: true, status: "fail", hash: "1".repeat(64), report: { checks: Array.from({ length: 6 }, (_, i) => ({ id: `check-${i}`, status: "fail", code: `CODE_${i}` })) } }; },
+                loadSuite: async () => { throw new Error("unexpected suite"); }, createConvergencePorts: async () => { throw new Error("unexpected runner"); }, stopOwnedRun: async () => { throw new Error("unexpected stop"); },
+            });
+            assert.equal(preflights, cancelAt === "before" ? 0 : 1);
+            assert.equal(output.state, cancelAt === "before" || cancelAt === "during" ? "cancelled" : "completed");
+            assert.deepEqual(output.reportRefs, cancelAt === "before" ? {} : { activationHash: "1".repeat(64) });
+            assert.deepEqual(fixture.events.filter((v: string) => !v.startsWith("frame:")), cancelAt === "before" ? ["register", "close"] : ["register", "acquire", "preflight", "release", "close"]);
+            assert.equal(fixture.events.at(-1), "frame:final_closed");
+            if (cancelAt !== "before")
+                assert.equal(fixture.frames[0].phase, "acquired");
+            if (cancelAt === "after") {
+                const directory = path.join(root, "runtime/evals/manual-control-journals", job, "records");
+                const records = fs.readdirSync(directory).map(name => JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")));
+                assert.equal(records.filter(value => value.event.type === "cancel_latched").length, 1);
+                assert.equal(fixture.frames.at(-1).code, "CONTROL_CANCEL_TOO_LATE");
+            }
+            assert.ok(fixture.frames.slice(0, -1).every((v: any) => v.reportRefs === undefined));
+        }
+        finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+test("journal refuses dangling head symlink before publishing any record", async () => {
+    const { WorkerJournalV1 } = await journalComponent();
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-worker-link-")));
+    fs.chmodSync(root, 0o700);
+    try {
+        const job = "11111111-1111-4111-8111-111111111111";
+        const journal = new WorkerJournalV1(root, job, "d".repeat(64), owner);
+        const directory = path.join(root, "manual-control-journals", job);
+        fs.symlinkSync(path.join(root, "absent"), path.join(directory, "head.json"));
+        assert.throws(() => journal.append(acquired), /CONTROL_JOURNAL_FAILED/);
+        assert.deepEqual(fs.readdirSync(path.join(directory, "records")), []);
+    }
+    finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+async function wrappedStartComponent(mode: "success" | "lost" | "unused" | "foreign" | "wrong_response" | "bind_refused" | "foreign_admission") {
+    const { loadConvergenceSuiteVersioned } = await import("../../src/evals/suite-schema-v2.js");
+    const { hashCanonicalJson } = await import("../../src/product-compiler/canonical-json.js");
+    const { createV3ReleaseAdmissionV1, computeCanarySlotHash, canarySelectorHash } = await import("../../src/execution/v3-release-admission.js");
+    const loaded = await loadConvergenceSuiteVersioned(path.resolve("evals/suites/product-convergence-codex-v1.json"));
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-worker-binding-")));
+    fs.chmodSync(root, 0o700);
+    const input = { jobId: "11111111-1111-4111-8111-111111111111", kind: "convergence_full8", sourceSha: "c".repeat(40), selectionHash: "b".repeat(64), suiteHash: loaded.suiteHash };
+    const request = { releaseSha: input.sourceSha, suiteHash: input.suiteHash, preflightHash: "d".repeat(64), ttlMs: 176400000, slots: loaded.suite.cases.map((value, index) => ({ caseHash: hashCanonicalJson(value), taskHash: hashCanonicalJson(value.task), repetition: 1, slotToken: String(index).repeat(32) })) };
+    const admission = createV3ReleaseAdmissionV1({ schema: "setfarm.v3-release-admission.v1", kind: "convergence_canary", releaseSha: input.sourceSha, suiteHash: loaded.suiteHash, preflightHash: mode === "foreign_admission" ? "f".repeat(64) : request.preflightHash, result: { hash: null, ref: null }, gate: { hash: null, ref: null }, issuedAt: "2026-10-19T00:00:00.000Z", expiresAt: "2026-10-21T01:00:00.000Z", slots: request.slots.map(slot => ({ ...(({ caseHash, taskHash, repetition }) => ({ caseHash, taskHash, repetition }))(slot), selectorHash: canarySelectorHash(slot.slotToken), slotHash: computeCanarySlotHash({ releaseSha: input.sourceSha, suiteHash: loaded.suiteHash, ...slot, selectorHash: canarySelectorHash(slot.slotToken) }) })) });
+    const contexts = request.slots.map(slot => ({ schema: "setfarm.internal-convergence-admission.v1", admissionHash: admission.admissionHash, slotHash: admission.slots.find(value => value.caseHash === slot.caseHash)!.slotHash, ...slot }));
+    const first = contexts[0]!;
+    const claim = { admission_hash: admission.admissionHash, admission_kind: "convergence_canary", case_hash: first.caseHash, task_hash: first.taskHash, repetition: 1, selector_hash: canarySelectorHash(first.slotToken), run_id: null, consumed_at: null };
+    const run = { id: "owned-run", run_number: 41, protocol: "v3", protocol_version: 1, compiler_release_sha: input.sourceSha, release_admission_hash: admission.admissionHash, task: loaded.suite.cases[0]!.task };
+    const file = path.join(root, "effects.mjs");
+    fs.writeFileSync(file, `export const facts={claim:${JSON.stringify(claim)},run:${JSON.stringify(run)},admission:${JSON.stringify(admission)},queries:[],bindings:[]};
+export const freshInstallationSelectionV1=Object.freeze({activation:Object.freeze({acknowledged:true,activatedPin:{}}),assertUnchanged(){}});
+export function assertFreshInstallationSelectionUnchangedV1(){}
+export function getSql(){return {async begin(mode,callback){if(mode!=='isolation level repeatable read read only')throw new Error('transaction');return callback({async unsafe(query,args){facts.queries.push({query,args});if(query==='SELECT payload FROM v3_release_admissions WHERE admission_hash=$1'){if(args[0]!==facts.admission.admissionHash)throw new Error('foreign admission');return [{payload:facts.admission}];}if(query.includes('FROM v3_canary_admission_claims WHERE slot_hash=$1')){if(args[0]!==${JSON.stringify(first.slotHash)})throw new Error('foreign slot');return [facts.claim];}if(query.includes('FROM runs WHERE id=$1')){if(args[0]!==facts.claim.run_id)throw new Error('foreign run');return [facts.run];}throw new Error('unexpected query');}});}};}
+export async function bindSelectedManualCanaryV1(value){facts.bindings.push(value);if(${JSON.stringify(mode)}==='bind_refused')throw new Error('bind refused');return {...value.reservation,revision:value.reservation.revision+1};}
+export async function acquireSelectedManualEvaluationV1(){throw new Error('unexpected acquire');}
+export async function registerSelectedManualWorkerCustodyV1(){throw new Error('unexpected register');}
+export async function prepareSelectedDirectEvaluationIntentV1(){throw new Error('unexpected direct');}
+export async function releaseSelectedManualEvaluationV1(){throw new Error('unexpected release');}
+export async function closeSelectedManualWorkerCustodyV1(){throw new Error('unexpected close');}
+`, { mode: 0o600 });
+    const url = pathToFileURL(file).href, fixture = await import(url);
+    const component = await journalComponent({ "../installation/fresh-installation-selection-v1.js": url, "../db-pg.js": url, "./manual-test-admission-v1.js": url });
+    const journal = new component.WorkerJournalV1(root, input.jobId, "a".repeat(64), owner);
+    journal.append({ ...acquired, kind: "convergence_full8", suiteHash: loaded.suiteHash, executionMode: "execute" });
+    const execution = new component.WorkerExecutionV1(input, { ...input, revision: 7, phase: "active" }, journal, {}, null);
+    let starts = 0, creates = 0;
+    const ports = { admissions: { createCanary: async () => { creates++; return { contexts }; }, promoteReleaseGo: async () => { } }, process: { startRun: async () => {
+                starts++;
+                const record = JSON.parse(fs.readFileSync(path.join(root, "manual-control-journals", input.jobId, "records", String(journal.ref().revision).padStart(20, "0") + ".json"), "utf8"));
+                assert.equal(record.event.type, "start_requested");
+                if (mode !== "unused") {
+                    fixture.facts.claim.run_id = "owned-run";
+                    fixture.facts.claim.consumed_at = "2026-10-19T00:01:00.000Z";
+                }
+                if (mode === "foreign")
+                    fixture.facts.claim.selector_hash = "f".repeat(64);
+                if (mode !== "success" && mode !== "wrong_response")
+                    throw new Error("lost output");
+                return { runId: mode === "wrong_response" ? "foreign-run" : "owned-run", runNumber: 41 };
+            } } };
+    return { root, input, request, loaded, fixture, journal, execution, wrapped: execution.wrap(loaded, ports), contexts, starts: () => starts, creates: () => creates };
+}
+for (const mode of ["success", "lost", "unused", "foreign", "wrong_response", "bind_refused", "foreign_admission"] as const) {
+    test(`actual worker wrapper binds all slots once and resolves ${mode} start only from its consumed claim`, async () => {
+        const h = await wrappedStartComponent(mode);
+        try {
+            if (mode === "bind_refused" || mode === "foreign_admission") {
+                await assert.rejects(() => h.wrapped.admissions.createCanary(h.request), /CONTROL_BINDING_FAILED/);
+                assert.equal(h.starts(), 0);
+                return;
+            }
+            const created = await h.wrapped.admissions.createCanary(h.request);
+            assert.equal(h.fixture.facts.bindings.length, 1);
+            assert.equal(h.fixture.facts.bindings[0].slots.length, 8);
+            assert.equal(h.creates(), 1);
+            const stored = JSON.parse(fs.readFileSync(path.join(h.root, "manual-control-journals", h.input.jobId, "records", "00000000000000000003.json"), "utf8"));
+            assert.equal(stored.event.type, "canary_bound");
+            assert.equal(stored.event.reservationRevision, 8);
+            const call = () => h.wrapped.process.startRun({ workflowId: h.loaded.suite.workflowId, task: h.loaded.suite.cases[0]!.task, releaseSha: h.input.sourceSha, admission: created.contexts[0] });
+            if (mode === "success" || mode === "lost")
+                assert.deepEqual(await call(), { runId: "owned-run", runNumber: 41 });
+            else
+                await assert.rejects(call, /CONTROL_START_UNRESOLVED/);
+            await assert.rejects(call, /CONTROL_BINDING_FAILED/);
+            assert.equal(h.starts(), 1);
+            assert.equal(h.creates(), 1);
+            assert.ok(h.fixture.facts.queries.every((q: any) => !q.query.includes("ORDER BY") && !q.query.includes("LIMIT")));
+        }
+        finally {
+            fs.rmSync(h.root, { recursive: true, force: true });
+        }
+    });
+}
+test("journal detects modification of an earlier immutable record before the next effect", async () => {
+    const { WorkerJournalV1 } = await journalComponent();
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-worker-chain-")));
+    fs.chmodSync(root, 0o700);
+    try {
+        const job = "11111111-1111-4111-8111-111111111111";
+        const journal = new WorkerJournalV1(root, job, "d".repeat(64), owner);
+        journal.append(acquired);
+        journal.append({ type: "phase", phase: "preflight", currentCaseId: null, completedCases: 0 });
+        const records = path.join(root, "manual-control-journals", job, "records");
+        fs.writeFileSync(path.join(records, "00000000000000000001.json"), "{}\n");
+        assert.throws(() => journal.append({ type: "phase", phase: "settling", currentCaseId: null, completedCases: 0 }), /CONTROL_JOURNAL_FAILED/);
+        assert.equal(fs.readdirSync(records).length, 2);
+    }
+    finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("selected direct orchestration refuses execution mode drift before acquisition", async () => {
+    const source = fs.readFileSync("src/execution/manual-test-worker-v1.ts", "utf8");
+    const tree = ts.createSourceFile("worker.ts", source, ts.ScriptTarget.ES2022, true);
+    const declaration = tree.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "runSelectedDirectConvergenceV1")!;
+    const body = ts.transpileModule(declaration.getText(tree), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText.replace("export ", "");
+    const { ObservedControlWorkerOwnerV1Schema, ControlWorkerFatalErrorV1 } = await import("../../src/execution/schemas/manual-control-worker-channel-v1.js");
+    const input = { jobId: "11111111-1111-4111-8111-111111111111", sourceSha: "a".repeat(40), suiteHash: "b".repeat(64), kind: "convergence_full8", selectionHash: "c".repeat(64) };
+    let acquisitions = 0;
+    const dependencies = { selected: () => ({ directory: "/fixture", paths: { root: "/fixture/runtime" } }), prepareSelectedDirectEvaluationIntentV1: async () => input, parents: () => [], readPin: () => ({ bytes: Buffer.from(JSON.stringify({ owner, executionMode: "preflight" })) }), path, digest: () => "d".repeat(64), ObservedControlWorkerOwnerV1Schema, checkParents: () => {}, checkPin: () => {}, ControlWorkerFatalErrorV1, acquireSelectedManualEvaluationV1: async () => { acquisitions++; throw new Error("unexpected acquire"); }, closeSelectedManualWorkerCustodyV1: async () => {} };
+    const run = new Function(...Object.keys(dependencies), body + ";return runSelectedDirectConvergenceV1;")(...Object.values(dependencies));
+    await assert.rejects(() => run({ suiteHash: input.suiteHash }, { releaseSha: input.sourceSha, execute: true }, {}), /CONTROL_BINDING_FAILED/);
+    assert.equal(acquisitions, 0);
+});

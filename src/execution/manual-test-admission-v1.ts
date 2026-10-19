@@ -159,12 +159,18 @@ function psV1(args: string[]): string {
   return result.stdout;
 }
 function processOwnerV1(pid: number, script: string, executable: string): Owner {
-  const output = psV1(["-ww", "-p", String(pid), "-o", "lstart=", "-o", "pgid=", "-o", "comm=", "-o", "args="]);
-  const row = /^\s*(\w{3} \w{3} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(\d+)\s+(\S+)\s+([^\r\n]+)\n?$/.exec(output);
-  if (!row || fs.realpathSync(row[3]!) !== executable || !row[4]!.startsWith(`${executable} ${script}`)
-    || !["", " "].includes(row[4]!.slice(`${executable} ${script}`.length, `${executable} ${script}`.length + 1))) refuseV1();
+  const argumentsV1 = ["-ww", "-p", String(pid), "-o", "lstart=", "-o", "pgid=", "-o", "args="];
+  const output = psV1(argumentsV1);
+  // macOS truncates comm when another column follows it, even with -ww.
+  // Read it as the last column between two identical identity/args snapshots.
+  const command = psV1(["-ww", "-p", String(pid), "-o", "comm="]);
+  if (psV1(argumentsV1) !== output) refuseV1();
+  const row = /^\s*(\w{3} \w{3} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(\d+)\s+([^\r\n]+)\n?$/.exec(output);
+  const fullExecutable = /^(\S+)\n?$/.exec(command);
+  if (!row || !fullExecutable || fs.realpathSync(fullExecutable[1]!) !== executable || !row[3]!.startsWith(`${executable} ${script}`)
+    || !["", " "].includes(row[3]!.slice(`${executable} ${script}`.length, `${executable} ${script}`.length + 1))) refuseV1();
   return OwnerSchema.parse({ pid, processStartedAt: new Date(`${row[1]} UTC`).toISOString(),
-    processGroupId: Number(row[2]), source: "observed_os", executable, script, commandHash: digestV1(row[4]!) });
+    processGroupId: Number(row[2]), source: "observed_os", executable, script, commandHash: digestV1(row[3]!) });
 }
 function entryV1(kind: "worker" | "direct"): Owner {
   const { selected } = selectionV1();
