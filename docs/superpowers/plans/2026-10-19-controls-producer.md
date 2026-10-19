@@ -31,7 +31,7 @@ All paths below are relative to `/Users/setrox/ai/setrox/.worktrees/setfarm-dash
 | File | Responsibility |
 |---|---|
 | `src/execution/schemas/manual-control-job-v1.ts` (new) | Strict versioned private intent/custody, public receipt/ref and projection schemas. Exports `ControlJobKindV1`, `ControlReportRefsV1`, `ControlJobReceiptV1`, `ControlPrivateIntentV1`, `ControlWorkerCustodyV1` and their Zod schemas. No raw nonce in receipt. Also exports pure strict `ControlSelectionIdentityV1Schema`, its type and `hashControlSelectionIdentityV1` exactly as the spec Shared selected identity hash section. |
-| `src/execution/manual-test-admission-v1.ts` (new) | Selected private reservation file/identity, complete activity census, existing DB fence transaction, exact canary exception and terminal release. |
+| `src/execution/manual-test-admission-v1.ts` (new) | Selected private reservation file/identity, complete activity census, existing DB fence transaction, exact canary exception and terminal release; the two spec-defined internal custody/direct-intent APIs live in this same mapped module. |
 | `src/execution/run-persistence.ts` | Read/recheck reservation only after its existing fence at `persistWorkflowRunInTransaction` and private `persistRecoverySourceBootstrapRunInTransactionV1`; preserve insertion and canary consumption atomicity. |
 | `src/execution/manual-test-worker-v1.ts` (new) | Actual preflight/full8 dispatch, durable admission/result/cancellation journal and canonical owned stop; fake effect ports are injectable only in tests. |
 | `src/cli/control-test-worker-v1.ts` (new) | Fixed compiled self/argv/custody gate, selected entry and cleanup, then dispatch. |
