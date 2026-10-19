@@ -257,7 +257,7 @@ test("reservation-first denies the actual ordinary INSERT and private recovery I
   assert.equal(fenceEntries, 1);
   assert.equal(downstreamAuthorityReads, 0);
   assert.equal(await f.revision(held.jobId), held.revision);
-  assert.deepEqual(await f.database.sql`SELECT id FROM runs`, []);
+  assert.equal((await f.database.sql`SELECT id FROM runs`).length, 0);
   await assert.rejects(() => f.persistence.persistInternalProductionRecoverySourceBootstrapRunV1({
     operationRef: "setfarm://tests/no-admitted-recovery-operation", operationHash: "e".repeat(64),
   }));
@@ -424,7 +424,7 @@ test("exact stored canary admits once and canonical terminal settlement remains 
   ]) {
     await assert.rejects(() => f.database.sql.begin(sql => f.persistence.persistWorkflowRunInTransaction(sql as PgTransactionSql,
       { ...input, run: { ...input.run, protocol: { ...input.run.protocol, canaryAdmission: altered as typeof context } } })));
-    assert.deepEqual(await f.database.sql`SELECT id FROM runs`, []);
+    assert.equal((await f.database.sql`SELECT id FROM runs`).length, 0);
     const claim = await f.database.sql`SELECT run_id,consumed_at FROM v3_canary_admission_claims WHERE slot_hash=${context.slotHash}`;
     assert.equal(claim[0]?.run_id, null);
     assert.equal(claim[0]?.consumed_at, null);
@@ -486,7 +486,7 @@ test("a bound canary that expires before insertion cannot consume its real store
     run: { ...f.ordinaryRunInput.run, protocol: { ...f.ordinaryRunInput.run.protocol,
       releaseAdmissionKind: "convergence_canary", releaseAdmissionHash: context.admissionHash, canaryAdmission: context } },
   })), /CANARY|MANUAL_EVALUATION/);
-  assert.deepEqual(await f.database.sql`SELECT id FROM runs`, []);
+  assert.equal((await f.database.sql`SELECT id FROM runs`).length, 0);
   const rows = await f.database.sql`SELECT run_id,consumed_at FROM v3_canary_admission_claims WHERE slot_hash=${context.slotHash}`;
   assert.equal(rows[0]?.run_id, null);
   assert.equal(rows[0]?.consumed_at, null);
