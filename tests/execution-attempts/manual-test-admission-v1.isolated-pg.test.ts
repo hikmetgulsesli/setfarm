@@ -834,9 +834,39 @@ test("actual default child consumes exact stored canary once and canonical settl
     await assert.rejects(() => readonlyDeliveryOwner(f, deliveryKey, consumer), /OWNER_UNAVAILABLE/);
     await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound));
   });
-  await f.database.sql`UPDATE operational_events SET run_id='foreign-run' WHERE event_key=${deliveryKey}`;
-  try { await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound)); }
-  finally { await f.database.sql`UPDATE operational_events SET run_id=${inserted.run.id} WHERE event_key=${deliveryKey}`; }
+  const immutableEvent = await outbox.findCanonicalByEventKey(deliveryKey);
+  assert.ok(immutableEvent);
+  const immutableDigest = hashCanonicalJson(immutableEvent);
+  const beforeImmutableRefusal = await settlementDataSnapshot(f);
+  await assert.rejects(() => f.database.sql`UPDATE operational_events SET run_id='foreign-run' WHERE event_key=${deliveryKey}`,
+    (error:unknown)=>error instanceof Error && error.message==="OPERATIONAL_EVENT_IMMUTABLE" && (error as Error & {code?:string}).code==="23514");
+  assert.equal(hashCanonicalJson(await outbox.findCanonicalByEventKey(deliveryKey)),immutableDigest);
+  assert.equal(await f.manual.observeSelectedManualSettlementV1(bound),"pending");
+  assert.equal(await settlementDataSnapshot(f),beforeImmutableRefusal);
+  // Canonical foreign provenance must be refused even when every event/delivery
+  // record is valid. Use the repository contract, never corrupt immutable rows.
+  const foreignRunId="manual-owned-foreign-"+randomUUID(), foreignEventKey="manual-owned-event-"+randomUUID();
+  const foreignOutbox=await outbox.enqueue({eventKey:foreignEventKey,eventType:"run.lifecycle_changed",aggregateType:"run",aggregateId:foreignRunId,
+    payload:{schema:"setfarm.operational-outbox-event.v1",status:"running",runId:foreignRunId}});
+  assert.equal(foreignOutbox.state,"pending");
+  assert.equal(await outbox.findCanonicalByEventKey(foreignEventKey),undefined);
+  const beforeForeignPending=await settlementDataSnapshot(f);
+  await assert.rejects(()=>f.manual.observeSelectedManualSettlementV1(bound),
+    (error:unknown)=>error instanceof Error && error.message==="MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  assert.equal(await settlementDataSnapshot(f),beforeForeignPending);
+  const foreignClaim=await outbox.claimNext({ownerInstanceId});
+  assert.ok(foreignClaim);assert.equal(foreignClaim.outboxId,foreignOutbox.outboxId);
+  await outbox.publish({outboxId:foreignClaim.outboxId,ownerInstanceId,leaseToken:foreignClaim.leaseToken!});
+  const foreignEvent=await outbox.findCanonicalByEventKey(foreignEventKey);
+  assert.ok(foreignEvent);assert.equal(foreignEvent.runId,foreignRunId);
+  assert.equal(foreignEvent.aggregateId,foreignRunId);assert.equal(foreignEvent.payload.runId,foreignRunId);
+  const foreignDeliveries=await f.database.sql`SELECT consumer,state FROM operational_event_deliveries WHERE event_key=${foreignEventKey} ORDER BY consumer`;
+  assert.deepEqual(foreignDeliveries.map(row=>({consumer:row.consumer,state:row.state})),[{consumer:"jsonl",state:"pending"},{consumer:"webhook",state:"pending"}]);
+  for(const foreignConsumer of ["jsonl","webhook"] as const) await readonlyDeliveryOwner(f,foreignEventKey,foreignConsumer);
+  const beforeForeignDelivery=await settlementDataSnapshot(f);
+  await assert.rejects(()=>f.manual.observeSelectedManualSettlementV1(bound),
+    (error:unknown)=>error instanceof Error && error.message==="MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  assert.equal(await settlementDataSnapshot(f),beforeForeignDelivery);
   for (const consumer of ["jsonl", "webhook"] as const) for (let count = 0; ; count++) {
     assert.ok(count < 40);
     const item = await deliveries.claimNext({ consumer, ownerInstanceId }); if (!item) break;
