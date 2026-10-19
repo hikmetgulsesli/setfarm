@@ -38,7 +38,7 @@ if (process.argv[1]?.endsWith('/scripts/run-private-postgres-tests.mjs')) {
     assert.match(scripts["test"] ?? "", /npm run test:evals/);
     assert.match(scripts["test"] ?? "", /npm run test:evidence/);
     assert.match(scripts["test"] ?? "", /npm run test:recovery/);
-    assert.match(scripts["eval:convergence"] ?? "", /src\/evals\/convergence-runner\.ts/);
+    assert.equal(scripts["eval:convergence"], "node dist/evals/convergence-runner.js");
   });
 
   it("dispatches held PG31 and sustained backend regressions from the default test graph", async () => {

@@ -207,6 +207,94 @@ test("production custody ingress refuses unselected source entry before any oper
   await assert.rejects(() => api.prepareSelectedDirectEvaluationIntentV1());
 });
 
+// Real parser and full intent function, with explicit local selection/owner observations.
+// The suite sentinel stops before any durable intent/custody effect; this is not entry/OS admission.
+function directRecipeComponent(argv: readonly string[]) {
+  function declarations(file: string, names: readonly string[]) {
+    const source = fs.readFileSync(new URL("../../" + file, import.meta.url), "utf8");
+    const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+    return names.map(name => {
+      const nodes = tree.statements.filter(node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
+        || (ts.isVariableStatement(node) && node.declarationList.declarations.some(item => item.name.getText(tree) === name)));
+      assert.equal(nodes.length, 1, `complete production ${name}`);
+      return nodes[0]!.getText(tree);
+    }).join("\n");
+  }
+  const source = declarations("src/execution/manual-test-admission-v1.ts", ["SUITE", "refuseV1", "prepareSelectedDirectEvaluationIntentV1"])
+    + "\n" + declarations("src/evals/convergence-runner.ts", ["parseCli"])
+    + "\n" + declarations("src/runtime-config.ts", ["resolveConvergenceEvalResultDir"]);
+  const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } })
+    .outputText.replace(/^export /gm, "");
+  const rawArgv = Object.freeze(["/component/node", "/component/selected-release/dist/evals/convergence-runner.js", ...argv]);
+  const rawCommand = rawArgv.join(" ");
+  const owner = Object.freeze({ pid: 123, processStartedAt: "2026-10-19T00:00:00.000Z", processGroupId: 123,
+    source: "observed_os", executable: rawArgv[0], script: rawArgv[1],
+    commandHash: createHash("sha256").update(rawCommand).digest("hex") });
+  const selected = Object.freeze({ directory: "/component/installation", paths: {
+    repository: "/component/selected-release", root: "/component/installation/runtime",
+    evals: "/component/installation/runtime/evals/results",
+  }, state: { origin: { sourceSha: SOURCE } } });
+  const sentinel = new Error("COMPONENT_SUITE_VALIDATION_BOUNDARY");
+  const calls: string[] = [];
+  const mutations: string[] = [];
+  const forbidden = (name: string) => () => { mutations.push(name); throw new Error("UNEXPECTED_COMPONENT_MUTATION"); };
+  const dependencies = {
+    path, join: path.join, process: Object.freeze({ argv: rawArgv, env: Object.freeze({}) }),
+    packageRoot: () => "/component/ordinary-release", resolvePackageRoot: () => "/component/ordinary-release",
+    expandRuntimePath: (value: string) => value, freshInstallationSelectionV1: selected,
+    assertFreshInstallationSelectionUnchangedV1: () => {}, custodies: new Map(),
+    entryV1: (kind: string) => { assert.equal(kind, "direct"); calls.push("entry"); return owner; },
+    rootV1: (create: boolean) => { if (create) return forbidden("root-create")(); calls.push("root-read");
+      return { selected, selectionHash: HASH, root: "/component/installation/runtime/manual-controls" }; },
+    suiteV1: async () => { calls.push("suite"); throw sentinel; }, randomUUID: () => JOB_ID,
+    randomBytes: forbidden("random-bytes"), digestV1: forbidden("digest"), createChildV1: forbidden("create-child"),
+    publishExclusiveV1: forbidden("publish"), bytesV1: forbidden("bytes"), registerCustodyV1: forbidden("register-custody"),
+  };
+  const api = new Function(...Object.keys(dependencies), code + ";return {parseCli,prepareSelectedDirectEvaluationIntentV1};")(...Object.values(dependencies));
+  return { api, rawArgv, owner, rawCommand, sentinel, calls, mutations };
+}
+
+test("selected raw intent and actual parser agree on omitted or exact suite without rewriting argv", async () => {
+  const suite = "/component/selected-release/evals/suites/product-convergence-codex-v1.json";
+  for (const argv of [[], ["--json"], ["--suite", suite], ["--execute", "--release-sha", SOURCE],
+    ["--suite", suite, "--execute", "--release-sha", SOURCE, "--json"],
+    ["--output-root", "/component/installation/runtime/evals/results", "--release-sha", SOURCE]]) {
+    const component = directRecipeComponent(argv);
+    const before = [...component.rawArgv];
+    await assert.rejects(component.api.prepareSelectedDirectEvaluationIntentV1, error => error === component.sentinel);
+    assert.equal(component.api.parseCli(argv).suiteFile, suite);
+    assert.deepEqual(component.calls, ["entry", "root-read", "suite"]);
+    assert.deepEqual(component.mutations, []);
+    assert.deepEqual(component.rawArgv, before);
+    assert.equal(component.rawArgv.join(" "), component.rawCommand);
+    assert.equal(component.owner.commandHash, createHash("sha256").update(component.rawCommand).digest("hex"));
+  }
+});
+
+test("selected raw intent retains explicit suite duplicate malformed output and release refusals before publication", async () => {
+  const suite = "/component/selected-release/evals/suites/product-convergence-codex-v1.json";
+  const output = "/component/installation/runtime/evals/results";
+  const refused = [
+    ["--suite", "/component/foreign.json"], ["--suite", "/component/selected-release/evals/suites/product-convergence-v1.json"],
+    ["--suite", "evals/suites/product-convergence-codex-v1.json"], ["--suite", ""], ["--suite"], ["--suite", "--json"],
+    ["--suite", suite, "--suite", suite], ["--json", "--json"], ["--execute", "--execute", "--release-sha", SOURCE],
+    ["--output-root", output, "--output-root", output], ["--release-sha", SOURCE, "--release-sha", SOURCE],
+    ["--unknown"], ["--output-root", "/component/foreign"], ["--output-root", ""], ["--output-root"],
+    ["--release-sha", "c".repeat(40)], ["--release-sha", ""], ["--release-sha"], ["--execute"],
+  ];
+  for (const argv of refused) {
+    const component = directRecipeComponent(argv);
+    const before = [...component.rawArgv];
+    try { component.api.parseCli(argv); }
+    catch (error) { assert.match((error as Error).message, /^(?:EVAL_ARGUMENT_INVALID:|MANUAL_EVALUATION_RECIPE_REFUSED$)/); }
+    await assert.rejects(component.api.prepareSelectedDirectEvaluationIntentV1, { message: "MANUAL_EVALUATION_RECIPE_REFUSED" });
+    assert.deepEqual(component.calls, ["entry", "root-read"]);
+    assert.deepEqual(component.mutations, []);
+    assert.deepEqual(component.rawArgv, before);
+    assert.equal(component.owner.commandHash, createHash("sha256").update(component.rawArgv.join(" ")).digest("hex"));
+  }
+});
+
 
 test("process census refuses malformed rows and retains descendants or orphan group children", () => {
   const { parseProcessTableV1, hasOwnedChildrenV1 } = privateFileComponent();

@@ -2530,7 +2530,10 @@ type CliOptions = Readonly<{
 
 function parseCli(argv: readonly string[]): CliOptions {
   const root = packageRoot();
-  let suiteFile = path.join(root, "evals", "suites", "product-convergence-v1.json");
+  const selectedSuite = freshInstallationSelectionV1
+    ? path.join(freshInstallationSelectionV1.paths.repository, "evals", "suites", "product-convergence-codex-v1.json")
+    : null;
+  let suiteFile = selectedSuite ?? path.join(root, "evals", "suites", "product-convergence-v1.json");
   let outputRoot = resolveConvergenceEvalResultDir();
   let releaseSha: string | undefined;
   let execute = false;
@@ -2539,7 +2542,10 @@ function parseCli(argv: readonly string[]): CliOptions {
     const argument = argv[index]!;
     if (argument === "--execute") execute = true;
     else if (argument === "--json") json = true;
-    else if (argument === "--suite" && argv[index + 1]) suiteFile = argv[++index]!;
+    else if (argument === "--suite" && argv[index + 1]) {
+      suiteFile = argv[++index]!;
+      if (selectedSuite && suiteFile !== selectedSuite) throw new Error("MANUAL_EVALUATION_RECIPE_REFUSED");
+    }
     else if (argument === "--output-root" && argv[index + 1]) outputRoot = argv[++index]!;
     else if (argument === "--release-sha" && argv[index + 1]) releaseSha = argv[++index]!;
     else throw new Error(`EVAL_ARGUMENT_INVALID:${argument}`);

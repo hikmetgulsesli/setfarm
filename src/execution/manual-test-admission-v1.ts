@@ -273,7 +273,8 @@ export async function prepareSelectedDirectEvaluationIntentV1(): Promise<Readonl
     else if (["--suite", "--output-root", "--release-sha"].includes(key) && process.argv[index + 1]) options.set(key, process.argv[++index]!);
     else refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
   }
-  if (options.get("--suite") !== path.join(context.selected.paths.repository, SUITE)
+  const selectedSuite = path.join(context.selected.paths.repository, SUITE);
+  if ((options.get("--suite") ?? selectedSuite) !== selectedSuite
     || (options.has("--output-root") && options.get("--output-root") !== context.selected.paths.evals)
     || (options.has("--release-sha") && options.get("--release-sha") !== context.selected.state.origin.sourceSha)
     || (execute && !options.has("--release-sha"))) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
