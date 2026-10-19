@@ -85,8 +85,9 @@ async function validateTask4PolicyProbeV1(root:string,ready:Readonly<RecordV1>,i
       requireV1(v.schema==="mission-control.task4-policy-probe-listener.v1"&&v.endpointRole==="owned_denied_canary"&&v.host==="127.0.0.1"&&v.state===state
         &&sameV1(v.owner,ready.setup.owner)&&v.acceptedConnections===0&&sameV1(v.original,{method:"owned_http_server",observed:true}));integerV1(v.port,1024,65535);timeV1(v.at);return v;};
     const deniedBefore=canary(original.canaryBefore,"listening"),deniedAfter=canary(original.canaryAfter,"listening"),deniedClosed=canary(original.canaryClosed,"absent");
+    const serverPort=task4BoundServerPortV1(task4ArtifactV1(artifacts,network.policy.serverLaunchRef),ready,artifacts);
     requireV1(deniedBefore.port===deniedAfter.port&&deniedBefore.port===deniedClosed.port&&deniedAfter.at>=deniedBefore.at&&deniedClosed.at>=deniedAfter.at
-      &&![before.port,ready.setup.postgres.port,3080,3333,5432,13081,18789].includes(deniedBefore.port));
+      &&serverPort!==before.port&&![serverPort,before.port,ready.setup.postgres.port,3080,3333,5432,13081,18789].includes(deniedBefore.port));
     for(const [key,endpointRole,first,last,count] of [["allowed","owned_allowed_mock",mock.before,mock.after,1],["denied","owned_denied_canary",original.canaryBefore,original.canaryAfter,0]] as const){
       keysV1(result[key],"endpointRole startedAt finishedAt outcome errno listenerBefore listenerAfter acceptedConnections");
       requireV1(result[key].endpointRole===endpointRole&&result[key].acceptedConnections===count&&sameV1(result[key].listenerBefore,first)&&sameV1(result[key].listenerAfter,last));
@@ -405,6 +406,15 @@ function task4ArtifactV1(artifacts:ReadonlyMap<string,Readonly<RecordV1>>,ref:un
   proofRefV1(ref);const value=artifacts.get(ref.sha256);requireV1(value!==undefined);
   const bytes=Buffer.from(task4CanonicalV1(value)+"\n");requireV1(bytes.length===ref.bytes&&hashV1(bytes)===ref.sha256);return value;
 }
+function task4BoundServerPortV1(observed:Readonly<RecordV1>,ready:Readonly<RecordV1>,artifacts:ReadonlyMap<string,Readonly<RecordV1>>):number {
+  keysV1(observed,"schema executionId setupDescriptorHash readyDescriptorHash intent owner listener");artifactBindingV1(observed,ready);
+  requireV1(observed.schema==="mission-control.task4-server-observed.v1");proofRefV1(observed.intent);processV1(observed.owner);
+  const listener=task4ArtifactV1(artifacts,observed.listener);
+  keysV1(listener,"schema executionId setupDescriptorHash readyDescriptorHash endpointRole host port at state owner original");artifactBindingV1(listener,ready);
+  requireV1(listener.schema==="mission-control.task4-listener.v1"&&listener.endpointRole==="mc"&&listener.host==="127.0.0.1"&&listener.state==="listening"
+    &&sameV1(listener.owner,observed.owner)&&sameV1(listener.original,{method:"owned_child_socket_census",observed:true}));timeV1(listener.at);
+  integerV1(listener.port,1024,65535);requireV1(![3080,3333,5432,13081,18789,ready.setup.postgres.port].includes(listener.port));return listener.port;
+}
 function validateTask4CleanupV1(value:unknown,ready:Readonly<RecordV1>,innerOwner:Readonly<RecordV1>,artifacts:ReadonlyMap<string,Readonly<RecordV1>>):void {
   try {
     keysV1(value,"schema executionId setupDescriptorHash readyDescriptorHash ownerHash nativeAudit mock server readers contexts complete");
@@ -425,7 +435,7 @@ function validateTask4CleanupV1(value:unknown,ready:Readonly<RecordV1>,innerOwne
     const listener=(ref:unknown,role:string,state:string,owner:Readonly<RecordV1>|null)=>{
       const v=task4ArtifactV1(artifacts,ref);keysV1(v,"schema executionId setupDescriptorHash readyDescriptorHash endpointRole host port at state owner original");
       artifactBindingV1(v,ready);requireV1(v.schema==="mission-control.task4-listener.v1"&&v.endpointRole===role&&v.host==="127.0.0.1"&&v.state===state&&sameV1(v.owner,owner));
-      integerV1(v.port,1024,65535);requireV1(role==="mc"?v.port===13081:![3080,3333,5432,13081,18789,ready.setup.postgres.port].includes(v.port));timeV1(v.at);
+      integerV1(v.port,1024,65535);requireV1(![3080,3333,5432,13081,18789,ready.setup.postgres.port].includes(v.port));timeV1(v.at);
       keysV1(v.original,"method observed");requireV1(v.original.observed===true&&v.original.method===(role==="mc"?"owned_child_socket_census":"owned_http_server"));return v;
     };
     keysV1(value.mock,"state listen closeCallback acceptedConnections closedConnections listenerAfter");const mock=value.mock;
@@ -453,7 +463,10 @@ function validateTask4CleanupV1(value:unknown,ready:Readonly<RecordV1>,innerOwne
       keysV1(settled.exit,"code signal exitObserved closeObserved");requireV1(settled.exit.exitObserved===true&&settled.exit.closeObserved===true);
       if(settled.stop==="original_child_sigterm")requireV1((settled.exit.code===null&&settled.exit.signal==="SIGTERM")||(settled.exit.code===0&&settled.exit.signal===null));
       else requireV1(settled.stop==="exited_before_stop"&&Number.isSafeInteger(settled.exit.code)&&settled.exit.signal===null);
-      const a=listener(settled.listenerBefore,"mc","listening",observed.owner),b=listener(settled.listenerAfter,"mc","absent",null);requireV1(b.at>=a.at);
+      const serverPort=task4BoundServerPortV1(observed,ready,artifacts);
+      const a=listener(settled.listenerBefore,"mc","listening",observed.owner),b=listener(settled.listenerAfter,"mc","absent",null);
+      requireV1(a.port===serverPort&&b.port===serverPort&&b.at>=a.at);
+      if(mock.state==="closed")requireV1(serverPort!==task4ArtifactV1(artifacts,mock.listen).port);
     }
   }catch{return refuseV1("TASK4_CLEANUP_UNKNOWN");}
 }
@@ -560,6 +573,8 @@ function validateTask4NetworkV1(value:unknown,ready:Readonly<RecordV1>,cleanup:R
           &&typeof v.query==="string"&&v.query.length<=1024&&!/[#\x00-\x20]/.test(v.query));}}
     keysV1(value.policy,"recipeHash browserInstalledAt serverPolicyHash serverLaunchRef");timeV1(value.policy.browserInstalledAt);
     const intent=task4ArtifactV1(artifacts,cleanup.server.intent),observed=task4ArtifactV1(artifacts,cleanup.server.observed);
+    const serverPort=task4BoundServerPortV1(observed,ready,artifacts),mockListen=task4ArtifactV1(artifacts,cleanup.mock.listen);
+    integerV1(mockListen.port,1024,65535);requireV1(serverPort!==mockListen.port);
     requireV1(value.policy.recipeHash===hashV1(task4CanonicalV1(recipes))&&sameV1(value.policy.serverLaunchRef,cleanup.server.observed)
       &&value.policy.serverPolicyHash===intent.policyHash&&sameV1(observed.intent,cleanup.server.intent));
     keysV1(value.osFence,"coverage policyHash launcherHash serverOwner probe actualAllowed denialTelemetry");const fence=value.osFence;
@@ -575,7 +590,7 @@ function validateTask4NetworkV1(value:unknown,ready:Readonly<RecordV1>,cleanup:R
     for(const [index,row] of value.browser.entries()){
       keysV1(row,"seq requestId contextId route at stage method target pathId urlHash decision status bodyHash failureCode");requireV1(row.seq===index+1&&TASK4_ROUTES_V1.includes(row.route));
       integerV1(row.requestId,1,4096);integerV1(row.contextId,1,6);timeV1(row.at);requireV1(row.at>=value.policy.browserInstalledAt&&row.target==="mc");
-      const known=recipe("browser",row.pathId,row.method);requireV1(known!==undefined&&row.urlHash===hashV1("http://127.0.0.1:13081"+known.path+(known.query?"?"+known.query:"")));
+      const known=recipe("browser",row.pathId,row.method);requireV1(known!==undefined&&row.urlHash===hashV1("http://127.0.0.1:"+serverPort+known.path+(known.query?"?"+known.query:"")));
       if(!contexts.has(row.contextId)){requireV1(row.contextId===nextContext++);contexts.add(row.contextId);}
       if(row.stage==="intercept"){
         requireV1(row.requestId===nextRequest++&&!requests.has(row.requestId)&&row.decision==="continue"&&row.status===null&&row.bodyHash===null&&row.failureCode===null);requests.set(row.requestId,row);
@@ -592,7 +607,7 @@ function validateTask4NetworkV1(value:unknown,ready:Readonly<RecordV1>,cleanup:R
       }
     }
     requireV1(requests.size>0&&requests.size===ended.size);
-    const mockListen=task4ArtifactV1(artifacts,cleanup.mock.listen);integerV1(mockListen.port,1024,65535);const mockRequests=new Set<number>();
+    const mockRequests=new Set<number>();
     for(const [index,row] of value.mock.entries()){
       keysV1(row,"seq connectionId requestId at method pathId urlHash decision status responseHash finished closed");requireV1(row.seq===index+1);integerV1(row.connectionId,1,4096);integerV1(row.requestId,1,4096);timeV1(row.at);
       requireV1(!mockRequests.has(row.requestId)&&row.requestId===mockRequests.size+1&&row.connectionId<=cleanup.mock.acceptedConnections);mockRequests.add(row.requestId);
@@ -2356,6 +2371,28 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     assert.throws(()=>parseTask4PgLogV1(Buffer.from(first.replace(db,"foreign")),id,db),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
     assert.throws(()=>parseTask4PgLogV1(Buffer.from(first.trimEnd()),id,db),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
   });
+  // Rehash every changed leaf and its dependent references, so port negatives reach semantic guards.
+  function rewritePortGraph(rows:ReadonlyMap<string,Readonly<RecordV1>>,patch:(row:RecordV1)=>void){
+    const rewritten=new Map<string,Readonly<RecordV1>>(),refs=new Map<string,RecordV1>();
+    const remap=(v:any):any=>Array.isArray(v)?v.map(remap):v&&typeof v==="object"?
+      Object.keys(v).sort().join(" ")==="bytes sha256"?(refs.get(v.sha256)??v):Object.fromEntries(Object.entries(v).map(([k,x])=>[k,remap(x)])):v;
+    for(const [old,row] of rows){const changed=remap(structuredClone(row));patch(changed);const bytes=Buffer.from(task4CanonicalV1(changed)+"\n"),ref={sha256:hashV1(bytes),bytes:bytes.length};
+      rewritten.set(ref.sha256,changed);refs.set(old,ref);}
+    return {rows:rewritten,remap};
+  }
+  test("descriptor policy probe rejects the actual bound server port as denied canary",async()=>{
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),ast=ts.createSourceFile("fixture.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+    const fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="validateTask4PolicyProbeV1") as import("typescript").FunctionDeclaration;
+    const body=fn.body!.statements.find(ts.isTryStatement)!.tryBlock.statements;
+    const guard=body.find(n=>ts.isExpressionStatement(n)&&n.getText(ast).startsWith("requireV1(deniedBefore.port==="))!;
+    const check=new Function("requireV1","deniedBefore","deniedAfter","deniedClosed","before","ready","serverPort",guard.getText(ast));
+    const ready=JSON.parse(GOLDEN_READY_V1),at="2026-10-19T10:00:00.000Z",canary={port:23903,at};
+    check(requireV1,canary,canary,canary,{port:23456},ready,23901);
+    for(const port of [23901,23456,ready.setup.postgres.port,3080,3333,5432,13081,18789]){
+      const crossed={...canary,port};assert.throws(()=>check(requireV1,crossed,crossed,crossed,{port:23456},ready,23901));
+    }
+    assert.throws(()=>check(requireV1,canary,{...canary,port:23904},canary,{port:23456},ready,23901));
+  });
   test("descriptor cleanup binds no-LF helper owner hash and original server listener closure",()=>{
     const ready=JSON.parse(GOLDEN_READY_V1),owner={...ready.fixtureOwner,pid:41006,ppid:ready.fixtureOwner.pid};
     const binding={executionId:ready.executionId,setupDescriptorHash:ready.setupDescriptorHash,readyDescriptorHash:hashV1(GOLDEN_READY_V1+"\n")};
@@ -2364,7 +2401,7 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     const rows=new Map<string,Readonly<RecordV1>>();const put=(v:RecordV1)=>{const bytes=Buffer.from(task4CanonicalV1(v)+"\n"),ref={sha256:hashV1(bytes),bytes:bytes.length};rows.set(ref.sha256,v);return ref;};
     const node=owner.executable,entry=path.join(ready.setup.missionControl.source.root,"dist-server/index.js"),serverOwner={...owner,pid:41007,ppid:owner.pid,commandHash:hashV1([node,entry].join(" "))};
     const listener=(endpointRole:string,state:string,who:RecordV1|null)=>put({schema:"mission-control.task4-listener.v1",...binding,
-      endpointRole,host:"127.0.0.1",port:endpointRole==="mc"?13081:23456,at:"2026-10-19T10:00:00.000Z",state,owner:who,
+      endpointRole,host:"127.0.0.1",port:endpointRole==="mc"?23901:23456,at:"2026-10-19T10:00:00.000Z",state,owner:who,
       original:{method:endpointRole==="mc"?"owned_child_socket_census":"owned_http_server",observed:true}});
     const before=listener("mc","listening",serverOwner),after=listener("mc","absent",null),mock=listener("mock","listening",owner),mockAfter=listener("mock","absent",null);
     const intent=put({schema:"mission-control.task4-server-intent.v1",...binding,parentOwner:owner,executable:node,executableHash:owner.executableHash,
@@ -2377,6 +2414,15 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
       mock:{state:"closed",listen:mock,closeCallback:true,acceptedConnections:2,closedConnections:2,listenerAfter:mockAfter},
       server:{state:"closed",intent,observed,settled},readers:{opened:2,closed:2,pending:0},contexts:{opened:0,closed:0,pending:0},complete:true};
     validateTask4CleanupV1(cleanup,ready,owner,rows);
+    const another=rewritePortGraph(rows,row=>{if(row.endpointRole==="mc")row.port=23902;});
+    validateTask4CleanupV1(another.remap(cleanup),ready,owner,another.rows);
+    const changes:Array<(row:RecordV1)=>void>=[
+      row=>{if(row.endpointRole==="mc"&&row.state==="absent")row.port=23902;},
+      row=>{if(row.endpointRole==="mc"&&row.state==="listening")row.owner={...row.owner,pid:row.owner.pid+1};},
+      row=>{if(row.endpointRole==="mc")row.original.method="owned_http_server";},
+      row=>{if(row.endpointRole==="mc")row.host="127.0.0.2";},
+      ...[1023,65536,3080,3333,5432,13081,18789,23456,ready.setup.postgres.port].map(port=>(row:RecordV1)=>{if(row.endpointRole==="mc")row.port=port;})];
+    for(const patch of changes){const crossed=rewritePortGraph(rows,patch);assert.throws(()=>validateTask4CleanupV1(crossed.remap(cleanup),ready,owner,crossed.rows),{message:"TASK4_CLEANUP_UNKNOWN"});}
     for(const change of [(v:any)=>{v.ownerHash=hashV1(task4CanonicalV1(ui)+"\n");},(v:any)=>{v.mock.closedConnections=1;},
       (v:any)=>{v.readers.pending=1;},(v:any)=>{v.nativeAudit.owner.pid++;},(v:any)=>{v.server.settled=null;},(v:any)=>{v.mock.closeCallback=false;}]){
       const v=structuredClone(cleanup);change(v);assert.throws(()=>validateTask4CleanupV1(v,ready,owner,rows),{message:"TASK4_CLEANUP_UNKNOWN"});
@@ -2438,20 +2484,30 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
   test("descriptor network ledger refuses unmatched requests foreign paths and unsupported OS claims",()=>{
     const ready=JSON.parse(GOLDEN_READY_V1),binding={executionId:ready.executionId,setupDescriptorHash:ready.setupDescriptorHash,readyDescriptorHash:hashV1(GOLDEN_READY_V1+"\n")};
     const owner={...ready.fixtureOwner,pid:41007,ppid:41006},rows=new Map<string,Readonly<RecordV1>>();const put=(v:RecordV1)=>{const bytes=Buffer.from(task4CanonicalV1(v)+"\n"),ref={sha256:hashV1(bytes),bytes:bytes.length};rows.set(ref.sha256,v);return ref;};
-    const policyHash="a".repeat(64),launcherHash="b".repeat(64),intent=put({policyHash,launcherHash}),observed=put({intent,owner}),cleanup={server:{intent,observed},mock:{listen:put({port:23456}),acceptedConnections:1,closedConnections:1}};
+    const policyHash="a".repeat(64),launcherHash="b".repeat(64),intent=put({policyHash,launcherHash});
+    const listener=put({schema:"mission-control.task4-listener.v1",...binding,endpointRole:"mc",host:"127.0.0.1",port:23901,at:"2026-10-19T10:00:00.000Z",state:"listening",owner,original:{method:"owned_child_socket_census",observed:true}});
+    const observed=put({schema:"mission-control.task4-server-observed.v1",...binding,intent,owner,listener}),cleanup={server:{intent,observed},mock:{listen:put({port:23456}),acceptedConnections:1,closedConnections:1}};
     const expected=task4SeedV1(ready.setup.setfarm.source.sourceSha).productResponse;
     const proxy=put({schema:"mission-control.task4-proxy-observation.v1",...binding,at:"2026-10-19T10:00:00.000Z",method:"GET",pathId:"product_v3",status:200,
       bodyHash:"c".repeat(64),parsedHash:hashV1(task4CanonicalV1(expected)),authorityHash:expected.authorityHash,packetHash:expected.packetAuthority.packetHash});
     const recipes={browser:[{pathId:"root",method:"GET",path:"/",query:""},{pathId:"product_v3",method:"GET",path:"/api/product",query:""}],mock:[{pathId:"product_v3",method:"GET",path:"/api/product",query:""}]};
-    const common={requestId:1,contextId:1,route:"/",at:"2026-10-19T10:00:00.000Z",method:"GET",target:"mc",pathId:"root",urlHash:hashV1("http://127.0.0.1:13081/"),status:null,bodyHash:null,failureCode:null};
+    const common={requestId:1,contextId:1,route:"/",at:"2026-10-19T10:00:00.000Z",method:"GET",target:"mc",pathId:"root",urlHash:hashV1("http://127.0.0.1:23901/"),status:null,bodyHash:null,failureCode:null};
     const value={schema:"mission-control.task4-network-ledger.v1",...binding,
       policy:{recipeHash:hashV1(task4CanonicalV1(recipes)),browserInstalledAt:common.at,serverPolicyHash:policyHash,serverLaunchRef:observed},
       browser:[{...common,seq:1,stage:"intercept",decision:"continue"},{...common,seq:2,stage:"response",decision:"observe",status:200,bodyHash:"d".repeat(64)}],
       mock:[{seq:1,connectionId:1,requestId:1,at:common.at,method:"GET",pathId:"product_v3",urlHash:hashV1("http://127.0.0.1:23456/api/product"),decision:"accepted",status:200,responseHash:"e".repeat(64),finished:true,closed:true}],osFence:{coverage:"server_launch_policy_bound_parent_probe_required",policyHash,launcherHash,serverOwner:owner,probe:"parent_originals_required",actualAllowed:{proxy,sql:"parent_originals_required"},denialTelemetry:"unavailable"},complete:true};
     validateTask4NetworkV1(value,ready,cleanup,rows,recipes);
+    for(const port of [23902,3080,3333,5432,13081,18789,23456,ready.setup.postgres.port]){
+      const changed=rewritePortGraph(rows,row=>{if(row.endpointRole==="mc")row.port=port;}),ledger=changed.remap(value),boundCleanup=changed.remap(cleanup);
+      for(const row of ledger.browser)row.urlHash=hashV1("http://127.0.0.1:"+port+"/");
+      if(port===23902)validateTask4NetworkV1(ledger,ready,boundCleanup,changed.rows,recipes);
+      else assert.throws(()=>validateTask4NetworkV1(ledger,ready,boundCleanup,changed.rows,recipes),{message:"TASK4_NETWORK_REFUSED"});
+    }
+    const crossed=rewritePortGraph(rows,row=>{if(row.endpointRole==="mc")row.port=23902;});
+    assert.throws(()=>validateTask4NetworkV1(crossed.remap(value),ready,crossed.remap(cleanup),crossed.rows,recipes),{message:"TASK4_NETWORK_REFUSED"});
     const legacy=structuredClone(value),legacyRecipes=structuredClone(recipes),id="ac8cea43-7686-4d27-8092-1e3dd9207ca4",browserPath=`/api/setfarm/runs/${id}/product-build-authority`,mockPath=`/api/runs/${id}/product-build-authority`;
     legacyRecipes.browser.push({pathId:"legacy_authority",method:"GET",path:browserPath,query:""});legacyRecipes.mock.push({pathId:"legacy_authority",method:"GET",path:mockPath,query:""});legacy.policy.recipeHash=hashV1(task4CanonicalV1(legacyRecipes));
-    const request={...common,requestId:2,route:`/setfarm/runs/${id}`,pathId:"legacy_authority",urlHash:hashV1("http://127.0.0.1:13081"+browserPath)};
+    const request={...common,requestId:2,route:`/setfarm/runs/${id}`,pathId:"legacy_authority",urlHash:hashV1("http://127.0.0.1:23901"+browserPath)};
     legacy.browser.push({...request,seq:3,stage:"intercept",decision:"continue"},{...request,seq:4,stage:"response",decision:"observe",status:409,
       bodyHash:hashV1(JSON.stringify({status:"unavailable",code:"SETFARM_PRODUCT_BUILD_AUTHORITY_NOT_READY",reason:"not_ready",upstreamStatus:409,upstreamCode:"RUNTIME_PACKET_RUN_NOT_V3"}))});
     legacy.mock.push({seq:2,connectionId:1,requestId:2,at:common.at,method:"GET",pathId:"legacy_authority",urlHash:hashV1("http://127.0.0.1:23456"+mockPath),decision:"accepted",status:409,responseHash:hashV1(JSON.stringify({code:"RUNTIME_PACKET_RUN_NOT_V3"})),finished:true,closed:true});
@@ -2553,5 +2609,5 @@ if(direct&&!process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^desc
   const adminUrl=process.env.SETFARM_TEST_PG_ADMIN_URL;
   requireV1(typeof adminUrl==="string","TASK4_BINDING_REFUSED");
   const context=await prepareTask4ContextV1(setup,"fixture",adminUrl);
-  test("owned 13081 current-schema smoke",async()=>{await runTask4OwnedFixtureV1(setup,context,adminUrl);});
+  test("owned server-port current-schema smoke",async()=>{await runTask4OwnedFixtureV1(setup,context,adminUrl);});
 }
