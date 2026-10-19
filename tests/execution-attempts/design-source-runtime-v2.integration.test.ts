@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -12,7 +12,7 @@ import {
   runDesignSourceAuthorityV2,
   serializeAttemptTransportV2,
 } from "../../src/product-compiler/design-source-runtime-v2.js";
-import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { canonicalJsonBytes, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
   DesignSourceGenerationRetryDeltaV1Schema,
 } from "../../src/product-compiler/design-source-compilation-attempt-runner.js";
@@ -31,6 +31,7 @@ import {
   validStitchHtml,
   validStitchPng,
 } from "../product-compiler/fixtures/stitch-artifacts.js";
+import { OperationalFailureCauseV1Schema } from "../../src/execution/schemas/operational-failure-cause-v1.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
@@ -48,6 +49,127 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2.neutralCodePoints,
       ["U+00A9"],
     );
+  });
+
+  it("seals offline resource prefetch as infrastructure without semantic retry or projection", async () => {
+    const database = await createIsolatedTestDatabase();
+    const originalFetch = globalThis.fetch;
+    const repos: string[] = [];
+    const cause = {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "design",
+      boundary: "product_compiler.design_source.resource_prefetch",
+      failureClass: "infrastructure_failure",
+      failureCode: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+    };
+    try {
+      const releaseSha = "a".repeat(40);
+      const admissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+      const compiled = compilePlanSemanticProposalV2({
+        task: CONTAINED_GAME_TASK, proposal: containedGamePlanProposalV2(),
+      });
+      assert.equal(compiled.status, "canonicalized");
+      if (compiled.status !== "canonicalized") return;
+      const targets = produceDesignGenerationTargetsV2(compiled.productSpec);
+      assert.equal(targets.status, "produced");
+      if (targets.status !== "produced") return;
+      const target = targets.generationTargets.targets[0]!;
+      const screenId = "offline-render-screen";
+      const htmlBytes = validStitchHtml(
+        `<script src="https://cdn.tailwindcss.com"></script><main data-surface-id="${target.surfaceRef}">Offline render fixture</main>`,
+        "offline-render",
+      );
+      const screenshotBytes = validStitchPng(231);
+      const transport = {
+        schema: "setfarm.stitch-attempt-transport.v1", total: 1,
+        screens: [{ screenId, title: target.expectedScreenTitle }], screenSource: "direct",
+        directCandidateTotal: 1, excludedDirectTotal: 0,
+        directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
+        directScreenEvidence: [{
+          screenId, title: target.expectedScreenTitle, responsePaths: ["$result.screens[0]"],
+          htmlAvailable: true, screenshotAvailable: true,
+          ...stitchDownloadReceipts(screenId, htmlBytes, screenshotBytes),
+          identityConflicts: [], disposition: "admitted_renderable_screen", missingEvidence: [],
+        }],
+        downloaded: [{ screenId, title: target.expectedScreenTitle,
+          htmlFile: `${screenId}.html`, screenshotFile: `${screenId}.png` }],
+      };
+      for (const [index, message] of ["fetch failed", "different private endpoint diagnostic"].entries()) {
+        const repo = await mkdtemp(path.join(tmpdir(), "setfarm-prefetch-cause-"));
+        repos.push(repo);
+        const runId = `run-prefetch-cause-${index}`;
+        await database.sql`
+          INSERT INTO runs (id, workflow_id, task, status, protocol, protocol_version,
+            compiler_release_sha, activation_preflight_hash, release_admission_hash)
+          VALUES (${runId}, 'feature-dev', 'Offline prefetch fixture', 'running', 'v3', 1,
+            ${releaseSha}, ${"b".repeat(64)}, ${admissionHash})
+        `;
+        const claims = await database.sql<Array<{ id: string }>>`
+          INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+          VALUES (${runId}, 'design', NULL, 'offline-prefetch-test') RETURNING id::text AS id
+        `;
+        const claimId = Number(claims[0]!.id);
+        let dispatches = 0;
+        let fetches = 0;
+        globalThis.fetch = (async () => {
+          fetches += 1;
+          throw new TypeError(message, { cause: Object.assign(new Error("offline fixture"), { code: "ECONNRESET" }) });
+        }) as typeof fetch;
+        const repository = new ProductCompilationAttemptRepository(database.sql);
+        const input = {
+          repo, runId, projectId: "offline-prefetch-project",
+          contract: { productSpec: compiled.productSpec, generationTargets: targets.generationTargets },
+          originClaimId: claimId, ownerClaimId: claimId, ownerInstanceId: "offline-prefetch-owner",
+          producerReleaseSha: releaseSha, provider: "stitch", model: "GEMINI_3_8_FLASH",
+          deviceType: "DESKTOP" as const,
+        };
+        const dependencies = { repository, generateStage: async () => {
+          dispatches += 1;
+          return { disposition: "accepted" as const, response: transport,
+            rawEvidence: serializeAttemptTransportV2(transport),
+            artifacts: [{ screenId, htmlBytes, screenshotBytes }] };
+        } };
+        const result = await runDesignSourceAuthorityV2(input, dependencies);
+        assert.equal(result.runner.status, "infrastructure_failure", JSON.stringify(result.runner));
+        if (result.runner.status !== "infrastructure_failure") return;
+        assert.deepEqual(result.runner.failure.reasonCodes, ["STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED"]);
+        assert.equal(result.runner.failure.operationalCauseHash, hashCanonicalJson(cause));
+        assert.equal(result.runner.stopReason, "no_retry");
+        assert.equal(result.runner.attempts.length, 1);
+        assert.equal(result.runner.attempt.ordinal, 1);
+        assert.equal(result.runner.attempt.outputRefs, null);
+        assert.deepEqual(await repository.get(result.runner.attempt.attemptId), result.runner.attempt);
+        assert.equal(dispatches, 1);
+        assert.equal(fetches, 1);
+        const attemptRoot = path.join(repo, result.runner.attempt.attemptLocator);
+        const bytes = await readFile(path.join(attemptRoot, "raw/failure.json"));
+        const artifact = JSON.parse(bytes.toString("utf8"));
+        assert.deepEqual(bytes, canonicalJsonBytes(artifact));
+        assert.equal(createHash("sha256").update(bytes).digest("hex"), result.runner.failure.failureArtifactHash);
+        assert.equal(artifact.disposition, "infrastructure_failure");
+        assert.equal(artifact.requestHash, result.runner.attempt.requestHash);
+        assert.deepEqual(OperationalFailureCauseV1Schema.parse(artifact.evidence.cause), cause);
+        assert.deepEqual(artifact.evidence, { cause, phase: "resource_prefetch", error: {
+          name: "StitchRenderedSemanticsInfrastructureErrorV2",
+          code: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED", phase: "resource_prefetch",
+        } });
+        assert.doesNotMatch(bytes.toString("utf8"), /fetch failed|private endpoint|ECONNRESET|cdn\.tailwindcss/);
+        assert.deepEqual(await readdir(path.join(attemptRoot, "render")), []);
+        await assert.rejects(readFile(path.join(repo, "stitch/DESIGN_MANIFEST.json")));
+        const replay = await runDesignSourceAuthorityV2(input, dependencies);
+        assert.equal(replay.runner.status, "infrastructure_failure");
+        if (replay.runner.status === "infrastructure_failure") {
+          assert.equal(replay.runner.attempt.attemptId, result.runner.attempt.attemptId);
+          assert.deepEqual(replay.runner.failure, result.runner.failure);
+        }
+        assert.equal(dispatches, 1);
+        assert.equal(fetches, 1);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      await Promise.all(repos.map((repo) => rm(repo, { recursive: true, force: true })));
+      await database.cleanup();
+    }
   });
 
   it("materializes one exact attempt, projects only selected authority, and replays without redispatch", async () => {

@@ -22,7 +22,7 @@ import {
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { resolveV3PlanOutputAuthorityV2 } from "../../src/execution/v3-plan-output-authority-v2.js";
-import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { canonicalJsonBytes, canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { CompilerEnglishAdmissionReceiptV1Schema } from "../../src/product-compiler/schemas/compiler-english-admission-receipt-v1.js";
 import { executeDesignPreclaimV2, generateStitchStageOnceWithExecutorForInternalTestV2 } from "../../src/installer/steps/02-design/runtime-v2.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
@@ -30,6 +30,11 @@ import {
   CONTAINED_GAME_TASK,
   containedGamePlanProductBuildProposalV1,
 } from "../product-compiler/fixtures/product-semantics-v2.js";
+import { createHash } from "node:crypto";
+import { ProductCompilationAttemptRepository } from "../../src/product-compiler/product-compilation-attempt-repository.js";
+import { prepareV3DesignContractV2 } from "../../src/product-compiler/v3-design-contract-v2.js";
+import { serializeAttemptTransportV2 } from "../../src/product-compiler/design-source-runtime-v2.js";
+import { stitchDownloadReceipts, validStitchHtml, validStitchPng } from "../product-compiler/fixtures/stitch-artifacts.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 const DRAIN_EVIDENCE = {
@@ -458,6 +463,85 @@ test("atomic PLAN completion persists exact build and behavior authority", async
         claimAgentId: "feature-dev_designer", claimedAt: new Date(),
       });
     });
+    await t.test("preclaim projects the sealed prefetch infrastructure cause and replays without dispatch", async () => {
+      const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-preclaim-prefetch-"));
+      const originalFetch = globalThis.fetch;
+      const cause = {
+        schema: "setfarm.operational-failure-cause.v1", workflowStepId: "design",
+        boundary: "product_compiler.design_source.resource_prefetch",
+        failureClass: "infrastructure_failure", failureCode: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+      };
+      try {
+        const contract = prepareV3DesignContractV2(row.canonical_prd);
+        const target = contract.generationTargets.targets[0]!;
+        const screenId = "preclaim-offline-render";
+        const htmlBytes = validStitchHtml(
+          `<script src="https://cdn.tailwindcss.com"></script><main data-surface-id="${target.surfaceRef}">Offline preclaim fixture</main>`,
+          "preclaim-offline-render",
+        );
+        const screenshotBytes = validStitchPng(232);
+        const transport = {
+          schema: "setfarm.stitch-attempt-transport.v1", total: 1,
+          screens: [{ screenId, title: target.expectedScreenTitle }], screenSource: "direct",
+          directCandidateTotal: 1, excludedDirectTotal: 0,
+          directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
+          directScreenEvidence: [{ screenId, title: target.expectedScreenTitle,
+            responsePaths: ["$result.screens[0]"], htmlAvailable: true, screenshotAvailable: true,
+            ...stitchDownloadReceipts(screenId, htmlBytes, screenshotBytes),
+            identityConflicts: [], disposition: "admitted_renderable_screen", missingEvidence: [],
+          }],
+          downloaded: [{ screenId, title: target.expectedScreenTitle,
+            htmlFile: `${screenId}.html`, screenshotFile: `${screenId}.png` }],
+        };
+        let dispatches = 0;
+        let fetches = 0;
+        globalThis.fetch = (async () => {
+          fetches += 1;
+          throw new TypeError("fetch failed", { cause: Object.assign(new Error("offline fixture"), { code: "ECONNRESET" }) });
+        }) as typeof fetch;
+        const input = {
+          sql: database.sql, repo, runId, prd: row.canonical_prd,
+          originClaimId: designClaimId, ownerClaimId: designClaimId,
+          ownerInstanceId: "design-prefetch-cause-test", producerReleaseSha: releaseSha,
+          deviceType: "DESKTOP" as const, englishAdmissionAuthority: ledgerAuthority,
+        };
+        const dependencies = {
+          ensureProject: async () => "prefetch-offline-project",
+          generateStage: async () => {
+            dispatches += 1;
+            return { disposition: "accepted" as const, response: transport,
+              rawEvidence: serializeAttemptTransportV2(transport),
+              artifacts: [{ screenId, htmlBytes, screenshotBytes }] };
+          },
+        };
+        const result = await executeDesignPreclaimV2(input, dependencies);
+        assert.equal(result.status, "infrastructure_failure");
+        if (result.status === "accepted") throw new Error("Unexpected accepted fixture");
+        assert.equal(result.code, "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED");
+        assert.deepEqual(result.operationalFailureCause, cause);
+        assert.ok(result.attemptId);
+        const attempt = await new ProductCompilationAttemptRepository(database.sql).get(result.attemptId);
+        assert.ok(attempt?.failure);
+        assert.equal(attempt.disposition, "infrastructure_failure");
+        assert.equal(attempt.ordinal, 1);
+        assert.equal(attempt.outputRefs, null);
+        assert.equal(attempt.failure.operationalCauseHash, hashCanonicalJson(cause));
+        const bytes = fs.readFileSync(path.join(repo, attempt.attemptLocator, "raw/failure.json"));
+        const artifact = JSON.parse(bytes.toString("utf8"));
+        assert.deepEqual(bytes, canonicalJsonBytes(artifact));
+        assert.equal(createHash("sha256").update(bytes).digest("hex"), attempt.failure.failureArtifactHash);
+        assert.deepEqual(artifact.evidence.cause, result.operationalFailureCause);
+        assert.equal(artifact.evidence.phase, "resource_prefetch");
+        const replay = await executeDesignPreclaimV2(input, dependencies);
+        assert.deepEqual(replay, result);
+        assert.equal(dispatches, 1);
+        assert.equal(fetches, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+        fs.rmSync(repo, { recursive: true, force: true });
+      }
+    });
+
     for (const fixture of [
       { model: undefined, expected: "GEMINI_3_8_FLASH" },
       { model: "GEMINI_3_5_FLASH_LITE", expected: "GEMINI_3_5_FLASH_LITE" },
@@ -512,6 +596,7 @@ test("atomic PLAN completion persists exact build and behavior authority", async
           assert.equal(result.status, "dispatch_ambiguous");
           if (result.status === "accepted") throw new Error("Unexpected accepted fixture");
           assert.equal(result.code, "DESIGN_SOURCE_DISPATCH_AMBIGUOUS");
+          assert.equal(result.operationalFailureCause, undefined);
           const replay = await executeDesignPreclaimV2(input, dependencies);
           assert.equal(replay.status, "dispatch_ambiguous");
           assert.equal(replay.attemptId, result.attemptId);

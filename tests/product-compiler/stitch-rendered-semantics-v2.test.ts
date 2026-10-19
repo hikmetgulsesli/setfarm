@@ -465,6 +465,29 @@ describe("Stitch rendered semantics v2", { concurrency: 1 }, () => {
     }
   });
 
+  it("preserves the typed prefetch phase when native fetch throws offline", async () => {
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("offline fixture"), { code: "ECONNRESET" }),
+      });
+    }) as typeof fetch;
+    try {
+      const value = fixture({ scriptMarkup: '<script src="https://cdn.tailwindcss.com"></script>' });
+      await assert.rejects(
+        captureStitchRenderedSemanticsV2({ ...value, deviceType: "DESKTOP" }),
+        (error: unknown) => error instanceof StitchRenderedSemanticsInfrastructureErrorV2
+          && error.code === "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED"
+          && error.phase === "resource_prefetch",
+      );
+      assert.equal(requests, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("cancels a non-success response body before reporting infrastructure", async () => {
     const originalFetch = globalThis.fetch;
     let cancellations = 0;
