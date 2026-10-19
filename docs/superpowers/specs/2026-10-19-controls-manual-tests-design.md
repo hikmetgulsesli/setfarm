@@ -72,3 +72,36 @@ MC writes the strict `ControlPrivateIntentV1` at exactly `runtime/mission-contro
 `prepareSelectedDirectEvaluationIntentV1(): Promise<Readonly<{jobId:string;kind:'convergence_full8';selectionHash:string;sourceSha:string;suiteHash:string}>>` is a zero-argument internal API in that same module. It accepts only the exact selected compiled convergence CLI and the committed codex-v1 recipe at the selected output root/current source, preserving the existing unselected CLI behavior. Unsupported/default-other selected recipes refuse clearly before effects. Both exact selected codex planning and execute modes may enroll; private direct intent records the actual mode and planning never qualifies. It exclusively fsyncs its own SF-private nonce-bound intent at `runtime/evals/manual-controls/direct/<jobId>.json` and registers exact current process. It must not invent MC build fields. Validate/load recipe and acquire before evaluator artifact preparation/publication; the existing read-only selected ports factory need not be split. No generic CLI form is added.
 
 Acquisition excludes only the independently validated control process belonging to this intent. Subsequent bind/release requires exact current custody and held revision. Other process/build/publication/work/child owners and unknown custody remain blocking. Registration alone grants no workflow admission or runtime role rights. Public owner observation still reports owned for an unfinished reservation.
+
+## Private SF custody closure (settled before implementation)
+
+`closeSelectedManualWorkerCustodyV1(): Promise<void>` in the mapped SF admission module closes only the uninterrupted exact privately registered current worker/direct process. Public intent/receipt/custody/HTTP schemas are unchanged. It publishes an exclusive fsynced immutable0600 single-link marker under private0700 safe parents at exactly selected `runtime/evals/manual-controls/closures/<jobId>.json`; no direct-only `.released` convention remains. The strict module-private marker is bounded16KiB and has exactly:
+
+```ts
+type ManualCustodyClosureV1 = Readonly<{
+  schema:'setfarm.manual-control-custody-closed.v1';
+  jobId:string; kind:'activation_preflight'|'convergence_full8';
+  selectionHash:string; sourceSha:string; suiteHash:string|null;
+  executionMode:'preflight'|'execute';
+  intentOrigin:'mission_control'|'direct';
+  intentHash:string; nonceDigest:string;
+  owner:{pid:number;processStartedAt:string;processGroupId:number;
+    source:'observed_os';executable:string;script:string;commandHash:string};
+  closure:{kind:'never_reserved'}
+    |{kind:'reservation_released';revision:number;recordHash:string};
+}>;
+```
+
+Hashes are SHA256 of exact immutable intent/released-record bytes and exact observed OS command respectively; do not substitute public receipt hashes. Validate canonical UUID/time/path/hash and recipe/mode/kind relations. `reservation_released` resolves the exact immutable retained revision at `runtime/evals/manual-controls/revisions/<revision padded to20 decimal digits>.json` and matches all bindings. Pin safe parents and regular file identity/owner/mode/links/content before/after; conflicting files/unsafe or missing history refuse. This is the existing source-owned private trust boundary, not a signature against arbitrary same-UID mutation.
+
+One custody per process has irreversible acquisition-in-flight/publication-attempt/held/released/closing/closed/uncertain facts. Set publication-attempt before pending publication even if write throws; registration cannot reset lifecycle. Latch closure before awaits and serialize against acquire/bind/release. Closed or uncertain custody never dispatches effects or re-acquires. Zero/multiple/restarted custody refuses; same-process acknowledged repeat succeeds only after identical pinned marker validation.
+
+Under the existing short shared DB fence and exact durable mutation guard, `never_reserved` requires no acquisition in flight, no publication attempt, no admitted effects and no bounded current/history reservation attributable to this job/intent/owner. It retires only this proven never-admitted intent even if unrelated activity caused the refusal; foreign owners/reservations remain blocking and untouched. Any pending write/rollback/lost acknowledgement/ambiguous own work forbids it. Previously acquired custody must first have exact latest-revision release return successfully in this process; closure retains and validates that released archive. It never implicitly releases or manufactures terminal state.
+
+Publish closure under the same durable mutation boundary, honor it only with mutation guard absent before/after stable reads, and remove only the exact pinned guard after definite transaction success. Rollback, uncertain commit or residue stays unknown; GET/restart never repairs/deletes/adopts. A valid marker suppresses only its bound immutable intent, never an observed live process/descendant/foreign owner. Only the exact current registered process/intent can be self-excluded for its own closure/release. After closure only bounded authenticated terminal reporting/owned shutdown remains.
+
+Reservation release proves every cumulative bound slot/admission/claim, including earlier revisions: unused claims have both run_id/consumed_at null; used claims have both and the exact run. Used claims need no current unexpired admission but all original identities/hashes match. Every used run must have actual terminal state and canonical closed owner, verified through existing `resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1` and `resolveInternalProductionOwnerReservationCloseInTransactionV1` plus actual locked owner/close references and the complete owner census. Status alone, last-slot-only proof, process exit or MC receipt prose is insufficient. No terminal/owner mutation or privilege repair is introduced.
+
+SF's bounded MC namespace inventory recognizes only canonical UUID job directories plus each required pinned strict `intent.json`; unknown top-level entries or partial/unsafe job directories/intent leaves are unknown. Other broker-owned siblings inside a validated job directory are opaque: SF neither interprets nor follows them and accepts no receipt/log locator. The broker owns their separate safe storage. A valid ui_regression intent is separate from SF evaluator reservation/closure; malformed intent is never silently skipped. Abandoned/unregistered SF intents remain unknown.
+
+Worker/direct order is registration, acquire, admitted work, canonical settlement, exact release, close custody, authenticated final acknowledgement, exit. A certain pre-publication refusal skips release but closes its own never-reserved custody. Pre-registration/ambiguous acquisition/release/closure failures retain ownership_unknown; no age/exit/receipt retry/adoption grants authority. MC publishes/pins intent before one fixed spawn, authenticates closure acknowledgement on its existing channel and never invents closure from receipt state. A closed marker never hides a still-live worker. Task1 owns private lifecycle/census/fence tests; Task2/direct CLI and MC broker consume it in mapped files. Normal test/review/build/operational gates remain required.

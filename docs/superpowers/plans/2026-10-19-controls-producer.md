@@ -242,3 +242,7 @@ Add wrong/missing gate, planned/partial/no-go, copied canonical hash on mutated 
 - [ ] **Step 4: Run GREEN** focused reader tests and import-graph check showing no publisher/evaluator runtime import. Root reviews the two plans together for schema/DTO consistency and coordinates the MC consumer after this export exists.
 
 Root separately owns review, clean builds, staged delivery, guarded rollout, and real selected preflight/full8 evidence after source fixes. Passing fake-effect or UI fixture tests alone is never a workflow GO claim.
+
+## Custody closure interface ruling
+
+Consume the paired spec Private SF custody closure section: Task1 additionally produces zero-argument `closeSelectedManualWorkerCustodyV1(): Promise<void>`, common fixed closures/<jobId>.json with explicit commandHash, irreversible never-reserved/acquired lifecycle and cumulative all-slot actual canonical-owner release proof. Existing mapped admission module/tests only; no public DTO/authority/FileMap widening. Task2 must release then close before authenticated terminal acknowledgement; certain pre-publication refusal may close its own intent despite unrelated owners, which stay blocking. MC UUID job-dir/required intent namespace is strict; other broker siblings opaque/no-follow, never terminal authority. Add meaningful RED/GREEN lifecycle/closure/busy/refusal/history/owner-status tests before claiming Task1 complete. Original intermediate4412179e P3 capture3/9 is retained, not final proof.
