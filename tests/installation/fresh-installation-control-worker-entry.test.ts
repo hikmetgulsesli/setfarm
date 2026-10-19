@@ -40,3 +40,13 @@ test("fixed worker closes its prepared DB after dispatch failure", async () => {
     await assert.rejects(invoke, value => value === failure);
     assert.deepEqual(events, ["prepare", "assert", "dispatch", "close"]);
 });
+
+// Explicit Root-only compiled mode: missing real inputs fail, never skip/pass.
+// Ordinary source execution does not register placeholder compiled tests.
+if (process.env.SETFARM_CONTROL_COMPILED_NEGATIVES === "required") {
+    const { loadCompiledNegativeContext, compiledWorkerNegativeCases, runCompiledWorkerNegative } = await import("./control-worker-compiled-negative-support.js");
+    const context = loadCompiledNegativeContext();
+    for (const name of compiledWorkerNegativeCases) test(`Root prepared compiled worker negative: ${name}`, { concurrency: false, timeout: 35000 }, () => runCompiledWorkerNegative(context, name));
+} else {
+    process.stdout.write("# COMPILED WORKER MATRIX NOT RUN: requires Root reviewed immutable build, two real isolated activated selections and measured private context. No compiled cases credited.\n");
+}

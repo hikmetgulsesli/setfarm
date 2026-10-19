@@ -141,7 +141,7 @@ test("journal refuses dangling head symlink before publishing any record", async
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
-async function wrappedStartComponent(mode: "success" | "lost" | "unused" | "foreign" | "wrong_response" | "bind_refused" | "foreign_admission") {
+async function wrappedStartComponent(mode: "success" | "lost" | "unused" | "foreign" | "wrong_response" | "bind_refused" | "foreign_admission", options: { failure?: string; terminal?: boolean; channel?: boolean } = {}) {
     const { loadConvergenceSuiteVersioned } = await import("../../src/evals/suite-schema-v2.js");
     const { hashCanonicalJson } = await import("../../src/product-compiler/canonical-json.js");
     const { createV3ReleaseAdmissionV1, computeCanarySlotHash, canarySelectorHash } = await import("../../src/execution/v3-release-admission.js");
@@ -155,25 +155,33 @@ async function wrappedStartComponent(mode: "success" | "lost" | "unused" | "fore
     const first = contexts[0]!;
     const claim = { admission_hash: admission.admissionHash, admission_kind: "convergence_canary", case_hash: first.caseHash, task_hash: first.taskHash, repetition: 1, selector_hash: canarySelectorHash(first.slotToken), run_id: null, consumed_at: null };
     const run = { id: "owned-run", run_number: 41, protocol: "v3", protocol_version: 1, compiler_release_sha: input.sourceSha, release_admission_hash: admission.admissionHash, task: loaded.suite.cases[0]!.task };
+    for (const directory of ["evals", "evals/manual-controls", "evals/manual-controls/closures"]) fs.mkdirSync(path.join(root, directory), { mode: 0o700 });
+    const pureUrl = pathToFileURL(path.resolve("src/execution/schemas/manual-control-worker-channel-v1.ts")).href;
     const file = path.join(root, "effects.mjs");
-    fs.writeFileSync(file, `export const facts={claim:${JSON.stringify(claim)},run:${JSON.stringify(run)},admission:${JSON.stringify(admission)},queries:[],bindings:[]};
-export const freshInstallationSelectionV1=Object.freeze({activation:Object.freeze({acknowledged:true,activatedPin:{}}),assertUnchanged(){}});
+    fs.writeFileSync(file, `import fs from 'node:fs';import {ControlWorkerFatalErrorV1} from ${JSON.stringify(pureUrl)};
+const options=${JSON.stringify(options)};
+export const facts={events:[],frames:[],stops:[],unavailable:false,claim:${JSON.stringify(claim)},run:${JSON.stringify(run)},admission:${JSON.stringify(admission)},queries:[],bindings:[]};
+export const freshInstallationSelectionV1=Object.freeze({directory:${JSON.stringify(root)},paths:Object.freeze({root:${JSON.stringify(root)}}),activation:Object.freeze({acknowledged:true,activatedPin:{}}),assertUnchanged(){}});
 export function assertFreshInstallationSelectionUnchangedV1(){}
 export function getSql(){return {async begin(mode,callback){if(mode!=='isolation level repeatable read read only')throw new Error('transaction');return callback({async unsafe(query,args){facts.queries.push({query,args});if(query==='SELECT payload FROM v3_release_admissions WHERE admission_hash=$1'){if(args[0]!==facts.admission.admissionHash)throw new Error('foreign admission');return [{payload:facts.admission}];}if(query.includes('FROM v3_canary_admission_claims WHERE slot_hash=$1')){if(args[0]!==${JSON.stringify(first.slotHash)})throw new Error('foreign slot');return [facts.claim];}if(query.includes('FROM runs WHERE id=$1')){if(args[0]!==facts.claim.run_id)throw new Error('foreign run');return [facts.run];}throw new Error('unexpected query');}});}};}
 export async function bindSelectedManualCanaryV1(value){facts.bindings.push(value);if(${JSON.stringify(mode)}==='bind_refused')throw new Error('bind refused');return {...value.reservation,revision:value.reservation.revision+1};}
 export async function acquireSelectedManualEvaluationV1(){throw new Error('unexpected acquire');}
 export async function registerSelectedManualWorkerCustodyV1(){throw new Error('unexpected register');}
 export async function prepareSelectedDirectEvaluationIntentV1(){throw new Error('unexpected direct');}
-export async function releaseSelectedManualEvaluationV1(){throw new Error('unexpected release');}
-export async function closeSelectedManualWorkerCustodyV1(){throw new Error('unexpected close');}
+export async function buildRunOperationalSnapshot(sql,runId){facts.events.push('snapshot');if(runId!==facts.run.id)throw new Error('foreign snapshot');return {run:{id:runId},summary:{lifecycleState:options.terminal?'terminal':'active'},snapshotHash:'${"e".repeat(64)}'};}
+export const effects={async stopOwnedRun(runId,expectedSnapshotHash){facts.stops.push({runId,expectedSnapshotHash});facts.events.push('stop');if(['stale_stop','denied_stop','terminal_race'].includes(options.failure))throw new Error(options.failure);}};
+export const channel={assertUnchanged(){},cancellation(){return facts.unavailable?{requestId:null,unavailable:true}:null;},async send(frame){facts.frames.push(frame);if(facts.unavailable||frame.type==='final_closed'&&options.failure==='final_frame')throw new ControlWorkerFatalErrorV1('CONTROL_CHANNEL_UNAVAILABLE');return {state:frame.outcome,reportRefs:frame.reportRefs??{}};}};
+export async function releaseSelectedManualEvaluationV1(reservation){facts.events.push('release:'+reservation.revision);if(reservation.revision!==8||['release','live_owner'].includes(options.failure))throw new Error('release refused');}
+export async function closeSelectedManualWorkerCustodyV1(){facts.events.push('close');if(options.failure==='close')throw new Error('close refused');fs.writeFileSync(${JSON.stringify(path.join(root,"evals/manual-controls/closures",input.jobId+".json"))},JSON.stringify({jobId:${JSON.stringify(input.jobId)},intentHash:'${"a".repeat(64)}',owner:${JSON.stringify(owner)}})+'\\n',{mode:0o600,flag:'wx'});if(options.failure==='final_journal')fs.appendFileSync(${JSON.stringify(path.join(root,"manual-control-journals",input.jobId,"records/00000000000000000001.json"))},' ');}
+
 `, { mode: 0o600 });
     const url = pathToFileURL(file).href, fixture = await import(url);
-    const component = await journalComponent({ "../installation/fresh-installation-selection-v1.js": url, "../db-pg.js": url, "./manual-test-admission-v1.js": url });
+    const component = await journalComponent({ "../installation/fresh-installation-selection-v1.js": url, "../db-pg.js": url, "./manual-test-admission-v1.js": url, "../server/run-operational-snapshot.js": url });
     const journal = new component.WorkerJournalV1(root, input.jobId, "a".repeat(64), owner);
     journal.append({ ...acquired, kind: "convergence_full8", suiteHash: loaded.suiteHash, executionMode: "execute" });
-    const execution = new component.WorkerExecutionV1(input, { ...input, revision: 7, phase: "active" }, journal, {}, null);
-    let starts = 0, creates = 0;
-    const ports = { admissions: { createCanary: async () => { creates++; return { contexts }; }, promoteReleaseGo: async () => { } }, process: { startRun: async () => {
+    const execution = new component.WorkerExecutionV1(input, { ...input, revision: 7, phase: "active" }, journal, fixture.effects, options.channel ? fixture.channel : null);
+    let starts = 0, creates = 0, promotions = 0;
+    const ports = { admissions: { createCanary: async () => { creates++; return { contexts }; }, promoteReleaseGo: async () => { promotions++; if (options.failure === "promotion") throw new Error("promotion output lost"); } }, process: { startRun: async () => {
                 starts++;
                 const record = JSON.parse(fs.readFileSync(path.join(root, "manual-control-journals", input.jobId, "records", String(journal.ref().revision).padStart(20, "0") + ".json"), "utf8"));
                 assert.equal(record.event.type, "start_requested");
@@ -187,7 +195,7 @@ export async function closeSelectedManualWorkerCustodyV1(){throw new Error('unex
                     throw new Error("lost output");
                 return { runId: mode === "wrong_response" ? "foreign-run" : "owned-run", runNumber: 41 };
             } } };
-    return { root, input, request, loaded, fixture, journal, execution, wrapped: execution.wrap(loaded, ports), contexts, starts: () => starts, creates: () => creates };
+    return { root, input, request, loaded, fixture, journal, execution, wrapped: execution.wrap(loaded, ports), contexts, starts: () => starts, creates: () => creates, promotions: () => promotions };
 }
 for (const mode of ["success", "lost", "unused", "foreign", "wrong_response", "bind_refused", "foreign_admission"] as const) {
     test(`actual worker wrapper binds all slots once and resolves ${mode} start only from its consumed claim`, async () => {
@@ -251,4 +259,229 @@ test("selected direct orchestration refuses execution mode drift before acquisit
     const run = new Function(...Object.keys(dependencies), body + ";return runSelectedDirectConvergenceV1;")(...Object.values(dependencies));
     await assert.rejects(() => run({ suiteHash: input.suiteHash }, { releaseSha: input.sourceSha, execute: true }, {}), /CONTROL_BINDING_FAILED/);
     assert.equal(acquisitions, 0);
+});
+
+// Isolated filesystem faults wrap only the OS port; these are the actual source
+// pin/journal bodies, with no selection, DB, or compiled-entry authority.
+async function filesystemComponent(fsPort: typeof fs = fs) {
+    const source = fs.readFileSync("src/execution/manual-test-worker-v1.ts", "utf8");
+    const tree = ts.createSourceFile("worker.ts", source, ts.ScriptTarget.ES2022, true);
+    const names = ["same", "parents", "checkParents", "readPin", "checkPin", "syncDirectory", "exclusive", "WorkerJournalV1"];
+    const nodes = tree.statements.filter(n => (ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && names.includes(n.name?.text ?? ""));
+    assert.equal(nodes.length, names.length);
+    const body = ts.transpileModule(nodes.map(n => n.getText(tree)).join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+    const deps = { fs: fsPort, path, process, ...(await import("../../src/execution/schemas/manual-control-worker-channel-v1.js")), ...(await import("../../src/execution/schemas/manual-control-job-v1.js")) };
+    return new Function(...Object.keys(deps), body + ";return {WorkerJournalV1,readPin};")(...Object.values(deps));
+}
+for (const mutation of ["job", "revision", "identical_replacement"] as const) test(`journal fences ${mutation} head swap at publication`, async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "worker-head-swap-")));
+    fs.chmodSync(root, 0o700);
+    let swaps = 0;
+    const port = new Proxy(fs, { get(target, key) {
+        if (key === "renameSync") return (from: string, to: string) => {
+            fs.renameSync(from, to);
+            const bytes = fs.readFileSync(to);
+            if (mutation === "identical_replacement") {
+                fs.writeFileSync(to + ".replacement", bytes, { mode: 0o600, flag: "wx" });
+                fs.renameSync(to + ".replacement", to);
+            } else {
+                const head = JSON.parse(bytes.toString());
+                if (mutation === "job") head.jobId = "22222222-2222-4222-8222-222222222222";
+                else head.revision++;
+                const keys = Object.keys(head).sort();
+                fs.writeFileSync(to, JSON.stringify(head, keys) + "\n");
+            }
+            swaps++;
+        };
+        return Reflect.get(target, key);
+    } });
+    try {
+        const { WorkerJournalV1 } = await filesystemComponent(port);
+        const journal = new WorkerJournalV1(root, "11111111-1111-4111-8111-111111111111", "d".repeat(64), owner);
+        assert.throws(() => journal.append(acquired), /CONTROL_JOURNAL_FAILED/);
+        assert.throws(() => journal.ref(), /CONTROL_JOURNAL_FAILED/);
+        assert.throws(() => journal.append(acquired), /CONTROL_JOURNAL_FAILED/);
+        assert.equal(swaps, 1);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+test("worker private read caps bytes when file grows after descriptor stat", async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "worker-read-growth-")));
+    const file = path.join(root, "record.json"), cap = 65536;
+    fs.writeFileSync(file, "{}\n", { mode: 0o600 });
+    let grown = false, bytesRead = 0;
+    const port = new Proxy(fs, { get(target, key) {
+        if (key === "fstatSync") return (...args: Parameters<typeof fs.fstatSync>) => {
+            const value = fs.fstatSync(...args);
+            if (!grown) { grown = true; fs.appendFileSync(file, Buffer.alloc(cap * 4)); }
+            return value;
+        };
+        if (key === "readFileSync") return (fd: number) => { const value = fs.readFileSync(fd); bytesRead += value.length; return value; };
+        if (key === "readSync") return (...args: any[]) => { const count = (fs.readSync as any)(...args); bytesRead += count; return count; };
+        return Reflect.get(target, key);
+    } });
+    try {
+        const { readPin } = await filesystemComponent(port);
+        assert.throws(() => readPin(file, cap), /file changed/);
+        assert.ok(bytesRead <= cap + 1, `read ${bytesRead} bytes for cap ${cap}`);
+        assert.equal(bytesRead, cap + 1);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const point of ["record_write", "record_fsync", "record_directory_fsync", "head_write", "head_fsync", "rename", "published_directory_fsync"] as const) test(`journal permanently fences ${point} failure and preserves crash residue`, async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "worker-journal-fault-")));
+    fs.chmodSync(root, 0o700);
+    const descriptors = new Map<number, string>();
+    let armed = false, renamed = false, failures = 0;
+    const fault = () => { failures++; throw new Error(`injected ${point}`); };
+    const port = new Proxy(fs, { get(target, key) {
+        if (key === "openSync") return (...args: any[]) => { const fd = (fs.openSync as any)(...args); descriptors.set(fd, String(args[0])); return fd; };
+        if (key === "closeSync") return (fd: number) => { descriptors.delete(fd); fs.closeSync(fd); };
+        if (key === "writeFileSync") return (fd: number, bytes: Uint8Array) => {
+            const name = descriptors.get(fd)!;
+            if (armed && ((point === "record_write" && name.endsWith("00000000000000000001.json")) || (point === "head_write" && name.endsWith("head.next.json")))) {
+                fs.writeSync(fd, bytes.subarray(0, 3)); fault();
+            }
+            fs.writeFileSync(fd, bytes);
+        };
+        if (key === "fsyncSync") return (fd: number) => {
+            const name = descriptors.get(fd)!;
+            if (armed && ((point === "record_fsync" && name.endsWith("00000000000000000001.json")) || (point === "record_directory_fsync" && name.endsWith("/records")) || (point === "head_fsync" && name.endsWith("head.next.json")) || (point === "published_directory_fsync" && renamed && name.endsWith("11111111-1111-4111-8111-111111111111")))) fault();
+            fs.fsyncSync(fd);
+        };
+        if (key === "renameSync") return (from: string, to: string) => { if (armed && point === "rename") fault(); fs.renameSync(from, to); renamed = true; };
+        return Reflect.get(target, key);
+    } });
+    try {
+        const { WorkerJournalV1 } = await filesystemComponent(port);
+        const job = "11111111-1111-4111-8111-111111111111", journal = new WorkerJournalV1(root, job, "d".repeat(64), owner);
+        armed = true;
+        assert.throws(() => journal.append(acquired), /CONTROL_JOURNAL_FAILED/);
+        assert.equal(failures, 1);
+        const directory = path.join(root, "manual-control-journals", job);
+        const before = fs.readdirSync(directory, { recursive: true });
+        assert.throws(() => journal.append(acquired), /CONTROL_JOURNAL_FAILED/);
+        assert.throws(() => journal.ref(), /CONTROL_JOURNAL_FAILED/);
+        assert.throws(() => new WorkerJournalV1(root, job, "d".repeat(64), owner), /CONTROL_JOURNAL_FAILED/);
+        assert.deepEqual(fs.readdirSync(directory, { recursive: true }), before);
+        assert.equal(failures, 1);
+        assert.equal(descriptors.size, 0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+test("journal refuses record 1025 without writing or adopting a new head", async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "worker-journal-cap-")));
+    fs.chmodSync(root, 0o700);
+    try {
+        const { WorkerJournalV1 } = await filesystemComponent();
+        const job = "11111111-1111-4111-8111-111111111111", journal = new WorkerJournalV1(root, job, "d".repeat(64), owner);
+        journal.append(acquired);
+        for (let i = 1; i < 1024; i++) journal.append({ type: "phase", phase: "preflight", currentCaseId: null, completedCases: 0 });
+        assert.equal(journal.ref().revision, 1024);
+        const directory = path.join(root, "manual-control-journals", job), before = fs.readFileSync(path.join(directory, "head.json"));
+        assert.throws(() => journal.append({ type: "phase", phase: "preflight", currentCaseId: null, completedCases: 0 }), /CONTROL_JOURNAL_FAILED/);
+        assert.equal(fs.readdirSync(path.join(directory, "records")).length, 1024);
+        assert.deepEqual(fs.readFileSync(path.join(directory, "head.json")), before);
+        assert.throws(() => journal.ref(), /CONTROL_JOURNAL_FAILED/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+async function startBound(h: Awaited<ReturnType<typeof wrappedStartComponent>>) {
+    const created = await h.wrapped.admissions.createCanary(h.request);
+    const run = await h.wrapped.process.startRun({ workflowId: h.loaded.suite.workflowId, task: h.loaded.suite.cases[0]!.task, releaseSha: h.input.sourceSha, admission: created.contexts[0] });
+    const { caseHash, taskHash, repetition } = created.contexts[0];
+    return { ...run, caseId: h.loaded.suite.cases[0]!.caseId, caseHash, taskHash, repetition };
+}
+for (const failure of [undefined, "stale_stop", "denied_stop", "terminal_race"]) test(`actual bound stop adapter ${failure ?? "requests exact fresh snapshot"} without retry`, async () => {
+    const h = await wrappedStartComponent("success", { failure });
+    try {
+        const run = await startBound(h);
+        assert.equal(await h.execution.control.requestOwnedRunStop(run), failure ? "refused" : "requested");
+        assert.deepEqual(h.fixture.facts.stops, [{ runId: "owned-run", expectedSnapshotHash: "e".repeat(64) }]);
+        await assert.rejects(() => h.execution.control.requestOwnedRunStop(run), /CONTROL_SETTLEMENT_UNCERTAIN/);
+        assert.equal(h.fixture.facts.stops.length, 1);
+        assert.equal(h.fixture.facts.events.some((v: string) => v.startsWith("release") || v === "close"), false);
+        assert.deepEqual(h.fixture.facts.frames, []);
+    } finally { fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+test("terminal stop snapshot avoids stop action but live-owner release refusal retains custody", async () => {
+    const h = await wrappedStartComponent("success", { terminal: true, failure: "live_owner", channel: true });
+    try {
+        const run = await startBound(h);
+        assert.equal(await h.execution.control.requestOwnedRunStop(run), "already_terminal");
+        assert.deepEqual(h.fixture.facts.stops, []);
+        await assert.rejects(() => h.execution.finish({}, "cancelled", "a".repeat(64), owner), /CONTROL_SETTLEMENT_UNCERTAIN/);
+        assert.deepEqual(h.fixture.facts.events, ["snapshot", "release:8"]);
+        assert.equal(h.fixture.facts.frames.some((v: any) => v.type === "final_closed"), false);
+    } finally { fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+for (const failure of [undefined, "release", "close", "final_journal", "final_frame"]) test(`actual finish adapter ${failure ?? "releases latest reservation and closes"} publishes no premature refs`, async () => {
+    const h = await wrappedStartComponent("success", { failure, channel: true });
+    try {
+        await h.wrapped.admissions.createCanary(h.request);
+        const refs = { resultHash: "b".repeat(64), gateHash: "c".repeat(64) };
+        const finish = () => h.execution.finish(refs, "completed", "a".repeat(64), owner);
+        if (failure) await assert.rejects(finish, failure === "release" ? /CONTROL_SETTLEMENT_UNCERTAIN/ : failure === "close" ? /close refused/ : failure === "final_journal" ? /CONTROL_JOURNAL_FAILED/ : /CONTROL_CHANNEL_UNAVAILABLE/);
+        else assert.deepEqual((await finish()).reportRefs, refs);
+        assert.deepEqual(h.fixture.facts.events, failure === "release" ? ["release:8"] : ["release:8", "close"]);
+        const finals = h.fixture.facts.frames.filter((v: any) => v.type === "final_closed");
+        assert.equal(finals.length, failure && failure !== "final_frame" ? 0 : 1);
+        assert.ok(h.fixture.facts.frames.filter((v: any) => v.type !== "final_closed").every((v: any) => v.reportRefs === undefined));
+        if (finals.length) assert.deepEqual(finals[0].reportRefs, refs);
+        assert.equal(h.starts(), 0);
+    } finally { fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+test("healthy-journal active disconnect latches cancellation, stops exact owned run and settles despite final ACK loss", async () => {
+    const h = await wrappedStartComponent("success", { channel: true });
+    try {
+        const run = await startBound(h);
+        h.fixture.facts.unavailable = true;
+        await h.execution.control.onPhase({ phase: "case_running", currentCaseId: run.caseId, completedCases: 0 });
+        assert.equal(await h.execution.control.cancellationRequested(), true);
+        assert.equal(await h.execution.control.requestOwnedRunStop(run), "requested");
+        assert.equal(await h.execution.control.beforeFinalization({ resultHash: "b".repeat(64), gateHash: "c".repeat(64), gateDecision: "no_go" }), "cancel");
+        await assert.rejects(() => h.execution.finish({}, "cancelled", "a".repeat(64), owner), /CONTROL_CHANNEL_UNAVAILABLE/);
+        assert.deepEqual(h.fixture.facts.events, ["snapshot", "stop", "release:8", "close"]);
+        assert.equal(h.starts(), 1);
+        const records = fs.readdirSync(path.join(h.root, "manual-control-journals", h.input.jobId, "records")).map(name => JSON.parse(fs.readFileSync(path.join(h.root, "manual-control-journals", h.input.jobId, "records", name), "utf8")));
+        assert.deepEqual(records.filter(v => v.event.type === "cancel_latched").map(v => v.event.source), ["channel_lost"]);
+        assert.equal(records.at(-1).event.type, "closed");
+        assert.deepEqual(h.fixture.facts.frames.map((v: any) => v.type), ["final_closed"]);
+    } finally { fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+test("uncertain journal prevents new start, artifact publication and finalization", async () => {
+    const h = await wrappedStartComponent("success");
+    try {
+        const created = await h.wrapped.admissions.createCanary(h.request);
+        fs.appendFileSync(path.join(h.root, "manual-control-journals", h.input.jobId, "records/00000000000000000001.json"), " ");
+        await assert.rejects(() => h.wrapped.process.startRun({ workflowId: h.loaded.suite.workflowId, task: h.loaded.suite.cases[0]!.task, releaseSha: h.input.sourceSha, admission: created.contexts[0] }), /CONTROL_JOURNAL_FAILED/);
+        await assert.rejects(() => h.execution.control.onPublication({ stage: "candidate", resultHash: "b".repeat(64), gateHash: "c".repeat(64) }), /CONTROL_JOURNAL_FAILED/);
+        await assert.rejects(() => h.execution.control.beforeFinalization({ resultHash: "b".repeat(64), gateHash: "c".repeat(64), gateDecision: "go" }), /CONTROL_JOURNAL_FAILED/);
+        assert.equal(h.starts(), 0);
+        assert.deepEqual(h.fixture.facts.events, []);
+    } finally { fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+
+test("worker promotion uncertainty is fatal and cannot be retried or publish final refs", async () => {
+    const h = await wrappedStartComponent("success", { failure: "promotion", channel: true });
+    try {
+        const refs = { resultHash: "b".repeat(64), gateHash: "c".repeat(64) };
+        await h.execution.control.onPublication({ stage: "candidate", ...refs, resultStatus: "pass", gateDecision: "go" });
+        assert.equal(await h.execution.control.beforeFinalization({ ...refs, gateDecision: "go" }), "continue");
+        const call = () => h.wrapped.admissions.promoteReleaseGo({ releaseSha: h.input.sourceSha, suiteHash: h.input.suiteHash, ...refs, resultRef: "/immutable/result", gateRef: "/immutable/gate" });
+        await assert.rejects(call, /CONTROL_PROMOTION_UNCERTAIN/);
+        await assert.rejects(call, /CONTROL_PROMOTION_UNCERTAIN/);
+        assert.equal(h.promotions(), 1);
+        assert.deepEqual(h.fixture.facts.events, []);
+        assert.deepEqual(h.fixture.facts.frames, []);
+    } finally { fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+
+for (const cap of [1024, 32768, 65536]) test(`private pin accepts exactly ${cap} bytes and refuses cap plus one`, async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "worker-byte-cap-"))), file = path.join(root, "bounded");
+    try {
+        const { readPin } = await filesystemComponent();
+        fs.writeFileSync(file, Buffer.alloc(cap, 65), { mode: 0o600 });
+        assert.equal(readPin(file, cap).bytes.length, cap);
+        fs.appendFileSync(file, "x");
+        assert.throws(() => readPin(file, cap), /unsafe file/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

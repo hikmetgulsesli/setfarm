@@ -1551,3 +1551,23 @@ describe("manual control polling and fatal boundaries",()=>{
     assert.equal(syncs,1);assert.equal(h.starts(),1);assert.equal(output.result.status,"blocked");
   });
 });
+
+for (const failure of ["promotion", "confirmed_journal", "cancelled_result", "cancelled_gate"] as const) it(`manual final publication ${failure} uncertainty never retries or returns a final pair`, async () => {
+  const loaded=await suite(), h=harness(loaded), publications:string[]=[];
+  let promotions=0, afterBoundary=false, writesAfterBoundary=0;
+  const put=h.ports.artifacts.put;
+  h.ports.artifacts.put=async value=>{if(afterBoundary && failure.startsWith("cancelled_")){writesAfterBoundary++;if(writesAfterBoundary===(failure==="cancelled_result"?1:2))throw new Error("final storage uncertain");}return put(value);};
+  h.ports.admissions.promoteReleaseGo=async()=>{promotions++;if(failure==="promotion")throw new Error("promotion output uncertain");};
+  const {ControlWorkerFatalErrorV1}=await import("../../src/execution/schemas/manual-control-worker-channel-v1.js");
+  await assert.rejects(()=>runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness({beforeFinalization:async()=>{afterBoundary=true;return failure.startsWith("cancelled_")?"cancel":"continue";},onPublication:async value=>{publications.push(value.stage);if(failure==="confirmed_journal"&&value.stage==="promotion_confirmed")throw new ControlWorkerFatalErrorV1("CONTROL_JOURNAL_FAILED");}})},h.ports), /uncertain|CONTROL_JOURNAL_FAILED/);
+  assert.equal(promotions,failure.startsWith("cancelled_")?0:1);
+  assert.deepEqual(publications,failure==="confirmed_journal"?["candidate","promotion_confirmed"]:["candidate"]);
+  assert.equal(h.starts(),8);
+});
+it("refused canonical owned stop escapes evaluator without final artifacts or promotion",async()=>{
+  const loaded=await suite(),h=harness(loaded);let polls=0,stops=0;
+  const read=h.ports.sql.readRun;
+  h.ports.sql.readRun=async id=>{polls++;return {...await read(id),status:"running",terminal:false};};
+  await assert.rejects(()=>runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness({cancellationRequested:async()=>polls>0,requestOwnedRunStop:async()=>{stops++;return "refused";}})},h.ports),/CONTROL_SETTLEMENT_UNCERTAIN/);
+  assert.equal(stops,1);assert.equal(h.starts(),1);assert.equal(h.promotions.length,0);assert.equal(h.artifacts.length,0);
+});

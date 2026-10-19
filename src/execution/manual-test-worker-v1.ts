@@ -61,7 +61,14 @@ function readPin(locator: string, cap: number): FilePin {
     try {
         if (!same(stat, fs.fstatSync(fd, { bigint: true }), true))
             throw new Error("file changed");
-        const bytes = fs.readFileSync(fd);
+        const buffer = Buffer.alloc(cap + 1);
+        let length = 0;
+        while (length < buffer.length) {
+            const count = fs.readSync(fd, buffer, length, buffer.length - length, null);
+            if (count === 0) break;
+            length += count;
+        }
+        const bytes = buffer.subarray(0, length);
         if (bytes.length > cap || !same(stat, fs.fstatSync(fd, { bigint: true }), true) || !same(stat, fs.lstatSync(locator, { bigint: true }), true))
             throw new Error("file changed");
         return { locator, stat, bytes };
@@ -155,8 +162,11 @@ class WorkerJournalV1 {
                 if (hashWorkerJournalRecordV1(parseWorkerJournalRecordV1(this.tail.bytes)) !== this.current?.hash)
                     throw new Error("tail changed");
             }
-            if (this.head && parseWorkerJournalHeadV1(this.head.bytes).recordHash !== this.current?.hash)
-                throw new Error("head changed");
+            if (this.head) {
+                const head = parseWorkerJournalHeadV1(this.head.bytes);
+                if (head.jobId !== this.jobId || head.revision !== this.current?.revision || head.recordHash !== this.current?.hash)
+                    throw new Error("head changed");
+            }
         }
         catch {
             this.failed = true;
@@ -176,9 +186,14 @@ class WorkerJournalV1 {
             checkPin(next, 1024);
             fs.renameSync(next.locator, path.join(this.directory, "head.json"));
             syncDirectory(this.directory);
+            const published = readPin(path.join(this.directory, "head.json"), 1024);
+            // Rename may change ctime, but must preserve the exact opened file,
+            // its content and all other immutable metadata. Never adopt a new head.
+            if (!same(next.stat, published.stat) || next.stat.nlink !== published.stat.nlink || next.stat.size !== published.stat.size || next.stat.mtimeNs !== published.stat.mtimeNs || !next.bytes.equals(published.bytes))
+                throw new Error("published head changed");
             this.records.push(tail);
             this.tail = tail;
-            this.head = readPin(path.join(this.directory, "head.json"), 1024);
+            this.head = published;
             this.current = Object.freeze({ revision, hash });
             this.validate();
             return this.current;
@@ -324,8 +339,21 @@ class WorkerExecutionV1 {
     }
     wrap(loaded: LoadedConvergenceSuiteVersioned, ports: ConvergenceRunnerPorts): ConvergenceRunnerPorts {
         const create = ports.admissions.createCanary.bind(ports.admissions), start = ports.process.startRun.bind(ports.process);
-        let creationAttempted = false;
-        return { ...ports, admissions: { ...ports.admissions, createCanary: async (input) => {
+        let creationAttempted = false, promotionAttempted = false;
+        return { ...ports, admissions: { ...ports.admissions, promoteReleaseGo: async (input) => {
+                    this.assert();
+                    if (promotionAttempted)
+                        throw new ControlWorkerFatalErrorV1("CONTROL_PROMOTION_UNCERTAIN");
+                    promotionAttempted = true;
+                    try {
+                        // No await before the canonical promotion call: the runner
+                        // has just committed its final cooperative decision.
+                        await ports.admissions.promoteReleaseGo(input);
+                    }
+                    catch {
+                        throw new ControlWorkerFatalErrorV1("CONTROL_PROMOTION_UNCERTAIN");
+                    }
+                }, createCanary: async (input) => {
                     this.assert();
                     if (creationAttempted || await this.cancel())
                         throw new ControlWorkerFatalErrorV1("CONTROL_BINDING_FAILED");

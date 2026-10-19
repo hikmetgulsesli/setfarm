@@ -37,7 +37,14 @@ function pinIntent(locator: string, root: string): PrivatePin {
     try {
         if (!same(before, fs.fstatSync(fd, { bigint: true }), true))
             fail();
-        const bytes = fs.readFileSync(fd);
+        const buffer = Buffer.alloc(32769);
+        let length = 0;
+        while (length < buffer.length) {
+            const count = fs.readSync(fd, buffer, length, buffer.length - length, null);
+            if (count === 0) break;
+            length += count;
+        }
+        const bytes = buffer.subarray(0, length);
         if (bytes.length > 32768 || !same(before, fs.fstatSync(fd, { bigint: true }), true) || !same(before, fs.lstatSync(locator, { bigint: true }), true))
             fail();
         for (const p of parents)
@@ -140,6 +147,7 @@ export async function acceptSelectedManualWorkerChannelV1(): Promise<Readonly<{
     };
     let binding: WorkerChannelBindingV1 | null = null, custody: ControlWorkerCustodyV1 | null = null;
     let brokerSequence = 0, workerSequence = 0, lastReceiptRevision = intent.receipt.revision;
+    let lastReceipt = intent.receipt;
     let cancellation: Readonly<{
         requestId: string | null;
         unavailable: boolean;
@@ -190,6 +198,7 @@ export async function acceptSelectedManualWorkerChannelV1(): Promise<Readonly<{
                 if (frame.body.acceptedReceiptRevision <= lastReceiptRevision)
                     fail();
                 cancellation = { requestId: frame.body.requestId, unavailable: false };
+                lastReceiptRevision = frame.body.acceptedReceiptRevision;
                 return;
             }
             if (frame.body.type !== "ack" || !outstanding)
@@ -201,27 +210,40 @@ export async function acceptSelectedManualWorkerChannelV1(): Promise<Readonly<{
             for (const key of ["jobId", "kind", "selectionHash", "sourceSha", "mcSourceSha", "mcBuildHash", "suiteHash", "requestedAt", "plannedCases"] as const)
                 if (receipt[key] !== initial[key])
                     fail();
-            if (cancellation && !receipt.cancelRequested)
+            if ((cancellation || lastReceipt.cancelRequested) && !receipt.cancelRequested)
                 fail();
             const acceptedBody = outstanding.frame.body;
+            if (receipt.updatedAt < lastReceipt.updatedAt || receipt.updatedAt < receipt.requestedAt ||
+                (receipt.startedAt !== null && (receipt.startedAt < receipt.requestedAt || receipt.startedAt > receipt.updatedAt)) ||
+                (lastReceipt.startedAt !== null && receipt.startedAt !== lastReceipt.startedAt))
+                fail();
             if (acceptedBody.type !== "final_closed" && (receipt.finishedAt !== null || Object.keys(receipt.reportRefs).length !== 0))
                 fail();
             if (acceptedBody.type === "final_closed") {
-                if (receipt.finishedAt === null || receipt.state !== acceptedBody.outcome || receipt.completedCases !== acceptedBody.completedCases)
+                if (receipt.finishedAt === null || receipt.finishedAt < (receipt.startedAt ?? receipt.requestedAt) || receipt.finishedAt > receipt.updatedAt || receipt.startedAt !== lastReceipt.startedAt || receipt.state !== acceptedBody.outcome || receipt.code !== acceptedBody.code || receipt.phase !== "closed" || receipt.currentCaseId !== null || receipt.ownedRunId !== null || receipt.completedCases !== acceptedBody.completedCases)
                     fail();
                 for (const key of ["activationHash", "resultHash", "gateHash", "uiReportHash"] as const)
                     if (receipt.reportRefs[key] !== acceptedBody.reportRefs[key])
                         fail();
             }
             else if (acceptedBody.type === "progress") {
-                if (!["starting", "running", "cancelling"].includes(receipt.state) || receipt.phase !== acceptedBody.phase || receipt.completedCases !== acceptedBody.completedCases || receipt.currentCaseId !== acceptedBody.currentCaseId || receipt.ownedRunId !== acceptedBody.ownedRunId)
+                if (receipt.state !== (receipt.cancelRequested ? "cancelling" : "running") || (acceptedBody.phase === "acquired" ? receipt.startedAt === null : receipt.startedAt !== lastReceipt.startedAt) || receipt.code !== acceptedBody.code || receipt.phase !== acceptedBody.phase || receipt.completedCases !== acceptedBody.completedCases || receipt.currentCaseId !== acceptedBody.currentCaseId || receipt.ownedRunId !== acceptedBody.ownedRunId)
                     fail();
             }
             else if (acceptedBody.type === "ready") {
-                if (!["starting", "cancelling"].includes(receipt.state) || receipt.phase !== "starting" || receipt.completedCases !== 0 || receipt.currentCaseId !== null || receipt.ownedRunId !== null)
+                if (receipt.state !== (receipt.cancelRequested ? "cancelling" : "starting") || receipt.startedAt !== null || receipt.phase !== "starting" || receipt.completedCases !== 0 || receipt.currentCaseId !== null || receipt.ownedRunId !== null)
+                    fail();
+            }
+            else if (acceptedBody.type === "cancel_observed") {
+                if (!receipt.cancelRequested || receipt.state !== "cancelling" || receipt.code !== (acceptedBody.effective === "after_boundary" ? "CONTROL_CANCEL_TOO_LATE" : "CONTROL_CANCEL_REQUESTED") || receipt.phase !== lastReceipt.phase || receipt.startedAt !== lastReceipt.startedAt || receipt.completedCases !== lastReceipt.completedCases || receipt.currentCaseId !== lastReceipt.currentCaseId || receipt.ownedRunId !== lastReceipt.ownedRunId)
+                    fail();
+            }
+            else if (acceptedBody.type === "fault") {
+                if (receipt.state !== "ownership_unknown" || receipt.phase !== "ownership_unknown" || receipt.code !== acceptedBody.code || receipt.startedAt !== lastReceipt.startedAt || receipt.completedCases !== lastReceipt.completedCases || receipt.currentCaseId !== lastReceipt.currentCaseId || receipt.ownedRunId !== lastReceipt.ownedRunId)
                     fail();
             }
             lastReceiptRevision = ack.receiptRevision;
+            lastReceipt = freezePrivate(receipt);
             outstanding.resolve(receipt);
             outstanding = null;
         }
