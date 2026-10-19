@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import ts from "typescript";
 import { test } from "node:test";
+import { z } from "zod";
 
 // These tests stay on the raw runner: parsing must not open a database,
 // inspect private operational material, or create a selected runtime root.
@@ -215,4 +216,57 @@ test("process census refuses malformed rows and retains descendants or orphan gr
   assert.equal(hasOwnedChildrenV1(parseProcessTableV1(one + "124 123 124 /fixed/child\n125 124 125 /fixed/grandchild\n"), owner), true);
   assert.equal(hasOwnedChildrenV1(parseProcessTableV1(one + "126 1 123 /fixed/orphan\n"), owner), true);
   for (const text of ["bad\n", one + one, "0 1 2 bad\n", "123 -1 123 bad\n"]) assert.throws(() => parseProcessTableV1(text));
+});
+
+
+function privateClosureComponent() {
+  const source = fs.readFileSync(new URL("../../src/execution/manual-test-admission-v1.ts", import.meta.url), "utf8");
+  const tree = ts.createSourceFile("manual.ts", source, ts.ScriptTarget.Latest, true);
+  const names = ["Hash", "AcquireSchema", "OwnerSchema", "ClosureSchema", "refuseV1", "beginCustodyOperationV1"];
+  const declarations = names.map(name => {
+    const node = tree.statements.find(statement => (ts.isFunctionDeclaration(statement) && statement.name?.text === name)
+      || (ts.isVariableStatement(statement) && statement.declarationList.declarations.some(declaration => declaration.name.getText(tree) === name)));
+    assert.ok(node, `complete production ${name} required`); return node.getText(tree);
+  }).join("\n");
+  const compiled = ts.transpileModule(declarations, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  return new Function("z", "path", `${compiled};return {ClosureSchema,beginCustodyOperationV1};`)(z, path);
+}
+
+test("private closure binds exact intent owner mode and released archive without accepting public outcome authority", () => {
+  const { ClosureSchema } = privateClosureComponent();
+  const marker = { schema: "setfarm.manual-control-custody-closed.v1", jobId: JOB_ID, kind: "convergence_full8",
+    selectionHash: HASH, sourceSha: SOURCE, suiteHash: HASH, executionMode: "execute", intentOrigin: "mission_control",
+    intentHash: HASH, nonceDigest: HASH, owner: { pid: 123, processStartedAt: "2026-10-19T00:00:00.000Z", processGroupId: 123,
+      source: "observed_os", executable: "/fixed/node", script: "/fixed/worker.js", commandHash: HASH }, closure: { kind: "never_reserved" } };
+  assert.equal(ClosureSchema.safeParse(marker).success, true);
+  assert.equal(ClosureSchema.safeParse({ ...marker, closure: { kind: "reservation_released", revision: 2, recordHash: HASH } }).success, true);
+  for (const changed of [{ nonce: "private" }, { outcome: "go" }, { kind: "ui_regression" }, { suiteHash: null },
+    { closure: { kind: "never_reserved", revision: 2, recordHash: HASH } },
+    { closure: { kind: "reservation_released", revision: 0, recordHash: HASH } },
+    { closure: { kind: "reservation_released", revision: 2 } },
+    { owner: { ...marker.owner, source: "tracked_child" } }, { owner: { ...marker.owner, commandHash: undefined } },
+    { owner: { ...marker.owner, executable: "/fixed/../node" } }, { owner: { ...marker.owner, processStartedAt: "invalid" } },
+    { kind: "activation_preflight", suiteHash: null, executionMode: "execute" }]) {
+    assert.equal(ClosureSchema.safeParse({ ...marker, ...changed }).success, false);
+  }
+});
+
+test("custody lifecycle serializes in-flight work and refuses reuse after uncertain release or closure", () => {
+  const { beginCustodyOperationV1 } = privateClosureComponent();
+  for (const lifecycle of ["acquiring", "binding", "releasing", "closing", "closed", "uncertain"]) {
+    const custody = { lifecycle, publicationAttempted: false, held: null, released: null };
+    for (const operation of ["acquiring", "binding", "releasing", "closing"]) assert.throws(() => beginCustodyOperationV1(custody, operation));
+    assert.equal(custody.lifecycle, lifecycle);
+  }
+  const custody = { lifecycle: "ready", publicationAttempted: false, held: null, released: null };
+  beginCustodyOperationV1(custody, "acquiring");
+  assert.equal(custody.lifecycle, "acquiring");
+  assert.throws(() => beginCustodyOperationV1(custody, "closing"));
+  assert.throws(() => beginCustodyOperationV1({ lifecycle: "ready", publicationAttempted: true, held: null, released: null }, "acquiring"));
+});
+
+test("zero-argument closure refuses a source process without established private custody", async () => {
+  const api = await import("../../src/execution/manual-test-admission-v1.js");
+  assert.equal(typeof api.closeSelectedManualWorkerCustodyV1, "function");
+  await assert.rejects(() => api.closeSelectedManualWorkerCustodyV1(), /MANUAL_EVALUATION/);
 });

@@ -737,11 +737,12 @@ async function persistRecoverySourceBootstrapRunInTransactionV1(
   sql: PgTransactionSql,
   candidate: RecoverySourceBootstrapRunCandidateV1,
 ): Promise<PersistInternalProductionRecoverySourceBootstrapRunResultV1> {
+  await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+  await assertNoSelectedManualRecoveryInsertionV1(sql);
   const authority = await lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1(
     sql,
     candidate.operation,
   );
-  await assertNoSelectedManualRecoveryInsertionV1(sql);
   if (
     authority.runId !== candidate.runId
     || authority.operationRef !== candidate.operation.operationRef

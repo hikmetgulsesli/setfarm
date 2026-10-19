@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
-import { pgBegin, lockInternalProductionWorkflowRunInsertionFenceV1, type PgTransactionSql } from "../db-pg.js";
+import { pgBegin, lockInternalProductionWorkflowRunInsertionFenceV1, resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1, resolveInternalProductionOwnerReservationCloseInTransactionV1, type PgTransactionSql } from "../db-pg.js";
 import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { deriveInternalProductionTerminalOwnerAuthorityPairV1 } from "../internal-production/owner-admission-v1.js";
 import { requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "../findings/finding-publication-v1.js";
 import { loadConvergenceSuite } from "../evals/suite-schema.js";
 import { V3ReleaseAdmissionV1Schema, canarySelectorHash } from "./v3-release-admission.js";
@@ -16,15 +17,30 @@ import type { PersistWorkflowRunInputV1 } from "./run-persistence.js";
 import { ControlPrivateIntentV1Schema, ControlWorkerCustodyV1Schema, hashControlSelectionIdentityV1, type ControlWorkerCustodyV1 } from "./schemas/manual-control-job-v1.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/);
-const AcquireSchema = z.object({ jobId: z.string().uuid(), kind: z.enum(["activation_preflight", "convergence_full8"]),
+const AcquireSchema = z.object({ jobId: z.string().uuid().refine(value => value === value.toLowerCase()), kind: z.enum(["activation_preflight", "convergence_full8"]),
   selectionHash: Hash, sourceSha: z.string().regex(/^[a-f0-9]{40}$/), suiteHash: Hash.nullable() }).strict();
 const ReservationSchema = AcquireSchema.extend({ revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   phase: z.enum(["pending", "active", "cancelling", "ownership_unknown", "released"]) }).strict();
 export type ManualEvaluationReservationV1 = Readonly<z.infer<typeof ReservationSchema>>;
 const SlotSchema = z.object({ admissionHash: Hash, slotHash: Hash, caseHash: Hash, taskHash: Hash, repetition: z.literal(1) }).strict();
-export type BoundCanarySlotV1 = Readonly<z.infer<typeof SlotSchema>>;
-const OwnerSchema = z.object({ pid: z.number().int().positive(), processStartedAt: z.string().datetime(),
-  processGroupId: z.number().int().positive(), source: z.literal("observed_os"), executable: z.string().min(1), script: z.string().min(1), commandHash: Hash }).strict();
+export type BoundCanarySlotV1 = Readonly<Omit<z.infer<typeof SlotSchema>, "repetition"> & { repetition: number }>;
+const OwnerSchema = z.object({ pid: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  processStartedAt: z.string().datetime().refine(value => Number.isFinite(new Date(value).getTime()) && new Date(value).toISOString() === value),
+  processGroupId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), source: z.literal("observed_os"),
+  executable: z.string().min(1).max(4096).refine(value => path.isAbsolute(value) && path.normalize(value) === value && !/[\u0000-\u001f\u007f]/.test(value)),
+  script: z.string().min(1).max(4096).refine(value => path.isAbsolute(value) && path.normalize(value) === value && !/[\u0000-\u001f\u007f]/.test(value)), commandHash: Hash }).strict();
+const ClosureSchema = AcquireSchema.extend({ schema: z.literal("setfarm.manual-control-custody-closed.v1"),
+  executionMode: z.enum(["preflight", "execute"]), intentOrigin: z.enum(["mission_control", "direct"]),
+  intentHash: Hash, nonceDigest: Hash, owner: OwnerSchema,
+  closure: z.discriminatedUnion("kind", [z.object({ kind: z.literal("never_reserved") }).strict(),
+    z.object({ kind: z.literal("reservation_released"), revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), recordHash: Hash }).strict()]),
+}).strict().superRefine((value, context) => {
+  if ((value.kind === "convergence_full8") !== (value.suiteHash !== null)
+    || (value.kind === "activation_preflight" && (value.executionMode !== "preflight" || value.intentOrigin !== "mission_control"))) {
+    context.addIssue({ code: "custom", message: "Closure recipe identity mismatch" });
+  }
+});
+type ClosureV1 = z.infer<typeof ClosureSchema>;
 type Owner = Readonly<z.infer<typeof OwnerSchema>>;
 const RecordSchema = z.object({ schema: z.literal("setfarm.manual-evaluation-record.v1"), reservation: ReservationSchema,
   owner: OwnerSchema, intentHash: Hash, nonceDigest: Hash, admissionHash: Hash.nullable(), slots: z.array(SlotSchema).max(8),
@@ -32,7 +48,7 @@ const RecordSchema = z.object({ schema: z.literal("setfarm.manual-evaluation-rec
 type RecordV1 = z.infer<typeof RecordSchema>;
 type ParentPin = { locator: string; stat: fs.BigIntStats };
 type FilePin = { locator: string; bytes: Buffer; stat: fs.BigIntStats; parents: ParentPin[] };
-type Custody = { input: z.infer<typeof AcquireSchema>; owner: Owner; intent: FilePin; nonceDigest: string; executionMode: "preflight" | "execute" };
+type Custody = { origin: "mission_control" | "direct"; lifecycle: "ready" | "acquiring" | "binding" | "releasing" | "closing" | "closed" | "uncertain"; publicationAttempted: boolean; held: ManualEvaluationReservationV1 | null; released: FilePin | null; closure: FilePin | null; input: z.infer<typeof AcquireSchema>; owner: Owner; intent: FilePin; nonceDigest: string; executionMode: "preflight" | "execute" };
 const custodies = new Map<string, Custody>();
 const observedPins = new WeakMap<ManualEvaluationReservationV1, FilePin>();
 const SUITE = "evals/suites/product-convergence-codex-v1.json";
@@ -165,14 +181,43 @@ async function suiteV1(): Promise<string> {
     || loaded.suite.timeout.runMs !== 21600000 || loaded.suite.timeout.pollMs !== 15000) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
   selected.assertUnchanged(); return loaded.suiteHash;
 }
-function assertCustodyV1(input: z.infer<typeof AcquireSchema>): Custody {
-  const context = selectionV1(), custody = custodies.get(input.jobId);
-  if (!custody || hashCanonicalJson(input) !== hashCanonicalJson(custody.input)
-    || input.selectionHash !== context.selectionHash || input.sourceSha !== context.selected.state.origin.sourceSha) refuseV1("MANUAL_EVALUATION_CUSTODY_REQUIRED");
+function verifyCustodyV1(custody: Custody): Custody {
+  const context = selectionV1(), input = custody.input;
+  if (custodies.get(input.jobId) !== custody || input.selectionHash !== context.selectionHash
+    || input.sourceSha !== context.selected.state.origin.sourceSha) refuseV1("MANUAL_EVALUATION_CUSTODY_REQUIRED");
   stableV1(custody.intent, context.selected.directory);
   assertFreshInstallationOperationalEntryV1();
   if (!sameOwnerV1(custody.owner, processOwnerV1(process.pid, custody.owner.script, custody.owner.executable))) refuseV1();
-  return custody;
+  context.selected.assertUnchanged(); return custody;
+}
+function assertCustodyV1(input: z.infer<typeof AcquireSchema>): Custody {
+  const custody = custodies.get(input.jobId);
+  if (!custody || hashCanonicalJson(input) !== hashCanonicalJson(custody.input)
+    || custody.lifecycle === "closed" || custody.lifecycle === "uncertain") refuseV1("MANUAL_EVALUATION_CUSTODY_REQUIRED");
+  return verifyCustodyV1(custody);
+}
+function beginCustodyOperationV1(custody: Custody, operation: "acquiring" | "binding" | "releasing" | "closing"): void {
+  if (custody.lifecycle !== "ready") refuseV1("MANUAL_EVALUATION_CUSTODY_BUSY");
+  if (operation === "acquiring" && (custody.publicationAttempted || custody.held || custody.released)) refuseV1("MANUAL_EVALUATION_RESERVED");
+  if ((operation === "binding" || operation === "releasing") && (!custody.held || custody.released)) refuseV1("MANUAL_EVALUATION_REVISION_CONFLICT");
+  if (operation === "closing" && (custody.publicationAttempted || custody.held) && !custody.released) refuseV1("MANUAL_EVALUATION_RELEASE_REQUIRED");
+  custody.lifecycle = operation;
+}
+async function custodyMutationV1<T>(custody: Custody, operation: "acquiring" | "binding" | "releasing", action: (sql: PgTransactionSql) => Promise<T>): Promise<T> {
+  beginCustodyOperationV1(custody, operation);
+  try { return await mutateV1(action, custody); }
+  finally { if (custody.lifecycle === operation) custody.lifecycle = "ready"; }
+}
+function registerCustodyV1(value: Pick<Custody, "input" | "owner" | "intent" | "nonceDigest" | "executionMode" | "origin">): void {
+  const existing = custodies.get(value.input.jobId);
+  if (existing) {
+    if (existing.lifecycle !== "ready" || hashCanonicalJson(existing.input) !== hashCanonicalJson(value.input)
+      || existing.origin !== value.origin || existing.executionMode !== value.executionMode
+      || digestV1(existing.intent.bytes) !== digestV1(value.intent.bytes) || !sameOwnerV1(existing.owner, value.owner)) refuseV1();
+    verifyCustodyV1(existing); return;
+  }
+  if (custodies.size !== 0 || optionalStatV1(path.join(rootV1(false).root, "closures", `${value.input.jobId}.json`))) refuseV1("MANUAL_EVALUATION_CUSTODY_REQUIRED");
+  custodies.set(value.input.jobId, { ...value, lifecycle: "ready", publicationAttempted: false, held: null, released: null, closure: null });
 }
 
 export async function registerSelectedManualWorkerCustodyV1(raw: ControlWorkerCustodyV1): Promise<void> {
@@ -189,13 +234,12 @@ export async function registerSelectedManualWorkerCustodyV1(raw: ControlWorkerCu
     || (receipt.kind === "convergence_full8" && receipt.suiteHash !== await suiteV1())) refuseV1("MANUAL_EVALUATION_CUSTODY_REQUIRED");
   stableV1(pin, context.selected.directory);
   const input = AcquireSchema.parse({ jobId: receipt.jobId, kind: receipt.kind, selectionHash: receipt.selectionHash, sourceSha: receipt.sourceSha, suiteHash: receipt.suiteHash });
-  const existing = custodies.get(input.jobId);
-  if (existing && (digestV1(existing.intent.bytes) !== digestV1(pin.bytes) || !sameOwnerV1(existing.owner, owner))) refuseV1();
-  custodies.set(input.jobId, { input, owner, intent: pin, nonceDigest: intent.nonceDigest, executionMode: "execute" });
+  registerCustodyV1({ input, owner, intent: pin, nonceDigest: intent.nonceDigest, origin: "mission_control",
+    executionMode: receipt.kind === "activation_preflight" ? "preflight" : "execute" });
 }
 
 export async function prepareSelectedDirectEvaluationIntentV1(): Promise<Readonly<z.infer<typeof AcquireSchema> & { kind: "convergence_full8"; suiteHash: string }>> {
-  if (arguments.length) refuseV1("MANUAL_EVALUATION_ENTRY_REFUSED");
+  if (arguments.length || custodies.size !== 0) refuseV1("MANUAL_EVALUATION_ENTRY_REFUSED");
   const owner = entryV1("direct"), context = rootV1(false);
   const options = new Map<string, string>(); let execute = false;
   for (let index = 2; index < process.argv.length; index++) {
@@ -215,20 +259,55 @@ export async function prepareSelectedDirectEvaluationIntentV1(): Promise<Readonl
   rootV1(true); const directory = createChildV1(context.root, "direct", context.selected.directory);
   const mode = execute ? "execute" as const : "preflight" as const;
   const pin = publishExclusiveV1(path.join(directory, `${input.jobId}.json`), bytesV1({ schema: "setfarm.manual-direct-evaluation-intent.v1", ...input, executionMode: mode, owner, nonceDigest }), context.selected.directory);
-  custodies.set(input.jobId, { input, owner, intent: pin, nonceDigest, executionMode: mode });
+  registerCustodyV1({ input, owner, intent: pin, nonceDigest, executionMode: mode, origin: "direct" });
   return Object.freeze(input);
 }
 
+function parseRecordPinV1(pin: FilePin): RecordV1 {
+  const context = selectionV1(), record = RecordSchema.parse(JSON.parse(pin.bytes.toString("utf8")));
+  if (!bytesV1(record).equals(pin.bytes) || record.reservation.selectionHash !== context.selectionHash
+    || record.reservation.sourceSha !== context.selected.state.origin.sourceSha
+    || ((record.reservation.kind === "convergence_full8") !== (record.reservation.suiteHash !== null))
+    || (record.reservation.kind === "activation_preflight" && (record.executionMode !== "preflight" || record.slots.length !== 0))) refuseV1();
+  return record;
+}
+function historyV1(): Array<{ record: RecordV1; pin: FilePin }> {
+  const context = rootV1(false), directory = path.join(context.root, "revisions");
+  if (!optionalStatV1(directory)) return [];
+  pinParentsV1(directory, context.selected.directory);
+  const names = fs.readdirSync(directory).sort(); if (names.length > 4096) refuseV1();
+  const history: Array<{ record: RecordV1; pin: FilePin }> = [];
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index]!;
+    if (name !== `${String(index + 1).padStart(20, "0")}.json`) refuseV1();
+    const pin = readPrivateFileV1(path.join(directory, name), 65536, context.selected.directory), record = parseRecordPinV1(pin);
+    if (record.reservation.revision !== index + 1) refuseV1();
+    const prior = history.at(-1)?.record;
+    if (!prior || prior.reservation.jobId !== record.reservation.jobId) {
+      if (record.reservation.phase !== "pending" || (prior && prior.reservation.phase !== "released")) refuseV1();
+    } else {
+      if (prior.reservation.phase === "released" || record.reservation.phase === "pending"
+        || prior.intentHash !== record.intentHash || prior.nonceDigest !== record.nonceDigest
+        || prior.executionMode !== record.executionMode || !sameOwnerV1(prior.owner, record.owner)
+        || ["kind", "selectionHash", "sourceSha", "suiteHash"].some(key => Reflect.get(prior.reservation, key) !== Reflect.get(record.reservation, key))
+        || prior.slots.some(slot => !record.slots.some(current => hashCanonicalJson(slot) === hashCanonicalJson(current)))) refuseV1();
+    }
+    history.push({ record, pin });
+  }
+  return history;
+}
 function readRecordV1(ignoreMutation = false): { record: RecordV1; pin: FilePin; uncertain: boolean } | null {
   const context = rootV1(false);
   if (!optionalStatV1(context.root)) return null;
+  const entries = fs.readdirSync(context.root);
+  if (entries.length > 5 || entries.some(name => !["mutation.json", "reservation.json", "revisions", "direct", "closures"].includes(name))) refuseV1();
   const mutation = optionalStatV1(path.join(context.root, "mutation.json"));
   const locator = path.join(context.root, "reservation.json");
-  if (!optionalStatV1(locator)) { if (mutation && !ignoreMutation) refuseV1(); return null; }
-  const pin = readPrivateFileV1(locator, 65536, context.selected.directory);
-  const record = RecordSchema.parse(JSON.parse(pin.bytes.toString("utf8")));
-  if (!bytesV1(record).equals(pin.bytes) || record.reservation.selectionHash !== context.selectionHash
-    || record.reservation.sourceSha !== context.selected.state.origin.sourceSha) refuseV1();
+  const history = historyV1();
+  if (!optionalStatV1(locator)) { if (history.length || (mutation && !ignoreMutation)) refuseV1(); return null; }
+  const pin = readPrivateFileV1(locator, 65536, context.selected.directory), record = parseRecordPinV1(pin);
+  const last = history.at(-1); if (!last || !last.pin.bytes.equals(pin.bytes)) refuseV1();
+  for (const entry of history) stableV1(entry.pin, context.selected.directory);
   return { record, pin, uncertain: !!mutation && !ignoreMutation };
 }
 function publishRecordV1(record: RecordV1, previous: FilePin | null): void {
@@ -244,16 +323,19 @@ function publishRecordV1(record: RecordV1, previous: FilePin | null): void {
   fs.renameSync(temporary, locator); syncDirectoryV1(context.root);
   if (!readPrivateFileV1(locator, 65536, context.selected.directory).bytes.equals(bytes)) refuseV1();
 }
-async function mutateV1<T>(action: (sql: PgTransactionSql) => Promise<T>): Promise<T> {
+async function mutateV1<T>(action: (sql: PgTransactionSql) => Promise<T>, custody?: Custody): Promise<T> {
+  let attempted = false;
   let lock: FilePin | undefined;
   const context = rootV1(false);
   // The existing DB epoch serializes publication. Custody persists beyond the
   // transaction acknowledgement; rollback/crash never erases this evidence.
+  try {
   const result = await pgBegin(async sql => {
     await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
     if (optionalStatV1(path.join(context.root, "mutation.json"))) refuseV1("MANUAL_EVALUATION_RESERVED");
     // Readiness runs inside action before its first publication via acquire.
     const createLock = () => {
+      attempted = true;
       rootV1(true);
       lock = publishExclusiveV1(path.join(context.root, "mutation.json"), bytesV1({ schema: "setfarm.manual-evaluation-mutation.v1", pid: process.pid, nonce: randomUUID() }), context.selected.directory);
     };
@@ -264,6 +346,7 @@ async function mutateV1<T>(action: (sql: PgTransactionSql) => Promise<T>): Promi
   if (lock) { stableV1(lock, context.selected.directory); fs.unlinkSync(lock.locator); syncDirectoryV1(context.root); }
   context.selected.assertUnchanged();
   return result as T;
+  } catch (error) { if (attempted && custody) custody.lifecycle = "uncertain"; throw error; }
 }
 const mutationStarters = new WeakMap<object, () => void>();
 function startMutationV1(sql: PgTransactionSql): void { const start = mutationStarters.get(sql); if (!start) refuseV1(); start(); mutationStarters.delete(sql); }
@@ -336,6 +419,9 @@ function externalOwnersV1(self?: Custody): "none" | "owned" {
   const { selected, root } = rootV1(false);
   const maintenanceRoot = path.join(selected.paths.repository, ".setfarm");
   if (optionalStatV1(maintenanceRoot)) {
+    const maintenanceStat = fs.lstatSync(maintenanceRoot);
+    if (!maintenanceStat.isDirectory() || maintenanceStat.isSymbolicLink() || maintenanceStat.uid !== process.getuid!()
+      || (maintenanceStat.mode & 0o022) !== 0) refuseV1();
     const entries = fs.readdirSync(maintenanceRoot);
     if (entries.length > 4096) refuseV1();
     // Presence, including incomplete/temp/old owner residue, blocks. Never
@@ -354,9 +440,18 @@ function externalOwnersV1(self?: Custody): "none" | "owned" {
     if (!script || !scripts.includes(script) || argv[0] !== executable) refuseV1();
     const owner = processOwnerV1(row.pid, script, executable);
     if (owner.processGroupId !== row.processGroupId) refuseV1();
-    if (!self || !sameOwnerV1(self.owner, owner) || hasOwnedChildrenV1(rows, owner)) return "owned";
+    if (!self || !sameOwnerV1(self.owner, owner)) {
+      const registered = [...custodies.values()].find(custody => sameOwnerV1(custody.owner, owner));
+      if (!registered || registered.lifecycle === "uncertain") refuseV1();
+      verifyCustodyV1(registered); return "owned";
+    }
+    if (hasOwnedChildrenV1(rows, owner)) return "owned";
   }
-  if (self && hasOwnedChildrenV1(rows, self.owner)) return "owned";
+  if (self) {
+    const own = rows.find(row => row.pid === self.owner.pid);
+    if (!own || own.processGroupId !== self.owner.processGroupId || digestV1(own.command) !== self.owner.commandHash) refuseV1();
+    if (hasOwnedChildrenV1(rows, self.owner)) return "owned";
+  }
   // Persistent ready services are checked as infrastructure, not counted as jobs.
   const services = path.join(selected.paths.root, "services");
   if (optionalStatV1(services)) for (const service of ["dashboard", "spawner"] as const) {
@@ -377,29 +472,107 @@ function externalOwnersV1(self?: Custody): "none" | "owned" {
     if (!sameOwnerV1(owner, observed)) refuseV1();
     stableV1(lock, selected.directory); stableV1(pid, selected.directory);
   }
-  // Direct intents published before reservation are durable ownership too.
-  const direct = path.join(root, "direct");
-  if (optionalStatV1(direct)) {
-    pinParentsV1(direct, selected.directory);
-    const entries = fs.readdirSync(direct); if (entries.length > 4096) refuseV1();
-    for (const name of entries) {
-      if (/^[a-f0-9-]{36}\.released$/.test(name)) {
-        if (!entries.includes(name.replace(/\.released$/, ".json"))) refuseV1();
-        continue;
-      }
-      if (!/^[a-f0-9-]{36}\.json$/.test(name)) refuseV1();
-      const pin = readPrivateFileV1(path.join(direct, name), 16384, selected.directory);
-      if (self && pin.locator === self.intent.locator) { stableV1(self.intent, selected.directory); continue; }
-      const jobId = name.slice(0, -5), done = path.join(direct, `${jobId}.released`);
-      if (!optionalStatV1(done)) return "owned";
-      const released = readPrivateFileV1(done, 65536, selected.directory);
-      const value = RecordSchema.parse(JSON.parse(released.bytes.toString("utf8")));
-      if (value.reservation.jobId !== jobId || value.reservation.phase !== "released" || value.intentHash !== digestV1(pin.bytes)) refuseV1();
-    }
-  }
+  const intentOwners = intentNamespaceOwnersV1(self);
+  if (intentOwners !== "none") return intentOwners;
   selected.assertUnchanged(); return "none";
 }
 
+const DirectIntentSchema = AcquireSchema.extend({ schema: z.literal("setfarm.manual-direct-evaluation-intent.v1"),
+  kind: z.literal("convergence_full8"), suiteHash: Hash, executionMode: z.enum(["preflight", "execute"]), owner: OwnerSchema, nonceDigest: Hash }).strict();
+type IntentFacts = { input: z.infer<typeof AcquireSchema>; executionMode: "preflight" | "execute"; nonceDigest: string; owner?: Owner };
+function intentFactsV1(pin: FilePin, origin: "mission_control" | "direct"): IntentFacts | null {
+  const { selected, selectionHash } = selectionV1();
+  const raw: unknown = JSON.parse(pin.bytes.toString("utf8"));
+  if (origin === "direct") {
+    const value = DirectIntentSchema.parse(raw);
+    if (value.selectionHash !== selectionHash || value.sourceSha !== selected.state.origin.sourceSha) refuseV1();
+    return { input: AcquireSchema.parse({ jobId: value.jobId, kind: value.kind, selectionHash: value.selectionHash, sourceSha: value.sourceSha, suiteHash: value.suiteHash }),
+      executionMode: value.executionMode, nonceDigest: value.nonceDigest, owner: value.owner };
+  }
+  const value = ControlPrivateIntentV1Schema.parse(raw), receipt = value.receipt;
+  if (value.installationDir !== selected.directory || value.releaseDir !== selected.paths.repository
+    || receipt.selectionHash !== selectionHash || receipt.sourceSha !== selected.state.origin.sourceSha) refuseV1();
+  if (receipt.kind === "ui_regression") return null;
+  return { input: AcquireSchema.parse({ jobId: receipt.jobId, kind: receipt.kind, selectionHash: receipt.selectionHash, sourceSha: receipt.sourceSha, suiteHash: receipt.suiteHash }),
+    executionMode: receipt.kind === "activation_preflight" ? "preflight" : "execute", nonceDigest: value.nonceDigest };
+}
+function matchesRecordV1(marker: ClosureV1, record: RecordV1): boolean {
+  return ["jobId", "kind", "selectionHash", "sourceSha", "suiteHash"].every(key => Reflect.get(marker, key) === Reflect.get(record.reservation, key))
+    && marker.intentHash === record.intentHash && marker.nonceDigest === record.nonceDigest
+    && marker.executionMode === record.executionMode && sameOwnerV1(marker.owner, record.owner);
+}
+function closureForIntentV1(pin: FilePin, origin: "mission_control" | "direct", facts: IntentFacts): FilePin | null {
+  const context = rootV1(false), mutation = path.join(context.root, "mutation.json");
+  if (optionalStatV1(mutation)) refuseV1();
+  const locator = path.join(context.root, "closures", `${facts.input.jobId}.json`);
+  if (!optionalStatV1(locator)) return null;
+  const markerPin = readPrivateFileV1(locator, 16384, context.selected.directory), marker = ClosureSchema.parse(JSON.parse(markerPin.bytes.toString("utf8")));
+  if (!bytesV1(marker).equals(markerPin.bytes) || marker.intentOrigin !== origin || marker.intentHash !== digestV1(pin.bytes)
+    || marker.nonceDigest !== facts.nonceDigest || marker.executionMode !== facts.executionMode
+    || Object.keys(facts.input).some(key => Reflect.get(marker, key) !== Reflect.get(facts.input, key))
+    || (facts.owner && !sameOwnerV1(facts.owner, marker.owner))) refuseV1();
+  const history = historyV1(); readRecordV1();
+  if (marker.closure.kind === "never_reserved") {
+    if (history.some(entry => entry.record.reservation.jobId === marker.jobId || entry.record.intentHash === marker.intentHash || sameOwnerV1(entry.record.owner, marker.owner))) refuseV1();
+  } else {
+    const closure = marker.closure;
+    const entry = history.find(item => item.record.reservation.revision === closure.revision);
+    if (!entry || entry.record.reservation.phase !== "released" || digestV1(entry.pin.bytes) !== marker.closure.recordHash
+      || !matchesRecordV1(marker, entry.record)
+      || history.some(item => item.record.reservation.jobId === marker.jobId && item.record.reservation.revision > entry.record.reservation.revision)) refuseV1();
+  }
+  for (const item of history) stableV1(item.pin, context.selected.directory);
+  stableV1(pin, context.selected.directory); stableV1(markerPin, context.selected.directory);
+  if (optionalStatV1(mutation)) refuseV1(); context.selected.assertUnchanged(); return markerPin;
+}
+function safeOptionalNamespaceV1(directory: string, privateRoot: string): boolean {
+  let cursor = directory;
+  while (!optionalStatV1(cursor)) {
+    if (cursor === privateRoot || path.dirname(cursor) === cursor) refuseV1();
+    cursor = path.dirname(cursor);
+  }
+  pinParentsV1(cursor, privateRoot);
+  return cursor === directory;
+}
+function intentNamespaceOwnersV1(self?: Custody): "none" | "owned" {
+  const { selected, root } = rootV1(false), seen = new Set<string>(), sfIntents = new Set<string>();
+  const namespaces = [{ directory: path.join(selected.paths.root, "mission-control", "controls", "jobs"), origin: "mission_control" as const },
+    { directory: path.join(root, "direct"), origin: "direct" as const }];
+  let owned = false;
+  for (const namespace of namespaces) {
+    if (!safeOptionalNamespaceV1(namespace.directory, selected.directory)) continue;
+    pinParentsV1(namespace.directory, selected.directory);
+    const names = fs.readdirSync(namespace.directory); if (names.length > 4096) refuseV1();
+    for (const name of names) {
+      const jobId = namespace.origin === "direct" && name.endsWith(".json") ? name.slice(0, -5) : name;
+      if (!z.string().uuid().safeParse(jobId).success || jobId !== jobId.toLowerCase() || seen.has(jobId)
+        || (namespace.origin === "direct" && name !== `${jobId}.json`)) refuseV1();
+      seen.add(jobId);
+      const locator = namespace.origin === "direct" ? path.join(namespace.directory, name) : path.join(namespace.directory, name, "intent.json");
+      const pin = readPrivateFileV1(locator, 32768, selected.directory), facts = intentFactsV1(pin, namespace.origin);
+      if (namespace.origin === "mission_control" && ControlPrivateIntentV1Schema.parse(JSON.parse(pin.bytes.toString("utf8"))).receipt.jobId !== jobId) refuseV1();
+      if (!facts) continue;
+      sfIntents.add(jobId);
+      if (facts.input.jobId !== jobId) refuseV1();
+      if (self && self.intent.locator === locator) {
+        stableV1(self.intent, selected.directory);
+        if (hashCanonicalJson(self.input) !== hashCanonicalJson(facts.input) || self.nonceDigest !== facts.nonceDigest) refuseV1();
+        continue;
+      }
+      if (closureForIntentV1(pin, namespace.origin, facts)) continue;
+      const custody = custodies.get(jobId);
+      if (custody && custody.intent.locator === locator && custody.lifecycle !== "uncertain" && custody.lifecycle !== "closed") { verifyCustodyV1(custody); owned = true; }
+      else refuseV1();
+    }
+  }
+  const closures = path.join(root, "closures");
+  if (optionalStatV1(closures)) {
+    pinParentsV1(closures, selected.directory);
+    const names = fs.readdirSync(closures); if (names.length > 4096) refuseV1();
+    for (const name of names) if (!name.endsWith(".json") || !sfIntents.has(name.slice(0, -5))) refuseV1();
+  }
+  return owned ? "owned" : "none";
+}
 function recordedCustodyV1(record: RecordV1): Custody {
   const { selected, root } = selectionV1();
   const worker = path.join(selected.paths.repository, "dist/cli/control-test-worker-v1.js");
@@ -424,7 +597,7 @@ function recordedCustodyV1(record: RecordV1): Custody {
       || Object.keys(input).some(key => Reflect.get(input, key) !== Reflect.get(parsed, key))) refuseV1();
   }
   selected.assertUnchanged();
-  return { input, owner: record.owner, intent, nonceDigest: record.nonceDigest, executionMode: record.executionMode };
+  return { input, owner: record.owner, intent, nonceDigest: record.nonceDigest, executionMode: record.executionMode, origin: isWorker ? "mission_control" : "direct", lifecycle: "ready", publicationAttempted: true, held: record.reservation, released: null, closure: null };
 }
 export async function observeSelectedEvaluatorOwnersV1(): Promise<"none" | "owned" | "unknown"> {
   try {
@@ -451,10 +624,11 @@ export async function acquireSelectedManualEvaluationV1(raw: z.infer<typeof Acqu
   const input = AcquireSchema.parse(raw), custody = assertCustodyV1(input);
   if ((input.kind === "activation_preflight" && input.suiteHash !== null)
     || (input.kind === "convergence_full8" && input.suiteHash !== await suiteV1())) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
-  return mutateV1(async sql => {
+  const held = await custodyMutationV1(custody, "acquiring", async sql => {
     const prior = readRecordV1();
     if (prior && (prior.uncertain || prior.record.reservation.phase !== "released")) refuseV1("MANUAL_EVALUATION_RESERVED");
     assertCustodyV1(input); await idleV1(sql); if (externalOwnersV1(custody) !== "none") refuseV1("MANUAL_EVALUATION_RESERVED");
+    custody.publicationAttempted = true;
     startMutationV1(sql);
     const record: RecordV1 = { schema: "setfarm.manual-evaluation-record.v1", reservation: { ...input, revision: (prior?.record.reservation.revision ?? 0) + 1, phase: "pending" },
       owner: custody.owner, intentHash: digestV1(custody.intent.bytes), nonceDigest: custody.nonceDigest,
@@ -465,6 +639,7 @@ export async function acquireSelectedManualEvaluationV1(raw: z.infer<typeof Acqu
     publishRecordV1(record, pending.pin);
     return Object.freeze({ ...record.reservation });
   });
+  custody.held = held; return held;
 }
 function heldV1(reservation: ManualEvaluationReservationV1) {
   const parsed = ReservationSchema.parse(reservation), current = readRecordV1();
@@ -472,21 +647,23 @@ function heldV1(reservation: ManualEvaluationReservationV1) {
   if (parsed.phase !== "active" && parsed.phase !== "cancelling") refuseV1();
   const { revision: _revision, phase: _phase, ...input } = parsed;
   const custody = assertCustodyV1(input);
+  if (!custody.held || hashCanonicalJson(custody.held) !== hashCanonicalJson(parsed)) refuseV1("MANUAL_EVALUATION_REVISION_CONFLICT");
   if (!sameOwnerV1(custody.owner, current.record.owner) || current.record.intentHash !== digestV1(custody.intent.bytes)
     || current.record.nonceDigest !== custody.nonceDigest) refuseV1();
   return { ...current, custody };
 }
-async function admissionV1(sql: PgTransactionSql, admissionHash: string) {
+async function admissionV1(sql: PgTransactionSql, admissionHash: string, requireUnexpired = true) {
   const rows = await sql.unsafe<Array<{ payload: unknown; expires_at: Date | string; expired: boolean }>>(
     "SELECT payload,expires_at,expires_at <= clock_timestamp() AS expired FROM v3_release_admissions WHERE admission_hash=$1", [admissionHash]);
   if (rows.length !== 1) refuseV1("MANUAL_EVALUATION_CANARY_REFUSED");
   const value = V3ReleaseAdmissionV1Schema.parse(rows[0]!.payload);
-  if (value.kind !== "convergence_canary" || value.admissionHash !== admissionHash || rows[0]!.expired !== false
+  if (value.kind !== "convergence_canary" || value.admissionHash !== admissionHash || (typeof rows[0]!.expired !== "boolean" || (requireUnexpired && rows[0]!.expired !== false))
     || new Date(rows[0]!.expires_at).toISOString() !== value.expiresAt) refuseV1("MANUAL_EVALUATION_CANARY_REFUSED");
   return value;
 }
 export async function bindSelectedManualCanaryV1(input: { reservation: ManualEvaluationReservationV1; admissionHash: string; slots: readonly BoundCanarySlotV1[] }): Promise<ManualEvaluationReservationV1> {
-  return mutateV1(async sql => {
+  const custody = assertCustodyV1(AcquireSchema.parse({ jobId: input.reservation.jobId, kind: input.reservation.kind, selectionHash: input.reservation.selectionHash, sourceSha: input.reservation.sourceSha, suiteHash: input.reservation.suiteHash }));
+  const refreshed = await custodyMutationV1(custody, "binding", async sql => {
     const held = heldV1(input.reservation);
     if (held.record.reservation.kind !== "convergence_full8" || held.record.executionMode !== "execute") refuseV1("MANUAL_EVALUATION_CANARY_REFUSED");
     const slots = z.array(SlotSchema).min(1).max(8).parse(input.slots), admission = await admissionV1(sql, Hash.parse(input.admissionHash));
@@ -495,11 +672,19 @@ export async function bindSelectedManualCanaryV1(input: { reservation: ManualEva
       || slots.some(slot => slot.admissionHash !== admission.admissionHash || !admission.slots.some(stored =>
         stored.slotHash === slot.slotHash && stored.caseHash === slot.caseHash && stored.taskHash === slot.taskHash && stored.repetition === slot.repetition))) refuseV1("MANUAL_EVALUATION_CANARY_REFUSED");
     await idleV1(sql); if (externalOwnersV1(held.custody) !== "none") refuseV1();
+    const cumulative = new Map(held.record.slots.map(slot => [slot.slotHash, slot]));
+    for (const slot of slots) {
+      const previous = cumulative.get(slot.slotHash);
+      if (previous && hashCanonicalJson(previous) !== hashCanonicalJson(slot)) refuseV1("MANUAL_EVALUATION_CANARY_REFUSED");
+      cumulative.set(slot.slotHash, slot);
+    }
+    if (cumulative.size > 8) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
     startMutationV1(sql);
-    const record = { ...held.record, admissionHash: admission.admissionHash, slots,
+    const record = { ...held.record, admissionHash: admission.admissionHash, slots: [...cumulative.values()],
       reservation: { ...held.record.reservation, revision: held.record.reservation.revision + 1 } };
     publishRecordV1(record, held.pin); return Object.freeze(record.reservation);
   });
+  custody.held = refreshed; return refreshed;
 }
 export async function assertSelectedManualRunInsertionV1(sql: PgTransactionSql, reservation: ManualEvaluationReservationV1 | null, run: PersistWorkflowRunInputV1["run"]): Promise<void> {
   const current = await observeSelectedManualEvaluationInTransactionV1(sql);
@@ -525,21 +710,135 @@ export async function assertSelectedManualRunInsertionV1(sql: PgTransactionSql, 
 export async function assertNoSelectedManualRecoveryInsertionV1(sql: PgTransactionSql): Promise<void> {
   if (await observeSelectedManualEvaluationInTransactionV1(sql)) refuseV1("MANUAL_EVALUATION_RESERVED");
 }
+async function proveBoundSlotTerminalV1(sql: PgTransactionSql, record: RecordV1, slot: z.infer<typeof SlotSchema>): Promise<void> {
+  const admission = await admissionV1(sql, slot.admissionHash, false);
+  const stored = admission.slots.find(value => value.slotHash === slot.slotHash);
+  if (admission.releaseSha !== record.reservation.sourceSha || admission.suiteHash !== record.reservation.suiteHash
+    || !stored || ["caseHash", "taskHash", "repetition"].some(key => Reflect.get(stored, key) !== Reflect.get(slot, key))) refuseV1();
+  const claims = await sql.unsafe<Array<{ run_id: string | null; consumed_at: Date | string | null; admission_hash: string; admission_kind: string;
+    case_hash: string; task_hash: string; repetition: number; selector_hash: string }>>(
+    "SELECT run_id,consumed_at,admission_hash,admission_kind,case_hash,task_hash,repetition,selector_hash FROM v3_canary_admission_claims WHERE slot_hash=$1 FOR UPDATE", [slot.slotHash]);
+  const claim = claims[0];
+  if (claims.length !== 1 || !claim || claim.admission_hash !== slot.admissionHash || claim.admission_kind !== "convergence_canary"
+    || claim.case_hash !== slot.caseHash || claim.task_hash !== slot.taskHash || claim.repetition !== slot.repetition || claim.selector_hash !== stored.selectorHash
+    || ((claim.run_id === null) !== (claim.consumed_at === null))) refuseV1();
+  if (claim.run_id === null) return;
+  const runs = await sql.unsafe<Array<{ id: string; status: string; protocol: string; protocol_version: number; compiler_release_sha: string; release_admission_hash: string; task: string }>>(
+    "SELECT id,status,protocol,protocol_version,compiler_release_sha,release_admission_hash,task FROM runs WHERE id=$1 FOR UPDATE", [claim.run_id]);
+  const run = runs[0];
+  if (runs.length !== 1 || !run || !["completed", "failed", "cancelled"].includes(run.status) || run.protocol !== "v3" || run.protocol_version !== 1
+    || run.compiler_release_sha !== record.reservation.sourceSha || run.release_admission_hash !== slot.admissionHash || hashCanonicalJson(run.task) !== slot.taskHash) refuseV1();
+  const pair = await resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(sql, { runId: run.id });
+  const owners = await sql.unsafe<Array<{ state: string; close_ref: string | null; close_hash: string | null;
+    canonical_owner_identity: { category: "run"; ownerKey: string; ownerRef: string; ownerHash: string } }>>(
+    "SELECT state,close_ref,close_hash,canonical_owner_identity FROM internal_production_owner_reservations_v1 WHERE reservation_ref=$1 AND reservation_hash=$2 FOR UPDATE", [pair.runOwnerReservationRef, pair.runOwnerReservationHash]);
+  const owner = owners[0];
+  if (owners.length !== 1 || !owner || owner.state !== "closed" || !owner.close_ref || !owner.close_hash) refuseV1("MANUAL_EVALUATION_CANONICAL_CLOSE_REQUIRED");
+  const close = await resolveInternalProductionOwnerReservationCloseInTransactionV1(sql, { closeRef: owner.close_ref, closeHash: owner.close_hash });
+  const identity = owner.canonical_owner_identity;
+  if (close.reservationRef !== pair.runOwnerReservationRef || close.reservationHash !== pair.runOwnerReservationHash
+    || identity.category !== "run" || identity.ownerKey !== run.id) refuseV1();
+  const closedPair = deriveInternalProductionTerminalOwnerAuthorityPairV1({ schema: "setfarm.internal-production-terminal-owner-authority.v1",
+    category: "run", ownerKey: run.id, ownerRef: identity.ownerRef, ownerHash: identity.ownerHash,
+    terminalOwnerRef: close.terminalOwnerRef, terminalOwnerHash: close.terminalOwnerHash });
+  if (closedPair.terminalAuthorityRef !== pair.terminalAuthorityRef || closedPair.terminalAuthorityHash !== pair.terminalAuthorityHash) refuseV1();
+}
 export async function releaseSelectedManualEvaluationV1(reservation: ManualEvaluationReservationV1): Promise<void> {
-  await mutateV1(async sql => {
+  const initial = heldV1(reservation), custody = initial.custody;
+  const released = await custodyMutationV1(custody, "releasing", async sql => {
     const held = heldV1(reservation); await idleV1(sql);
     if (externalOwnersV1(held.custody) !== "none") refuseV1();
-    for (const slot of held.record.slots) {
-      const claims = await sql.unsafe<Array<{ run_id: string | null; consumed_at: unknown; status: string | null; release_admission_hash: string | null }>>(
-        "SELECT c.run_id,c.consumed_at,r.status,r.release_admission_hash FROM v3_canary_admission_claims c LEFT JOIN runs r ON r.id=c.run_id WHERE c.slot_hash=$1 AND c.admission_hash=$2 FOR UPDATE OF c", [slot.slotHash, slot.admissionHash]);
-      if (claims.length !== 1 || (claims[0]!.run_id === null ? claims[0]!.consumed_at !== null
-        : claims[0]!.consumed_at === null || !["completed", "failed", "cancelled"].includes(claims[0]!.status ?? "") || claims[0]!.release_admission_hash !== slot.admissionHash)) refuseV1();
+    const history = historyV1();
+    const cumulative = new Map<string, z.infer<typeof SlotSchema>>();
+    for (const entry of history.filter(value => value.record.reservation.jobId === reservation.jobId)) {
+      for (const slot of entry.record.slots) {
+        const prior = cumulative.get(slot.slotHash);
+        if (prior && hashCanonicalJson(prior) !== hashCanonicalJson(slot)) refuseV1();
+        cumulative.set(slot.slotHash, slot);
+      }
     }
+    if (cumulative.size !== held.record.slots.length) refuseV1();
+    for (const slot of cumulative.values()) await proveBoundSlotTerminalV1(sql, held.record, slot);
+    verifyCustodyV1(custody); stableV1(held.pin, selectionV1().selected.directory);
+    for (const entry of history) stableV1(entry.pin, selectionV1().selected.directory);
     startMutationV1(sql);
     const record: RecordV1 = { ...held.record, reservation: { ...held.record.reservation, revision: held.record.reservation.revision + 1, phase: "released" } };
     publishRecordV1(record, held.pin);
-    if (held.custody.intent.locator.endsWith(`${reservation.jobId}.json`)) {
-      publishExclusiveV1(held.custody.intent.locator.replace(/\.json$/, ".released"), bytesV1(record), selectionV1().selected.directory);
-    }
+    const current = readRecordV1(true)!;
+    return historyV1().find(entry => entry.record.reservation.revision === current.record.reservation.revision)!.pin;
   });
+  custody.released = released;
+}
+async function assertNoOwnWorkV1(sql: PgTransactionSql, custody: Custody): Promise<void> {
+  const rows = parseProcessTableV1(psV1(["-ww", "-axo", "pid=,ppid=,pgid=,command="]));
+  const own = rows.find(row => row.pid === custody.owner.pid);
+  if (!own || own.processGroupId !== custody.owner.processGroupId || digestV1(own.command) !== custody.owner.commandHash
+    || hasOwnedChildrenV1(rows, custody.owner)) refuseV1();
+  const runtimes = await sql.unsafe<Array<{ count: number }>>(
+    "SELECT count(*)::integer AS count FROM runtime_sessions WHERE state NOT IN ('released','quarantined') AND (pid=$1 OR (process_group_id=$2 AND $1=$2))", [custody.owner.pid, custody.owner.processGroupId]);
+  if (runtimes.length !== 1 || !Number.isSafeInteger(runtimes[0]!.count) || runtimes[0]!.count !== 0) refuseV1();
+  // This never-admitted fixed entry has no build/publication dispatch path.
+  // Any source maintenance record attributed to this exact process still blocks.
+  const { selected } = selectionV1(), directory = path.join(selected.paths.repository, ".setfarm");
+  if (optionalStatV1(directory)) {
+    const names = fs.readdirSync(directory); if (names.length > 4096) refuseV1();
+    for (const name of names.filter(value => value === "build-generation-maintenance-lock-v1.json" || value.startsWith(".build-generation-maintenance-lock-v1.json."))) {
+      const pin = readPrivateFileV1(path.join(directory, name), 16384, directory);
+      const value = JSON.parse(pin.bytes.toString("utf8"));
+      if (value.schema !== "setfarm.platform-build-generation-maintenance-lock.v1" || !Number.isSafeInteger(value.pid) || value.pid <= 0
+        || !Number.isSafeInteger(value.processGroupId) || value.processGroupId <= 0 || typeof value.processLstart !== "string"
+        || value.pid === custody.owner.pid || (custody.owner.processGroupId === custody.owner.pid && value.processGroupId === custody.owner.processGroupId)) refuseV1();
+      stableV1(pin, directory);
+    }
+  }
+}
+export async function closeSelectedManualWorkerCustodyV1(): Promise<void> {
+  if (arguments.length || custodies.size !== 1) refuseV1("MANUAL_EVALUATION_CUSTODY_REQUIRED");
+  const custody = [...custodies.values()][0]!;
+  verifyCustodyV1(custody);
+  if (custody.lifecycle === "closed") {
+    if (!custody.closure) refuseV1();
+    await mutateV1(async () => {
+      const facts = intentFactsV1(custody.intent, custody.origin); if (!facts) refuseV1();
+      const current = closureForIntentV1(custody.intent, custody.origin, facts);
+      if (!current || !sameStatV1(current.stat, custody.closure!.stat, true) || !current.bytes.equals(custody.closure!.bytes)) refuseV1();
+      verifyCustodyV1(custody);
+    });
+    return;
+  }
+  beginCustodyOperationV1(custody, "closing");
+  try {
+    const closure = await mutateV1(async sql => {
+      verifyCustodyV1(custody);
+      const current = readRecordV1(); if (current?.uncertain) refuseV1();
+      const history = historyV1(), facts = intentFactsV1(custody.intent, custody.origin); if (!facts) refuseV1();
+      await assertNoOwnWorkV1(sql, custody);
+      const context = rootV1(false);
+      let proof: ClosureV1["closure"];
+      if (!custody.publicationAttempted && !custody.held && !custody.released) {
+        if (history.some(entry => entry.record.reservation.jobId === custody.input.jobId || entry.record.intentHash === digestV1(custody.intent.bytes)
+          || sameOwnerV1(entry.record.owner, custody.owner))) refuseV1();
+        proof = { kind: "never_reserved" };
+      } else {
+        if (!custody.released) refuseV1("MANUAL_EVALUATION_RELEASE_REQUIRED");
+        stableV1(custody.released, context.selected.directory);
+        const record = parseRecordPinV1(custody.released), matching = history.filter(entry => entry.record.reservation.jobId === custody.input.jobId);
+        const last = matching.at(-1);
+        if (!last || record.reservation.phase !== "released" || !last.pin.bytes.equals(custody.released.bytes)
+          || !sameStatV1(last.pin.stat, custody.released.stat, true)) refuseV1();
+        proof = { kind: "reservation_released", revision: record.reservation.revision, recordHash: digestV1(custody.released.bytes) };
+      }
+      const marker = ClosureSchema.parse({ schema: "setfarm.manual-control-custody-closed.v1", ...custody.input,
+        executionMode: custody.executionMode, intentOrigin: custody.origin, intentHash: digestV1(custody.intent.bytes), nonceDigest: custody.nonceDigest,
+        owner: custody.owner, closure: proof });
+      if (custody.released && !matchesRecordV1(marker, parseRecordPinV1(custody.released))) refuseV1();
+      verifyCustodyV1(custody); for (const entry of history) stableV1(entry.pin, context.selected.directory);
+      startMutationV1(sql);
+      const directory = createChildV1(context.root, "closures", context.selected.directory);
+      const pin = publishExclusiveV1(path.join(directory, `${custody.input.jobId}.json`), bytesV1(marker), context.selected.directory);
+      verifyCustodyV1(custody); for (const entry of history) stableV1(entry.pin, context.selected.directory);
+      return pin;
+    }, custody);
+    custody.closure = closure; custody.lifecycle = "closed";
+  } catch (error) { custody.lifecycle = "uncertain"; throw error; }
 }
