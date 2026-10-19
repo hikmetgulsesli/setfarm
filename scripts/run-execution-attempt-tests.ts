@@ -17,6 +17,7 @@ const OWNER_BACKED_TESTS = new Set([
   "claim-step-v3-recovery.integration.test.ts",
   "compiler-claim-fence.test.ts",
   "concurrency.test.ts",
+  "control-evidence-admission-reader-v1.isolated-pg.test.ts",
   "manual-test-admission-v1.isolated-pg.test.ts",
   "migration-runtime-preservation.test.ts",
   "migration33-current-entry-observers.test.ts",
