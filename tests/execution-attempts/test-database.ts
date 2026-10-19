@@ -424,6 +424,21 @@ async function verifyP3ReadinessUnavailableV1(): Promise<void> {
 export async function createIsolatedTestDatabase(
   options: Readonly<{ migrate?: boolean }> = {},
 ) {
+  return createIsolatedTestDatabaseImplementationV1(options, false);
+}
+
+/** Fixed authenticated Task4 entry; uncertainty never authorizes pre-return clone destruction. */
+export async function createOwnedTask4TestDatabaseV1() {
+  if (arguments.length !== 0) throw new Error("P3_TASK4_FACTORY_INPUT_REFUSED");
+  authenticateP3ProjectedReadinessTestCapabilityV1();
+  readP3MarkerV1();
+  return createIsolatedTestDatabaseImplementationV1({}, true);
+}
+
+async function createIsolatedTestDatabaseImplementationV1(
+  options: Readonly<{ migrate?: boolean }>,
+  retainInitializationFailure: boolean,
+) {
   const projectionMarkerPath = path.join(realpathSync(process.cwd()), ".setfarm-p3-projection-marker.json");
   const projectionMarkerPresent = existsSync(projectionMarkerPath);
   if (
@@ -579,6 +594,8 @@ export async function createIsolatedTestDatabase(
       await verifyP3ReadinessUnavailableV1();
     }
   } catch (error) {
+    // CREATE was acknowledged. Preserve the original uncertainty and hidden admin ownership.
+    if (retainInitializationFailure) throw error;
     await admin`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${database} AND pid <> pg_backend_pid()`;
     await admin.unsafe(`DROP DATABASE "${database}"`);
     await admin.end({ timeout: 5 });

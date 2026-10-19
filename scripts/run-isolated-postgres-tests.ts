@@ -22,6 +22,9 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import postgres from "postgres";
+import { isTask4CommandV1, readTask4Fd4V1, prepareTask4ContextV1, observeTask4OriginalChildV1,
+  observeTask4ProcessV1, task4CanonicalV1, pinTask4DirectoryV1, readTask4ProofV1, publishTask4ProofV1,
+  validateTask4ParentEnvelopeV1, validateTask4RunnerEnvelopeV1 } from "../tests/fixtures/mission-control-render-smoke-owned-v1.js";
 
 type P3ProjectionMarkerV1 = Readonly<{
   schema: "setfarm.p3-isolated-projection-marker.v1";
@@ -448,13 +451,70 @@ async function spawnWithCapabilityV1(input: Readonly<{
   cwd: string;
   env: NodeJS.ProcessEnv;
   frame: Buffer;
+  task4?: Readonly<{
+    setup: Readonly<Record<string, any>>;
+    context: Awaited<ReturnType<typeof prepareTask4ContextV1>>;
+    role: "setup" | "test";
+    records: Array<Record<string, unknown>>;
+  }>;
 }>): Promise<number> {
+  if (input.task4) {
+    const { setup, context, role, records } = input.task4;
+    const expected = role === "setup"
+      ? ["--import", "tsx", "tests/execution-attempts/test-database.ts"]
+      : ["--import", "tsx", "--test", "--test-concurrency=1", "tests/fixtures/mission-control-render-smoke-owned-v1.ts"];
+    if (JSON.stringify(input.args) !== JSON.stringify(expected)) throw new Error("TASK4_BINDING_REFUSED");
+    context.check();
+    const child = spawn(process.execPath, input.args, {
+      cwd: input.cwd, env: input.env,
+      stdio: role === "test" ? ["inherit", "inherit", "inherit", "pipe", "pipe"] : ["inherit", "inherit", "inherit", "pipe"],
+    });
+    const original = observeTask4OriginalChildV1(child);
+    // Attach immediately. A failed publication cannot abandon the captured child promise.
+    const terminal = original.then(value => ({ value, failed: false }), () => ({ value: null, failed: true }));
+    const record: Record<string, any> = { role, owner: null, exit: null, fd3: "unknown", fd4: role === "test" ? "unknown" : "not_applicable" };
+    records.push(record);
+    const deliveries: Promise<void>[] = [];
+    const write = (descriptor: number, bytes: Buffer) => {
+      const writer = child.stdio[descriptor] as import("node:stream").Writable;
+      let finished = false;
+      const delivery = new Promise<void>((resolve, reject) => {
+        writer.once("error", () => reject(new Error("TASK4_FRAME_DELIVERY_UNKNOWN")));
+        writer.once("finish", () => { finished = true; record[`fd${descriptor}`] = "finished"; resolve(); });
+        writer.once("close", () => { if (!finished) reject(new Error("TASK4_FRAME_DELIVERY_UNKNOWN")); });
+      });
+      deliveries.push(delivery); writer.end(bytes);
+    };
+    let publicationFailed = false;
+    try {
+      if (!child.pid) throw new Error("TASK4_CHILD_UNKNOWN");
+      const observed = observeTask4ProcessV1(child.pid);
+      if (observed.pin.ppid !== process.pid || observed.pin.executable !== realpathSync(process.execPath)
+        || observed.rawCommand !== [realpathSync(process.execPath), ...expected].join(" ")) throw new Error("TASK4_BINDING_REFUSED");
+      record.owner = observed.pin;
+      context.check();
+      write(3, input.frame);
+      if (role === "test") write(4, Buffer.from(task4CanonicalV1(setup) + "\n"));
+    } catch {
+      publicationFailed = true;
+      for (const descriptor of role === "test" ? [3, 4] : [3]) {
+        const writer = child.stdio[descriptor] as import("node:stream").Writable;
+        writer?.on("error", () => {}); if (writer && !writer.writableEnded && !writer.destroyed) writer.end();
+      }
+    }
+    const [sent, ended] = await Promise.all([Promise.allSettled(deliveries), terminal]);
+    record.exit = ended.value;
+    context.check();
+    if (publicationFailed || ended.failed || sent.some(result => result.status === "rejected") || !ended.value
+      || ended.value.signal !== null) throw new Error("TASK4_CHILD_UNKNOWN");
+    return ended.value.code ?? 1;
+  }
   const child = spawn(process.execPath, input.args, {
     cwd: input.cwd,
     env: input.env,
     stdio: ["inherit", "inherit", "inherit", "pipe"],
   });
-  const writer = child.stdio[3]!;
+  const writer = child.stdio[3]! as import("node:stream").Writable;
   let deliveryStarted = false;
   let deliveryFinished = false;
   const delivery = new Promise<void>((resolve, reject) => {
@@ -491,12 +551,14 @@ function childEnvironmentV1(input: Readonly<{
   adminUrl: string;
   testProcess?: boolean;
   recoveryLifecycleShard?: typeof P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1[number];
+  task4?: Readonly<{ home: string; tmp: string }>;
 }>): NodeJS.ProcessEnv {
   return {
     PATH: "/usr/bin:/bin",
     LANG: "C",
     LC_ALL: "C",
     TSX_DISABLE_CACHE: "1",
+    ...(input.task4 ? { HOME: input.task4.home, TMPDIR: input.task4.tmp } : {}),
     ...(input.testProcess ? {
       NODE_OPTIONS:
         "--test-isolation=none --import=./.setfarm-p3-test-capability-preload.mjs",
@@ -624,10 +686,15 @@ async function verifyPrimaryCloneV1(
   }
 }
 
+let task4InvocationV1 = false;
 async function main(): Promise<void> {
   if (process.env.SETFARM_PG_URL !== undefined) throw new Error("ISOLATED_TEST_AMBIENT_PG_URL_FORBIDDEN");
   const command = commandArguments();
+  task4InvocationV1 = isTask4CommandV1(command);
+  const task4Setup = task4InvocationV1 ? await readTask4Fd4V1("setup") : undefined;
   const adminUrl = normalizedAdminUrlV1();
+  const task4Context = task4Setup ? await prepareTask4ContextV1(task4Setup, "runner", adminUrl) : undefined;
+  const task4Children: Array<Record<string, unknown>> = [];
   const projection = projectCurrentBytesV1();
   const prefix = `setfarm_p3_${randomBytes(12).toString("hex")}`;
   const templateDatabaseName = `${prefix}_template`;
@@ -661,16 +728,20 @@ async function main(): Promise<void> {
   templateUrl.pathname = `/${templateDatabaseName}`;
   const primaryUrl = new URL(adminUrl);
   primaryUrl.pathname = `/${primaryDatabaseName}`;
+  let task4BodyFailed = false;
   try {
     const setupCode = await spawnWithCapabilityV1({
       args: ["--import", "tsx", "tests/execution-attempts/test-database.ts"],
       cwd: projection.root,
-      env: childEnvironmentV1({ databaseUrl: templateUrl.toString(), adminUrl }),
+      env: childEnvironmentV1({ databaseUrl: templateUrl.toString(), adminUrl, task4: task4Context }),
       frame: capabilityFrameV1("setup", setupNonce),
+      ...(task4Setup && task4Context ? { task4: { setup: task4Setup, context: task4Context, role: "setup" as const, records: task4Children } } : {}),
     });
     if (setupCode !== 0) throw new Error(`P3_TEMPLATE_SETUP_FAILED:${setupCode}`);
     await cloneDatabaseV1(adminUrl, primaryDatabaseName, templateDatabaseName);
+    task4Context?.check();
     await verifyPrimaryCloneV1(projection.root, primaryUrl.toString());
+    task4Context?.check();
     process.stderr.write(`[p3-isolated-test-db] cloned ${primaryDatabaseName} from ${templateDatabaseName}\n`);
     for (const [index, recoveryLifecycleShard] of testShards.entries()) {
       const testNonce = testNonces[index]!;
@@ -690,24 +761,118 @@ async function main(): Promise<void> {
           adminUrl,
           testProcess: true,
           recoveryLifecycleShard,
+          task4: task4Context,
         }),
         frame: capabilityFrameV1("test", testNonce),
+        ...(task4Setup && task4Context ? { task4: { setup: task4Setup, context: task4Context, role: "test" as const, records: task4Children } } : {}),
       });
       if (exitCode !== 0) {
         process.exitCode = exitCode;
         break;
       }
     }
+  } catch (error) {
+    task4BodyFailed = true;
+    throw error;
   } finally {
+    if (task4Setup && task4Context) {
+      let parent: Readonly<Record<string, any>> | null = null;
+      let parentResult: Readonly<{ sha256: string; bytes: number }> | null = null;
+      let databasesAbsent: boolean | null = null;
+      let projectionAbsent: boolean | null = null;
+      let outcome = "unknown";
+      let code: string | null = "TASK4_CLEANUP_UNKNOWN";
+      const projectionPin = pinTask4DirectoryV1(projection.root, true);
+      try {
+        task4Context.check();
+        try {
+          const observed = readTask4ProofV1(task4Setup.resourceRoot.path, "parent-result.json");
+          parentResult = observed.ref;
+          const test = task4Children.find(record => record.role === "test");
+          if (!test?.owner) throw new Error("TASK4_CHILD_UNKNOWN");
+          parent = validateTask4ParentEnvelopeV1(observed.value, task4Setup, test.owner as Record<string, any>);
+          for (const ref of Object.values(parent.evidence)) if (ref !== null) {
+            readTask4ProofV1(task4Setup.resourceRoot.path, "artifact", ref as Readonly<{ sha256: string; bytes: number }>);
+          }
+          if (task4CanonicalV1(parent.projection.root) !== task4CanonicalV1(projectionPin.value)
+            || parent.projection.projectedHead !== projection.head) throw new Error("TASK4_BINDING_REFUSED");
+        } catch { parent = null; }
+        let cleanupSafe = false;
+        try {
+          task4Context.check(); projectionPin.check();
+          if (task4BodyFailed || !parent || parent.outcome === "unknown" || parent.integrity !== "verified"
+            || parent.projection.runDatabasePrefix !== prefix || task4Children.length !== 2) throw new Error("TASK4_CLEANUP_UNKNOWN");
+          for (const [index, child] of task4Children.entries()) {
+            const exit = child.exit as Record<string, unknown> | null;
+            const owner = child.owner as Record<string, unknown> | null;
+            if (child.role !== ["setup", "test"][index] || !owner || owner.ppid !== task4Context.owner.pid
+              || owner.executable !== task4Context.owner.executable || owner.executableHash !== task4Context.owner.executableHash
+              || !exit || exit.exitObserved !== true || exit.closeObserved !== true || exit.signal !== null
+              || exit.code !== (index === 0 || parent.outcome === "pass" ? 0 : 1)
+              || child.fd3 !== "finished" || child.fd4 !== (index === 0 ? "not_applicable" : "finished")) throw new Error("TASK4_CLEANUP_UNKNOWN");
+          }
+          if (task4CanonicalV1(task4Children[1]!.owner) !== task4CanonicalV1(parent.fixtureOwner)) throw new Error("TASK4_BINDING_REFUSED");
+          // The authenticated parent owns semantic validation of inner evidence. Re-read the
+          // exact retained result it bound before allowing any destructive prefix cleanup.
+          const inner = readTask4ProofV1(task4Setup.resourceRoot.path, "inner-result.json", parent.inner.result).value;
+          if (inner.outcome !== parent.outcome || inner.integrity !== "verified"
+            || inner.binding.setupDescriptorHash !== parent.setupDescriptorHash
+            || inner.binding.readyDescriptorHash !== parent.readyDescriptorHash
+            || task4CanonicalV1(inner.owner) !== task4CanonicalV1(parent.inner.owner)) throw new Error("TASK4_INTEGRITY_FAILED");
+          task4Context.check(); projectionPin.check(); cleanupSafe = true;
+        } catch { cleanupSafe = false; }
+        // Unknown descendants retain their database and Source. Cleanup cannot repair proof.
+        if (cleanupSafe) {
+        try {
+          await cleanupDatabasesV1(adminUrl, prefix);
+          task4Context.check();
+          const admin = postgres(adminUrl, { max: 1, connect_timeout: 5, idle_timeout: 1, onnotice: () => {}, connection: { statement_timeout: 5000 } });
+          try {
+            const remaining = await admin.unsafe("SELECT datname FROM pg_database WHERE datname LIKE $1 ORDER BY datname LIMIT 65", [prefix + "%"]);
+            databasesAbsent = remaining.length === 0;
+          } finally { await admin.end({ timeout: 5 }); }
+          task4Context.check();
+        } catch { databasesAbsent = null; }
+        if (databasesAbsent === true) {
+        try {
+          task4Context.check(); projectionPin.check();
+          rmSync(path.dirname(projection.root), { recursive: true, force: false });
+          try { lstatSync(path.dirname(projection.root)); projectionAbsent = false; }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") projectionAbsent = true; else throw error; }
+          task4Context.check();
+        } catch { projectionAbsent = null; }
+        }
+        }
+        if (cleanupSafe && parent && databasesAbsent === true && projectionAbsent === true) {
+          outcome = parent.outcome; code = parent.code;
+        }
+        let result: Record<string, any> = {
+          schema: "setfarm.task4-runner-result.v1", executionId: task4Setup.executionId,
+          setupDescriptorHash: sha256(task4CanonicalV1(task4Setup) + "\n"), owner: task4Context.owner,
+          outcome, code, children: task4Children, parentResult,
+          projection: { root: projectionPin.value, projectedHead: projection.head }, cleanup: { databasesAbsent, projectionAbsent },
+        };
+        try { result = validateTask4RunnerEnvelopeV1(result, task4Setup, task4Context.owner, parent, parentResult); }
+        catch {
+          // Keep actual original facts, but never promote an inconsistent child/parent mapping.
+          result = { ...result, outcome: "unknown", code: "TASK4_INTEGRITY_FAILED" };
+          result = validateTask4RunnerEnvelopeV1(result, task4Setup, task4Context.owner, parent, parentResult);
+        }
+        task4Context.check(); publishTask4ProofV1(task4Setup.resourceRoot.path, "runner-result.json", result); task4Context.check();
+        if (result.outcome !== "pass") process.exitCode = 1;
+      } finally { projectionPin.close(); task4Context.close(); }
+    } else {
     await cleanupDatabasesV1(adminUrl, prefix).catch((error) => {
       process.stderr.write(`P3_DATABASE_CLEANUP_FAILED:${String(error)}\n`);
       process.exitCode = 1;
     });
     rmSync(path.dirname(projection.root), { recursive: true, force: true });
+    }
   }
 }
 
 main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`${task4InvocationV1 ? (/^TASK4_[A-Z_]+$/.test(message) ? message : "TASK4_CLEANUP_UNKNOWN") : message}\n`);
   process.exitCode = 1;
 });
