@@ -270,3 +270,67 @@ test("zero-argument closure refuses a source process without established private
   assert.equal(typeof api.closeSelectedManualWorkerCustodyV1, "function");
   await assert.rejects(() => api.closeSelectedManualWorkerCustodyV1(), /MANUAL_EVALUATION/);
 });
+
+test("read-only closed-run owner observation refuses absent canonical rows before granting settlement", async () => {
+  const db=await import("../../src/db-pg.js");
+  const queries:string[]=[];
+  const sql=Object.assign(async(parts:TemplateStringsArray)=>{queries.push(parts.join("?"));return [];},{unsafe:async(query:string)=>{queries.push(query);return [];}});
+  await assert.rejects(()=>(db as any).observeInternalProductionWorkflowRunClosedOwnerInTransactionV1(sql,{runId:"owned-run"}),/INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE/);
+  assert.ok(queries.length>0);assert.ok(queries.every(query=>!/(?:FOR UPDATE|FOR SHARE|INSERT|UPDATE|DELETE)/.test(query)));
+});
+
+
+test("read-only delivery owner observation refuses absent canonical rows without locks or mutations", async () => {
+  const db = await import("../../src/db-pg.js"), queries: string[] = [];
+  const sql = Object.assign(async (parts: TemplateStringsArray) => { queries.push(parts.join("?")); return []; }, { unsafe: async (query: string) => { queries.push(query); return []; } });
+  await assert.rejects(() => (db as any).observeInternalProductionOperationalDeliveryBoundOwnerInTransactionV1(sql, {eventKey:"run/owned/terminal/v2/failed",consumer:"jsonl"}), /INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_UNAVAILABLE/);
+  assert.ok(queries.length > 0); assert.ok(queries.every(query => !/FOR UPDATE|FOR SHARE|INSERT|UPDATE|DELETE/i.test(query)));
+});
+
+async function settlementComponent() {
+  const events = await import("../../src/execution/schemas/operational-event-v1.js");
+  const authority = await import("../../src/internal-production/owner-admission-v1.js");
+  const {hashCanonicalJson} = await import("../../src/product-compiler/canonical-json.js");
+  const source = fs.readFileSync(new URL("../../src/execution/manual-test-admission-v1.ts",import.meta.url),"utf8");
+  const tree = ts.createSourceFile("settlement.ts",source,ts.ScriptTarget.Latest,true);
+  const names = ["refuseV1","settlementTimestampV1","settlementLeaseV1","settlementEventIdentityV1","pendingSettlementV1"];
+  const body = names.map(name => { const node=tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name);assert.ok(node);return node.getText(tree); }).join("\n");
+  const bindings = {...events,...authority,hashCanonicalJson,observeInternalProductionOperationalDeliveryBoundOwnerInTransactionV1:async()=>({reservationRef:"setfarm://fixtures/delivery",reservationHash:HASH,bindingHash:owner.binding_hash})};
+  const invoke = new Function(...Object.keys(bindings),ts.transpileModule(body,{compilerOptions:{module:ts.ModuleKind.None,target:ts.ScriptTarget.ES2022}}).outputText+";return pendingSettlementV1;")(...Object.values(bindings));
+  const timestamp="2026-10-19T00:00:00.000Z", runId="exact-run", eventKey=`run/${runId}/terminal/v2/failed`;
+  const row={outbox_id:"owned-outbox",request_id:null,event_key:eventKey,event_type:"run.terminal",aggregate_type:"run",aggregate_id:runId,payload:{schema:"setfarm.run-terminal-event.v2",runId,status:"failed"},state:"pending",owner_instance_id:null,lease_token:null,lease_expires_at:null,attempt_count:0,published_at:null,created_at:timestamp,updated_at:timestamp};
+  const event=events.createCanonicalOperationalEventV1({eventKey,outboxId:row.outbox_id,eventType:row.event_type,aggregateType:"run",aggregateId:runId,payload:row.payload,sourceCreatedAt:timestamp,committedAt:timestamp});
+  const identity=authority.createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1({eventKey,consumer:"jsonl"});
+  const projection={schema:"setfarm.internal-production-bound-owner-reservation.v1",category:"operational-delivery",producerImplementationId:"a-operational-delivery-v1",ownerKey:identity.ownerKey,reservationRef:"setfarm://fixtures/delivery",reservationHash:HASH,canonicalOwnerIdentity:identity,state:"bound"};
+  const bound={...projection,bindingHash:hashCanonicalJson(projection)};
+  const owner={state:"bound",category:"operational-delivery",producer_implementation_id:projection.producerImplementationId,owner_key:identity.ownerKey,reservation_ref:bound.reservationRef,reservation_hash:HASH,binding_hash:bound.bindingHash,binding_payload:bound,canonical_owner_identity:identity};
+  const delivery={...row,consumer:"jsonl",delivery_id:events.operationalEventDeliveryId(eventKey,"jsonl"),input_hash:event.eventHash,idempotency_key:eventKey,delivered_at:null,
+    event:{...row,run_id:runId,event_hash:event.eventHash,source_created_at:timestamp,committed_at:timestamp},outbox:{...row,state:"published",published_at:timestamp}};
+  const observe=async(outbox:any[],deliveries:any[],owners:any[],extra:Record<string,number>={})=>{
+    const queries:string[]=[];
+    const sql={unsafe:async(query:string)=>{queries.push(query);return query.includes("FROM operational_outbox")?outbox:query.includes("FROM operational_event_deliveries")?deliveries:owners;}};
+    try{return await invoke(sql,{active_outbox:outbox.length,active_operational_deliveries:deliveries.length,active_owner_reservations:owners.length,...extra},new Set([runId]));}
+    finally {assert.ok(queries.every(query=>!/(?:FOR UPDATE|INSERT|DELETE|UPDATE\s)/.test(query)));}
+  };
+  return {observe,row,delivery,owner};
+}
+
+test("read-only settlement attributes pending outbox then delivery then zero activity to exact terminal runs",async()=>{
+  const f=await settlementComponent();
+  assert.equal(await f.observe([f.row],[],[]),"pending");
+  assert.equal(await f.observe([],[f.delivery],[f.owner]),"pending");
+  assert.equal(await f.observe([],[],[]),"ready");
+});
+for(const fault of ["foreign_outbox","missing_event","foreign_event","bad_hash","bad_lease","extra_owner","bad_binding","active_run","overflow"] as const)test(`read-only settlement refuses ${fault} instead of waiting or granting readiness`,async()=>{
+  const f=await settlementComponent(); let outbox:any[]=[],deliveries:any[]=[structuredClone(f.delivery)],owners:any[]=[structuredClone(f.owner)],extra:Record<string,number>={};
+  if(fault==="foreign_outbox"){outbox=[{...f.row,aggregate_id:"foreign"}];deliveries=[];owners=[];}
+  if(fault==="missing_event")deliveries[0].event=null;
+  if(fault==="foreign_event")deliveries[0].event.run_id="foreign";
+  if(fault==="bad_hash")deliveries[0].input_hash="f".repeat(64);
+  if(fault==="bad_lease")deliveries[0].state="leased";
+  if(fault==="extra_owner")owners.push({...f.owner,owner_key:"foreign"});
+  if(fault==="bad_binding")owners[0].binding_hash="f".repeat(64);
+  if(fault==="active_run")extra.active_runs=1;
+  if(fault==="overflow"){outbox=Array(4097).fill(f.row);deliveries=[];owners=[];}
+  await assert.rejects(()=>f.observe(outbox,deliveries,owners,extra));
+});

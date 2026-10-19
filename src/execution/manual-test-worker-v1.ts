@@ -8,7 +8,7 @@ import { loadConvergenceSuiteVersioned, type LoadedConvergenceSuiteVersioned } f
 import { createDefaultConvergencePorts, runConvergenceSuite, type ConvergenceRunnerPorts, type ConvergenceJobControlV1, type ConvergenceSuiteRun, type BoundCaseIdentityV1 } from "../evals/convergence-runner.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { selectedManualWorkerChannelV1 } from "./manual-test-worker-channel-v1.js";
-import { registerSelectedManualWorkerCustodyV1, prepareSelectedDirectEvaluationIntentV1, acquireSelectedManualEvaluationV1, bindSelectedManualCanaryV1, releaseSelectedManualEvaluationV1, closeSelectedManualWorkerCustodyV1, type ManualEvaluationReservationV1 } from "./manual-test-admission-v1.js";
+import { registerSelectedManualWorkerCustodyV1, prepareSelectedDirectEvaluationIntentV1, acquireSelectedManualEvaluationV1, bindSelectedManualCanaryV1, releaseSelectedManualEvaluationV1, observeSelectedManualSettlementV1, closeSelectedManualWorkerCustodyV1, type ManualEvaluationReservationV1 } from "./manual-test-admission-v1.js";
 import { V3ReleaseAdmissionV1Schema, canarySelectorHash, computeCanarySlotHash, type InternalCanaryAdmissionContextV1 } from "./v3-release-admission.js";
 import { buildRunOperationalSnapshot } from "../server/run-operational-snapshot.js";
 import { executeRunOperationalAction } from "./run-operational-action.js";
@@ -19,6 +19,7 @@ export type ManualControlEffectPortsV1 = Readonly<{
     loadSuite: typeof loadConvergenceSuiteVersioned;
     createConvergencePorts: typeof createDefaultConvergencePorts;
     stopOwnedRun: (runId: string, expectedSnapshotHash: string) => Promise<void>;
+    settlementClock?: Readonly<{ now(): number; sleep(ms: number): Promise<void> }>;
 }>;
 const defaultEffects: ManualControlEffectPortsV1 = Object.freeze({
     runPreflight: runDefaultActivationPreflight, loadSuite: loadConvergenceSuiteVersioned, createConvergencePorts: createDefaultConvergencePorts,
@@ -283,8 +284,10 @@ class WorkerExecutionV1 {
     }>();
     private started = new Set<string>();
     private stopAttempted = new Set<string>();
+    private settlementClock = { now: () => performance.now(), sleep: (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)) };
     readonly control: ConvergenceJobControlV1;
     constructor(private input: JobInput, private reservation: ManualEvaluationReservationV1, private journal: WorkerJournalV1, private effects: ManualControlEffectPortsV1, private channel: Channel | null) {
+        if (effects.settlementClock) this.settlementClock = effects.settlementClock;
         this.control = {
             beforeCase: async (identity) => { this.assert(); if (![...this.bound.values()].some(v => hashCanonicalJson(v.identity) === hashCanonicalJson(identity)))
                 throw new ControlWorkerFatalErrorV1("CONTROL_BINDING_FAILED"); },
@@ -399,7 +402,7 @@ class WorkerExecutionV1 {
                 } }, process: { ...ports.process, startRun: async (input) => {
                     this.assert();
                     const binding = this.bound.get(input.admission.slotHash);
-                    if (!binding || binding.run || this.started.has(input.admission.slotHash) || hashCanonicalJson(binding.context) !== hashCanonicalJson(input.admission) || hashCanonicalJson(input.task) !== binding.identity.taskHash)
+                    if (input.workflowId !== loaded.suite.workflowId || !binding || binding.run || this.started.has(input.admission.slotHash) || hashCanonicalJson(binding.context) !== hashCanonicalJson(input.admission) || hashCanonicalJson(input.task) !== binding.identity.taskHash)
                         throw new ControlWorkerFatalErrorV1("CONTROL_BINDING_FAILED");
                     this.journal.append({ type: "start_requested", case: { ...binding.identity, repetition: 1 }, admissionHash: binding.context.admissionHash, slotHash: binding.context.slotHash });
                     this.started.add(input.admission.slotHash);
@@ -408,7 +411,7 @@ class WorkerExecutionV1 {
                         runNumber: number;
                     } | undefined;
                     try {
-                        response = await start(input);
+                        response = await start({ ...input, startChild: { reservation: this.reservation, journal: this.journal.ref()! } });
                     }
                     catch (error) {
                         if (isControlWorkerFatalErrorV1(error))
@@ -454,6 +457,22 @@ class WorkerExecutionV1 {
         await this.progress(null, null);
         await this.cancel();
         try {
+            const deadline = this.settlementClock.now() + 60_000;
+            let ready = false;
+            for (let observation = 0; observation < 12; observation++) {
+                this.assert(); await this.cancel();
+                // Reserve the full transaction bound; never extend the overall deadline.
+                if (deadline - this.settlementClock.now() < 5_000) break;
+                const state = await observeSelectedManualSettlementV1(this.reservation);
+                this.assert();
+                if (this.settlementClock.now() >= deadline) break;
+                if (state === "ready") { ready = true; break; }
+                if (state !== "pending") throw new Error("unknown settlement");
+                const delay = Math.min(5_000, deadline - this.settlementClock.now() - 5_000);
+                if (delay <= 0) break;
+                await this.settlementClock.sleep(delay);
+            }
+            if (!ready) throw new Error("settlement deadline exceeded");
             await releaseSelectedManualEvaluationV1(this.reservation);
         }
         catch {

@@ -3,18 +3,21 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type ChildProcess } from "node:child_process";
 import { z } from "zod";
-import { pgBegin, lockInternalProductionWorkflowRunInsertionFenceV1, resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1, resolveInternalProductionOwnerReservationCloseInTransactionV1, type PgTransactionSql } from "../db-pg.js";
+import { getSql, observeInternalProductionOperationalDeliveryBoundOwnerInTransactionV1, observeInternalProductionWorkflowRunClosedOwnerInTransactionV1, pgBegin, lockInternalProductionWorkflowRunInsertionFenceV1, resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1, resolveInternalProductionOwnerReservationCloseInTransactionV1, type PgTransactionSql } from "../db-pg.js";
 import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import { deriveInternalProductionTerminalOwnerAuthorityPairV1 } from "../internal-production/owner-admission-v1.js";
+import { hashCanonicalJson, canonicalJsonStringify } from "../product-compiler/canonical-json.js";
+import { createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1, validateInternalProductionBoundOwnerReservationV1, deriveInternalProductionTerminalOwnerAuthorityPairV1 } from "../internal-production/owner-admission-v1.js";
 import { requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "../findings/finding-publication-v1.js";
 import { loadConvergenceSuite } from "../evals/suite-schema.js";
 import { V3ReleaseAdmissionV1Schema, canarySelectorHash } from "./v3-release-admission.js";
+import { OperationalEventIdentityV1Schema, CanonicalOperationalEventV1Schema, OperationalEventDeliveryConsumerV1Schema, operationalEventRunId, operationalEventDeliveryId } from "./schemas/operational-event-v1.js";
 import type { PersistWorkflowRunInputV1 } from "./run-persistence.js";
 import { ControlPrivateIntentV1Schema, ControlWorkerCustodyV1Schema, hashControlSelectionIdentityV1, type ControlWorkerCustodyV1 } from "./schemas/manual-control-job-v1.js";
+
+import { parseWorkerJournalHeadV1, parseWorkerJournalRecordV1, hashWorkerJournalRecordV1, hashObservedControlWorkerOwnerV1, type WorkerJournalRefV1 } from "./schemas/manual-control-worker-channel-v1.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/);
 const AcquireSchema = z.object({ jobId: z.string().uuid().refine(value => value === value.toLowerCase()), kind: z.enum(["activation_preflight", "convergence_full8"]),
@@ -157,6 +160,21 @@ function psV1(args: string[]): string {
     env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C", TZ: "UTC" }, stdio: ["ignore", "pipe", "pipe"] });
   if (result.error || result.signal || result.status !== 0 || result.stderr !== "") refuseV1();
   return result.stdout;
+}
+function processTableV1(): ProcessRow[] {
+  const args = ["-ww", "-axo", "pid=,ppid=,pgid=,command="];
+  const result = spawnSync("/bin/ps", args, { shell: false, encoding: "utf8", timeout: 5000, maxBuffer: 4 * 1024 * 1024,
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C", TZ: "UTC" }, stdio: ["ignore", "pipe", "pipe"] });
+  // spawnSync's successful original handle result proves definite observer exit.
+  // A name, caller PID, missing row, timeout or partial output grants no exemption.
+  if (result.error || result.signal || result.status !== 0 || result.stderr !== ""
+    || !Number.isSafeInteger(result.pid) || result.pid <= 0 || typeof result.stdout !== "string"
+    || !result.stdout.endsWith("\n")) refuseV1();
+  const rows = parseProcessTableV1(result.stdout);
+  const observer = rows.find(row => row.pid === result.pid), parent = rows.find(row => row.pid === process.pid);
+  if (!observer || !parent || observer.parentPid !== process.pid
+    || observer.processGroupId !== parent.processGroupId || observer.command !== `/bin/ps ${args.join(" ")}`) refuseV1();
+  return rows.filter(row => row !== observer);
 }
 function processOwnerV1(pid: number, script: string, executable: string): Owner {
   const argumentsV1 = ["-ww", "-p", String(pid), "-o", "lstart=", "-o", "pgid=", "-o", "args="];
@@ -306,7 +324,7 @@ function readRecordV1(ignoreMutation = false): { record: RecordV1; pin: FilePin;
   const context = rootV1(false);
   if (!optionalStatV1(context.root)) return null;
   const entries = fs.readdirSync(context.root);
-  if (entries.length > 5 || entries.some(name => !["mutation.json", "reservation.json", "revisions", "direct", "closures"].includes(name))) refuseV1();
+  if (entries.length > 6 || entries.some(name => !["mutation.json", "reservation.json", "revisions", "direct", "closures", "start-children"].includes(name))) refuseV1();
   const mutation = optionalStatV1(path.join(context.root, "mutation.json"));
   const locator = path.join(context.root, "reservation.json");
   const history = historyV1();
@@ -357,7 +375,7 @@ async function mutateV1<T>(action: (sql: PgTransactionSql) => Promise<T>, custod
 const mutationStarters = new WeakMap<object, () => void>();
 function startMutationV1(sql: PgTransactionSql): void { const start = mutationStarters.get(sql); if (!start) refuseV1(); start(); mutationStarters.delete(sql); }
 
-async function idleV1(sql: PgTransactionSql): Promise<void> {
+async function activityV1(sql: PgTransactionSql): Promise<Record<string, number>> {
   const rows = await sql.unsafe<Record<string, unknown>[]>(`SELECT
     (SELECT count(*)::integer FROM runs WHERE status IN ('running','resuming','cancelling','failing')) AS active_runs,
     (SELECT count(*)::integer FROM claim_log WHERE outcome IS NULL) AS open_claims,
@@ -378,7 +396,7 @@ async function idleV1(sql: PgTransactionSql): Promise<void> {
   const fields = ["active_runs", "open_claims", "active_attempts", "active_attempt_binding_conflicts", "active_runtimes", "active_runtime_completions", "active_completion_effects", "active_recovery_cases", "active_recovery_deliveries", "active_termination_requests", "active_compilations", "active_publications", "active_publication_batches", "active_outbox", "active_operational_deliveries", "active_owner_reservations"];
   if (rows.length !== 1 || Object.keys(rows[0]!).length !== fields.length
     || fields.some(field => !Number.isSafeInteger(rows[0]![field]) || Number(rows[0]![field]) < 0)) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
-  if (fields.some(field => rows[0]![field] !== 0)) refuseV1("MANUAL_EVALUATION_ACTIVITY_PRESENT");
+
   // An open historical issue is not unfinished publication work. Validate the
   // actual immutable parent/child publication relation instead of issue prose.
   const parents = await sql.unsafe<FindingPublicationParentRowV1[]>("SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,source_sha,source_tree_hash,finding_ids,payload FROM finding_sets ORDER BY finding_set_hash LIMIT 4097");
@@ -387,6 +405,10 @@ async function idleV1(sql: PgTransactionSql): Promise<void> {
   const groups = new Map(parents.map(parent => [parent.finding_set_hash, [] as FindingPublicationChildRowV1[]]));
   for (const child of children) { const group = groups.get(child.finding_set_hash); if (!group) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN"); group.push(child); }
   for (const parent of parents) requireFindingPublicationV1(parent, groups.get(parent.finding_set_hash)!);
+  return rows[0]! as Record<string, number>;
+}
+async function idleV1(sql: PgTransactionSql): Promise<void> {
+  if (Object.values(await activityV1(sql)).some(count => count !== 0)) refuseV1("MANUAL_EVALUATION_ACTIVITY_PRESENT");
 }
 
 type ProcessRow = { pid: number; parentPid: number; processGroupId: number; command: string };
@@ -421,7 +443,7 @@ function hasOwnedChildrenV1(rows: readonly ProcessRow[], owner: Pick<Owner, "pid
   }
   return false;
 }
-function externalOwnersV1(self?: Custody): "none" | "owned" {
+function externalOwnersV1(self?: Custody, insertion?: { child: Owner; assertUnchanged(): void }): "none" | "owned" {
   const { selected, root } = rootV1(false);
   const maintenanceRoot = path.join(selected.paths.repository, ".setfarm");
   if (optionalStatV1(maintenanceRoot)) {
@@ -436,7 +458,14 @@ function externalOwnersV1(self?: Custody): "none" | "owned" {
   }
   const executable = fs.realpathSync(process.execPath);
   const scripts = [path.join(selected.paths.repository, "dist/cli/control-test-worker-v1.js"), path.join(selected.paths.repository, "dist/evals/convergence-runner.js")];
-  const rows = parseProcessTableV1(psV1(["-ww", "-axo", "pid=,ppid=,pgid=,command="]));
+  let rows = processTableV1();
+  if (insertion) {
+    insertion.assertUnchanged();
+    const child = rows.find(row => row.pid === insertion.child.pid);
+    if (!self || !child || child.parentPid !== self.owner.pid || child.processGroupId !== insertion.child.processGroupId
+      || digestV1(child.command) !== insertion.child.commandHash || hasOwnedChildrenV1(rows, insertion.child)) refuseV1();
+    rows = rows.filter(row => row !== child);
+  }
   for (const row of rows) {
     const argv = row.command.split(/\s+/), script = argv[1];
     const selectedMention = scripts.some(candidate => argv.includes(candidate))
@@ -480,7 +509,7 @@ function externalOwnersV1(self?: Custody): "none" | "owned" {
   }
   const intentOwners = intentNamespaceOwnersV1(self);
   if (intentOwners !== "none") return intentOwners;
-  selected.assertUnchanged(); return "none";
+  insertion?.assertUnchanged(); selected.assertUnchanged(); return "none";
 }
 
 const DirectIntentSchema = AcquireSchema.extend({ schema: z.literal("setfarm.manual-direct-evaluation-intent.v1"),
@@ -692,27 +721,156 @@ export async function bindSelectedManualCanaryV1(input: { reservation: ManualEva
   });
   custody.held = refreshed; return refreshed;
 }
-export async function assertSelectedManualRunInsertionV1(sql: PgTransactionSql, reservation: ManualEvaluationReservationV1 | null, run: PersistWorkflowRunInputV1["run"]): Promise<void> {
-  const current = await observeSelectedManualEvaluationInTransactionV1(sql);
-  if (current === null && reservation === null) return;
-  if (!current || !reservation || hashCanonicalJson(current) !== hashCanonicalJson(reservation) || current.phase !== "active") refuseV1("MANUAL_EVALUATION_RESERVED");
-  const context = rootV1(false), prior = observedPins.get(reservation); if (!prior) refuseV1(); stableV1(prior, context.selected.directory);
-  const stored = readRecordV1(); if (!stored || stored.uncertain) refuseV1();
+export type ManualStartChildDescriptorV1 = Readonly<{ reservation: ManualEvaluationReservationV1; journal: WorkerJournalRefV1 }>;
+const StartChildProofSchemaV1 = z.object({ schema: z.literal("setfarm.manual-start-child.v1"),
+  reservation: ReservationSchema, intentHash: Hash, owner: OwnerSchema, child: OwnerSchema,
+  parentPid: z.number().int().positive(), journal: z.object({ revision: z.number().int().positive().max(1024), hash: Hash }).strict(),
+  slot: SlotSchema, caseId: z.string().min(1).max(128), workflowId: z.string().min(1).max(128),
+}).strict();
+type StartChildObservationV1 = { child: Owner; assertUnchanged(): void };
+const insertionProofsV1 = new WeakMap<ManualEvaluationReservationV1, StartChildObservationV1>();
+function startProofPathV1(record: RecordV1): string {
+  return path.join(rootV1(false).root, "start-children", record.reservation.jobId);
+}
+function startJournalV1(record: RecordV1, slot: BoundCanarySlotV1, expected?: WorkerJournalRefV1) {
+  const { selected } = selectionV1();
+  const directory = path.join(selected.paths.root, "evals/manual-control-journals", record.reservation.jobId);
+  const headPin = readPrivateFileV1(path.join(directory, "head.json"), 1024, selected.directory);
+  const head = parseWorkerJournalHeadV1(headPin.bytes);
+  if (head.jobId !== record.reservation.jobId || head.revision > 1024 || expected && (head.revision !== expected.revision || head.recordHash !== expected.hash)) refuseV1();
+  const pins: FilePin[] = [headPin];
+  let previousHash: string | null = null, bound = false, caseId: string | null = null;
+  for (let revision = 1; revision <= head.revision; revision++) {
+    const pin = readPrivateFileV1(path.join(directory, "records", `${String(revision).padStart(20, "0")}.json`), 65536, selected.directory);
+    pins.push(pin);
+    const value = parseWorkerJournalRecordV1(pin.bytes);
+    if (value.jobId !== head.jobId || value.intentHash !== record.intentHash || value.ownerHash !== hashObservedControlWorkerOwnerV1(record.owner)
+      || value.revision !== revision || value.previousHash !== previousHash) refuseV1();
+    previousHash = hashWorkerJournalRecordV1(value);
+    const event = value.event;
+    if (revision === 1 && (event.type !== "acquired" || event.selectionHash !== record.reservation.selectionHash
+      || event.sourceSha !== record.reservation.sourceSha || event.suiteHash !== record.reservation.suiteHash
+      || event.kind !== "convergence_full8" || event.executionMode !== "execute" || !sameOwnerV1(event.owner, record.owner))) refuseV1();
+    if (event.type === "canary_bound") {
+      if (bound || event.reservationRevision !== record.reservation.revision || event.contexts.length !== record.slots.length
+        || event.contexts.some(({context}) => !record.slots.some(stored => Object.keys(stored).every(key => Reflect.get(stored,key) === Reflect.get(context,key))))) refuseV1();
+      bound = true;
+      caseId = event.contexts.find(({context}) => context.slotHash === slot.slotHash)?.caseId ?? null;
+    }
+    if (event.type === "start_requested" && event.slotHash === slot.slotHash && revision !== head.revision) refuseV1();
+    if (["fault", "cancel_latched", "released", "closed", "finalization_boundary"].includes(event.type)) refuseV1();
+    if (revision === head.revision && (!bound || !caseId || event.type !== "start_requested" || event.case.caseId !== caseId
+      || event.case.caseHash !== slot.caseHash || event.case.taskHash !== slot.taskHash || event.case.repetition !== slot.repetition
+      || event.admissionHash !== slot.admissionHash || event.slotHash !== slot.slotHash)) refuseV1();
+  }
+  if (previousHash !== head.recordHash || !caseId) refuseV1();
+  const assertUnchanged = () => { selected.assertUnchanged(); for (const pin of pins) stableV1(pin, selected.directory); };
+  assertUnchanged();
+  return { ref: { revision: head.revision, hash: head.recordHash }, caseId, assertUnchanged };
+}
+function observeStartChildV1(pid: number, parent: Owner, workflowId: string, task: string): Owner {
+  const { selected } = selectionV1();
+  const executable = fs.realpathSync(process.execPath), script = path.join(selected.paths.repository, "dist/cli/cli.js");
+  if (fs.realpathSync(script) !== script || /\s/.test(executable + script)) refuseV1();
+  const owner = processOwnerV1(pid, script, executable);
+  const expected = [executable, script, "workflow", "run", workflowId, task, "--protocol", "v3"].join(" ");
+  if (owner.commandHash !== digestV1(expected) || owner.processGroupId !== parent.processGroupId) refuseV1();
+  const rows = processTableV1(), row = rows.find(value => value.pid === pid);
+  if (!row || row.parentPid !== parent.pid || row.processGroupId !== owner.processGroupId || row.command !== expected
+    || !sameOwnerV1(owner, processOwnerV1(pid, script, executable))) refuseV1();
+  return owner;
+}
+export function publishSelectedManualStartChildV1(descriptor: ManualStartChildDescriptorV1,
+  input: { workflowId: string; task: string; releaseSha: string; admission: BoundCanarySlotV1 }, child: ChildProcess): () => void {
+  const held = heldV1(descriptor.reservation), record = held.record;
+  if (record.reservation.phase !== "active" || input.releaseSha !== record.reservation.sourceSha
+    || hashCanonicalJson(input.task) !== input.admission.taskHash || record.admissionHash !== input.admission.admissionHash
+    || !record.slots.some(slot => Object.keys(slot).every(key => Reflect.get(slot,key) === Reflect.get(input.admission,key)))
+    || child.exitCode !== null || child.signalCode !== null || !child.pid) refuseV1();
+  const { selected } = selectionV1();
+  const expected = [fs.realpathSync(process.execPath), path.join(selected.paths.repository,"dist/cli/cli.js"),"workflow","run",input.workflowId,input.task,"--protocol","v3"];
+  if (child.spawnfile !== expected[0] || JSON.stringify(child.spawnargs) !== JSON.stringify(expected)) refuseV1();
+  const journal = startJournalV1(record, input.admission, descriptor.journal);
+  const observed = observeStartChildV1(child.pid, record.owner, input.workflowId, input.task);
+  const proof = StartChildProofSchemaV1.parse({schema:"setfarm.manual-start-child.v1",reservation:record.reservation,
+    intentHash:record.intentHash,owner:record.owner,child:observed,parentPid:record.owner.pid,journal:journal.ref,
+    slot: SlotSchema.parse({admissionHash:input.admission.admissionHash,slotHash:input.admission.slotHash,caseHash:input.admission.caseHash,taskHash:input.admission.taskHash,repetition:input.admission.repetition}),caseId:journal.caseId,workflowId:input.workflowId});
+  const base = createChildV1(rootV1(false).root,"start-children",selected.directory);
+  const directory = createChildV1(base,record.reservation.jobId,selected.directory);
+  heldV1(descriptor.reservation); journal.assertUnchanged();
+  const pin = publishExclusiveV1(path.join(directory,`${proof.slot.slotHash}.json`),Buffer.from(canonicalJsonStringify(proof)+"\n"),selected.directory);
+  const assertUnchanged = () => { heldV1(descriptor.reservation); journal.assertUnchanged(); stableV1(pin,selected.directory); };
+  assertUnchanged(); return assertUnchanged;
+}
+async function readStartChildProofV1(stored: { record: RecordV1; pin: FilePin }, custody: Custody, run: PersistWorkflowRunInputV1["run"]): Promise<StartChildObservationV1> {
+  const { selected } = selectionV1(), canary = run.protocol.canaryAdmission!;
+  const locator = path.join(startProofPathV1(stored.record),`${canary.slotHash}.json`);
+  const deadline = performance.now() + 5000;
+  while (!optionalStatV1(locator)) {
+    if (performance.now() >= deadline) refuseV1();
+    stableV1(stored.pin,selected.directory); stableV1(custody.intent,selected.directory);
+    await new Promise(resolve => setTimeout(resolve,25)); selected.assertUnchanged();
+  }
+  const pin = readPrivateFileV1(locator,16384,selected.directory);
+  const proof = StartChildProofSchemaV1.parse(JSON.parse(pin.bytes.toString("utf8")));
+  if (!pin.bytes.equals(Buffer.from(canonicalJsonStringify(proof)+"\n"))
+    || hashCanonicalJson(proof.reservation) !== hashCanonicalJson(stored.record.reservation)
+    || proof.intentHash !== stored.record.intentHash || !sameOwnerV1(proof.owner,stored.record.owner)
+    || proof.child.pid !== process.pid || proof.parentPid !== process.ppid || process.ppid !== proof.owner.pid
+    || proof.workflowId !== run.workflowId || Object.keys(proof.slot).some(key=>Reflect.get(proof.slot,key)!==Reflect.get(canary,key))) refuseV1();
+  const journal = startJournalV1(stored.record,proof.slot,proof.journal);
+  if (journal.caseId !== proof.caseId) refuseV1();
+  const assertUnchanged = () => {
+    selected.assertUnchanged(); stableV1(stored.pin,selected.directory); stableV1(custody.intent,selected.directory); stableV1(pin,selected.directory); journal.assertUnchanged();
+    if (!sameOwnerV1(proof.child,observeStartChildV1(process.pid,proof.owner,run.workflowId,run.task))
+      || !sameOwnerV1(proof.owner,processOwnerV1(proof.owner.pid,proof.owner.script,proof.owner.executable))) refuseV1();
+  };
+  assertUnchanged(); return {child:proof.child,assertUnchanged};
+}
+async function authorizeManualCanaryV1(sql: PgTransactionSql, record: RecordV1, run: PersistWorkflowRunInputV1["run"]): Promise<void> {
   const canary = run.protocol.canaryAdmission;
-  if (!canary || current.kind !== "convergence_full8" || stored.record.executionMode !== "execute" || run.protocol.mode !== "v3"
-    || run.protocol.releaseAdmissionKind !== "convergence_canary" || run.protocol.compilerReleaseSha !== current.sourceSha
-    || canary.admissionHash !== stored.record.admissionHash || run.protocol.releaseAdmissionHash !== canary.admissionHash
+  if (!canary || record.reservation.kind !== "convergence_full8" || record.executionMode !== "execute" || run.protocol.mode !== "v3"
+    || run.protocol.releaseAdmissionKind !== "convergence_canary" || run.protocol.compilerReleaseSha !== record.reservation.sourceSha
+    || canary.admissionHash !== record.admissionHash || run.protocol.releaseAdmissionHash !== canary.admissionHash
     || canary.taskHash !== hashCanonicalJson(run.task)
-    || !stored.record.slots.some(slot => Object.keys(slot).every(key => Reflect.get(slot, key) === Reflect.get(canary, key)))) refuseV1("MANUAL_EVALUATION_RESERVED");
+    || !record.slots.some(slot => Object.keys(slot).every(key => Reflect.get(slot, key) === Reflect.get(canary, key)))) refuseV1("MANUAL_EVALUATION_RESERVED");
   const admission = await admissionV1(sql, canary.admissionHash);
-  if (admission.suiteHash !== current.suiteHash || admission.releaseSha !== current.sourceSha
+  if (admission.suiteHash !== record.reservation.suiteHash || admission.releaseSha !== record.reservation.sourceSha
     || !admission.slots.some(slot => slot.slotHash === canary.slotHash && slot.caseHash === canary.caseHash && slot.taskHash === canary.taskHash
       && slot.repetition === canary.repetition && slot.selectorHash === canarySelectorHash(canary.slotToken))) refuseV1("MANUAL_EVALUATION_CANARY_REFUSED");
-  const claims = await sql.unsafe<Array<{ run_id: string | null; consumed_at: unknown; selector_hash: string; admission_hash: string }>>(
-    "SELECT run_id,consumed_at,selector_hash,admission_hash FROM v3_canary_admission_claims WHERE slot_hash=$1 FOR UPDATE", [canary.slotHash]);
+  const claims = await sql.unsafe<Array<{ run_id: string | null; consumed_at: unknown; selector_hash: string; admission_hash: string; admission_kind: string; case_hash: string; task_hash: string; repetition: number }>>(
+    "SELECT run_id,consumed_at,selector_hash,admission_hash,admission_kind,case_hash,task_hash,repetition FROM v3_canary_admission_claims WHERE slot_hash=$1 FOR UPDATE", [canary.slotHash]);
   if (claims.length !== 1 || claims[0]!.run_id !== null || claims[0]!.consumed_at !== null
+    || claims[0]!.admission_kind !== "convergence_canary" || claims[0]!.case_hash !== canary.caseHash
+    || claims[0]!.task_hash !== canary.taskHash || claims[0]!.repetition !== canary.repetition
     || claims[0]!.admission_hash !== canary.admissionHash || claims[0]!.selector_hash !== canarySelectorHash(canary.slotToken)) refuseV1("MANUAL_EVALUATION_CANARY_REFUSED");
 }
+export async function observeSelectedManualRunInsertionInTransactionV1(sql: PgTransactionSql, run: PersistWorkflowRunInputV1["run"]): Promise<ManualEvaluationReservationV1 | null> {
+  if (!freshInstallationSelectionV1) { assertFreshInstallationSelectionUnchangedV1(); return null; }
+  const stored = readRecordV1();
+  if (!stored || (!stored.uncertain && stored.record.reservation.phase === "released")) {
+    if (externalOwnersV1() !== "none") refuseV1(); return null;
+  }
+  if (stored.uncertain || stored.record.reservation.phase !== "active") refuseV1("MANUAL_EVALUATION_RESERVED");
+  await authorizeManualCanaryV1(sql, stored.record, run);
+  const custody = recordedCustodyV1(stored.record);
+  const proof = await readStartChildProofV1(stored, custody, run);
+  proof.assertUnchanged();
+  if (externalOwnersV1(custody, proof) !== "none") refuseV1("MANUAL_EVALUATION_RESERVED");
+  const reservation = Object.freeze({ ...stored.record.reservation });
+  observedPins.set(reservation, stored.pin); insertionProofsV1.set(reservation, proof);
+  return reservation;
+}
+export async function assertSelectedManualRunInsertionV1(sql: PgTransactionSql, reservation: ManualEvaluationReservationV1 | null, run: PersistWorkflowRunInputV1["run"]): Promise<void> {
+  if (!reservation) { if (await observeSelectedManualEvaluationInTransactionV1(sql)) refuseV1(); return; }
+  const proof = insertionProofsV1.get(reservation), stored = readRecordV1();
+  if (!proof || !stored || stored.uncertain || hashCanonicalJson(stored.record.reservation) !== hashCanonicalJson(reservation)) refuseV1();
+  proof.assertUnchanged();
+  await authorizeManualCanaryV1(sql, stored.record, run);
+  proof.assertUnchanged();
+  if (externalOwnersV1(recordedCustodyV1(stored.record), proof) !== "none") refuseV1();
+}
+
 export async function assertNoSelectedManualRecoveryInsertionV1(sql: PgTransactionSql): Promise<void> {
   if (await observeSelectedManualEvaluationInTransactionV1(sql)) refuseV1("MANUAL_EVALUATION_RESERVED");
 }
@@ -749,6 +907,131 @@ async function proveBoundSlotTerminalV1(sql: PgTransactionSql, record: RecordV1,
     terminalOwnerRef: close.terminalOwnerRef, terminalOwnerHash: close.terminalOwnerHash });
   if (closedPair.terminalAuthorityRef !== pair.terminalAuthorityRef || closedPair.terminalAuthorityHash !== pair.terminalAuthorityHash) refuseV1();
 }
+async function observeBoundSlotTerminalV1(sql: PgTransactionSql, record: RecordV1, slot: z.infer<typeof SlotSchema>): Promise<string | null> {
+  const admission = await admissionV1(sql, slot.admissionHash, false);
+  const stored = admission.slots.find(value => value.slotHash === slot.slotHash);
+  if (admission.releaseSha !== record.reservation.sourceSha || admission.suiteHash !== record.reservation.suiteHash
+    || !stored || ["caseHash", "taskHash", "repetition"].some(key => Reflect.get(stored, key) !== Reflect.get(slot, key))) refuseV1();
+  const claims = await sql.unsafe<Array<{ run_id: string | null; consumed_at: Date | string | null; admission_hash: string; admission_kind: string;
+    case_hash: string; task_hash: string; repetition: number; selector_hash: string }>>(
+    "SELECT run_id,consumed_at,admission_hash,admission_kind,case_hash,task_hash,repetition,selector_hash FROM v3_canary_admission_claims WHERE slot_hash=$1", [slot.slotHash]);
+  const claim = claims[0];
+  if (claims.length !== 1 || !claim || claim.admission_hash !== slot.admissionHash || claim.admission_kind !== "convergence_canary"
+    || claim.case_hash !== slot.caseHash || claim.task_hash !== slot.taskHash || claim.repetition !== slot.repetition || claim.selector_hash !== stored.selectorHash
+    || ((claim.run_id === null) !== (claim.consumed_at === null))) refuseV1();
+  if (claim.run_id === null) return null;
+  const runs = await sql.unsafe<Array<{ id: string; status: string; protocol: string; protocol_version: number; compiler_release_sha: string; release_admission_hash: string; task: string }>>(
+    "SELECT id,status,protocol,protocol_version,compiler_release_sha,release_admission_hash,task FROM runs WHERE id=$1", [claim.run_id]);
+  const run = runs[0];
+  if (runs.length !== 1 || !run || !["completed", "failed", "cancelled"].includes(run.status) || run.protocol !== "v3" || run.protocol_version !== 1
+    || run.compiler_release_sha !== record.reservation.sourceSha || run.release_admission_hash !== slot.admissionHash || hashCanonicalJson(run.task) !== slot.taskHash) refuseV1();
+  await observeInternalProductionWorkflowRunClosedOwnerInTransactionV1(sql, { runId: run.id });
+  return run.id;
+}
+type SettlementRowV1 = Record<string, any>;
+function settlementTimestampV1(value: unknown): string {
+  if (!(value instanceof Date) && typeof value !== "string") refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  const date = new Date(value as string | Date);
+  if (!Number.isFinite(date.getTime())) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  return date.toISOString();
+}
+function settlementLeaseV1(row: SettlementRowV1, delivery: boolean): void {
+  if (!["pending", "leased"].includes(row.state) || !Number.isSafeInteger(row.attempt_count) || row.attempt_count < 0
+    || (delivery && row.attempt_count > 3) || (delivery ? row.delivered_at : row.published_at) !== null)
+    refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  if (row.state === "leased") {
+    if (typeof row.owner_instance_id !== "string" || !row.owner_instance_id || typeof row.lease_token !== "string" || !row.lease_token)
+      refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+    settlementTimestampV1(row.lease_expires_at);
+  } else if (row.owner_instance_id !== null || row.lease_token !== null || row.lease_expires_at !== null) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  settlementTimestampV1(row.created_at); settlementTimestampV1(row.updated_at);
+}
+function settlementEventIdentityV1(row: SettlementRowV1, runIds: ReadonlySet<string>) {
+  const runId = operationalEventRunId({ aggregateType: row.aggregate_type, aggregateId: row.aggregate_id, payload: row.payload });
+  const identity = OperationalEventIdentityV1Schema.parse({ schema: "setfarm.operational-event-identity.v1", eventKey: row.event_key,
+    outboxId: row.outbox_id, requestId: row.request_id, eventType: row.event_type, aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id, runId, payload: row.payload, sourceCreatedAt: settlementTimestampV1(row.created_at) });
+  if (!runIds.has(runId) || (identity.aggregateType === "run" && identity.aggregateId !== runId)
+    || ("runId" in identity.payload && identity.payload.runId !== runId)) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  return identity;
+}
+async function pendingSettlementV1(sql: PgTransactionSql, activity: Record<string, number>, runIds: ReadonlySet<string>): Promise<"ready" | "pending"> {
+  const allowed = new Set(["active_outbox", "active_operational_deliveries", "active_owner_reservations"]);
+  if (Object.entries(activity).some(([key, count]) => count !== 0 && !allowed.has(key))) refuseV1("MANUAL_EVALUATION_ACTIVITY_PRESENT");
+  // Left joins preserve malformed/missing provenance as a refusal, never hide it.
+  const outbox = await sql.unsafe<SettlementRowV1[]>("SELECT * FROM operational_outbox WHERE state IN ('pending','leased') ORDER BY outbox_id LIMIT 4097");
+  const deliveries = await sql.unsafe<SettlementRowV1[]>("SELECT d.*,row_to_json(e) AS event,row_to_json(o) AS outbox FROM operational_event_deliveries d LEFT JOIN operational_events e ON e.event_key=d.event_key LEFT JOIN operational_outbox o ON o.outbox_id=e.outbox_id WHERE d.state IN ('pending','leased') ORDER BY d.event_key,d.consumer LIMIT 4097");
+  const owners = await sql.unsafe<SettlementRowV1[]>("SELECT * FROM internal_production_owner_reservations_v1 WHERE state IN ('pending','bound') ORDER BY reservation_ref LIMIT 4097");
+  if (outbox.length > 4096 || deliveries.length > 4096 || owners.length > 4096 || outbox.length !== activity.active_outbox
+    || deliveries.length !== activity.active_operational_deliveries || owners.length !== activity.active_owner_reservations)
+    refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  const eventKeys = new Set<string>();
+  for (const row of outbox) {
+    settlementLeaseV1(row, false); const event = settlementEventIdentityV1(row, runIds);
+    if (eventKeys.has(event.eventKey)) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN"); eventKeys.add(event.eventKey);
+  }
+  const expectedOwners = new Map<string, ReturnType<typeof createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1>>();
+  for (const row of deliveries) {
+    settlementLeaseV1(row, true);
+    const eventRow = row.event, outboxRow = row.outbox;
+    if (!eventRow || !outboxRow || outboxRow.state !== "published" || outboxRow.published_at === null) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+    const source = settlementEventIdentityV1(outboxRow, runIds);
+    const event = CanonicalOperationalEventV1Schema.parse({ schema: "setfarm.operational-event.v1", eventKey: eventRow.event_key,
+      outboxId: eventRow.outbox_id, requestId: eventRow.request_id, eventType: eventRow.event_type, aggregateType: eventRow.aggregate_type,
+      aggregateId: eventRow.aggregate_id, runId: eventRow.run_id, payload: eventRow.payload, sourceCreatedAt: settlementTimestampV1(eventRow.source_created_at),
+      eventHash: eventRow.event_hash, committedAt: settlementTimestampV1(eventRow.committed_at) });
+    if (hashCanonicalJson(source) !== event.eventHash || !runIds.has(event.runId) || row.event_key !== event.eventKey
+      || row.input_hash !== event.eventHash || row.idempotency_key !== event.eventKey) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+    const consumer = OperationalEventDeliveryConsumerV1Schema.parse(row.consumer);
+    if (row.delivery_id !== operationalEventDeliveryId(event.eventKey, consumer)) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+    const identity = createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1({ eventKey: event.eventKey, consumer });
+    if (expectedOwners.has(identity.ownerKey)) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+    const observedOwner = await observeInternalProductionOperationalDeliveryBoundOwnerInTransactionV1(sql, { eventKey: event.eventKey, consumer });
+    const matches = owners.filter(owner => owner.reservation_ref === observedOwner.reservationRef && owner.reservation_hash === observedOwner.reservationHash
+      && owner.binding_hash === observedOwner.bindingHash);
+    if (matches.length !== 1) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+    expectedOwners.set(identity.ownerKey, identity);
+  }
+  if (owners.length !== expectedOwners.size) refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+  for (const row of owners) {
+    const identity = expectedOwners.get(row.owner_key);
+    const bound = validateInternalProductionBoundOwnerReservationV1(row.binding_payload);
+    if (!identity || row.state !== "bound" || row.category !== "operational-delivery" || row.producer_implementation_id !== "a-operational-delivery-v1"
+      || bound.producerImplementationId !== row.producer_implementation_id || bound.category !== row.category || bound.ownerKey !== row.owner_key
+      || bound.reservationRef !== row.reservation_ref || bound.reservationHash !== row.reservation_hash || bound.bindingHash !== row.binding_hash
+      || hashCanonicalJson(bound.canonicalOwnerIdentity) !== hashCanonicalJson(identity) || hashCanonicalJson(row.canonical_owner_identity) !== hashCanonicalJson(identity))
+      refuseV1("MANUAL_EVALUATION_ACTIVITY_UNKNOWN");
+    expectedOwners.delete(row.owner_key);
+  }
+  return outbox.length + deliveries.length === 0 ? "ready" : "pending";
+}
+/** Read-only observation; this never grants release authority or starts more work. */
+export async function observeSelectedManualSettlementV1(reservation: ManualEvaluationReservationV1): Promise<"ready" | "pending"> {
+  const held = heldV1(reservation), selected = selectionV1().selected, sqlOwner = getSql(), history = historyV1();
+  const cumulative = new Map<string, z.infer<typeof SlotSchema>>();
+  for (const entry of history.filter(value => value.record.reservation.jobId === reservation.jobId)) for (const slot of entry.record.slots) {
+    const prior = cumulative.get(slot.slotHash);
+    if (prior && hashCanonicalJson(prior) !== hashCanonicalJson(slot)) refuseV1(); cumulative.set(slot.slotHash, slot);
+  }
+  if (cumulative.size !== held.record.slots.length || held.record.slots.some(slot => hashCanonicalJson(cumulative.get(slot.slotHash)) !== hashCanonicalJson(slot))) refuseV1();
+  const recheck = () => {
+    selected.assertUnchanged(); verifyCustodyV1(held.custody); heldV1(reservation);
+    stableV1(held.pin, selected.directory); stableV1(held.custody.intent, selected.directory);
+    for (const entry of history) stableV1(entry.pin, selected.directory);
+    if (getSql() !== sqlOwner || externalOwnersV1(held.custody) !== "none") refuseV1();
+  };
+  recheck();
+  const result = await sqlOwner.begin("isolation level repeatable read read only", async sql => {
+    await sql.unsafe("SELECT pg_catalog.set_config('lock_timeout','1000',true),pg_catalog.set_config('statement_timeout','5000',true),pg_catalog.set_config('transaction_timeout','5000',true)");
+    const activity = await activityV1(sql), runIds = new Set<string>();
+    for (const slot of cumulative.values()) {
+      const runId = await observeBoundSlotTerminalV1(sql, held.record, slot);
+      if (runId) { if (runIds.has(runId)) refuseV1(); runIds.add(runId); }
+    }
+    const state = await pendingSettlementV1(sql, activity, runIds); recheck(); return state;
+  });
+  recheck(); return result as "ready" | "pending";
+}
 export async function releaseSelectedManualEvaluationV1(reservation: ManualEvaluationReservationV1): Promise<void> {
   const initial = heldV1(reservation), custody = initial.custody;
   const released = await custodyMutationV1(custody, "releasing", async sql => {
@@ -776,7 +1059,7 @@ export async function releaseSelectedManualEvaluationV1(reservation: ManualEvalu
   custody.released = released;
 }
 async function assertNoOwnWorkV1(sql: PgTransactionSql, custody: Custody): Promise<void> {
-  const rows = parseProcessTableV1(psV1(["-ww", "-axo", "pid=,ppid=,pgid=,command="]));
+  const rows = processTableV1();
   const own = rows.find(row => row.pid === custody.owner.pid);
   if (!own || own.processGroupId !== custody.owner.processGroupId || digestV1(own.command) !== custody.owner.commandHash
     || hasOwnedChildrenV1(rows, custody.owner)) refuseV1();

@@ -241,6 +241,8 @@ export interface ConvergenceHttpPort {
   syncProject(runId: string): Promise<Readonly<{ ok: boolean; evidenceHash: string }>>;
 }
 
+import type { ManualStartChildDescriptorV1 } from "../execution/manual-test-admission-v1.js";
+
 export interface ConvergenceProcessPort {
   inspectRelease(): Promise<ConvergenceReleaseInspection>;
   startRun(input: Readonly<{
@@ -248,6 +250,7 @@ export interface ConvergenceProcessPort {
     task: string;
     releaseSha: string;
     admission: InternalCanaryAdmissionContextV1;
+    startChild?: ManualStartChildDescriptorV1;
   }>): Promise<Readonly<{ runId: string; runNumber: number }>>;
   inspectProject(input: Readonly<{
     projectLocator: string | null;
@@ -621,15 +624,15 @@ function unavailableProjection(): z.infer<typeof ConvergenceProjectionEvidenceV1
 async function collectProjection(
   ports: ConvergenceRunnerPorts,
   runId: string,
-): Promise<z.infer<typeof ConvergenceProjectionEvidenceV1Schema>> {
+): Promise<{ projection: z.infer<typeof ConvergenceProjectionEvidenceV1Schema>; ordinaryPending: boolean }> {
   const [setfarmRead, missionControlRead] = await Promise.all([
     settle(() => ports.http.operationalSnapshot("setfarm", runId)),
     settle(() => ports.http.operationalSnapshot("mission_control", runId)),
   ]);
-  if (!setfarmRead.ok || !missionControlRead.ok) return unavailableProjection();
+  if (!setfarmRead.ok || !missionControlRead.ok) return { projection: unavailableProjection(), ordinaryPending: false };
   const setfarm = RunOperationalSnapshotV2Schema.safeParse(setfarmRead.value);
   const missionControl = RunOperationalSnapshotV2Schema.safeParse(missionControlRead.value);
-  if (!setfarm.success || !missionControl.success) return unavailableProjection();
+  if (!setfarm.success || !missionControl.success) return { projection: unavailableProjection(), ordinaryPending: false };
   const { snapshotHash: setfarmSnapshotHash, ...setfarmHashable } = setfarm.data;
   const { snapshotHash: missionControlSnapshotHash, ...missionControlHashable } = missionControl.data;
   if (
@@ -639,7 +642,7 @@ async function collectProjection(
     || computeRunOperationalSnapshotHash(missionControlHashable) !== missionControlSnapshotHash
     || !setfarm.data.source.capabilities.implementationSubmissionEvidence
     || !missionControl.data.source.capabilities.implementationSubmissionEvidence
-  ) return unavailableProjection();
+  ) return { projection: unavailableProjection(), ordinaryPending: false };
   const capabilities = Object.fromEntries(REQUIRED_CAPABILITIES.map((key) => [
     key,
     setfarm.data.source.capabilities[key] === true
@@ -654,14 +657,25 @@ async function collectProjection(
     && setfarmAck.projectRecordHash === missionControlAck.projectRecordHash
     && setfarmAck.sourceSnapshotHash === missionControlAck.sourceSnapshotHash,
   );
-  const operationalSettled = [setfarm.data, missionControl.data].every((snapshot) =>
+  const snapshots = [setfarm.data, missionControl.data];
+  const knownTerminal = snapshots.every(snapshot => snapshot.run.terminal
+    && snapshot.summary.lifecycleState === "terminal" && snapshot.summary.health === "ok"
+    && snapshot.summary.invariantViolations === 0 && snapshot.invariants.length === 0
+    && snapshot.source.projection === "complete"
+    && snapshot.outbox.every(item => ["pending", "leased", "published"].includes(item.state))
+    && snapshot.summary.unpublishedOutbox === snapshot.outbox.filter(item => item.state !== "published").length);
+  const pendingOwners = (snapshot: typeof setfarm.data) => snapshot.summary.activeClaims + snapshot.summary.activeAttempts
+    + snapshot.summary.activeRuntimes + snapshot.summary.openCompletions + snapshot.summary.mandatoryEffectsPending
+    + snapshot.summary.unpublishedOutbox;
+  const ordinaryPending = knownTerminal && snapshots.some(snapshot => pendingOwners(snapshot) > 0);
+  const operationalSettled = knownTerminal && snapshots.every((snapshot) =>
     snapshot.summary.lifecycleState === "terminal"
     && snapshot.summary.health === "ok"
     && snapshot.summary.invariantViolations === 0
-    && snapshot.summary.unpublishedOutbox === 0
+    && pendingOwners(snapshot) === 0
     && snapshot.invariants.length === 0
     && snapshot.outbox.every((item) => item.state === "published"));
-  return ConvergenceProjectionEvidenceV1Schema.parse({
+  return { ordinaryPending, projection: ConvergenceProjectionEvidenceV1Schema.parse({
     setfarmSnapshotHash: setfarm.data.snapshotHash,
     missionControlSnapshotHash: missionControl.data.snapshotHash,
     exactHashMatch: setfarm.data.snapshotHash === missionControl.data.snapshotHash,
@@ -672,7 +686,7 @@ async function collectProjection(
     transferAcknowledged,
     projectTransferAckHash: transferAcknowledged ? setfarmAck!.ackHash : null,
     projectRecordHash: transferAcknowledged ? setfarmAck!.projectRecordHash : null,
-  });
+  }) };
 }
 
 async function waitForCanonicalProjection(
@@ -683,7 +697,8 @@ async function waitForCanonicalProjection(
   cancellationRequested?: () => Promise<boolean>,
 ): Promise<z.infer<typeof ConvergenceProjectionEvidenceV1Schema>> {
   if (accepted && !await cancellationRequested?.()) await settle(() => ports.http.syncProject(runId));
-  let projection = await collectProjection(ports, runId);
+  let observed = await collectProjection(ports, runId);
+  let projection = observed.projection;
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const complete = projection.exactHashMatch
       && projection.setfarmProjection === "complete"
@@ -691,13 +706,25 @@ async function waitForCanonicalProjection(
       && projection.operationalSettled
       && Object.values(projection.capabilities).every(Boolean)
       && (accepted ? projection.transferAcknowledged : !projection.transferAcknowledged);
-    if (complete || await cancellationRequested?.()) return projection;
-    if (accepted && attempt > 0 && attempt % 3 === 0) {
+    const cancelled = await cancellationRequested?.();
+    if (cancelled) {
+      const trustworthy = projection.exactHashMatch && projection.setfarmProjection === "complete"
+        && projection.missionControlProjection === "complete" && Object.values(projection.capabilities).every(Boolean);
+      if (!trustworthy || (!projection.operationalSettled && !observed.ordinaryPending))
+        throw new ControlWorkerFatalErrorV1("CONTROL_SETTLEMENT_UNCERTAIN");
+      if (projection.operationalSettled) return projection;
+    } else if (complete) return projection;
+    if (!cancelled && accepted && attempt > 0 && attempt % 3 === 0) {
       await settle(() => ports.http.syncProject(runId));
     }
     await ports.clock.sleep(Math.min(5_000, Math.max(250, pollMs)));
-    projection = await collectProjection(ports, runId);
+    observed = await collectProjection(ports, runId);
+    projection = observed.projection;
   }
+  if (await cancellationRequested?.() && (!projection.operationalSettled || !projection.exactHashMatch
+    || projection.setfarmProjection !== "complete" || projection.missionControlProjection !== "complete"
+    || !Object.values(projection.capabilities).every(Boolean)))
+    throw new ControlWorkerFatalErrorV1("CONTROL_SETTLEMENT_UNCERTAIN");
   return projection;
 }
 
@@ -2177,23 +2204,26 @@ export function createNodeConvergenceProcessPort(root = packageRoot()): Converge
     },
 
     async startRun(input) {
-      const output = await command(process.execPath, [
-        cli,
-        "workflow",
-        "run",
-        input.workflowId,
-        input.task,
-        "--protocol",
-        "v3",
-      ], {
-        cwd: root,
-        timeout: 120_000,
-        env: {
-          ...process.env,
-          SETFARM_INTERNAL_CONVERGENCE_ADMISSION:
-            serializeInternalCanaryAdmissionContext(input.admission),
-        },
+      const executable = realpathSync(process.execPath);
+      const args = [cli, "workflow", "run", input.workflowId, input.task, "--protocol", "v3"];
+      // Load before spawning: the original promise/handle has an owner from birth.
+      const publish = input.startChild
+        ? (await import("../execution/manual-test-admission-v1.js")).publishSelectedManualStartChildV1 : null;
+      const pending = execFileAsync(executable, args, {
+        cwd: root, timeout: 120_000, encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
+        env: { ...process.env, SETFARM_INTERNAL_CONVERGENCE_ADMISSION: serializeInternalCanaryAdmissionContext(input.admission) },
       });
+      // Attach rejection handling before synchronous proof publication. Always
+      // await this one original handle, even if publication/observation refuses.
+      const outcome = pending.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+      let publicationError: unknown, assertPublished: (() => void) | undefined;
+      try { if (publish) assertPublished = publish(input.startChild!, input, pending.child); }
+      catch (error) { publicationError = error; }
+      const result = await outcome;
+      if (publicationError) throw new ControlWorkerFatalErrorV1("CONTROL_START_UNRESOLVED");
+      try { assertPublished?.(); } catch { throw new ControlWorkerFatalErrorV1("CONTROL_START_UNRESOLVED"); }
+      if (!result.ok) throw result.error;
+      const output = String(result.value.stdout).trim();
       const match = output.match(/Run:\s*#([1-9][0-9]*)\s*\(([^)]+)\)/);
       if (!match) throw new Error("EVAL_RUN_START_OUTPUT_INVALID");
       return { runId: match[2]!, runNumber: Number(match[1]) };

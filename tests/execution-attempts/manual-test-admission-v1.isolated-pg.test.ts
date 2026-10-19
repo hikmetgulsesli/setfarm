@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, lstatSync, realpathSync, rmSync, writeFileSync, existsSync, chmodSync, renameSync } from "node:fs";
 import { registerHooks } from "node:module";
+import { Script } from "node:vm";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
 import type { PgTransactionSql } from "../../src/db-pg.js";
@@ -23,38 +24,53 @@ const SOURCE_ROOT = realpathSync(fileURLToPath(new URL("../../", import.meta.url
 const MANUAL_URL = new URL("../../src/execution/manual-test-admission-v1.js", import.meta.url);
 const PERSISTENCE_URL = new URL("../../src/execution/run-persistence.js", import.meta.url);
 
+// Explicit OS fixture boundary: parent harness identity/table remain injected.
+// Only the default CLI child and its descendants use actual captured OS rows;
+// this is not a compiled selection or a whole-host admission qualification.
+function childTableObservationSource(owner: {pid:number;processGroupId:number}, argv: string[], repository: string): string {
+  return `function processTableV1(){const rows=actualProcessTableV1();const keep=new Set([${owner.pid}]);
+    for(const row of rows)if(row.parentPid===${owner.pid}&&row.command.startsWith(${JSON.stringify(argv[0]+" "+path.join(repository,"dist/cli/cli.js")+" ")}))keep.add(row.pid);
+    for(let n=0;n<rows.length;n++){let added=false;for(const row of rows)if(row.parentPid!==${owner.pid}&&keep.has(row.parentPid)&&!keep.has(row.pid)){keep.add(row.pid);added=true;}if(!added)break;}
+    return rows.filter(row=>keep.has(row.pid)).map(row=>row.pid===${owner.pid}?{...row,processGroupId:${owner.processGroupId},command:${JSON.stringify(argv.join(" "))}}:row);}`;
+}
+
 /** Root-approved component scope: only the new module's immutable locator
  * observation is replaced. DB preparation, pgBegin, the common fence, run
  * persistence, canary validation/consumption and terminal settlement stay real.
  * This supplies no compiled selected-entry or privileged recovery authority. */
-async function fixture(t: TestContext, entryKind: "worker" | "direct" = "worker") {
+async function fixture(t: TestContext, entryKind: "worker" | "direct" = "worker", actualChild = false) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-manual-admission-")));
   const rootPin = lstatSync(root);
   const runtime = path.join(root, "runtime");
   const evals = path.join(runtime, "evals");
   for (const directory of [runtime, evals, path.join(evals, "results")]) mkdirSync(directory, { mode: 0o700 });
+  const repositoryRoot = actualChild ? path.join(root, "release") : SOURCE_ROOT;
+  if (actualChild) {
+    for (const directory of [repositoryRoot,path.join(repositoryRoot,"dist"),path.join(repositoryRoot,"dist/cli"),path.join(repositoryRoot,"evals"),path.join(repositoryRoot,"evals/suites")]) mkdirSync(directory,{mode:0o700});
+    writeFileSync(path.join(repositoryRoot,"evals/suites/product-convergence-codex-v1.json"),readFileSync(path.join(SOURCE_ROOT,"evals/suites/product-convergence-codex-v1.json")),{mode:0o600});
+  }
   const fixtureId = randomUUID(); let jobId: string = randomUUID();
   const identity = observeProcessIdentity(process.pid);
   assert.ok(identity && identity.source === "observed_os" && identity.processGroupId);
   const { schema: _schema, ...osIdentity } = identity;
   const executable = realpathSync(process.execPath);
-  const script = path.join(SOURCE_ROOT, entryKind === "worker" ? "dist/cli/control-test-worker-v1.js" : "dist/evals/convergence-runner.js");
+  const script = path.join(repositoryRoot, entryKind === "worker" ? "dist/cli/control-test-worker-v1.js" : "dist/evals/convergence-runner.js");
   const workerArgv = entryKind === "worker" ? [executable, script, "--job-id", jobId]
-    : [executable, script, "--suite", path.join(SOURCE_ROOT, "evals/suites/product-convergence-codex-v1.json"), "--output-root", path.join(evals, "results")];
-  const owner = Object.freeze({ ...osIdentity, executable, script, commandHash: createHash("sha256").update(workerArgv.join(" ")).digest("hex") });
+    : [executable, script, "--suite", path.join(repositoryRoot, "evals/suites/product-convergence-codex-v1.json"), "--output-root", path.join(evals, "results")];
+  const owner = Object.freeze({ ...osIdentity, processGroupId: identity.processGroupId, source: "observed_os" as const, executable, script, commandHash: createHash("sha256").update(workerArgv.join(" ")).digest("hex") });
   const faults = { rollbackAfterCallback: false, censusOverlay: null as Record<string, unknown> | null, transactionBackendPid: null as number | null };
   const faultKey = `setfarm.manual-test-fault.${fixtureId}`;
   Reflect.set(globalThis, Symbol.for(faultKey), faults);
   const selected = {
     directory: root,
-    paths: { root: runtime, repository: SOURCE_ROOT, evals: path.join(evals, "results") },
+    paths: { root: runtime, repository: repositoryRoot, evals: path.join(evals, "results") },
     state: { origin: { sourceSha: SOURCE_SHA, installationId: fixtureId } },
     catalogHash: "c".repeat(64),
     activation: { acknowledged: true, preparedPin: { sha256: "e".repeat(64) }, activatedPin: { sha256: "f".repeat(64) } },
   };
   const selectionHash = hashCanonicalJson({
     schema: "setfarm.manual-control-selection.v1", installationId: fixtureId, sourceSha: SOURCE_SHA,
-    installationDir: root, releaseDir: SOURCE_ROOT, catalogHash: selected.catalogHash,
+    installationDir: root, releaseDir: repositoryRoot, catalogHash: selected.catalogHash,
     activationPreparedHash: selected.activation.preparedPin.sha256,
     activationAcknowledgedHash: selected.activation.activatedPin.sha256,
   });
@@ -105,6 +121,8 @@ async function fixture(t: TestContext, entryKind: "worker" | "direct" = "worker"
       }
       if (parent.includes("manual-test-admission-v1.") && parent.includes(`manual-fixture=${fixtureId}`)
         && /(?:^|\/)db-pg\.[jt]s$/.test(specifier)) return { url: faultUrl, shortCircuit: true };
+      if (parent.includes("convergence-runner.") && parent.includes(`manual-fixture=${fixtureId}`)
+        && /manual-test-admission-v1\.[jt]s$/.test(specifier)) return nextResolve(`${specifier}?manual-fixture=${fixtureId}`,context);
       if (parent.includes("run-persistence.") && parent.includes(`manual-fixture=${fixtureId}`)
         && /manual-test-admission-v1\.[jt]s$/.test(specifier)) {
         return nextResolve(`${specifier}?manual-fixture=${fixtureId}${parent.includes("pre-worker") ? "&pre-worker" : ""}`, context);
@@ -121,11 +139,21 @@ async function fixture(t: TestContext, entryKind: "worker" | "direct" = "worker"
       const replacements: Record<string, string> = {
         entryV1: `function entryV1(kind){if(kind!==${JSON.stringify(entryKind)})throw new Error('FIXTURE_ENTRY_REFUSED');return Object.freeze(${JSON.stringify(owner)})}`,
         processOwnerV1: `function processOwnerV1(pid,script,executable){const owner=Object.freeze(${JSON.stringify(owner)});if(pid!==owner.pid||script!==owner.script||executable!==owner.executable)throw new Error('FIXTURE_OS_OBSERVATION_UNKNOWN');return owner}`,
-        psV1: `function psV1(args){if(JSON.stringify(args)!==JSON.stringify(['-ww','-axo','pid=,ppid=,pgid=,command=']))throw new Error('FIXTURE_PS_OBSERVATION_UNKNOWN');return ${JSON.stringify(url.includes("pre-worker") ? "" : `${owner.pid} ${process.ppid} ${owner.processGroupId} ${workerArgv.join(" ")}\n`)}}`,
+        processTableV1: `function processTableV1(){return ${JSON.stringify(url.includes("pre-worker") ? [] : [{pid:owner.pid,parentPid:process.ppid,processGroupId:owner.processGroupId,command:workerArgv.join(" ")}])}}`,
       };
       const edits = tree.statements.filter(ts.isFunctionDeclaration).filter(node => node.name && replacements[node.name.text])
         .map(node => ({ start: node.getStart(tree), end: node.end, text: replacements[node.name!.text]! }));
       assert.equal(edits.length, 3);
+      if (actualChild) {
+        const originalOwner = tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="processOwnerV1")!.getText(tree).replace("function processOwnerV1(","function actualProcessOwnerV1(");
+        const originalTable = tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="processTableV1")!.getText(tree).replace("function processTableV1(","function actualProcessTableV1(");
+        replacements.processOwnerV1 = `function processOwnerV1(pid,script,executable){if(pid===${owner.pid})return ${JSON.stringify(owner)};return actualProcessOwnerV1(pid,script,executable);}`;
+        replacements.processTableV1 = childTableObservationSource(owner,workerArgv,repositoryRoot);
+        for (const edit of edits) { const node=tree.statements.find(node=>node.getStart(tree)===edit.start)! as ts.FunctionDeclaration; edit.text=replacements[node.name!.text]!; }
+        // Existing parent entry/OS observations are fixture facts; exact child
+        // identities and descendants come from the production OS observer.
+        edits.push({start:source.length,end:source.length,text:"\n"+originalOwner+"\n"+originalTable});
+      }
       let changed = source;
       for (const edit of edits.sort((a, b) => b.start - a.start)) changed = changed.slice(0, edit.start) + edit.text + changed.slice(edit.end);
       return { ...loaded, source: changed };
@@ -178,7 +206,7 @@ async function fixture(t: TestContext, entryKind: "worker" | "direct" = "worker"
         receipt: { schema: "mission-control.control-job.v1", ...input(), revision: 1, mcSourceSha: "c".repeat(40), mcBuildHash: "d".repeat(64),
           state: "accepted", requestedAt: now, startedAt: null, updatedAt: now, finishedAt: null, phase: "accepted", code: null,
           currentCaseId: null, ownedRunId: null, completedCases: 0, plannedCases: 8, reportRefs: {}, cancelRequested: false },
-        installationDir: root, releaseDir: SOURCE_ROOT, nonceDigest: createHash("sha256").update(nonce).digest("hex"),
+        installationDir: root, releaseDir: repositoryRoot, nonceDigest: createHash("sha256").update(nonce).digest("hex"),
         fixedSuiteRelativePath: "evals/suites/product-convergence-codex-v1.json" }) + "\n", { mode: 0o600, flag: "wx" });
       enrolled = true;
     }
@@ -219,7 +247,109 @@ async function fixture(t: TestContext, entryKind: "worker" | "direct" = "worker"
     return Math.max(...matches);
   }
   const restart = async (): Promise<typeof manual> => import(`${MANUAL_URL.href}?manual-fixture=${fixtureId}&restart=${randomUUID()}`);
-  return { manual, persistence, database, db, root, evals, suite, input, ordinaryRunInput, revision, faults, restart, acquire, enroll, preWorkerManual: () => import(`${MANUAL_URL.href}?manual-fixture=${fixtureId}&pre-worker`) as Promise<typeof manual>, preWorkerPersistence: () => import(`${PERSISTENCE_URL.href}?manual-fixture=${fixtureId}&pre-worker`) as Promise<typeof persistence> };
+  return { manual, persistence, database, db, root, evals, suite, input, owner, repositoryRoot, selectionSource, fixtureId, workerArgv, ordinaryRunInput, revision, faults, restart, acquire, enroll, preWorkerManual: () => import(`${MANUAL_URL.href}?manual-fixture=${fixtureId}&pre-worker`) as Promise<typeof manual>, preWorkerPersistence: () => import(`${PERSISTENCE_URL.href}?manual-fixture=${fixtureId}&pre-worker`) as Promise<typeof persistence> };
+}
+
+async function settlementDataSnapshot(f: Awaited<ReturnType<typeof fixture>>) {
+  const tables = ["runs", "v3_canary_admission_claims", "internal_production_owner_reservations_v1", "internal_production_owner_admission_authorities_v1", "internal_production_owner_admission_head_v1", "operational_outbox", "operational_events", "operational_event_deliveries"];
+  const result: Record<string, unknown> = {};
+  for (const table of tables) result[table] = await f.database.sql.unsafe(`SELECT row_to_json(t) AS row FROM ${table} t ORDER BY row_to_json(t)::text`);
+  return JSON.stringify(result);
+}
+async function readonlyRunOwner(f: Awaited<ReturnType<typeof fixture>>, runId: string) {
+  return f.database.sql.begin("isolation level repeatable read read only", async sql => {
+    assert.equal((await sql`SHOW transaction_read_only`)[0]?.transaction_read_only, "on");
+    return f.db.observeInternalProductionWorkflowRunClosedOwnerInTransactionV1(sql as PgTransactionSql, {runId});
+  });
+}
+async function readonlyDeliveryOwner(f: Awaited<ReturnType<typeof fixture>>, eventKey: string, consumer: "jsonl" | "webhook") {
+  return f.database.sql.begin("isolation level repeatable read read only", async sql => {
+    assert.equal((await sql`SHOW transaction_read_only`)[0]?.transaction_read_only, "on");
+    return f.db.observeInternalProductionOperationalDeliveryBoundOwnerInTransactionV1(sql as PgTransactionSql, {eventKey,consumer});
+  });
+}
+// Deliberate private fixture corruption. Every mutation is restored exactly;
+// production observers still run against real rows in an enforced READ ONLY transaction.
+async function withAlteredOwner(f: Awaited<ReturnType<typeof fixture>>, ref: string, field: "producer_implementation_id" | "binding_hash" | "close_hash", replacement: string, assertion: () => Promise<void>) {
+  const original = await f.database.sql.unsafe(`SELECT ${field} AS value FROM internal_production_owner_reservations_v1 WHERE reservation_ref=$1`,[ref]);
+  assert.equal(original.length,1);
+  await f.database.sql.unsafe(`UPDATE internal_production_owner_reservations_v1 SET ${field}=$2 WHERE reservation_ref=$1`,[ref,replacement]);
+  try { await assertion(); } finally { await f.database.sql.unsafe(`UPDATE internal_production_owner_reservations_v1 SET ${field}=$2 WHERE reservation_ref=$1`,[ref,original[0]!.value]); }
+}
+async function withExtraOwner(f: Awaited<ReturnType<typeof fixture>>, ref: string, assertion: () => Promise<void>) {
+  const duplicateRef = "setfarm://fixture/extra-owner/" + randomUUID(), duplicateHash = hashCanonicalJson(duplicateRef);
+  await f.database.sql`INSERT INTO internal_production_owner_reservations_v1 SELECT (jsonb_populate_record(NULL::internal_production_owner_reservations_v1,
+    to_jsonb(o) || jsonb_build_object('reservation_ref',${duplicateRef}::text,'reservation_hash',${duplicateHash}::text,'owner_key_hash',${duplicateHash}::text))).*
+    FROM internal_production_owner_reservations_v1 o WHERE reservation_ref=${ref}`;
+  try { await assertion(); } finally { await f.database.sql`DELETE FROM internal_production_owner_reservations_v1 WHERE reservation_ref=${duplicateRef}`; }
+}
+
+async function startActualDefaultChild(f: Awaited<ReturnType<typeof fixture>>, input: PersistWorkflowRunInputV1,
+  reservation: import("../../src/execution/manual-test-admission-v1.js").ManualEvaluationReservationV1,
+  contexts: readonly import("../../src/execution/v3-release-admission.js").InternalCanaryAdmissionContextV1[], fault: "none" | "proof_drift" | "foreign_child" = "none") {
+  // Actual Source journal implementation; no synthetic proof file or child PID.
+  const workerPath=path.join(SOURCE_ROOT,"src/execution/manual-test-worker-v1.ts");
+  let workerSource=readFileSync(workerPath,"utf8").replace(/from "(\.[^"]+)"/g,(_,specifier)=>`from ${JSON.stringify(pathToFileURL(path.resolve(path.dirname(workerPath),specifier.replace(/\.js$/,".ts"))).href)}`);
+  workerSource+="\nexport {WorkerJournalV1};";
+  const worker=await import(`data:text/javascript;base64,${Buffer.from(ts.transpileModule(workerSource,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString("base64")}`);
+  const record=JSON.parse(readFileSync(path.join(f.evals,"manual-controls/reservation.json"),"utf8"));
+  const journal=new worker.WorkerJournalV1(f.evals,reservation.jobId,record.intentHash,f.owner,f.root);
+  journal.append({type:"acquired",kind:"convergence_full8",selectionHash:reservation.selectionHash,sourceSha:SOURCE_SHA,suiteHash:f.suite.suiteHash,executionMode:"execute",owner:f.owner,origin:"mission_control",reservationRevision:reservation.revision-1});
+  const caseFor=(context:typeof contexts[number])=>f.suite.suite.cases.find(value=>convergenceCaseHash(value)===context.caseHash)!;
+  journal.append({type:"canary_create_requested",releaseSha:SOURCE_SHA,suiteHash:f.suite.suiteHash,preflightHash:"d".repeat(64),ttlMs:60_000,slots:contexts.map(context=>({caseId:caseFor(context).caseId,caseHash:context.caseHash,taskHash:context.taskHash,repetition:1,slotToken:context.slotToken}))});
+  journal.append({type:"canary_bound",contexts:contexts.map(context=>({caseId:caseFor(context).caseId,context})),reservationRevision:reservation.revision});
+  const context=input.run.protocol.canaryAdmission!;
+  const head=journal.append({type:"start_requested",case:{caseId:caseFor(context).caseId,caseHash:context.caseHash,taskHash:context.taskHash,repetition:1},admissionHash:context.admissionHash,slotHash:context.slotHash});
+  const selectionUrl=`data:text/javascript;base64,${Buffer.from(f.selectionSource).toString("base64")}`;
+  // Native synchronous transpilation avoids test-loader work descendants. This
+  // temp CLI runs the real persistence transaction, not the actual selected CLI
+  // workflow/preparation entry. No compilation/qualification credit is claimed.
+  const cli=path.join(f.repositoryRoot,"dist/cli/cli.js");
+  const manualSource=readFileSync(path.join(SOURCE_ROOT,"src/execution/manual-test-admission-v1.ts"),"utf8");
+  const tree=ts.createSourceFile("manual.ts",manualSource,ts.ScriptTarget.Latest,true);
+  const originalOwner=tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="processOwnerV1")!.getText(tree).replace("function processOwnerV1(","function actualProcessOwnerV1(");
+  const originalTable=tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="processTableV1")!.getText(tree).replace("function processTableV1(","function actualProcessTableV1(");
+  const replacements={processOwnerV1:`function processOwnerV1(pid,script,executable){if(pid===${f.owner.pid})return ${JSON.stringify(f.owner)};return actualProcessOwnerV1(pid,script,executable);}`,processTableV1:childTableObservationSource(f.owner,f.workerArgv,f.repositoryRoot)};
+  const proofPath=path.join(f.evals,"manual-controls/start-children",reservation.jobId,context.slotHash+".json");
+  const childSource=`const fs=require('node:fs'),path=require('node:path');
+const {pathToFileURL,fileURLToPath}=require('node:url');const {registerHooks}=require('node:module');const ts=require(${JSON.stringify(path.join(SOURCE_ROOT,"node_modules/typescript/lib/typescript.js"))});
+const sourceRoot=${JSON.stringify(SOURCE_ROOT)},selectionUrl=${JSON.stringify(selectionUrl)},fixtureId=${JSON.stringify(f.fixtureId)},replacements=${JSON.stringify(replacements)};
+registerHooks({resolve(specifier,context,next){const parent=context.parentURL||'';
+ if(parent.includes('manual-test-admission-v1.')&&specifier.includes('fresh-installation-selection-v1'))return {url:selectionUrl,shortCircuit:true};
+ if(specifier.startsWith('.')&&/\\.js$/.test(specifier)&&parent.startsWith('file:')){const u=new URL(specifier,parent);u.pathname=u.pathname.replace(/\\.js$/,'.ts');if(fs.existsSync(fileURLToPath(u)))return {url:u.href,shortCircuit:true};}return next(specifier,context);},
+ load(url,context,next){if(!url.startsWith('file:')||!new URL(url).pathname.endsWith('.ts'))return next(url,context);let source=fs.readFileSync(fileURLToPath(url),'utf8');
+ if(url.includes('/manual-test-admission-v1.')){const tree=ts.createSourceFile('manual.ts',source,ts.ScriptTarget.Latest,true);const edits=tree.statements.filter(ts.isFunctionDeclaration).filter(n=>n.name&&replacements[n.name.text]).map(n=>({start:n.getStart(tree),end:n.end,text:replacements[n.name.text]}));for(const e of edits.sort((a,b)=>b.start-a.start))source=source.slice(0,e.start)+e.text+source.slice(e.end);source+=${JSON.stringify("\n"+originalOwner+"\n"+originalTable)};}
+ return {format:'module',source:ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,esModuleInterop:true}}).outputText,shortCircuit:true};}});
+(async()=>{const db=await import(pathToFileURL(path.join(sourceRoot,'src/db-pg.ts')).href);db.pgConfigureIsolatedTestDatabase(process.env.SETFARM_PG_URL);await db.initializeInternalProductionCurrentEntryDatabaseV1();
+const databaseIdentity=await db.getSql().unsafe('SELECT current_database() AS database');if(databaseIdentity.length!==1||databaseIdentity[0].database!==${JSON.stringify(f.database.database)})throw new Error('OWNED_CLONE_IDENTITY_REFUSED');
+const persistence=await import(pathToFileURL(path.join(sourceRoot,'src/execution/run-persistence.ts')).href);
+let foreignDone=null,foreignChild=null;try{if(${JSON.stringify(fault)}==='proof_drift'){const file=${JSON.stringify(proofPath)},deadline=performance.now()+5000;while(!fs.existsSync(file)){if(performance.now()>=deadline)throw new Error('MANUAL_EVALUATION_PROOF_MISSING');await new Promise(resolve=>setTimeout(resolve,25));}fs.appendFileSync(file,' ');}
+ if(${JSON.stringify(fault)}==='foreign_child'){const {spawn}=require('node:child_process'),{once}=require('node:events');const child=spawn(process.execPath,['-e',${JSON.stringify("process.stdout.write('READY\\n');process.stdin.resume();process.stdin.once('end',()=>process.exit(0));setTimeout(()=>process.exit(9),10000).unref()")}],{env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});foreignChild=child;foreignDone=once(child,'exit');foreignDone.catch(()=>{});await Promise.race([once(child.stdout,'data'),foreignDone.then(()=>{throw new Error('foreign fixture child exited before readiness');})]);}
+const input=${JSON.stringify(input)};
+ const actual=JSON.parse(process.env.SETFARM_INTERNAL_CONVERGENCE_ADMISSION);if(JSON.stringify(Object.entries(actual).sort())!==JSON.stringify(Object.entries(input.run.protocol.canaryAdmission).sort()))throw new Error('fixture canary context changed');
+ const result=await db.getSql().begin(sql=>persistence.persistWorkflowRunInTransaction(sql,input));process.stdout.write('Run: #'+result.run.runNumber+' ('+result.run.id+')');}
+finally{if(foreignDone){foreignChild.stdin.end();const [code,signal]=await foreignDone;if(code!==0||signal!==null)throw new Error('foreign fixture child cleanup failed');}await db.pgClose();}})().catch(error=>{process.stderr.write(error.message+'\\n');process.exitCode=1;});`;
+  new Script(childSource, {filename:"owned-component-cli.cjs"});
+  writeFileSync(cli,childSource,{mode:0o600,flag:"wx"});
+  const runner=await import(`${pathToFileURL(path.join(SOURCE_ROOT,"src/evals/convergence-runner.ts")).href}?manual-fixture=${f.fixtureId}`);
+  const previousUrl = process.env.SETFARM_PG_URL;
+  const setupCredentialKeys = Object.keys(process.env).filter(key => key !== "SETFARM_PG_URL" && (/^SETFARM_.*(?:ADMIN|TEST).*PG|^SETFARM_.*PG.*(?:ADMIN|TEST)/.test(key) || /^(?:PGHOST|PGHOSTADDR|PGPORT|PGDATABASE|PGUSER|PGPASSWORD|PGPASSFILE|PGSERVICE|PGSERVICEFILE|DATABASE_URL)$/.test(key)));
+  const setupCredentials = new Map(setupCredentialKeys.map(key => [key,process.env[key]!]));
+  let output: {runId:string;runNumber:number};
+  try {
+    // Private owned-clone connection ingress only; never serialize it into files or diagnostics.
+    for (const key of setupCredentialKeys) delete process.env[key];
+    process.env.SETFARM_PG_URL = f.database.url;
+    output = await runner.createNodeConvergenceProcessPort(f.repositoryRoot).startRun({workflowId:input.run.workflowId,task:input.run.task,releaseSha:SOURCE_SHA,admission:context,startChild:{reservation,journal:head}});
+  } finally {
+    if (previousUrl === undefined) delete process.env.SETFARM_PG_URL; else process.env.SETFARM_PG_URL = previousUrl;
+    for (const [key,value] of setupCredentials) process.env[key] = value;
+  }
+  assert.equal(output.runId,input.run.id);assert.equal(output.runNumber,input.run.runNumber);
+  const proof=JSON.parse(readFileSync(path.join(f.evals,"manual-controls/start-children",reservation.jobId,context.slotHash+".json"),"utf8"));
+  assert.equal(proof.parentPid,process.pid);assert.notEqual(proof.child.pid,process.pid);assert.equal(proof.child.script,cli);assert.equal(proof.journal.hash,head.hash);
+  assert.equal(JSON.stringify(proof).includes(context.slotToken),false);
+  return output;
 }
 
 function exactPrivateRecoveryComponent(bindings: Record<string, unknown>) {
@@ -392,19 +522,19 @@ test("rollback after durable publication retains a pending or unknown reservatio
   assert.equal(await f.revision(input.jobId), observed.revision);
 });
 
-test("exact stored canary admits once and canonical terminal settlement remains usable under reservation", async t => {
-  const f = await fixture(t);
+test("actual default child consumes exact stored canary once and canonical settlement remains usable (selection and parent OS component fixture)", async t => {
+  const f = await fixture(t,"worker",true);
   const held = await f.acquire();
   const entry = f.suite.suite.cases[0]!;
   const repository = createV3ReleaseAdmissionRepository(f.database.sql, new ContentAddressedEvalResultStore(path.join(f.evals, "results")));
   const canary = await repository.createCanary({
     releaseSha: SOURCE_SHA, suiteHash: f.suite.suiteHash, preflightHash: "d".repeat(64), ttlMs: 60_000,
-    slots: [{ caseHash: convergenceCaseHash(entry), taskHash: hashCanonicalJson(entry.task), repetition: 1, slotToken: "test_private_selector_".repeat(3) }],
+    slots: f.suite.suite.cases.map(value=>({caseHash:convergenceCaseHash(value),taskHash:hashCanonicalJson(value.task),repetition:1,slotToken:randomUUID()+randomUUID()})),
   });
   const context = canary.contexts[0]!;
   assert.equal(context.repetition, 1);
   const bound = await f.manual.bindSelectedManualCanaryV1({ reservation: held, admissionHash: canary.admission.admissionHash,
-    slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: 1 }] });
+    slots: canary.contexts.map(({admissionHash,slotHash,caseHash,taskHash,repetition})=>({admissionHash,slotHash,caseHash,taskHash,repetition})) });
   await assert.rejects(() => f.manual.bindSelectedManualCanaryV1({ reservation: held,
     admissionHash: canary.admission.admissionHash,
     slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: 1 }] }),
@@ -429,7 +559,10 @@ test("exact stored canary admits once and canonical terminal settlement remains 
     assert.equal(claim[0]?.run_id, null);
     assert.equal(claim[0]?.consumed_at, null);
   }
-  const inserted = await f.database.sql.begin(sql => f.persistence.persistWorkflowRunInTransaction(sql as PgTransactionSql, input));
+  const started = await startActualDefaultChild(f,input,bound,canary.contexts);
+  const inserted = {run:{id:started.runId}};
+  await assert.rejects(() => readonlyRunOwner(f, inserted.run.id), /INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER/);
+  await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound), /MANUAL_EVALUATION_ACTIVITY/);
   const claim = await f.database.sql`SELECT run_id,consumed_at FROM v3_canary_admission_claims WHERE slot_hash=${context.slotHash}`;
   assert.equal(claim[0]?.run_id, inserted.run.id);
   assert.ok(claim[0]?.consumed_at);
@@ -439,6 +572,26 @@ test("exact stored canary admits once and canonical terminal settlement remains 
     runId: inserted.run.id, status: "failed", diagnostic: "Manual admission isolated pre-claim test",
     terminalFailure: true, unclaimedBootstrapFailure: true,
   });
+  const beforeReadonly = await settlementDataSnapshot(f);
+  const closed = await readonlyRunOwner(f, inserted.run.id);
+  assert.equal(closed.runId, inserted.run.id);
+  assert.equal(await f.manual.observeSelectedManualSettlementV1(bound), "pending");
+  assert.equal(await settlementDataSnapshot(f), beforeReadonly);
+  for (const field of ["producer_implementation_id", "close_hash"] as const) await withAlteredOwner(f, closed.runOwnerReservationRef, field,
+    field === "close_hash" ? "f".repeat(64) : "a-recovery-source-bootstrap-run-v1", async () => {
+      await assert.rejects(() => readonlyRunOwner(f, inserted.run.id), /INTERNAL_PRODUCTION/);
+      await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound));
+    });
+  await withExtraOwner(f, closed.runOwnerReservationRef, async () => { await assert.rejects(() => readonlyRunOwner(f, inserted.run.id), /OWNER_UNAVAILABLE/); });
+  await f.database.sql`UPDATE runs SET status='completed' WHERE id=${inserted.run.id}`;
+  try { await assert.rejects(() => readonlyRunOwner(f, inserted.run.id), /INTERNAL_PRODUCTION/); }
+  finally { await f.database.sql`UPDATE runs SET status='failed' WHERE id=${inserted.run.id}`; }
+  const pendingOutbox = await f.database.sql`SELECT outbox_id,payload FROM operational_outbox WHERE state='pending'`;
+  assert.ok(pendingOutbox.length > 0);
+  const originalPayload = pendingOutbox[0]!.payload;
+  await f.database.sql`UPDATE operational_outbox SET payload=jsonb_set(payload,'{runId}',to_jsonb('foreign-run'::text)) WHERE outbox_id=${pendingOutbox[0]!.outbox_id}`;
+  try { await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound), /MANUAL_EVALUATION_ACTIVITY_UNKNOWN/); }
+  finally { await f.database.sql`UPDATE operational_outbox SET payload=${f.database.sql.json(originalPayload)} WHERE outbox_id=${pendingOutbox[0]!.outbox_id}`; }
   const current = await f.database.sql.begin(sql => f.manual.observeSelectedManualEvaluationInTransactionV1(sql as PgTransactionSql));
   assert.ok(current);
   await assert.rejects(() => f.database.sql.begin(sql => f.persistence.persistWorkflowRunInTransaction(sql as PgTransactionSql,
@@ -455,11 +608,32 @@ test("exact stored canary admits once and canonical terminal settlement remains 
     const item = await outbox.claimNext({ ownerInstanceId }); if (!item) break;
     await outbox.publish({ outboxId: item.outboxId, ownerInstanceId, leaseToken: item.leaseToken! });
   }
+  const pendingDelivery = await f.database.sql`SELECT event_key,consumer FROM operational_event_deliveries WHERE state='pending' ORDER BY event_key,consumer`;
+  assert.ok(pendingDelivery.length > 0);
+  const deliveryKey = pendingDelivery[0]!.event_key, consumer = pendingDelivery[0]!.consumer as "jsonl" | "webhook";
+  const beforeDeliveryObservation = await settlementDataSnapshot(f);
+  const deliveryOwner = await readonlyDeliveryOwner(f, deliveryKey, consumer);
+  assert.equal(await f.manual.observeSelectedManualSettlementV1(bound), "pending");
+  assert.equal(await settlementDataSnapshot(f), beforeDeliveryObservation);
+  await withAlteredOwner(f, deliveryOwner.reservationRef, "binding_hash", "f".repeat(64), async () => {
+    await assert.rejects(() => readonlyDeliveryOwner(f, deliveryKey, consumer), /INTERNAL_PRODUCTION/);
+    await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound));
+  });
+  await withExtraOwner(f, deliveryOwner.reservationRef, async () => {
+    await assert.rejects(() => readonlyDeliveryOwner(f, deliveryKey, consumer), /OWNER_UNAVAILABLE/);
+    await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound));
+  });
+  await f.database.sql`UPDATE operational_events SET run_id='foreign-run' WHERE event_key=${deliveryKey}`;
+  try { await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound)); }
+  finally { await f.database.sql`UPDATE operational_events SET run_id=${inserted.run.id} WHERE event_key=${deliveryKey}`; }
   for (const consumer of ["jsonl", "webhook"] as const) for (let count = 0; ; count++) {
     assert.ok(count < 40);
     const item = await deliveries.claimNext({ consumer, ownerInstanceId }); if (!item) break;
     await deliveries.settle({ eventKey: item.eventKey, consumer, ownerInstanceId, leaseToken: item.leaseToken!, outcome: "skipped", result: { reason: "private test fixture has no external consumer" } });
   }
+  const beforeReady = await settlementDataSnapshot(f);
+  assert.equal(await f.manual.observeSelectedManualSettlementV1(bound), "ready");
+  assert.equal(await settlementDataSnapshot(f), beforeReady);
   await f.manual.releaseSelectedManualEvaluationV1(current);
   // The immutable enrolled-worker snapshot still observes that process alive;
   // release is recorded, but public owner observation may not pretend it exited.
@@ -610,17 +784,17 @@ test("later canary binds preserve earlier slots and missing cumulative history r
 });
 
 test("terminal status without the actual canonical closed run owner cannot release custody", async t => {
-  const f = await fixture(t); let held = await f.acquire();
+  const f = await fixture(t,"worker",true); let held = await f.acquire();
   const entry = f.suite.suite.cases[0]!;
   const repository = createV3ReleaseAdmissionRepository(f.database.sql, new ContentAddressedEvalResultStore(path.join(f.evals, "results")));
   const created = await repository.createCanary({ releaseSha: SOURCE_SHA, suiteHash: f.suite.suiteHash, preflightHash: "d".repeat(64), ttlMs: 60_000,
-    slots: [{ caseHash: convergenceCaseHash(entry), taskHash: hashCanonicalJson(entry.task), repetition: 1, slotToken: randomUUID() + randomUUID() }] });
+    slots: f.suite.suite.cases.map(value=>({caseHash:convergenceCaseHash(value),taskHash:hashCanonicalJson(value.task),repetition:1,slotToken:randomUUID()+randomUUID()})) });
   const context = created.contexts[0]!;
   held = await f.manual.bindSelectedManualCanaryV1({ reservation: held, admissionHash: context.admissionHash,
-    slots: [{ admissionHash: context.admissionHash, slotHash: context.slotHash, caseHash: context.caseHash, taskHash: context.taskHash, repetition: 1 }] });
+    slots: created.contexts.map(({admissionHash,slotHash,caseHash,taskHash,repetition})=>({admissionHash,slotHash,caseHash,taskHash,repetition})) });
   const input = { ...f.ordinaryRunInput, run: { ...f.ordinaryRunInput.run, protocol: { ...f.ordinaryRunInput.run.protocol,
     releaseAdmissionKind: "convergence_canary" as const, releaseAdmissionHash: context.admissionHash, canaryAdmission: context } } };
-  await f.database.sql.begin(sql => f.persistence.persistWorkflowRunInTransaction(sql as PgTransactionSql, input));
+  await startActualDefaultChild(f,input,held,created.contexts);
   // Private negative fixture: a status write supplies no terminal lifecycle or
   // owner-close authority. It must not make this run releasable.
   await f.database.sql`UPDATE runs SET status='failed' WHERE id=${input.run.id}`;
@@ -628,4 +802,19 @@ test("terminal status without the actual canonical closed run owner cannot relea
   assert.equal(owners[0]?.state, "bound");
   await assert.rejects(() => f.manual.releaseSelectedManualEvaluationV1(held), /MANUAL_EVALUATION_ACTIVITY|MANUAL_EVALUATION_CANONICAL/);
   await assert.rejects(() => f.manual.closeSelectedManualWorkerCustodyV1(), /MANUAL_EVALUATION_RELEASE_REQUIRED/);
+});
+
+for(const fault of ["proof_drift","foreign_child"] as const)test(`actual default child ${fault} cannot mutate a run, owner or one-use claim (component selection fixture)`,async t=>{
+  const f=await fixture(t,"worker",true);let held=await f.acquire();
+  const repository=createV3ReleaseAdmissionRepository(f.database.sql,new ContentAddressedEvalResultStore(path.join(f.evals,"results")));
+  const created=await repository.createCanary({releaseSha:SOURCE_SHA,suiteHash:f.suite.suiteHash,preflightHash:"d".repeat(64),ttlMs:60_000,slots:f.suite.suite.cases.map(value=>({caseHash:convergenceCaseHash(value),taskHash:hashCanonicalJson(value.task),repetition:1,slotToken:randomUUID()+randomUUID()}))});
+  held=await f.manual.bindSelectedManualCanaryV1({reservation:held,admissionHash:created.admission.admissionHash,slots:created.contexts.map(({admissionHash,slotHash,caseHash,taskHash,repetition})=>({admissionHash,slotHash,caseHash,taskHash,repetition}))});
+  const context=created.contexts[0]!;
+  const input={...f.ordinaryRunInput,run:{...f.ordinaryRunInput.run,protocol:{...f.ordinaryRunInput.run.protocol,releaseAdmissionKind:"convergence_canary" as const,releaseAdmissionHash:context.admissionHash,canaryAdmission:context}}};
+  const before=await f.database.sql`SELECT reservation_ref,state FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`;
+  await assert.rejects(()=>startActualDefaultChild(f,input,held,created.contexts,fault),/MANUAL_EVALUATION|CONTROL_START_UNRESOLVED/);
+  assert.equal((await f.database.sql`SELECT id FROM runs`).length,0);
+  assert.deepEqual(await f.database.sql`SELECT reservation_ref,state FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`,before);
+  const claims=await f.database.sql`SELECT run_id,consumed_at FROM v3_canary_admission_claims WHERE admission_hash=${context.admissionHash}`;
+  assert.equal(claims.length,8);assert.ok(claims.every(row=>row.run_id===null&&row.consumed_at===null));
 });

@@ -54,3 +54,44 @@ test("actual owned Node child preserves full executable, exact args digest and s
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
+
+test("actual all-process admission and closure census excludes only its exited observer and retains a live foreign child", async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "manual-census-")));
+    const names = ["digestV1", "refuseV1", "psV1", "parseProcessTableV1", "hasOwnedChildrenV1", "externalOwnersV1", "assertNoOwnWorkV1"];
+    if (fs.readFileSync("src/execution/manual-test-admission-v1.ts", "utf8").includes("function processTableV1(")) names.push("processTableV1");
+    const body = declarations("src/execution/manual-test-admission-v1.ts", names);
+    const script = path.join(root, "census.mjs");
+    fs.writeFileSync(script, `import assert from 'node:assert/strict'; import fs from 'node:fs'; import path from 'node:path'; import {createHash} from 'node:crypto'; import {spawn,spawnSync} from 'node:child_process'; import {once} from 'node:events';
+const timeout=setTimeout(()=>{throw new Error('owned census test deadline')},8000);
+const root=${JSON.stringify(root)}, environment=${JSON.stringify(environment)};
+const selected={directory:root,paths:{repository:root,root},assertUnchanged(){}};
+const rootV1=()=>({selected,root}), selectionV1=()=>({selected}), optionalStatV1=()=>undefined, intentNamespaceOwnersV1=()=>"none";
+${body}
+const raw=spawnSync('/bin/ps',['-ww','-p',String(process.pid),'-o','pgid=','-o','args='],{encoding:'utf8',env:environment}); assert.equal(raw.status,0);
+const own=/^\\s*(\\d+)\\s+([^\\n]+)\\n?$/.exec(raw.stdout);
+const custody={owner:{pid:process.pid,processGroupId:Number(own[1]),commandHash:createHash('sha256').update(own[2]).digest('hex')}};
+const sql={unsafe:async()=>[{count:0}]};
+try {
+ assert.equal(externalOwnersV1(custody),'none'); await assertNoOwnWorkV1(sql,custody);
+ const child=spawn(fs.realpathSync(process.execPath),['-e',${JSON.stringify("process.stdout.write('READY\\n');setTimeout(()=>process.exit(0),1000)")}],{env:environment,stdio:['ignore','pipe','pipe']}); const finished=once(child,'exit');
+ try { const [ready]=await once(child.stdout,'data'); assert.equal(String(ready),'READY\\n'); assert.equal(externalOwnersV1(custody),'owned'); await assert.rejects(()=>assertNoOwnWorkV1(sql,custody),/MANUAL_EVALUATION_OWNERSHIP_UNKNOWN/); }
+ finally { const [code,signal]=await finished;assert.equal(code,0);assert.equal(signal,null); }
+ assert.equal(externalOwnersV1(custody),'none'); await assertNoOwnWorkV1(sql,custody);
+} finally {clearTimeout(timeout);}
+`, {mode:0o600});
+    const child=spawn(fs.realpathSync(process.execPath),[script],{env:environment,stdio:["ignore","pipe","pipe"]});
+    let output=""; for(const stream of [child.stdout!,child.stderr!]) stream.on("data",value=>{output+=String(value); assert.ok(output.length<65536);});
+    try { const [code,signal]=await once(child,"exit");assert.equal(signal,null);assert.equal(code,0,output); }
+    finally { fs.rmSync(root,{recursive:true,force:true}); }
+});
+
+test("census normalization requires original successful observer identity and complete output", () => {
+    const body = declarations("src/execution/manual-test-admission-v1.ts", ["refuseV1", "parseProcessTableV1", "processTableV1"]);
+    const parent = {pid:120};
+    const stdout="120 1 120 /fixed/node /fixed/worker.js\n121 120 120 /bin/ps -ww -axo pid=,ppid=,pgid=,command=\n122 120 120 /bin/ps -ww -axo pid=,ppid=,pgid=,command=\n";
+    const result={pid:121,status:0,signal:null,error:undefined,stderr:"",stdout};
+    const read=(value:unknown)=>new Function("spawnSync","process",body+";return processTableV1();")(()=>value,parent);
+    assert.deepEqual(read(result).map((row:{pid:number})=>row.pid),[120,122]);
+    for(const changed of [{pid:122,stdout:stdout.replace("122 120 120 /bin/ps", "122 120 120 /foreign")},{pid:999},{status:1},{signal:"SIGTERM"},{error:new Error("timeout")},{stderr:"partial"},{stdout:stdout.trimEnd()},
+      {stdout:stdout.replace("121 120 120", "121 1 120")},{stdout:stdout.replace("121 120 120", "121 120 999")},{stdout:stdout.replace("121 120 120 /bin/ps", "121 120 120 /foreign")}]) assert.throws(()=>read({...result,...changed}));
+});

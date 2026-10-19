@@ -93,6 +93,7 @@ export function selectedManualWorkerChannelV1(){return channel;}
 export async function registerSelectedManualWorkerCustodyV1(){events.push('register');}
 export async function acquireSelectedManualEvaluationV1(input){events.push('acquire');return {...input,revision:7,phase:'active'};}
 export async function bindSelectedManualCanaryV1(){throw new Error('unexpected canary');}
+export async function observeSelectedManualSettlementV1(){return "ready";}
 export async function releaseSelectedManualEvaluationV1(reservation){if(reservation.revision!==7)throw new Error('revision');events.push('release');}
 export async function closeSelectedManualWorkerCustodyV1(){events.push('close');fs.writeFileSync(${JSON.stringify(path.join(root, "runtime/evals/manual-controls/closures", job + ".json"))},JSON.stringify({jobId:intent.receipt.jobId,intentHash:channel.intentHash,owner})+'\\n',{mode:0o600,flag:'wx'});}
 export async function prepareSelectedDirectEvaluationIntentV1(){throw new Error('unexpected direct');}
@@ -169,9 +170,10 @@ export async function acquireSelectedManualEvaluationV1(){throw new Error('unexp
 export async function registerSelectedManualWorkerCustodyV1(){throw new Error('unexpected register');}
 export async function prepareSelectedDirectEvaluationIntentV1(){throw new Error('unexpected direct');}
 export async function buildRunOperationalSnapshot(sql,runId){facts.events.push('snapshot');if(runId!==facts.run.id)throw new Error('foreign snapshot');return {run:{id:runId},summary:{lifecycleState:options.terminal?'terminal':'active'},snapshotHash:'${"e".repeat(64)}'};}
-export const effects={async stopOwnedRun(runId,expectedSnapshotHash){facts.stops.push({runId,expectedSnapshotHash});facts.events.push('stop');if(['stale_stop','denied_stop','terminal_race'].includes(options.failure))throw new Error(options.failure);}};
+export const effects={settlementClock:{now:()=>facts.clockMs??0,sleep:async(ms)=>{facts.clockMs=(facts.clockMs??0)+ms;facts.events.push('settlement_wait');}},async stopOwnedRun(runId,expectedSnapshotHash){facts.stops.push({runId,expectedSnapshotHash});facts.events.push('stop');if(['stale_stop','denied_stop','terminal_race'].includes(options.failure))throw new Error(options.failure);}};
 export const channel={assertUnchanged(){},cancellation(){return facts.unavailable?{requestId:null,unavailable:true}:null;},async send(frame){facts.frames.push(frame);if(facts.unavailable||frame.type==='final_closed'&&options.failure==='final_frame')throw new ControlWorkerFatalErrorV1('CONTROL_CHANNEL_UNAVAILABLE');return {state:frame.outcome,reportRefs:frame.reportRefs??{}};}};
-export async function releaseSelectedManualEvaluationV1(reservation){facts.events.push('release:'+reservation.revision);if(reservation.revision!==8||['release','live_owner'].includes(options.failure))throw new Error('release refused');}
+export async function observeSelectedManualSettlementV1(){facts.events.push('settlement');facts.settlementReads=(facts.settlementReads??0)+1;if(options.failure==='unknown_settlement')throw new Error('unknown');return options.failure==='forever_pending'||options.failure==='pending_delivery'&&facts.settlementReads<3?'pending':'ready';}
+export async function releaseSelectedManualEvaluationV1(reservation){facts.events.push('release:'+reservation.revision);if(options.failure==='pending_delivery'&&facts.settlementReads!==3)throw new Error('delivery still pending');if(reservation.revision!==8||['release','live_owner'].includes(options.failure))throw new Error('release refused');}
 export async function closeSelectedManualWorkerCustodyV1(){facts.events.push('close');if(options.failure==='close')throw new Error('close refused');fs.writeFileSync(${JSON.stringify(path.join(root,"evals/manual-controls/closures",input.jobId+".json"))},JSON.stringify({jobId:${JSON.stringify(input.jobId)},intentHash:'${"a".repeat(64)}',owner:${JSON.stringify(owner)}})+'\\n',{mode:0o600,flag:'wx'});if(options.failure==='final_journal')fs.appendFileSync(${JSON.stringify(path.join(root,"manual-control-journals",input.jobId,"records/00000000000000000001.json"))},' ');}
 
 `, { mode: 0o600 });
@@ -180,9 +182,10 @@ export async function closeSelectedManualWorkerCustodyV1(){facts.events.push('cl
     const journal = new component.WorkerJournalV1(root, input.jobId, "a".repeat(64), owner);
     journal.append({ ...acquired, kind: "convergence_full8", suiteHash: loaded.suiteHash, executionMode: "execute" });
     const execution = new component.WorkerExecutionV1(input, { ...input, revision: 7, phase: "active" }, journal, fixture.effects, options.channel ? fixture.channel : null);
-    let starts = 0, creates = 0, promotions = 0;
-    const ports = { admissions: { createCanary: async () => { creates++; return { contexts }; }, promoteReleaseGo: async () => { promotions++; if (options.failure === "promotion") throw new Error("promotion output lost"); } }, process: { startRun: async () => {
+    let starts = 0, creates = 0, promotions = 0, clockMs = Date.now();
+    const ports = { clock: {now:()=>new Date(clockMs),sleep:async(ms:number)=>{clockMs+=ms;fixture.facts.events.push("settlement_wait");}}, admissions: { createCanary: async () => { creates++; return { contexts }; }, promoteReleaseGo: async () => { promotions++; if (options.failure === "promotion") throw new Error("promotion output lost"); } }, process: { startRun: async (startInput: any) => {
                 starts++;
+                fixture.facts.startChild = startInput.startChild;
                 const record = JSON.parse(fs.readFileSync(path.join(root, "manual-control-journals", input.jobId, "records", String(journal.ref().revision).padStart(20, "0") + ".json"), "utf8"));
                 assert.equal(record.event.type, "start_requested");
                 if (mode !== "unused") {
@@ -409,7 +412,7 @@ test("terminal stop snapshot avoids stop action but live-owner release refusal r
         assert.equal(await h.execution.control.requestOwnedRunStop(run), "already_terminal");
         assert.deepEqual(h.fixture.facts.stops, []);
         await assert.rejects(() => h.execution.finish({}, "cancelled", "a".repeat(64), owner), /CONTROL_SETTLEMENT_UNCERTAIN/);
-        assert.deepEqual(h.fixture.facts.events, ["snapshot", "release:8"]);
+        assert.deepEqual(h.fixture.facts.events, ["snapshot", "settlement", "release:8"]);
         assert.equal(h.fixture.facts.frames.some((v: any) => v.type === "final_closed"), false);
     } finally { fs.rmSync(h.root, { recursive: true, force: true }); }
 });
@@ -421,7 +424,7 @@ for (const failure of [undefined, "release", "close", "final_journal", "final_fr
         const finish = () => h.execution.finish(refs, "completed", "a".repeat(64), owner);
         if (failure) await assert.rejects(finish, failure === "release" ? /CONTROL_SETTLEMENT_UNCERTAIN/ : failure === "close" ? /close refused/ : failure === "final_journal" ? /CONTROL_JOURNAL_FAILED/ : /CONTROL_CHANNEL_UNAVAILABLE/);
         else assert.deepEqual((await finish()).reportRefs, refs);
-        assert.deepEqual(h.fixture.facts.events, failure === "release" ? ["release:8"] : ["release:8", "close"]);
+        assert.deepEqual(h.fixture.facts.events, failure === "release" ? ["settlement", "release:8"] : ["settlement", "release:8", "close"]);
         const finals = h.fixture.facts.frames.filter((v: any) => v.type === "final_closed");
         assert.equal(finals.length, failure && failure !== "final_frame" ? 0 : 1);
         assert.ok(h.fixture.facts.frames.filter((v: any) => v.type !== "final_closed").every((v: any) => v.reportRefs === undefined));
@@ -439,7 +442,7 @@ test("healthy-journal active disconnect latches cancellation, stops exact owned 
         assert.equal(await h.execution.control.requestOwnedRunStop(run), "requested");
         assert.equal(await h.execution.control.beforeFinalization({ resultHash: "b".repeat(64), gateHash: "c".repeat(64), gateDecision: "no_go" }), "cancel");
         await assert.rejects(() => h.execution.finish({}, "cancelled", "a".repeat(64), owner), /CONTROL_CHANNEL_UNAVAILABLE/);
-        assert.deepEqual(h.fixture.facts.events, ["snapshot", "stop", "release:8", "close"]);
+        assert.deepEqual(h.fixture.facts.events, ["snapshot", "stop", "settlement", "release:8", "close"]);
         assert.equal(h.starts(), 1);
         const records = fs.readdirSync(path.join(h.root, "manual-control-journals", h.input.jobId, "records")).map(name => JSON.parse(fs.readFileSync(path.join(h.root, "manual-control-journals", h.input.jobId, "records", name), "utf8")));
         assert.deepEqual(records.filter(v => v.event.type === "cancel_latched").map(v => v.event.source), ["channel_lost"]);
@@ -484,4 +487,82 @@ for (const cap of [1024, 32768, 65536]) test(`private pin accepts exactly ${cap}
         fs.appendFileSync(file, "x");
         assert.throws(() => readPin(file, cap), /unsafe file/);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("worker passes refreshed reservation and exact durable start head to the default-child boundary", async () => {
+    const h = await wrappedStartComponent("success");
+    try {
+        const created = await h.wrapped.admissions.createCanary(h.request);
+        await h.wrapped.process.startRun({workflowId:h.loaded.suite.workflowId,task:h.loaded.suite.cases[0]!.task,releaseSha:h.input.sourceSha,admission:created.contexts[0]});
+        assert.deepEqual(h.fixture.facts.startChild, {reservation:{...h.input,revision:8,phase:"active"},journal:{revision:4,hash:JSON.parse(fs.readFileSync(path.join(h.root,"manual-control-journals",h.input.jobId,"records/00000000000000000005.json"),"utf8")).previousHash}});
+    } finally {fs.rmSync(h.root,{recursive:true,force:true});}
+});
+
+// Real private file/journal/proof functions with explicitly simulated selected
+// custody and OS identity. These cases grant no compiled or OS authority.
+async function startProofComponentFixture() {
+    const h=await wrappedStartComponent("unused");
+    const created=await h.wrapped.admissions.createCanary(h.request),context=created.contexts[0];
+    await assert.rejects(()=>h.wrapped.process.startRun({workflowId:h.loaded.suite.workflowId,task:h.loaded.suite.cases[0]!.task,releaseSha:h.input.sourceSha,admission:context}),/CONTROL_START_UNRESOLVED/);
+    fs.renameSync(path.join(h.root,"manual-control-journals"),path.join(h.root,"evals/manual-control-journals"));
+    const canonical=await import("../../src/product-compiler/canonical-json.js"), channel=await import("../../src/execution/schemas/manual-control-worker-channel-v1.js");
+    const record={schema:"setfarm.manual-evaluation-record.v1",reservation:{...h.input,revision:8,phase:"active"},owner,intentHash:"a".repeat(64),nonceDigest:"b".repeat(64),admissionHash:context.admissionHash,slots:created.contexts.map(({admissionHash,slotHash,caseHash,taskHash,repetition}:any)=>({admissionHash,slotHash,caseHash,taskHash,repetition})),executionMode:"execute"};
+    const selected={directory:h.root,paths:{root:h.root,repository:h.root},assertUnchanged(){}};
+    const childOwner={...owner,pid:124,script:path.join(h.root,"dist/cli/cli.js"),executable:fs.realpathSync(process.execPath)};
+    const source=fs.readFileSync("src/execution/manual-test-admission-v1.ts","utf8"),tree=ts.createSourceFile("manual.ts",source,ts.ScriptTarget.Latest,true);
+    const names=["Hash","AcquireSchema","ReservationSchema","SlotSchema","OwnerSchema","StartChildProofSchemaV1","refuseV1","sameStatV1","pinParentsV1","assertParentsV1","readPrivateFileV1","stableV1","syncDirectoryV1","publishExclusiveV1","sameOwnerV1","digestV1","optionalStatV1","createChildV1","startProofPathV1","startJournalV1","publishSelectedManualStartChildV1","readStartChildProofV1"];
+    const nodes=tree.statements.filter(node=>ts.isFunctionDeclaration(node)?names.includes(node.name?.text??""):ts.isVariableStatement(node)&&node.declarationList.declarations.some(d=>ts.isIdentifier(d.name)&&names.includes(d.name.text)));
+    assert.equal(nodes.length,names.length);
+    const body=ts.transpileModule(nodes.map(node=>node.getText(tree)).join("\n"),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace(/^export /gm,"");
+    const {z}=await import("zod"),{createHash}=await import("node:crypto");
+    const held={record,pin:null as any};
+    const deps={fs,path,z,createHash,...canonical,...channel,process:new Proxy(process,{get(target,key){if(key==="pid")return 124;if(key==="ppid")return owner.pid;return Reflect.get(target,key);}}),selectionV1:()=>({selected}),rootV1:()=>({selected,root:path.join(h.root,"evals/manual-controls")}),heldV1:(reservation:any)=>{assert.deepEqual(reservation,record.reservation);return held;},observeStartChildV1:()=>childOwner,processOwnerV1:()=>owner};
+    const api=new Function(...Object.keys(deps),body+";return {publishSelectedManualStartChildV1,readStartChildProofV1,readPrivateFileV1,startJournalV1};")(...Object.values(deps));
+    const reservationPath=path.join(h.root,"evals/manual-controls/reservation.json"),intentPath=path.join(h.root,"intent.json");
+    fs.writeFileSync(reservationPath,JSON.stringify(record)+"\n",{mode:0o600});fs.writeFileSync(intentPath,"{}\n",{mode:0o600});
+    held.pin=api.readPrivateFileV1(reservationPath,65536,h.root);
+    const custody={owner,intent:api.readPrivateFileV1(intentPath,32768,h.root)};
+    const head=JSON.parse(fs.readFileSync(path.join(h.root,"evals/manual-control-journals",h.input.jobId,"head.json"),"utf8"));
+    const descriptor={reservation:record.reservation,journal:{revision:head.revision,hash:head.recordHash}};
+    const input={workflowId:h.loaded.suite.workflowId,task:h.loaded.suite.cases[0]!.task,releaseSha:h.input.sourceSha,admission:context};
+    const child={pid:childOwner.pid,exitCode:null,signalCode:null,spawnfile:childOwner.executable,spawnargs:[childOwner.executable,childOwner.script,"workflow","run",input.workflowId,input.task,"--protocol","v3"]};
+    const run={workflowId:input.workflowId,task:input.task,protocol:{canaryAdmission:context}};
+    return {h,api,record,custody,descriptor,input,child,run,held,childOwner,proofPath:path.join(h.root,"evals/manual-controls/start-children",h.input.jobId,context.slotHash+".json")};
+}
+for(const fault of ["none","revision","head","earlier_record","foreign_slot","foreign_parent","duplicate","proof_drift"] as const) test(`private start proof binds durable current head, all-slot revision and exact child: ${fault}`,async()=>{
+    const f=await startProofComponentFixture();
+    try {
+        if(fault==="revision")f.descriptor.reservation={...f.descriptor.reservation,revision:7};
+        if(fault==="head")f.descriptor.journal.hash="f".repeat(64);
+        if(fault==="earlier_record")fs.appendFileSync(path.join(f.h.root,"evals/manual-control-journals",f.h.input.jobId,"records/00000000000000000001.json")," ");
+        if(fault==="foreign_slot")f.input.admission={...f.input.admission,slotHash:"f".repeat(64)};
+        if(["revision","head","earlier_record","foreign_slot"].includes(fault)) {assert.throws(()=>f.api.publishSelectedManualStartChildV1(f.descriptor,f.input,f.child));assert.equal(fs.existsSync(f.proofPath),false);return;}
+        const recheck=f.api.publishSelectedManualStartChildV1(f.descriptor,f.input,f.child);
+        if(fault==="duplicate"){assert.throws(()=>f.api.publishSelectedManualStartChildV1(f.descriptor,f.input,f.child));return;}
+        if(fault==="foreign_parent") {const proof=JSON.parse(fs.readFileSync(f.proofPath,"utf8"));proof.parentPid++;const {canonicalJsonStringify}=await import("../../src/product-compiler/canonical-json.js");fs.writeFileSync(f.proofPath,canonicalJsonStringify(proof)+"\n");await assert.rejects(()=>f.api.readStartChildProofV1(f.held,f.custody,f.run));return;}
+        const observed=await f.api.readStartChildProofV1(f.held,f.custody,f.run);assert.deepEqual(observed.child,f.childOwner);observed.assertUnchanged();
+        if(fault==="proof_drift") {fs.appendFileSync(f.proofPath," ");assert.throws(recheck);assert.throws(()=>observed.assertUnchanged());return;}
+        recheck();const proof=JSON.parse(fs.readFileSync(f.proofPath,"utf8"));assert.equal(proof.reservation.revision,8);assert.equal(proof.journal.revision,4);assert.equal(JSON.stringify(proof).includes(f.input.admission.slotToken),false);
+    } finally {fs.rmSync(f.h.root,{recursive:true,force:true});}
+});
+
+test("worker waits through known canonical delivery drain then releases and closes once",async()=>{
+    const h=await wrappedStartComponent("success",{failure:"pending_delivery"});
+    try {
+        await h.wrapped.admissions.createCanary(h.request);
+        await h.execution.finish({},"cancelled","a".repeat(64),owner);
+        assert.deepEqual(h.fixture.facts.events,["settlement","settlement_wait","settlement","settlement_wait","settlement","release:8","close"]);
+    } finally {fs.rmSync(h.root,{recursive:true,force:true});}
+});
+
+for (const failure of ["forever_pending", "unknown_settlement"] as const) test(`worker ${failure} retains custody without release or another start`, async () => {
+    const h = await wrappedStartComponent("success", {failure});
+    try {
+        await h.wrapped.admissions.createCanary(h.request);
+        await assert.rejects(() => h.execution.finish({}, "cancelled", "a".repeat(64), owner), /CONTROL_SETTLEMENT_UNCERTAIN/);
+        assert.equal(h.fixture.facts.events.some((event: string) => event.startsWith("release") || event === "close"), false);
+        assert.equal(h.fixture.facts.settlementReads, failure === "unknown_settlement" ? 1 : 12);
+        assert.ok(h.fixture.facts.events.filter((event: string) => event === "settlement_wait").length <= 11);
+        assert.equal(h.starts(),0); assert.equal(h.promotions(),0);
+    } finally { fs.rmSync(h.root,{recursive:true,force:true}); }
 });

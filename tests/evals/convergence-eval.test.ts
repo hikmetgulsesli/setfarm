@@ -1547,8 +1547,8 @@ describe("manual control polling and fatal boundaries",()=>{
     const loaded=await suite();const h=harness(loaded,{projectionMismatch:true});let cancelled=false,syncs=0;
     const sync=h.ports.http.syncProject;
     h.ports.http.syncProject=async id=>{syncs++;cancelled=true;return sync(id);};
-    const output=await runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness({cancellationRequested:async()=>cancelled})},h.ports);
-    assert.equal(syncs,1);assert.equal(h.starts(),1);assert.equal(output.result.status,"blocked");
+    await assert.rejects(()=>runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness({cancellationRequested:async()=>cancelled})},h.ports),/CONTROL_SETTLEMENT_UNCERTAIN/);
+    assert.equal(syncs,1);assert.equal(h.starts(),1);assert.equal(h.artifacts.length,0);
   });
 });
 
@@ -1570,4 +1570,64 @@ it("refused canonical owned stop escapes evaluator without final artifacts or pr
   h.ports.sql.readRun=async id=>{polls++;return {...await read(id),status:"running",terminal:false};};
   await assert.rejects(()=>runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness({cancellationRequested:async()=>polls>0,requestOwnedRunStop:async()=>{stops++;return "refused";}})},h.ports),/CONTROL_SETTLEMENT_UNCERTAIN/);
   assert.equal(stops,1);assert.equal(h.starts(),1);assert.equal(h.promotions.length,0);assert.equal(h.artifacts.length,0);
+});
+
+for (const version of [1, 2] as const) it(`cancelled v${version} observes ordinary terminal outbox drain before final publication without sync or a second stop`, async () => {
+  const loaded = version === 1 ? await suite() : await suiteV2();
+  const h = harness(loaded); let polls = 0, stopped = false, observations = 0, syncs = 0, stops = 0;
+  const read = h.ports.sql.readRun, project = h.ports.http.operationalSnapshot;
+  h.ports.sql.readRun = async id => { polls++; return { ...await read(id), status: stopped ? "cancelled" : "running", terminal: stopped }; };
+  h.ports.http.syncProject = async () => { syncs++; throw new Error("cancelled sync"); };
+  h.ports.http.operationalSnapshot = async (service, id) => {
+    const value = RunOperationalSnapshotV2Schema.parse(await project(service, id));
+    observations++;
+    if (observations <= 4) {
+      value.summary.unpublishedOutbox = 1;
+      value.outbox = [{ref:"setfarm://outbox/terminal",outboxId:"terminal",requestRef:null,eventKey:"terminal",eventType:"run_terminal",aggregateType:"run",aggregateId:id,state:"pending",attemptCount:0,publishedAt:null,createdAt:NOW,updatedAt:NOW}];
+    }
+    const {snapshotHash: _hash, ...hashable} = value;
+    return {...hashable, snapshotHash:computeRunOperationalSnapshotHash(hashable)};
+  };
+  const output = await runConvergenceSuite(loaded, {releaseSha:SHA,execute:true,control:controlHarness({
+    cancellationRequested:async()=>polls>0,
+    requestOwnedRunStop:async()=>{stops++;stopped=true;return "requested";},
+    onPublication:async()=>{assert.ok(observations>=6,"publication preceded canonical drain observation");},
+  })}, h.ports);
+  assert.equal(output.result.runs[0]!.projection.operationalSettled,true);
+  assert.equal(output.result.status,"blocked");assert.equal(h.starts(),1);assert.equal(stops,1);assert.equal(syncs,0);assert.equal(h.promotions.length,0);
+});
+
+for (const state of ["pending", "quarantined", "wrong_run", "malformed", "late_mismatch"] as const) it(`cancelled terminal ${state} retains uncertainty without release eligibility or extra effects`,async()=>{
+  const loaded=await suite(),h=harness(loaded);let polls=0,stops=0,observations=0,sleeps=0;
+  const read=h.ports.sql.readRun,project=h.ports.http.operationalSnapshot;
+  h.ports.sql.readRun=async id=>{polls++;return {...await read(id),status:stops?"cancelled":"running",terminal:stops>0};};
+  const sleep=h.ports.clock.sleep;h.ports.clock.sleep=async ms=>{sleeps++;await sleep(ms);};
+  h.ports.http.syncProject=async()=>{throw new Error("unexpected sync");};
+  h.ports.http.operationalSnapshot=async(service,id)=>{
+    observations++;const value=RunOperationalSnapshotV2Schema.parse(await project(service,id));
+    if(state==="late_mismatch" && observations>24){
+      value.summary.unpublishedOutbox=0;value.outbox=[];value.run.status=service==="mission_control"?"failed":"completed";
+      const {snapshotHash:_hash,...hashable}=value;return {...hashable,snapshotHash:computeRunOperationalSnapshotHash(hashable)};
+    }
+    if(state==="malformed")return {};
+    if(state==="wrong_run")value.run.id="wrong-run";
+    value.summary.unpublishedOutbox=1;value.outbox=[{ref:"setfarm://outbox/terminal",outboxId:"terminal",requestRef:null,eventKey:"terminal",eventType:"run_terminal",aggregateType:"run",aggregateId:id,state:state==="quarantined"?"quarantined":"pending",attemptCount:0,publishedAt:null,createdAt:NOW,updatedAt:NOW}];
+    const {snapshotHash:_hash,...hashable}=value;return {...hashable,snapshotHash:computeRunOperationalSnapshotHash(hashable)};
+  };
+  await assert.rejects(()=>runConvergenceSuite(loaded,{releaseSha:SHA,execute:true,control:controlHarness({cancellationRequested:async()=>polls>0,requestOwnedRunStop:async()=>{stops++;return "requested";}})},h.ports),/CONTROL_SETTLEMENT_UNCERTAIN/);
+  assert.equal(stops,1);assert.equal(h.starts(),1);assert.equal(h.artifacts.length,0);assert.equal(h.promotions.length,0);
+  assert.equal(observations,["pending","late_mismatch"].includes(state)?26:2);assert.equal(sleeps,["pending","late_mismatch"].includes(state)?13:1);
+});
+
+it("default start awaits its original actual child after private proof publication refuses",async()=>{
+  const root=await mkdtemp(path.join(tmpdir(),"default-start-owned-"));
+  const {mkdir}=await import("node:fs/promises");
+  try {
+    await mkdir(path.join(root,"dist/cli"),{recursive:true});
+    const marker=path.join(root,"exited.json");
+    await writeFile(path.join(root,"dist/cli/cli.js"),`const fs=require('node:fs');setTimeout(()=>{fs.writeFileSync(${JSON.stringify(marker)},'one');process.stdout.write('Run: #1 (owned)');},50);`);
+    const port=createNodeConvergenceProcessPort(root);
+    await assert.rejects(()=>port.startRun({workflowId:"feature-dev",task:"owned test",releaseSha:SHA,admission:{schema:"setfarm.internal-convergence-admission.v1",admissionHash:"a".repeat(64),slotHash:"b".repeat(64),caseHash:"c".repeat(64),taskHash:"d".repeat(64),repetition:1,slotToken:"t".repeat(32)},startChild:{reservation:{} as never,journal:{revision:1,hash:"e".repeat(64)}}}),/CONTROL_START_UNRESOLVED/);
+    assert.equal(await readFile(marker,"utf8"),"one");
+  } finally {await rm(root,{recursive:true,force:true});}
 });
