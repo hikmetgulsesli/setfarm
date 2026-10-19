@@ -572,3 +572,72 @@ export type ControlEvidenceEnvelopeV1 = Readonly<{
 ```
 
 The selected hash comes only from captured unchanged prepared composition; null means unavailable/unconfigured and disables launch. History is at most50 opaque stable IDs and source hashes from the explicit validated private SF evidence index, never a directory/latest scan; no raw path/log/task/selector. UI job/report history remains its own indexed source, not fabricated SF projection. Jobs stays its own endpoint and is not duplicated in this envelope. Parse the wrapper strictly in mapped MC evidence/route/client tests; never upgrade qualification from a completed job/count/GO file. Cost if wrong: refuse unavailable metadata/evidence and correct the wrapper/client together; no new authority or implicit job start.
+
+## Accepted two-level evidence qualification
+
+Root accepts the bounded private admission-composed reader below before SFTask3 and its MC composition edit. It fixes a concrete proof gap: immutable GO files alone do not prove separate committed admission promotion. The unchanged filesystem-only reader leaves current GO unqualified; historical stays historical. Exact committed source-owned admission observation enables qualified without changing receipt ownership, starting work or granting workflow authority. Public projections/inputs/receipt/request schemas and Task2 worker protocol are unchanged. Follow the already existing admission deep artifact/hash semantics; never call the mutating store/repository from GET.
+
+## Exact minimal private export
+
+Create `src/evals/control-evidence-admission-reader-v1.ts` with this sole cross-repository function:
+
+```ts
+import type postgres from "postgres";
+import type {
+  ControlEvidenceExpectedV1,
+  ControlEvidenceProjectionV1,
+} from "../execution/schemas/manual-control-job-v1.js";
+
+export function readSelectedControlEvidenceWithAdmissionV1(
+  input: ControlEvidenceExpectedV1,
+  sql: postgres.Sql,
+): Promise<ControlEvidenceProjectionV1>;
+```
+
+The SQL argument is a private capability supplied exclusively by the selected MC composition's captured owner. It is never a DTO, HTTP argument, callback supplied by a request, returned admission object, or predicate such as `promoted: true`. The adapter owns both the filesystem read and the fixed SQL; it never accepts an externally constructed projection to upgrade. Type-only `postgres` import erases at runtime. No new factory, cache, global DB client, or initialization API.
+
+Algorithm:
+
+1. Call the unchanged `readSelectedControlEvidenceV1(input)`. Its default current qualification is `unqualified`; historical remains `historical`. Require the full reader-validated current, execute, pass, exact eight-case result with linked, recomputed GO gate. Any planned, partial, failed, blocked, no-GO, historical, unavailable, malformed, or unsafe artifact evidence returns without querying admission. Counts alone are insufficient. Retain all original artifact checks and selected identity/ancestor pins.
+2. For this valid GO candidate only, use the supplied `sql.begin('isolation level repeatable read read only', ...)`. Set transaction-local lock/statement timeouts to the existing composition's 1000/5000 ms values with `pg_catalog.set_config`; qualify the table as `public.v3_release_admissions`. Do not create a connection, migrate, promote, lock rows `FOR UPDATE/SHARE`, or call any repository. Read exactly:
+
+   ```sql
+   SELECT admission_hash, kind, release_sha, suite_hash,
+          result_hash, result_ref, gate_hash, gate_ref, expires_at, payload
+     FROM public.v3_release_admissions
+    WHERE kind = 'release_go' AND release_sha = $1
+    LIMIT 2
+   ```
+
+   Bind the schema-validated expected release SHA. Zero rows means missing proof; two means conflict. For one row, parse `V3ReleaseAdmissionV1Schema`, require `kind='release_go'`, recomputed admission hash, canonical refs, null expiry, and exact scalar/payload agreement as in `parseAdmissionRow`. Match release/suite and result/gate hashes/refs to the already validated expected artifacts. A legitimate admission pointing at another result/gate does not qualify these refs.
+3. Upgrade only after the read-only transaction resolves successfully. Recheck selected installation identity after all asynchronous work. MC additionally rechecks the captured context, selected identity, compiled module pins, and unchanged owner before and after the adapter call. Guard/identity failure is the existing fail-closed selection failure; never catch it as an ordinary missing admission.
+4. Successful exact observation changes only `evaluation.report.qualification` to `qualified` and clears the candidate's admission-observation availability code. Preserve all artifact statuses, runs/counts, checks, hashes, and blocker codes. This reports the committed admission observed at the read snapshot; it does not authorize a workflow, replace workflow admission checks, or adopt any worker.
+
+No full canary-evidence replay is required on GET: `promoteReleaseGo` already requires that evidence in the transaction that stores this authoritative row. Reading a caller-constructed payload would not establish that fact; reading the captured selected DB does. Do not broaden this adapter into a new admission authority.
+
+## Missing and uncertain proof
+
+Use the existing `evaluation.availability` shape. Valid artifacts remain `state:'available'` with their report and `qualification:'unqualified'`; safe observation codes explain why qualification was not established:
+
+| Condition | Code |
+| --- | --- |
+| FS-only current GO candidate, no admission observation | `CONTROL_RELEASE_ADMISSION_UNOBSERVED` |
+| No release GO row | `CONTROL_RELEASE_ADMISSION_MISSING` |
+| Multiple release GO rows | `CONTROL_RELEASE_ADMISSION_CONFLICT` |
+| Malformed payload/hash, scalar mismatch, wrong linked tuple | `CONTROL_RELEASE_ADMISSION_INVALID` |
+| Query, timeout, permission, connection, or transaction completion failure | `CONTROL_RELEASE_ADMISSION_UNKNOWN` |
+
+These codes explain projection availability/qualification; they are not inserted into result-derived `blockerCodes`. Missing admission is not missing artifact evidence. Never replace actual pass/GO with fabricated blocked/no-GO artifacts. Existing artifact errors keep their original availability/state/code. Historical evidence stays historical. Catch failure around the **whole transaction**, including its completion; observing a row followed by transaction failure must not leak a qualified result. Selection/module/owner checks occur outside that DB-error catch. No cached positive or stale fallback after a failed observation.
+
+## MC composition and File Map
+
+- **SF create:** `src/evals/control-evidence-admission-reader-v1.ts`, imports only the FS reader, selected read-only selection helpers, pure admission/schema/canonical helpers, and erased SQL types. No runtime import of `db`, admission repository, report store, preflight execution, runner, spawner, or evaluator. Existing pure schema extraction and FS-reader work remain as planned.
+- **SF test:** `tests/evals/control-evidence-reader-v1.test.ts` asserts FS GO stays unqualified; new `tests/evals/control-evidence-admission-reader-v1.test.ts` covers exact observation and readonly composition. Repository production promotion logic is unchanged.
+- **MC edit:** `server/services/fresh-installation-runtime.ts` adds/pins/imports the fixed compiled `evals/control-evidence-admission-reader-v1.js`, validates its export, and replaces direct `readEvidence` assignment with a wrapper that calls `assertUnchanged()`, awaits `adapter.readSelectedControlEvidenceWithAdmissionV1(expected, captured.owner)`, then calls `assertUnchanged()` again. Preserve the existing private `SelectedControlRuntimeV1.readEvidence(input)` signature. Keep the original fixed FS module pin as well; this is an additional private module, not a worker entrypoint/index replacement.
+- **MC tests:** selected-runtime/Controls composition tests must establish that only the captured owner is supplied, that selection/owner/module drift refuses before and after an await, and that HTTP cannot inject a SQL client, admission payload, or qualification override. Root assigns the exact existing test file after the active MC writer freezes.
+- **Root-owned paired plans/File Map:** record the added private compiled export and two-level qualification rule. Public schemas/routes/receipt and Task 2 worker exports remain unchanged. Serialize the MC seam edit with its current writer; this report is not authorization for concurrent edits.
+
+
+### Root required focused verification and boundaries
+
+Add pure adapter tests plus existing P3-owned real-PG integration through a new `tests/execution-attempts/control-evidence-admission-reader-v1.isolated-pg.test.ts`, registered in the existing OWNER_BACKED_TESTS by SFTask3. Root alone runs protected PG. Use actual production promotion with valid committed fixture prerequisites, never hand-insert a positive authority row or use a synthetic promoted boolean. Verify files before promotion unqualified, actual committed exact admission qualified, rollback/uncommitted other-connection row not qualified, transaction completion failure cannot leak positive, and no data/DDL/filesystem writes or DB preparation/new client in reader. Component fixture evidence remains distinct from actual full8/live qualification. Selection/module/owner drift must fail outside ordinary DB-error catch. Missing/conflicting/invalid/unknown admission retains truthful available artifacts with safe qualification observation code, never fabricated blocked/no_go reports. SQL capability is only MC captured selected owner, never HTTP, globals or a caller assertion. Cost if wrong: unqualified/unknown evidence and reviewed correction, never false GO/adoption or borrowed DB authority.
