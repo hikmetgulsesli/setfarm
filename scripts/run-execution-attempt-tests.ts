@@ -26,6 +26,7 @@ const OWNER_BACKED_TESTS = new Set([
   "post-claim-ownership-finalizer.integration.test.ts",
   "repository.test.ts",
   "run-operational-action.test.ts",
+  "run-protocol.test.ts",
   "run-terminal-transition.test.ts",
   "run-termination.test.ts",
   "runtime-completion.test.ts",
