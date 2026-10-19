@@ -49,3 +49,18 @@ Meaningful production-boundary RED/GREEN before behavior changes, source-owned t
 ## Source language integration ruling
 
 The existing English source guard and English UI language remain binding. Turkish operator terms in design prose denote concepts; actual product labels and behavioral assertions use clear English equivalents. Do not add guard exceptions, escaped copy or hidden string catalogs. This resolves the actual combined-build language refusal without weakening compiler/prompt/source guards.
+
+## Shared selected identity hash
+
+`selectionHash` is a drift precondition, not authority. Both repositories consume the same pure strict `ControlSelectionIdentityV1Schema` and `hashControlSelectionIdentityV1` exported by SF `src/execution/schemas/manual-control-job-v1.ts`; hash with the existing SF `hashCanonicalJson` over exactly this parsed record (no additional timestamps, MC build or suite fields):
+
+```ts
+type ControlSelectionIdentityV1 = Readonly<{
+  schema: 'setfarm.manual-control-selection.v1';
+  installationId: string; sourceSha: string;
+  installationDir: string; releaseDir: string; catalogHash: string;
+  activationPreparedHash: string; activationAcknowledgedHash: string;
+}>;
+```
+
+Map only from the captured validated `freshInstallationSelectionV1`: `state.origin.installationId`, `state.origin.sourceSha`, `directory`, `paths.repository`, `catalogHash`, `activation.preparedPin.sha256`, `activation.activatedPin.sha256`. Require acknowledged activation and both pins; no activation/unknown selection refuses launch. UUID/source/hash/path validation is strict; paths are canonical absolute internal values checked by the existing selection authority. Recheck `selection.assertUnchanged()` before/after derivation and before effects; ordinary selected operational entry/database/build checks remain mandatory. MC extends only its internal captured Selection view and uses the fixed selected SF pure schema/hash helper; it never derives from HTTP or current checkout. Raw record/paths/pins stay private; browser receives only the resulting hash. MC source/build and suite identities are separately bound in the job receipt. This hash grants no runtime or credential authority.

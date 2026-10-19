@@ -30,7 +30,7 @@ All paths below are relative to `/Users/setrox/ai/setrox/.worktrees/setfarm-dash
 
 | File | Responsibility |
 |---|---|
-| `src/execution/schemas/manual-control-job-v1.ts` (new) | Strict versioned private intent/custody, public receipt/ref and projection schemas. Exports `ControlJobKindV1`, `ControlReportRefsV1`, `ControlJobReceiptV1`, `ControlPrivateIntentV1`, `ControlWorkerCustodyV1` and their Zod schemas. No raw nonce in receipt. |
+| `src/execution/schemas/manual-control-job-v1.ts` (new) | Strict versioned private intent/custody, public receipt/ref and projection schemas. Exports `ControlJobKindV1`, `ControlReportRefsV1`, `ControlJobReceiptV1`, `ControlPrivateIntentV1`, `ControlWorkerCustodyV1` and their Zod schemas. No raw nonce in receipt. Also exports pure strict `ControlSelectionIdentityV1Schema`, its type and `hashControlSelectionIdentityV1` exactly as the spec Shared selected identity hash section. |
 | `src/execution/manual-test-admission-v1.ts` (new) | Selected private reservation file/identity, complete activity census, existing DB fence transaction, exact canary exception and terminal release. |
 | `src/execution/run-persistence.ts` | Read/recheck reservation only after its existing fence at `persistWorkflowRunInTransaction` and private `persistRecoverySourceBootstrapRunInTransactionV1`; preserve insertion and canary consumption atomicity. |
 | `src/execution/manual-test-worker-v1.ts` (new) | Actual preflight/full8 dispatch, durable admission/result/cancellation journal and canonical owned stop; fake effect ports are injectable only in tests. |
@@ -120,7 +120,7 @@ export type BoundCanarySlotV1 = Readonly<{
 }>;
 ```
 
-- [ ] **Step 1: Write RED tests** around the *actual* `persistWorkflowRunInTransaction(sql: PgTransactionSql,input: PersistWorkflowRunInputV1)` export and `persistInternalProductionRecoverySourceBootstrapRunV1(input:{operationRef:string;operationHash:string})` wrapper. Register `manual-test-admission-v1.isolated-pg.test.ts` in `OWNER_BACKED_TESTS` in this same step, before running RED. Use `tests/execution-attempts/helpers/compiler-story-admission-fixture.ts` to create the real selected run fixture. Put the following assertion in the owner-backed isolated-PG test; keep temp-file/schema-only cases in the raw test:
+- [ ] **Step 1: Write RED tests** around the *actual* `persistWorkflowRunInTransaction(sql: PgTransactionSql,input: PersistWorkflowRunInputV1)` export and the private recovery insertion function; preserve a separate real public `persistInternalProductionRecoverySourceBootstrapRunV1(input:{operationRef:string;operationHash:string})` authority-refusal test. Register `manual-test-admission-v1.isolated-pg.test.ts` in `OWNER_BACKED_TESTS` in this same step, before running RED. Use `tests/execution-attempts/helpers/compiler-story-admission-fixture.ts` to create the real selected run fixture. Put the following assertion in the owner-backed isolated-PG test; keep temp-file/schema-only cases in the raw test:
 
 ```ts
 const held = await acquireSelectedManualEvaluationV1({
@@ -130,17 +130,19 @@ await assert.rejects(
   () => persistWorkflowRunInTransaction(sql, ordinaryRunInput),
   /MANUAL_EVALUATION_RESERVED/,
 );
+// Component-only: execute the complete actual private insertion function
+// with the real shared DB fence and an unusable downstream authority port.
+// Separately assert the public wrapper retains its actual authority refusal.
 await assert.rejects(
-  () => persistInternalProductionRecoverySourceBootstrapRunV1({
-    operationRef: recoveryOperation.operationRef,
-    operationHash: recoveryOperation.operationHash,
-  }),
+  () => executeActualPrivateRecoveryInsertionComponent(sql, held),
   /MANUAL_EVALUATION_RESERVED/,
 );
 assert.equal(await readReservationFile(), held.revision);
 ```
 
 Add table cases for every known activity family (running/resuming/cancelling/failing runs; claims; attempts/binding conflicts; runtimes/completions; recovery cases/deliveries; termination; evaluator/other build/publication owner); missing/noninteger/negative data refuses. Two concurrent acquisition promises yield exactly one owner. A pending fsynced reservation after simulated transaction rollback remains blocking/unknown. A direct canary with exact stored admission/suite/slot/case/task/repetition and unconsumed claim is accepted; foreign/expired/consumed selector or raw matching `slotHash` is denied. Assert terminal transition still enters the shared fence under reservation.
+
+Root fixture ruling: the existing P3 harness explicitly rejects global fresh selection. A **module-local test-only substitution of immutable selected locator/path/identity observations** may point the actual reservation module to an owned temp `runtime/evals`; retain the real P3 SQL/pgBegin/shared fence and actual normal persistence/canary repository. This is selected-filesystem plus real-DB component evidence, never actual fresh activation/public admission. Do not change P3 authority helpers or install new roles. The mandated compiler fixture creates running claims: use its canonical owned drain APIs or a separate pristine owned database before successful acquisition, never hide activity by weakening the census. There is no existing admitted recovery-operation fixture. For recovery, keep the real public wrapper authority-refusal test and execute the complete AST-extracted private insertion function as a component with real shared DB fence and an intentionally unusable downstream authority port; assert reservation refusal occurs before downstream authority access or business SQL. Do not fabricate a valid recovery operation/admission or claim a successful public recovery start. An actual activated public recovery journey remains a later operational gate.
 
 - [ ] **Step 2: Run focused tests to observe RED.** `node --import tsx scripts/run-execution-attempt-tests.ts manual-test-admission-v1.test.ts manual-test-admission-v1.isolated-pg.test.ts` must fail for missing exports/absent refusal. The owner-backed test uses the existing P3 harness and root-provided protected PG input; no live PG URL is used.
 - [ ] **Step 3: Implement the narrow gate.** Create the selected reservation under the fixed selected `runtime/evals` child with 0700 parent/0600 file, exclusive/fsynced publication, revision/CAS and pinned inode/owner/mode. Enter the existing DB fence in short selected transactions on acquire/bind/release; publish pending before any effect and keep pending/unknown on rollback or lost connection. At normal insertion, observe immediately after the existing fence, before owner creation; recheck just before `INSERT` after `lockAndVerifyReleaseAdmission` validates the DB claim. At recovery insertion, observe immediately after its existing fence and deny active reservations. Do not change the fence helper, `db-pg.ts`, the normal canary `UPDATE`, or privileged recovery authority. Use an exact selected process/owner inventory; an unregistered or unreadable evaluator is unknown and refuses.
