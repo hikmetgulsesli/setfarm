@@ -5,8 +5,8 @@ import type postgres from "postgres";
 import { fixture, snapshot } from "../evals/control-evidence-fixture-v1.js";
 import { ContentAddressedEvalResultStore } from "../../src/evals/report.js";
 import { createConvergenceResult } from "../../src/evals/result-schema.js";
-import { convergenceArtifactRef } from "../../src/execution/v3-release-admission.js";
-import { createV3ReleaseAdmissionRepository } from "../../src/execution/v3-release-admission-repository.js";
+import { convergenceArtifactRef, V3ReleaseAdmissionV1Schema } from "../../src/execution/v3-release-admission.js";
+import { createV3ReleaseAdmissionRepository, V3ReleaseAdmissionError } from "../../src/execution/v3-release-admission-repository.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 // Root-only protected P3 execution. The shared fixture replaces only captured
@@ -111,12 +111,49 @@ test("protected P3 observes only actual committed production promotion and perfo
   });
 
   await t.test("actual commit survives lost return acknowledgement and independent observation qualifies", async () => {
-    const lostReturn = withBegin(owner, async callback => { await owner.begin(callback); throw new Error("INJECTED_LOST_COMMITTED_RETURN"); });
-    await assert.rejects(createV3ReleaseAdmissionRepository(lostReturn, store).promoteReleaseGo(promotion));
-    const actual = await repository.promoteReleaseGo(promotion);
-    const rows = await owner.unsafe("SELECT admission_hash FROM public.v3_release_admissions WHERE kind='release_go' AND release_sha=$1", [f.input.releaseSha]);
-    assert.equal(rows.length, 1); assert.equal(rows[0]!.admission_hash, actual.admissionHash);
-    const result = await read(); assert.equal(result.evaluation.report?.qualification, "qualified"); assert.equal(result.evaluation.availability.code, null);
+    const query = `SELECT admission_hash, kind, release_sha, suite_hash,
+      result_hash, result_ref, gate_hash, gate_ref, expires_at, payload
+      FROM public.v3_release_admissions WHERE kind='release_go' AND release_sha=$1`;
+    assert.equal((await owner.unsafe(query, [f.input.releaseSha])).length, 0);
+    const lostCommittedReturn = new V3ReleaseAdmissionError("V3_RELEASE_GO_CONFLICT", "INJECTED_LOST_COMMITTED_RETURN");
+    let promotionTransactions = 0;
+    const lostReturn = withBegin(owner, async callback => {
+      assert.equal(++promotionTransactions, 1, "Lost-return observation must not retry promotion");
+      await owner.begin(callback);
+      // This exact error is injected only after the real transaction commits.
+      throw lostCommittedReturn;
+    });
+    await assert.rejects(createV3ReleaseAdmissionRepository(lostReturn, store).promoteReleaseGo(promotion), error => {
+      assert.strictEqual(error, lostCommittedReturn);
+      return true;
+    });
+    assert.equal(promotionTransactions, 1);
+    // Independent reads prove the first attempt committed; no mutator intervenes.
+    const rows = await owner.unsafe(query, [f.input.releaseSha]);
+    assert.equal(rows.length, 1);
+    const row = rows[0]!;
+    const actual = V3ReleaseAdmissionV1Schema.parse(row.payload);
+    assert.deepEqual(actual, {
+      schema: "setfarm.v3-release-admission.v1", kind: "release_go",
+      releaseSha: promotion.releaseSha, suiteHash: promotion.suiteHash,
+      result: { hash: promotion.resultHash, ref: promotion.resultRef },
+      gate: { hash: promotion.gateHash, ref: promotion.gateRef },
+      preflightHash: stored.result.preflight.preflightHash, issuedAt: stored.result.finishedAt,
+      expiresAt: null, slots: [], admissionHash: row.admission_hash,
+    });
+    assert.deepEqual({ ...row }, {
+      admission_hash: actual.admissionHash, kind: actual.kind,
+      release_sha: actual.releaseSha, suite_hash: actual.suiteHash,
+      result_hash: actual.result.hash, result_ref: actual.result.ref,
+      gate_hash: actual.gate.hash, gate_ref: actual.gate.ref,
+      expires_at: null, payload: actual,
+    });
+    const result = await read();
+    assert.equal(result.evaluation.report?.qualification, "qualified");
+    assert.equal(result.evaluation.availability.code, null);
+    assert.equal(result.evaluation.report?.resultHash, promotion.resultHash);
+    assert.equal(result.evaluation.report?.gateHash, promotion.gateHash);
+    assert.equal(promotionTransactions, 1);
   });
 
   await t.test("adapter owns an enforced read-only snapshot with zero filesystem or DB data/DDL changes", async () => {
