@@ -109,6 +109,20 @@ import {
   type InternalCanaryAdmissionContextV1,
 } from "../execution/v3-release-admission.js";
 
+import { ControlWorkerFatalErrorV1, isControlWorkerFatalErrorV1 } from "../execution/schemas/manual-control-worker-channel-v1.js";
+
+export type BoundCaseIdentityV1 = Readonly<{caseId:string;caseHash:string;taskHash:string;repetition:number}>;
+export interface ConvergenceJobControlV1 {
+  beforeCase(value:BoundCaseIdentityV1):Promise<void>;
+  onRunStarted(value:BoundCaseIdentityV1 & {admissionHash:string;slotHash:string;runId:string}):Promise<void>;
+  onRunResult(value:BoundCaseIdentityV1 & {runId:string;resultHash:string}):Promise<void>;
+  cancellationRequested():Promise<boolean>;
+  requestOwnedRunStop(value:BoundCaseIdentityV1 & {runId:string}):Promise<"requested"|"already_terminal"|"refused">;
+  onPhase(value:{phase:"preflight"|"admission"|"case_start"|"case_running"|"case_collect"|"publishing"|"finalizing"|"settling";currentCaseId:string|null;completedCases:number}):Promise<void>;
+  onPublication(value:{stage:"candidate"|"cancelled_final"|"promotion_confirmed"|"final_without_promotion";resultHash:string;gateHash:string;resultStatus:"planned"|"pass"|"fail"|"blocked";gateDecision:"go"|"no_go"}):Promise<void>;
+  beforeFinalization(value:{resultHash:string;gateHash:string;gateDecision:"go"|"no_go"}):Promise<"cancel"|"continue">;
+}
+
 const execFileAsync = promisify(execFile);
 const TERMINAL_RUN_STATUSES = new Set(["completed", "done", "failed", "cancelled", "canceled", "error", "blocked"]);
 const REQUIRED_CAPABILITIES = [
@@ -227,6 +241,8 @@ export interface ConvergenceHttpPort {
   syncProject(runId: string): Promise<Readonly<{ ok: boolean; evidenceHash: string }>>;
 }
 
+import type { ManualStartChildDescriptorV1 } from "../execution/manual-test-admission-v1.js";
+
 export interface ConvergenceProcessPort {
   inspectRelease(): Promise<ConvergenceReleaseInspection>;
   startRun(input: Readonly<{
@@ -234,6 +250,7 @@ export interface ConvergenceProcessPort {
     task: string;
     releaseSha: string;
     admission: InternalCanaryAdmissionContextV1;
+    startChild?: ManualStartChildDescriptorV1;
   }>): Promise<Readonly<{ runId: string; runNumber: number }>>;
   inspectProject(input: Readonly<{
     projectLocator: string | null;
@@ -411,7 +428,8 @@ function preflightCheck(
 async function settle<T>(work: () => Promise<T>): Promise<Readonly<{ ok: true; value: T } | { ok: false }>> {
   try {
     return { ok: true, value: await work() };
-  } catch {
+  } catch (error) {
+    if (isControlWorkerFatalErrorV1(error)) throw error;
     return { ok: false };
   }
 }
@@ -606,15 +624,15 @@ function unavailableProjection(): z.infer<typeof ConvergenceProjectionEvidenceV1
 async function collectProjection(
   ports: ConvergenceRunnerPorts,
   runId: string,
-): Promise<z.infer<typeof ConvergenceProjectionEvidenceV1Schema>> {
+): Promise<{ projection: z.infer<typeof ConvergenceProjectionEvidenceV1Schema>; ordinaryPending: boolean }> {
   const [setfarmRead, missionControlRead] = await Promise.all([
     settle(() => ports.http.operationalSnapshot("setfarm", runId)),
     settle(() => ports.http.operationalSnapshot("mission_control", runId)),
   ]);
-  if (!setfarmRead.ok || !missionControlRead.ok) return unavailableProjection();
+  if (!setfarmRead.ok || !missionControlRead.ok) return { projection: unavailableProjection(), ordinaryPending: false };
   const setfarm = RunOperationalSnapshotV2Schema.safeParse(setfarmRead.value);
   const missionControl = RunOperationalSnapshotV2Schema.safeParse(missionControlRead.value);
-  if (!setfarm.success || !missionControl.success) return unavailableProjection();
+  if (!setfarm.success || !missionControl.success) return { projection: unavailableProjection(), ordinaryPending: false };
   const { snapshotHash: setfarmSnapshotHash, ...setfarmHashable } = setfarm.data;
   const { snapshotHash: missionControlSnapshotHash, ...missionControlHashable } = missionControl.data;
   if (
@@ -624,7 +642,7 @@ async function collectProjection(
     || computeRunOperationalSnapshotHash(missionControlHashable) !== missionControlSnapshotHash
     || !setfarm.data.source.capabilities.implementationSubmissionEvidence
     || !missionControl.data.source.capabilities.implementationSubmissionEvidence
-  ) return unavailableProjection();
+  ) return { projection: unavailableProjection(), ordinaryPending: false };
   const capabilities = Object.fromEntries(REQUIRED_CAPABILITIES.map((key) => [
     key,
     setfarm.data.source.capabilities[key] === true
@@ -639,14 +657,25 @@ async function collectProjection(
     && setfarmAck.projectRecordHash === missionControlAck.projectRecordHash
     && setfarmAck.sourceSnapshotHash === missionControlAck.sourceSnapshotHash,
   );
-  const operationalSettled = [setfarm.data, missionControl.data].every((snapshot) =>
+  const snapshots = [setfarm.data, missionControl.data];
+  const knownTerminal = snapshots.every(snapshot => snapshot.run.terminal
+    && snapshot.summary.lifecycleState === "terminal" && snapshot.summary.health === "ok"
+    && snapshot.summary.invariantViolations === 0 && snapshot.invariants.length === 0
+    && snapshot.source.projection === "complete"
+    && snapshot.outbox.every(item => ["pending", "leased", "published"].includes(item.state))
+    && snapshot.summary.unpublishedOutbox === snapshot.outbox.filter(item => item.state !== "published").length);
+  const pendingOwners = (snapshot: typeof setfarm.data) => snapshot.summary.activeClaims + snapshot.summary.activeAttempts
+    + snapshot.summary.activeRuntimes + snapshot.summary.openCompletions + snapshot.summary.mandatoryEffectsPending
+    + snapshot.summary.unpublishedOutbox;
+  const ordinaryPending = knownTerminal && snapshots.some(snapshot => pendingOwners(snapshot) > 0);
+  const operationalSettled = knownTerminal && snapshots.every((snapshot) =>
     snapshot.summary.lifecycleState === "terminal"
     && snapshot.summary.health === "ok"
     && snapshot.summary.invariantViolations === 0
-    && snapshot.summary.unpublishedOutbox === 0
+    && pendingOwners(snapshot) === 0
     && snapshot.invariants.length === 0
     && snapshot.outbox.every((item) => item.state === "published"));
-  return ConvergenceProjectionEvidenceV1Schema.parse({
+  return { ordinaryPending, projection: ConvergenceProjectionEvidenceV1Schema.parse({
     setfarmSnapshotHash: setfarm.data.snapshotHash,
     missionControlSnapshotHash: missionControl.data.snapshotHash,
     exactHashMatch: setfarm.data.snapshotHash === missionControl.data.snapshotHash,
@@ -657,7 +686,7 @@ async function collectProjection(
     transferAcknowledged,
     projectTransferAckHash: transferAcknowledged ? setfarmAck!.ackHash : null,
     projectRecordHash: transferAcknowledged ? setfarmAck!.projectRecordHash : null,
-  });
+  }) };
 }
 
 async function waitForCanonicalProjection(
@@ -665,9 +694,11 @@ async function waitForCanonicalProjection(
   runId: string,
   accepted: boolean,
   pollMs: number,
+  cancellationRequested?: () => Promise<boolean>,
 ): Promise<z.infer<typeof ConvergenceProjectionEvidenceV1Schema>> {
-  if (accepted) await settle(() => ports.http.syncProject(runId));
-  let projection = await collectProjection(ports, runId);
+  if (accepted && !await cancellationRequested?.()) await settle(() => ports.http.syncProject(runId));
+  let observed = await collectProjection(ports, runId);
+  let projection = observed.projection;
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const complete = projection.exactHashMatch
       && projection.setfarmProjection === "complete"
@@ -675,13 +706,25 @@ async function waitForCanonicalProjection(
       && projection.operationalSettled
       && Object.values(projection.capabilities).every(Boolean)
       && (accepted ? projection.transferAcknowledged : !projection.transferAcknowledged);
-    if (complete) return projection;
-    if (accepted && attempt > 0 && attempt % 3 === 0) {
+    const cancelled = await cancellationRequested?.();
+    if (cancelled) {
+      const trustworthy = projection.exactHashMatch && projection.setfarmProjection === "complete"
+        && projection.missionControlProjection === "complete" && Object.values(projection.capabilities).every(Boolean);
+      if (!trustworthy || (!projection.operationalSettled && !observed.ordinaryPending))
+        throw new ControlWorkerFatalErrorV1("CONTROL_SETTLEMENT_UNCERTAIN");
+      if (projection.operationalSettled) return projection;
+    } else if (complete) return projection;
+    if (!cancelled && accepted && attempt > 0 && attempt % 3 === 0) {
       await settle(() => ports.http.syncProject(runId));
     }
     await ports.clock.sleep(Math.min(5_000, Math.max(250, pollMs)));
-    projection = await collectProjection(ports, runId);
+    observed = await collectProjection(ports, runId);
+    projection = observed.projection;
   }
+  if (await cancellationRequested?.() && (!projection.operationalSettled || !projection.exactHashMatch
+    || projection.setfarmProjection !== "complete" || projection.missionControlProjection !== "complete"
+    || !Object.values(projection.capabilities).every(Boolean)))
+    throw new ControlWorkerFatalErrorV1("CONTROL_SETTLEMENT_UNCERTAIN");
   return projection;
 }
 
@@ -795,14 +838,26 @@ async function waitForTerminal(
   suite: ProductConvergenceSuiteVersioned,
   releaseSha: string,
   ports: ConvergenceRunnerPorts,
+  control?: ConvergenceJobControlV1,
+  identity?: BoundCaseIdentityV1,
 ): Promise<Readonly<{ poll: ConvergenceRunPoll; timedOut: boolean; invalidated: boolean }>> {
   const deadline = ports.clock.now().getTime() + suite.timeout.runMs;
   let latest = await ports.sql.readRun(runId);
   let invalidated = latest.protocol !== "v3" || latest.compilerReleaseSha !== releaseSha;
+  let stopRequested = false;
+  const checkCancellation = async () => {
+    if (control && identity && await control.cancellationRequested() && !stopRequested) {
+      stopRequested = true;
+      const result = await control.requestOwnedRunStop({...identity, runId});
+      if (result === "refused") throw new ControlWorkerFatalErrorV1("CONTROL_SETTLEMENT_UNCERTAIN");
+    }
+  };
+  await checkCancellation();
   while (!latest.terminal && ports.clock.now().getTime() < deadline) {
     await ports.clock.sleep(suite.timeout.pollMs);
     latest = await ports.sql.readRun(runId);
     invalidated ||= latest.protocol !== "v3" || latest.compilerReleaseSha !== releaseSha;
+    await checkCancellation();
   }
   return { poll: latest, timedOut: !latest.terminal, invalidated };
 }
@@ -822,14 +877,22 @@ function plannedCases(suite: ProductConvergenceSuiteVersioned): Array<Readonly<{
 
 export async function runConvergenceSuite(
   loaded: LoadedConvergenceSuiteVersioned,
-  rawOptions: Readonly<{ releaseSha: string; execute?: boolean }>,
+  rawOptions: Readonly<{ releaseSha: string; execute?: boolean; control?: ConvergenceJobControlV1 }>,
   ports: ConvergenceRunnerPorts,
 ): Promise<ConvergenceSuiteRun> {
   const options = RunnerOptionsSchema.parse({
     releaseSha: rawOptions.releaseSha,
     execute: rawOptions.execute === true,
   });
+  const control = rawOptions.control;
+  let cancelled = false;
+  const checkCancellation = async () => {
+    if (control && await control.cancellationRequested()) cancelled = true;
+    return cancelled;
+  };
   const startedAt = iso(ports.clock);
+  await control?.onPhase({phase:"preflight",currentCaseId:null,completedCases:0});
+  await checkCancellation();
   const { preflight, release } = await buildPreflight(
     loaded.suite,
     options.releaseSha,
@@ -846,7 +909,9 @@ export async function runConvergenceSuite(
 
   if (preflight.status !== "pass") blockers.add("EVAL_PREFLIGHT_BLOCKED");
 
-  if (options.execute && preflight.status === "pass") {
+  await control?.onPhase({phase:"admission",currentCaseId:null,completedCases:0});
+  if (await checkCancellation()) blockers.add("EVAL_CANCEL_REQUESTED");
+  if (options.execute && preflight.status === "pass" && !cancelled) {
     const ttlMs = (planned.length * loaded.suite.timeout.runMs) + 60 * 60 * 1_000;
     const creation = await settle(() => ports.admissions.createCanary({
       releaseSha: options.releaseSha,
@@ -875,6 +940,11 @@ export async function runConvergenceSuite(
 
   if (options.execute && preflight.status === "pass" && blockers.size === 0) {
     for (const item of planned) {
+      const identity: BoundCaseIdentityV1 = {caseId:item.value.caseId,caseHash:convergenceCaseHashVersioned(item.value),taskHash:safeHash(item.value.task),repetition:item.repetition};
+      if (await checkCancellation()) { blockers.add("EVAL_CANCEL_REQUESTED"); break; }
+      await control?.onPhase({phase:"case_start",currentCaseId:item.value.caseId,completedCases:runs.length});
+      await control?.beforeCase(identity);
+      if (await checkCancellation()) { blockers.add("EVAL_CANCEL_REQUESTED"); break; }
       if (!await verifyReleaseStillPinned(options.releaseSha, release.runnerHash, ports)) {
         blockers.add("EVAL_RELEASE_IDENTITY_DRIFT");
         break;
@@ -903,6 +973,7 @@ export async function runConvergenceSuite(
         blockers.add("EVAL_CANARY_ADMISSION_INCOMPLETE");
         break;
       }
+      if (await checkCancellation()) { blockers.add("EVAL_CANCEL_REQUESTED"); break; }
       const startRead = await settle(() => ports.process.startRun({
         workflowId: loaded.suite.workflowId,
         task: item.value.task,
@@ -913,12 +984,18 @@ export async function runConvergenceSuite(
         blockers.add("EVAL_RUN_START_FAILED");
         break;
       }
+      await control?.onRunStarted({...identity,admissionHash:admission.admissionHash,slotHash:admission.slotHash,runId:startRead.value.runId});
+      await control?.onPhase({phase:"case_running",currentCaseId:item.value.caseId,completedCases:runs.length});
       const terminal = await waitForTerminal(
         startRead.value.runId,
         loaded.suite,
         options.releaseSha,
         ports,
+        control,
+        identity,
       );
+      await checkCancellation();
+      await control?.onPhase({phase:"case_collect",currentCaseId:item.value.caseId,completedCases:runs.length});
       const collectionRead = await settle(() => ports.sql.collectRun(startRead.value.runId, {
         task: item.value.task,
         oracle: item.value.oracle,
@@ -940,6 +1017,7 @@ export async function runConvergenceSuite(
         startRead.value.runId,
         expectedDecision.kind === "accepted_candidate",
         loaded.suite.timeout.pollMs,
+        checkCancellation,
       );
       const projectRead = expectedDecision.kind === "typed_rejection"
           ? { ok: true as const, value: {
@@ -1059,9 +1137,11 @@ export async function runConvergenceSuite(
       const runResult = createConvergenceRunResultVersioned(loaded.suite, { ...runPayload, passed, rootCauseHash });
       await ports.artifacts.put(runResult);
       runs.push(runResult);
+      await control?.onRunResult({...identity,runId:startRead.value.runId,resultHash:runResult.resultHash});
       if (rootCauseHash) {
         rootCounts.set(rootCauseHash, (rootCounts.get(rootCauseHash) ?? 0) + 1);
       }
+      if (await checkCancellation()) { blockers.add("EVAL_CANCEL_REQUESTED"); break; }
       if (terminal.timedOut) {
         blockers.add("EVAL_RUN_TIMEOUT_ACTIVE_OWNERSHIP");
         break;
@@ -1089,16 +1169,18 @@ export async function runConvergenceSuite(
     }
   }
 
+  await control?.onPhase({phase:"publishing",currentCaseId:null,completedCases:runs.length});
+  if (await checkCancellation()) blockers.add("EVAL_CANCEL_REQUESTED");
   const complete = runs.length === planned.length;
   const allPassed = complete && runs.every((item) => item.passed);
-  const status = !options.execute
+  const status = cancelled ? "blocked" as const : !options.execute
     ? preflight.status === "pass" ? "planned" as const : "blocked" as const
     : allPassed
       ? "pass" as const
       : complete && repeatedRootCause === null
         ? "fail" as const
         : "blocked" as const;
-  const result = createConvergenceResultVersioned(loaded.suite, {
+  let result = createConvergenceResultVersioned(loaded.suite, {
     suiteId: loaded.suite.suiteId,
     suiteHash: loaded.suiteHash,
     releaseSha: options.releaseSha,
@@ -1117,10 +1199,25 @@ export async function runConvergenceSuite(
     stoppedOnRepeatedRootCause: repeatedRootCause,
     blockerCodes: [...blockers].sort(),
   });
-  const artifact = await ports.artifacts.put(result);
-  const gate = evaluateConvergenceReleaseGate(result);
-  const gateArtifact = await ports.artifacts.put(gate);
-  if (gate.decision === "go") {
+  let artifact = await ports.artifacts.put(result);
+  let gate = evaluateConvergenceReleaseGate(result);
+  let gateArtifact = await ports.artifacts.put(gate);
+  const publish = async (stage: Parameters<ConvergenceJobControlV1["onPublication"]>[0]["stage"]) => {
+    await control?.onPublication({stage,resultHash:result.resultHash,gateHash:gate.gateHash,resultStatus:result.status,gateDecision:gate.decision});
+  };
+  await publish("candidate");
+  await control?.onPhase({phase:"finalizing",currentCaseId:null,completedCases:runs.length});
+  const decision = control ? await control.beforeFinalization({resultHash:result.resultHash,gateHash:gate.gateHash,gateDecision:gate.decision}) : "continue";
+  if (decision === "cancel") {
+    if (!result.blockerCodes.includes("EVAL_CANCEL_REQUESTED")) {
+      const {resultHash:_hash,schema:_schema,suiteVersion:_version,...payload}=result;
+      result=createConvergenceResultVersioned(loaded.suite,{...payload,status:"blocked",blockerCodes:[...payload.blockerCodes,"EVAL_CANCEL_REQUESTED"].sort()});
+      artifact=await ports.artifacts.put(result);
+      gate=evaluateConvergenceReleaseGate(result);
+      gateArtifact=await ports.artifacts.put(gate);
+    }
+    await publish("cancelled_final");
+  } else if (gate.decision === "go") {
     await ports.admissions.promoteReleaseGo({
       releaseSha: options.releaseSha,
       suiteHash: loaded.suiteHash,
@@ -1129,6 +1226,9 @@ export async function runConvergenceSuite(
       gateHash: gateArtifact.hash,
       gateRef: gateArtifact.locator,
     });
+    await publish("promotion_confirmed");
+  } else {
+    await publish("final_without_promotion");
   }
   return Object.freeze({ result, artifact, gate, gateArtifact });
 }
@@ -2104,23 +2204,26 @@ export function createNodeConvergenceProcessPort(root = packageRoot()): Converge
     },
 
     async startRun(input) {
-      const output = await command(process.execPath, [
-        cli,
-        "workflow",
-        "run",
-        input.workflowId,
-        input.task,
-        "--protocol",
-        "v3",
-      ], {
-        cwd: root,
-        timeout: 120_000,
-        env: {
-          ...process.env,
-          SETFARM_INTERNAL_CONVERGENCE_ADMISSION:
-            serializeInternalCanaryAdmissionContext(input.admission),
-        },
+      const executable = realpathSync(process.execPath);
+      const args = [cli, "workflow", "run", input.workflowId, input.task, "--protocol", "v3"];
+      // Load before spawning: the original promise/handle has an owner from birth.
+      const publish = input.startChild
+        ? (await import("../execution/manual-test-admission-v1.js")).publishSelectedManualStartChildV1 : null;
+      const pending = execFileAsync(executable, args, {
+        cwd: root, timeout: 120_000, encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
+        env: { ...process.env, SETFARM_INTERNAL_CONVERGENCE_ADMISSION: serializeInternalCanaryAdmissionContext(input.admission) },
       });
+      // Attach rejection handling before synchronous proof publication. Always
+      // await this one original handle, even if publication/observation refuses.
+      const outcome = pending.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+      let publicationError: unknown, assertPublished: (() => void) | undefined;
+      try { if (publish) assertPublished = publish(input.startChild!, input, pending.child); }
+      catch (error) { publicationError = error; }
+      const result = await outcome;
+      if (publicationError) throw new ControlWorkerFatalErrorV1("CONTROL_START_UNRESOLVED");
+      try { assertPublished?.(); } catch { throw new ControlWorkerFatalErrorV1("CONTROL_START_UNRESOLVED"); }
+      if (!result.ok) throw result.error;
+      const output = String(result.value.stdout).trim();
       const match = output.match(/Run:\s*#([1-9][0-9]*)\s*\(([^)]+)\)/);
       if (!match) throw new Error("EVAL_RUN_START_OUTPUT_INVALID");
       return { runId: match[2]!, runNumber: Number(match[1]) };
@@ -2427,7 +2530,10 @@ type CliOptions = Readonly<{
 
 function parseCli(argv: readonly string[]): CliOptions {
   const root = packageRoot();
-  let suiteFile = path.join(root, "evals", "suites", "product-convergence-v1.json");
+  const selectedSuite = freshInstallationSelectionV1
+    ? path.join(freshInstallationSelectionV1.paths.repository, "evals", "suites", "product-convergence-codex-v1.json")
+    : null;
+  let suiteFile = selectedSuite ?? path.join(root, "evals", "suites", "product-convergence-v1.json");
   let outputRoot = resolveConvergenceEvalResultDir();
   let releaseSha: string | undefined;
   let execute = false;
@@ -2436,7 +2542,10 @@ function parseCli(argv: readonly string[]): CliOptions {
     const argument = argv[index]!;
     if (argument === "--execute") execute = true;
     else if (argument === "--json") json = true;
-    else if (argument === "--suite" && argv[index + 1]) suiteFile = argv[++index]!;
+    else if (argument === "--suite" && argv[index + 1]) {
+      suiteFile = argv[++index]!;
+      if (selectedSuite && suiteFile !== selectedSuite) throw new Error("MANUAL_EVALUATION_RECIPE_REFUSED");
+    }
     else if (argument === "--output-root" && argv[index + 1]) outputRoot = argv[++index]!;
     else if (argument === "--release-sha" && argv[index + 1]) releaseSha = argv[++index]!;
     else throw new Error(`EVAL_ARGUMENT_INVALID:${argument}`);
@@ -2452,10 +2561,11 @@ async function main(): Promise<void> {
     const releaseSha = GitObjectHashSchema.parse(options.releaseSha ?? inspected.headSha);
     if (options.execute && !options.releaseSha) throw new Error("EVAL_EXECUTE_RELEASE_SHA_REQUIRED");
     const loaded = await loadConvergenceSuiteVersioned(options.suiteFile);
-    const completed = await runConvergenceSuite(loaded, {
-      releaseSha,
-      execute: options.execute,
-    }, ports);
+    const completed = freshInstallationSelectionV1
+      ? await (await import("../execution/manual-test-worker-v1.js")).runSelectedDirectConvergenceV1(loaded, {
+          releaseSha, execute: options.execute,
+        }, ports)
+      : await runConvergenceSuite(loaded, { releaseSha, execute: options.execute }, ports);
     process.stdout.write(completed.result.schema === "setfarm.product-convergence-result.v2"
       ? options.json
         ? stableConvergenceResultJsonV2(completed.result)

@@ -1,3 +1,4 @@
+import { observeSelectedManualRunInsertionInTransactionV1, assertSelectedManualRunInsertionV1, assertNoSelectedManualRecoveryInsertionV1 } from "./manual-test-admission-v1.js";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -334,8 +335,12 @@ export async function persistWorkflowRunInTransaction(
     throw new Error("RUN_PERSISTENCE_CALLER_TIME_INVALID");
   }
   await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
-  const ownerBegin = await beginWorkflowRunOwnerForPersistenceV1(sql, run.id);
-  const { reservation } = ownerBegin;
+  const manualReservation = await observeSelectedManualRunInsertionInTransactionV1(sql, run);
+  if (manualReservation && (manualReservation.phase !== "active"
+    || manualReservation.kind !== "convergence_full8" || run.protocol.releaseAdmissionKind !== "convergence_canary"
+    || !run.protocol.canaryAdmission || run.protocol.compilerReleaseSha !== manualReservation.sourceSha)) {
+    throw new Error("MANUAL_EVALUATION_RESERVED");
+  }
   const existingRows = await sql.unsafe<PersistedWorkflowRunRowV1[]>(
     `SELECT id,run_number,workflow_id,task,status,context,notify_url,protocol,
             protocol_version,compiler_release_sha,activation_preflight_hash,
@@ -347,10 +352,6 @@ export async function persistWorkflowRunInTransaction(
   );
   if (existingRows.length > 1) throw new Error("RUN_PERSISTENCE_STORED_RUN_INVALID");
   const existing = existingRows[0] ?? null;
-  if (
-    existing === null
-    && (!ownerBegin.createdHere || ownerBegin.state !== "pending")
-  ) throw new Error("RUN_PERSISTENCE_PREEXISTING_OWNER_INVALID");
   const activity = await sql.unsafe<Array<{
     active_runs: number;
     active_compiler_runs: number;
@@ -391,6 +392,14 @@ export async function persistWorkflowRunInTransaction(
     throw new Error("RUN_ACTIVATION_PREFLIGHT_IDENTITY_MISSING");
   }
   const persistedAt = await lockAndVerifyReleaseAdmission(sql, run, existing?.created_at ?? null);
+  await assertSelectedManualRunInsertionV1(sql, manualReservation, run);
+  const ownerBegin = await beginWorkflowRunOwnerForPersistenceV1(sql, run.id);
+  const { reservation } = ownerBegin;
+  if (
+    existing === null
+    && (!ownerBegin.createdHere || ownerBegin.state !== "pending")
+  ) throw new Error("RUN_PERSISTENCE_PREEXISTING_OWNER_INVALID");
+
   if (existing) {
     const createdAt = new Date(existing.created_at).toISOString();
     if (
@@ -729,6 +738,8 @@ async function persistRecoverySourceBootstrapRunInTransactionV1(
   sql: PgTransactionSql,
   candidate: RecoverySourceBootstrapRunCandidateV1,
 ): Promise<PersistInternalProductionRecoverySourceBootstrapRunResultV1> {
+  await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+  await assertNoSelectedManualRecoveryInsertionV1(sql);
   const authority = await lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1(
     sql,
     candidate.operation,

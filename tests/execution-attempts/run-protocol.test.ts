@@ -1144,7 +1144,19 @@ it("P4 recovery source bootstrap persistence isolates the repository before exac
   assert.ok(start >= 0 && end > start && publicEnd > end);
   const fixture = await mkdtemp(path.join(tmpdir(), "setfarm-p4-source-bootstrap-persistence-"));
   let managedWorkspaceRoot: string | undefined;
+  let database: TestDatabase | undefined;
+  const db = await import("../../src/db-pg.js");
   try {
+    database = await createIsolatedTestDatabase();
+    db.pgConfigureIsolatedTestDatabase(database.url);
+    await db.initializeInternalProductionCurrentEntryDatabaseV1();
+    const unsuffixedTs: typeof db = await import(new URL("../../src/db-pg.ts", import.meta.url).href);
+    assert.equal(unsuffixedTs.getSql(), db.getSql());
+    for (const sql of [database.sql, db.getSql()]) {
+      const rows = await sql.unsafe<Array<{ database: string }>>("SELECT current_database() AS database");
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]!.database, database.database);
+    }
     const canonicalRepo = fixture;
     const bareOrigin = path.join(fixture, "origin.git");
     const git = (args: string[], cwd = canonicalRepo): string => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -1173,6 +1185,9 @@ it("P4 recovery source bootstrap persistence isolates the repository before exac
     const repositoryModule = await import("../../src/execution/recovery-source-bootstrap-repository-v1.js");
     const modulePath = path.join(execution, "run-persistence-kernel.ts");
     await writeFile(modulePath, `
+import assert from "node:assert/strict";
+import {pgBegin as actualPgBegin, lockInternalProductionWorkflowRunInsertionFenceV1 as actualInsertionFence} from ${JSON.stringify(new URL("../../src/db-pg.ts", import.meta.url).href)};
+import {assertNoSelectedManualRecoveryInsertionV1 as actualManualGuard} from ${JSON.stringify(new URL("../../src/execution/manual-test-admission-v1.ts", import.meta.url).href)};
 import {createHash} from "node:crypto";
 import {existsSync} from "node:fs";
 import path from "node:path";
@@ -1185,7 +1200,14 @@ const resolveInternalProductionRecoverySourceBootstrapOperationV1=async()=>g.__p
 const resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1=async()=>g.__p4PersistProtocol;
 const resolveBundledWorkflowDir=()=>"feature-dev";
 const loadWorkflowSpec=async()=>g.__p4PersistWorkflow;
-const lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1=async(_sql:any)=>{g.__p4PersistLedger.push("lock");return g.__p4PersistAuthority};
+// Only the pre-existing recovery business/privileged-authority ports are modeled.
+// Both new guards run on the same actual owned transaction surrounding the kernel.
+const guardTransactions=new WeakMap<object,{sql:any,identity:any,stage:number}>();
+const readTransactionIdentity=async(sql:any)=>{const rows=await sql.unsafe("SELECT current_database() AS database,pg_backend_pid() AS pid,txid_current()::text AS transaction");assert.equal(rows.length,1);assert.equal(rows[0].database,${JSON.stringify(database.database)});return rows[0]};
+const guardTransaction=async(sql:any,stage:number)=>{const held=guardTransactions.get(sql);assert.ok(held);assert.equal(held.stage,stage);assert.deepEqual(await readTransactionIdentity(held.sql),held.identity);return held};
+const lockInternalProductionWorkflowRunInsertionFenceV1=async(sql:any)=>{const held=await guardTransaction(sql,0);await actualInsertionFence(held.sql);held.stage=1;g.__p4PersistLedger.push("insertion-fence")};
+const assertNoSelectedManualRecoveryInsertionV1=async(sql:any)=>{const held=await guardTransaction(sql,1);await actualManualGuard(held.sql);assert.deepEqual(await readTransactionIdentity(held.sql),held.identity);held.stage=2;g.__p4PersistLedger.push("manual-observation")};
+const lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1=async(sql:any)=>{await guardTransaction(sql,2);g.__p4PersistLedger.push("lock");return g.__p4PersistAuthority};
 const resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1=(input:any)=>g.__p4ResolveRepositoryIdentity(input);
 const prepareInternalProductionRecoverySourceBootstrapRepositoryV1=(input:any)=>{g.__p4PersistLedger.push("workspace");return g.__p4PrepareRepository(input)};
 const validateInternalProductionRecoverySourceBootstrapRepositoryV1=(input:any)=>g.__p4ValidateRepository(input);
@@ -1193,7 +1215,7 @@ const createInternalProductionRecoverySourceBootstrapRunContextV1=(operation:any
 const bindInternalProductionRecoverySourceBootstrapRunInTransactionV1=async(_sql:any,input:any)=>{g.__p4PersistLedger.push("bind");const context=JSON.parse(g.__p4PersistTx.runs[input.runId].context);if(Object.keys(context).length!==35)throw new Error("EXACT35_CONTEXT_REQUIRED");if(context.branch!==input.runId||context.ownerAdmissionFenceRef!==g.__p4PersistOperation.ownerAdmissionFenceRef||context.ownerAdmissionFenceHash!==g.__p4PersistOperation.ownerAdmissionFenceHash)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUNTIME_IDENTITY_CROSSED");if(g.__p4PersistTx.steps.length!==g.__p4PersistWorkflow.steps.length)throw new Error("EXACT_STEPS_REQUIRED");return {runOwnerReservationRef:g.__p4PersistOperation.targetRunReservationRef,runOwnerReservationHash:g.__p4PersistOperation.targetRunReservationHash}};
 const readDatabaseWallClock=async()=>{g.__p4PersistLedger.push("clock");return new Date("2026-08-26T12:00:00.000Z")};
 const persistedWorkflowRunResultV1=(row:any,pair:any)=>({run:{id:row.id,runNumber:row.run_number,workflowId:row.workflow_id,task:row.task,status:"running",context:row.context,notifyUrl:row.notify_url,protocol:row.protocol,protocolVersion:row.protocol_version,compilerReleaseSha:row.compiler_release_sha,activationPreflightHash:row.activation_preflight_hash,releaseAdmissionHash:row.release_admission_hash,createdAt:new Date(row.created_at).toISOString(),updatedAt:new Date(row.updated_at).toISOString()},...pair});
-const pgBegin=async(cb:any)=>{const prior=structuredClone(g.__p4PersistState);const tx=structuredClone(prior);g.__p4PersistTx=tx;const sql:any={unsafe:async(q:string,p:any[]=[])=>{if(q.includes("FROM runs")&&q.includes("FOR UPDATE")){g.__p4PersistLedger.push("select-run");return tx.runs[p[0]]?[tx.runs[p[0]]]:[]}if(q.includes("nextval")){g.__p4PersistLedger.push("nextval");return [{next:41}]}if(q.includes("INSERT INTO runs")){g.__p4PersistLedger.push("insert-run");tx.runs[p[0]]={id:p[0],run_number:p[1],workflow_id:"feature-dev",task:p[2],status:"running",context:p[3],notify_url:null,protocol:"v3",protocol_version:1,compiler_release_sha:p[4],activation_preflight_hash:p[5],release_admission_hash:p[6],created_at:p[7],updated_at:p[7]};return []}if(q.includes("INSERT INTO steps")){g.__p4PersistLedger.push("insert-step");tx.steps.push({id:p[0],run_id:p[1],step_id:p[2],agent_id:p[3],step_index:p[4],input_template:p[5],expects:p[6],status:p[7],max_retries:p[8],type:p[9],loop_config:p[10],created_at:p[11],updated_at:p[11]});return []}if(q.includes("FROM steps")){g.__p4PersistLedger.push("select-steps");return tx.steps}throw new Error("UNEXPECTED_SQL:"+q)}};const value=await cb(sql);if(g.__p4PersistRejectCommit)throw new Error("INJECT_COMMIT_ACK_LOSS");g.__p4PersistState=tx;g.__p4PersistLedger.push("commit");return value};
+const pgBegin=async(cb:any)=>{const prior=structuredClone(g.__p4PersistState);const tx=structuredClone(prior);g.__p4PersistTx=tx;const value=await actualPgBegin(async(realSql)=>{const identity=await readTransactionIdentity(realSql);const sql:any={unsafe:async(q:string,p:any[]=[])=>{if(q.includes("FROM runs")&&q.includes("FOR UPDATE")){g.__p4PersistLedger.push("select-run");return tx.runs[p[0]]?[tx.runs[p[0]]]:[]}if(q.includes("nextval")){g.__p4PersistLedger.push("nextval");return [{next:41}]}if(q.includes("INSERT INTO runs")){g.__p4PersistLedger.push("insert-run");tx.runs[p[0]]={id:p[0],run_number:p[1],workflow_id:"feature-dev",task:p[2],status:"running",context:p[3],notify_url:null,protocol:"v3",protocol_version:1,compiler_release_sha:p[4],activation_preflight_hash:p[5],release_admission_hash:p[6],created_at:p[7],updated_at:p[7]};return []}if(q.includes("INSERT INTO steps")){g.__p4PersistLedger.push("insert-step");tx.steps.push({id:p[0],run_id:p[1],step_id:p[2],agent_id:p[3],step_index:p[4],input_template:p[5],expects:p[6],status:p[7],max_retries:p[8],type:p[9],loop_config:p[10],created_at:p[11],updated_at:p[11]});return []}if(q.includes("FROM steps")){g.__p4PersistLedger.push("select-steps");return tx.steps}throw new Error("UNEXPECTED_SQL:"+q)}};guardTransactions.set(sql,{sql:realSql,identity,stage:0});try{const result=await cb(sql);if(g.__p4PersistRejectCommit)throw new Error("INJECT_COMMIT_ACK_LOSS");return result}finally{guardTransactions.delete(sql)}});g.__p4PersistState=tx;g.__p4PersistLedger.push("commit");return value};
 ${production.slice(start, publicEnd)}
 export function p4State(){return structuredClone(g.__p4PersistState)}
 `, "utf8");
@@ -1283,7 +1305,7 @@ export function p4State(){return structuredClone(g.__p4PersistState)}
     const persisted = await kernel.persistInternalProductionRecoverySourceBootstrapRunV1({ operationRef: operation.operationRef, operationHash: operation.operationHash });
     assert.equal(persisted.run.id, runId);
     const ledger = (globalThis as any).__p4PersistLedger as string[];
-    assert.deepEqual(ledger, ["lock", "select-run", "workspace", "nextval", "clock", "insert-run", "insert-step", "insert-step", "bind", "select-run", "select-steps", "commit"]);
+    assert.deepEqual(ledger, ["insertion-fence", "manual-observation", "lock", "select-run", "workspace", "nextval", "clock", "insert-run", "insert-step", "insert-step", "bind", "select-run", "select-steps", "commit"]);
     const persistedContext = JSON.parse(persisted.run.context);
     assert.equal(Object.keys(persistedContext).length, 35);
     assert.notEqual(persistedContext.repo, realpathSync(canonicalRepo));
@@ -1878,8 +1900,12 @@ export function p4State(){return structuredClone(g.__p4PersistState)}
     assert.ok((parentProcessSource.match(/unlinkAuthenticatedErasureRecordV1\(/g) ?? []).length >= 5,
       "partial, twin, abandoned, and terminal journal records all share the authenticated sandbox unlink boundary");
   } finally {
-    if (managedWorkspaceRoot) await rm(managedWorkspaceRoot, { recursive: true, force: true });
-    await rm(fixture, { recursive: true, force: true });
+    try {
+      if (database) { await db.pgClose(); await database.cleanup(); }
+    } finally {
+      if (managedWorkspaceRoot) await rm(managedWorkspaceRoot, { recursive: true, force: true });
+      await rm(fixture, { recursive: true, force: true });
+    }
   }
 });
 

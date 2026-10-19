@@ -475,11 +475,11 @@ const ConvergenceEvalResultPayloadV1Schema = z.object({
     if (value.runs.length !== 0 || value.rootCauseCounts.length !== 0 || value.stoppedOnRepeatedRootCause !== null) {
       context.addIssue({ code: "custom", path: ["runs"], message: "Preflight result cannot contain executed runs" });
     }
-    const expected = value.preflight.status === "pass" ? "planned" : "blocked";
+    const expected = value.blockerCodes.includes("EVAL_CANCEL_REQUESTED") ? "blocked" : value.preflight.status === "pass" ? "planned" : "blocked";
     if (value.status !== expected) context.addIssue({ code: "custom", path: ["status"], message: "Preflight status mismatch" });
   } else {
     const allPassed = value.runs.length === value.plannedRuns && value.runs.every((item) => item.passed);
-    const expected = allPassed
+    const expected = value.blockerCodes.includes("EVAL_CANCEL_REQUESTED") ? "blocked" : allPassed
       ? "pass"
       : value.runs.length === value.plannedRuns && value.stoppedOnRepeatedRootCause === null
         ? "fail"

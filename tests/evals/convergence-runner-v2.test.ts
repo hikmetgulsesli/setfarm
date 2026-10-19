@@ -136,3 +136,21 @@ describe("dual-version convergence runner", () => {
     }
   });
 });
+
+it("selected direct main dispatches through reservation owner before runner artifacts", async () => {
+  const ts=await import("typescript");
+  const source=await readFile("src/evals/convergence-runner.ts","utf8");
+  const tree=ts.createSourceFile("convergence-runner.ts",source,ts.ScriptTarget.ES2022,true);
+  const declaration=tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="main")!;
+  const body=ts.transpileModule(declaration.getText(tree),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText
+    .replace('await import("../execution/manual-test-worker-v1.js")','({runSelectedDirectConvergenceV1})');
+  const events:string[]=[];
+  const run={result:{schema:"setfarm.product-convergence-result.v1",status:"planned"},artifact:{locator:"artifact"},gate:{decision:"no_go",gateHash:"hash"},gateArtifact:{locator:"gate"}};
+  const main=new Function("parseCli","createDefaultConvergencePorts","GitObjectHashSchema","loadConvergenceSuiteVersioned","runConvergenceSuite","freshInstallationSelectionV1","runSelectedDirectConvergenceV1","process","convergenceResultTable","stableConvergenceResultJson","convergenceResultTableV2","stableConvergenceResultJsonV2",body+";return main;")(
+    ()=>({outputRoot:"fixed",execute:false,json:false,suiteFile:"fixed",releaseSha:RELEASE_SHA}),
+    async()=>({process:{inspectRelease:async()=>({headSha:RELEASE_SHA})},sql:{close:async()=>{events.push("close");}}}),
+    {parse:(v:unknown)=>v},async()=>({}),async()=>{events.push("unreserved");return run;},Object.freeze({}),
+    async()=>{events.push("reserved");return run;},{argv:[],stdout:{write:()=>{}}},()=>"",()=>"",()=>"",()=>"",
+  );
+  await main();assert.deepEqual(events,["reserved","close"]);
+});

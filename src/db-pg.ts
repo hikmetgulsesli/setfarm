@@ -5525,6 +5525,56 @@ export async function resolveInternalProductionRecoverySourceBootstrapActualRunT
   });
 }
 
+/** Read-only evidence for the one existing operational-delivery owner family. */
+export async function observeInternalProductionOperationalDeliveryBoundOwnerInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ eventKey: string; consumer: "jsonl" | "webhook" }>,
+): Promise<Readonly<{ reservationRef: string; reservationHash: string; bindingHash: string }>> {
+  assertOrdinaryDashboardDatabaseAccessV2();
+  exactObjectKeys(input, ["eventKey", "consumer"], "INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_INPUT_INVALID");
+  const identity = createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(input);
+  const rows = await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE category='operational-delivery' AND owner_key=${identity.ownerKey}`;
+  if (rows.length !== 1) throw new Error("INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_UNAVAILABLE");
+  const row = rows[0]!;
+  if (row.state !== "bound" || row.producer_implementation_id !== "a-operational-delivery-v1") throw new Error("INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_CORRUPTION");
+  const reservation = await resolveOwnerReservationInTransactionV1(sql, { reservationRef: row.reservation_ref, reservationHash: row.reservation_hash }, false);
+  validateOwnerReservationStateShapeV1(row);
+  const bound = await validateBoundOwnerReservationRowV1(sql, row, reservation);
+  if (!sameJsonValueV1(bound.canonicalOwnerIdentity, identity)) throw new Error("INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_CORRUPTION");
+  return Object.freeze({ reservationRef: bound.reservationRef, reservationHash: bound.reservationHash, bindingHash: bound.bindingHash });
+}
+
+/** Immutable settlement evidence only; callers supply a consistent READ ONLY transaction. */
+export async function observeInternalProductionWorkflowRunClosedOwnerInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ runId: string }>,
+): Promise<Readonly<{ runId: string; runOwnerReservationRef: string; runOwnerReservationHash: string; closeRef: string; closeHash: string }>> {
+  assertOrdinaryDashboardDatabaseAccessV2();
+  exactObjectKeys(input, ["runId"], "INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_INPUT_INVALID");
+  const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(input.runId);
+  const runs = await sql<WorkflowRunTerminalRowV1[]>`SELECT id,status FROM runs WHERE id=${input.runId}`;
+  // Include every run owner candidate, including foreign producers and states.
+  const candidates = await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE category='run' AND owner_key=${input.runId}`;
+  if (runs.length !== 1 || candidates.length !== 1) throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");
+  const row = candidates[0]!;
+  if (row.producer_implementation_id !== "a-runtime-run-v1" || row.state !== "closed") throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION");
+  const reservations = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${row.reservation_ref} AND authority_hash=${row.reservation_hash}`;
+  const closes = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${row.close_ref} AND authority_hash=${row.close_hash}`;
+  if (reservations.length !== 1 || closes.length !== 1) throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION");
+  const reservation = await resolveOwnerReservationInTransactionV1(sql, { reservationRef: row.reservation_ref, reservationHash: row.reservation_hash }, false);
+  validateOwnerReservationStateShapeV1(row);
+  const close = validateInternalProductionOwnerReservationCloseV1(row.close_payload);
+  const bound = await validateClosedOwnerReservationRowV1(sql, row, reservation, close, closes[0]!);
+  if (bound.category !== "run" || !sameJsonValueV1(bound.canonicalOwnerIdentity, identity) || runs[0]!.id !== input.runId)
+    throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION");
+  const authority = createWorkflowRunTerminalAuthorityFromLockedRowsV1(runs[0]!, bound as InternalProductionBoundOwnerReservationV1<"run">);
+  bindWorkflowRunTerminalAuthorityToReservationStateV1({ row }, authority);
+  const pair = deriveInternalProductionTerminalOwnerAuthorityPairV1(authority);
+  validateInternalProductionTerminalOwnerAuthorityPairV1(pair, authority);
+  return Object.freeze({ runId: input.runId, runOwnerReservationRef: bound.reservationRef,
+    runOwnerReservationHash: bound.reservationHash, closeRef: close.closeRef, closeHash: close.closeHash });
+}
+
 export async function resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ runId: string }>,
