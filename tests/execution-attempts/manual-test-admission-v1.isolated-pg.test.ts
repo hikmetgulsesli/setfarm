@@ -34,6 +34,29 @@ function childTableObservationSource(owner: {pid:number;processGroupId:number}, 
     return rows.filter(row=>keep.has(row.pid)).map(row=>row.pid===${owner.pid}?{...row,processGroupId:${owner.processGroupId},command:${JSON.stringify(argv.join(" "))}}:row);}`;
 }
 
+type SafeStartDiagnostic = { name: string; code: string | null; frames: string[] };
+function safeStartDiagnostic(error: unknown): SafeStartDiagnostic {
+  const value = error as {name?:unknown;message?:unknown;code?:unknown;stack?:unknown} | null;
+  const names = ["Error", "TypeError", "RangeError", "ZodError", "ControlWorkerFatalErrorV1"];
+  const allowedCode = (candidate: unknown): candidate is string => typeof candidate === "string" && candidate.length <= 128
+    && (/^(?:MANUAL_EVALUATION_|CONTROL_|FIXTURE_)[A-Z0-9_]+$/.test(candidate) || ["ENOENT","EEXIST","EACCES","EPERM","ELOOP","EINVAL"].includes(candidate));
+  const code = allowedCode(value?.message) ? value.message : allowedCode(value?.code) ? value.code
+    : typeof value?.code === "number" && value.code !== 0 ? "CHILD_EXIT_NONZERO" : null;
+  const frames: string[] = [];
+  if (typeof value?.stack === "string") for (const line of value.stack.slice(0,8192).split("\n").slice(1,17)) {
+    const frame = /^\s+at (?:([A-Za-z0-9_.$<>]{1,96}) \()?[^\n]*[/\\]([A-Za-z0-9_.-]{1,96}\.(?:ts|mjs|cjs|js)):(\d{1,6}):(\d{1,6})\)?$/.exec(line);
+    if (frame) frames.push(`${frame[1] ?? "anonymous"} ${frame[2]}:${frame[3]}:${frame[4]}`);
+    else {
+      // A transformed data-URL frame may lack a usable Source line. Retain
+      // only its bounded function name; never return any part of that URI.
+      const functionOnly = /^\s+at ([A-Za-z0-9_.$<>]{1,96}) \(/.exec(line);
+      if (functionOnly) frames.push(functionOnly[1]!);
+    }
+    if (frames.length === 6) break;
+  }
+  return {name:typeof value?.name === "string" && names.includes(value.name) ? value.name : "OtherError",code,frames};
+}
+
 /** Root-approved component scope: only the new module's immutable locator
  * observation is replaced. DB preparation, pgBegin, the common fence, run
  * persistence, canary validation/consumption and terminal settlement stay real.
@@ -58,7 +81,7 @@ async function fixture(t: TestContext, entryKind: "worker" | "direct" = "worker"
   const workerArgv = entryKind === "worker" ? [executable, script, "--job-id", jobId]
     : [executable, script, "--suite", path.join(repositoryRoot, "evals/suites/product-convergence-codex-v1.json"), "--output-root", path.join(evals, "results")];
   const owner = Object.freeze({ ...osIdentity, processGroupId: identity.processGroupId, source: "observed_os" as const, executable, script, commandHash: createHash("sha256").update(workerArgv.join(" ")).digest("hex") });
-  const faults = { rollbackAfterCallback: false, censusOverlay: null as Record<string, unknown> | null, transactionBackendPid: null as number | null };
+  const faults = { rollbackAfterCallback: false, censusOverlay: null as Record<string, unknown> | null, transactionBackendPid: null as number | null, startPublication: null as null | {state:"published" | "refused"; failure:SafeStartDiagnostic | null} };
   const faultKey = `setfarm.manual-test-fault.${fixtureId}`;
   Reflect.set(globalThis, Symbol.for(faultKey), faults);
   const selected = {
@@ -152,7 +175,25 @@ async function fixture(t: TestContext, entryKind: "worker" | "direct" = "worker"
         for (const edit of edits) { const node=tree.statements.find(node=>node.getStart(tree)===edit.start)! as ts.FunctionDeclaration; edit.text=replacements[node.name!.text]!; }
         // Existing parent entry/OS observations are fixture facts; exact child
         // identities and descendants come from the production OS observer.
-        edits.push({start:source.length,end:source.length,text:"\n"+originalOwner+"\n"+originalTable});
+        // Observe the exact original publisher without changing its body,
+        // argument identities, result or thrown error. Never retain raw input/error text.
+        const diagnosticTree = ts.createSourceFile("diagnostic.ts",readFileSync(fileURLToPath(import.meta.url),"utf8"),ts.ScriptTarget.Latest,true);
+        const diagnosticNode = diagnosticTree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="safeStartDiagnostic");
+        assert.ok(diagnosticNode);
+        const diagnosticFunction = ts.transpileModule(diagnosticNode.getText(diagnosticTree),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+        const publicationObservation = `
+const originalStartPublisherForFixture = publishSelectedManualStartChildV1;
+${diagnosticFunction}
+const safeStartDiagnosticForFixture = safeStartDiagnostic;
+publishSelectedManualStartChildV1 = function(...args) {
+  const fault = globalThis[Symbol.for(${JSON.stringify(faultKey)})];
+  let result;
+  try { result = originalStartPublisherForFixture(...args); }
+  catch(error) { try { fault.startPublication = {state:"refused",failure:safeStartDiagnosticForFixture(error)}; } catch {} throw error; }
+  try { fault.startPublication = {state:"published",failure:null}; } catch {}
+  return result;
+};`;
+        edits.push({start:source.length,end:source.length,text:"\n"+originalOwner+"\n"+originalTable+"\n"+publicationObservation});
       }
       let changed = source;
       for (const edit of edits.sort((a, b) => b.start - a.start)) changed = changed.slice(0, edit.start) + edit.text + changed.slice(edit.end);
@@ -311,6 +352,7 @@ async function startActualDefaultChild(f: Awaited<ReturnType<typeof fixture>>, i
   const originalTable=tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="processTableV1")!.getText(tree).replace("function processTableV1(","function actualProcessTableV1(");
   const replacements={processOwnerV1:`function processOwnerV1(pid,script,executable){if(pid===${f.owner.pid})return ${JSON.stringify(f.owner)};return actualProcessOwnerV1(pid,script,executable);}`,processTableV1:childTableObservationSource(f.owner,f.workerArgv,f.repositoryRoot)};
   const proofPath=path.join(f.evals,"manual-controls/start-children",reservation.jobId,context.slotHash+".json");
+  const faultMarker=path.join(f.root,"start-fault-observed.json");
   const childSource=`const fs=require('node:fs'),path=require('node:path');
 const {pathToFileURL,fileURLToPath}=require('node:url');const {registerHooks}=require('node:module');const ts=require(${JSON.stringify(path.join(SOURCE_ROOT,"node_modules/typescript/lib/typescript.js"))});
 const sourceRoot=${JSON.stringify(SOURCE_ROOT)},selectionUrl=${JSON.stringify(selectionUrl)},fixtureId=${JSON.stringify(f.fixtureId)},replacements=${JSON.stringify(replacements)};
@@ -323,8 +365,8 @@ registerHooks({resolve(specifier,context,next){const parent=context.parentURL||'
 (async()=>{const db=await import(pathToFileURL(path.join(sourceRoot,'src/db-pg.ts')).href);db.pgConfigureIsolatedTestDatabase(process.env.SETFARM_PG_URL);await db.initializeInternalProductionCurrentEntryDatabaseV1();
 const databaseIdentity=await db.getSql().unsafe('SELECT current_database() AS database');if(databaseIdentity.length!==1||databaseIdentity[0].database!==${JSON.stringify(f.database.database)})throw new Error('OWNED_CLONE_IDENTITY_REFUSED');
 const persistence=await import(pathToFileURL(path.join(sourceRoot,'src/execution/run-persistence.ts')).href);
-let foreignDone=null,foreignChild=null;try{if(${JSON.stringify(fault)}==='proof_drift'){const file=${JSON.stringify(proofPath)},deadline=performance.now()+5000;while(!fs.existsSync(file)){if(performance.now()>=deadline)throw new Error('MANUAL_EVALUATION_PROOF_MISSING');await new Promise(resolve=>setTimeout(resolve,25));}fs.appendFileSync(file,' ');}
- if(${JSON.stringify(fault)}==='foreign_child'){const {spawn}=require('node:child_process'),{once}=require('node:events');const child=spawn(process.execPath,['-e',${JSON.stringify("process.stdout.write('READY\\n');process.stdin.resume();process.stdin.once('end',()=>process.exit(0));setTimeout(()=>process.exit(9),10000).unref()")}],{env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});foreignChild=child;foreignDone=once(child,'exit');foreignDone.catch(()=>{});await Promise.race([once(child.stdout,'data'),foreignDone.then(()=>{throw new Error('foreign fixture child exited before readiness');})]);}
+let foreignDone=null,foreignChild=null;try{if(${JSON.stringify(fault)}==='proof_drift'){const file=${JSON.stringify(proofPath)},deadline=performance.now()+5000;while(!fs.existsSync(file)){if(performance.now()>=deadline)throw new Error('MANUAL_EVALUATION_PROOF_MISSING');await new Promise(resolve=>setTimeout(resolve,25));}fs.appendFileSync(file,' ');fs.writeFileSync(${JSON.stringify(faultMarker)},JSON.stringify({fault:'proof_drift',point:'proof_modified'})+'\\n',{mode:0o600,flag:'wx'});}
+ if(${JSON.stringify(fault)}==='foreign_child'){const {spawn}=require('node:child_process'),{once}=require('node:events');const child=spawn(process.execPath,['-e',${JSON.stringify("process.stdout.write('READY\\n');process.stdin.resume();process.stdin.once('end',()=>process.exit(0));setTimeout(()=>process.exit(9),10000).unref()")}],{env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});foreignChild=child;foreignDone=once(child,'exit');foreignDone.catch(()=>{});await Promise.race([once(child.stdout,'data'),foreignDone.then(()=>{throw new Error('foreign fixture child exited before readiness');})]);fs.writeFileSync(${JSON.stringify(faultMarker)},JSON.stringify({fault:'foreign_child',point:'owned_child_ready'})+'\\n',{mode:0o600,flag:'wx'});}
 const input=${JSON.stringify(input)};
  const actual=JSON.parse(process.env.SETFARM_INTERNAL_CONVERGENCE_ADMISSION);if(JSON.stringify(Object.entries(actual).sort())!==JSON.stringify(Object.entries(input.run.protocol.canaryAdmission).sort()))throw new Error('fixture canary context changed');
  const result=await db.getSql().begin(sql=>persistence.persistWorkflowRunInTransaction(sql,input));process.stdout.write('Run: #'+result.run.runNumber+' ('+result.run.id+')');}
@@ -341,6 +383,17 @@ finally{if(foreignDone){foreignChild.stdin.end();const [code,signal]=await forei
     for (const key of setupCredentialKeys) delete process.env[key];
     process.env.SETFARM_PG_URL = f.database.url;
     output = await runner.createNodeConvergenceProcessPort(f.repositoryRoot).startRun({workflowId:input.run.workflowId,task:input.run.task,releaseSha:SOURCE_SHA,admission:context,startChild:{reservation,journal:head}});
+  } catch(error) {
+    let injectionReached = false;
+    if (fault !== "none" && existsSync(faultMarker)) {
+      const stat = lstatSync(faultMarker);
+      if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 256 && (stat.mode & 0o777) === 0o600) {
+        const expected = {fault,point:fault === "proof_drift" ? "proof_modified" : "owned_child_ready"};
+        injectionReached = readFileSync(faultMarker,"utf8") === JSON.stringify(expected)+"\n";
+      }
+    }
+    const observation = {start:safeStartDiagnostic(error),publication:f.faults.startPublication,injectionReached};
+    throw Object.assign(new Error("OWNED_COMPONENT_START_REFUSED "+JSON.stringify(observation)), {startObservation:observation});
   } finally {
     if (previousUrl === undefined) delete process.env.SETFARM_PG_URL; else process.env.SETFARM_PG_URL = previousUrl;
     for (const [key,value] of setupCredentials) process.env[key] = value;
@@ -812,7 +865,11 @@ for(const fault of ["proof_drift","foreign_child"] as const)test(`actual default
   const context=created.contexts[0]!;
   const input={...f.ordinaryRunInput,run:{...f.ordinaryRunInput.run,protocol:{...f.ordinaryRunInput.run.protocol,releaseAdmissionKind:"convergence_canary" as const,releaseAdmissionHash:context.admissionHash,canaryAdmission:context}}};
   const before=await f.database.sql`SELECT reservation_ref,state FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`;
-  await assert.rejects(()=>startActualDefaultChild(f,input,held,created.contexts,fault),/MANUAL_EVALUATION|CONTROL_START_UNRESOLVED/);
+  await assert.rejects(()=>startActualDefaultChild(f,input,held,created.contexts,fault), (error: unknown) => {
+    const observed = (error as {startObservation?:{injectionReached:boolean;publication:{state:string}|null;start:SafeStartDiagnostic}}).startObservation;
+    return observed?.injectionReached === true && observed.publication?.state === "published"
+      && ["CONTROL_START_UNRESOLVED","CHILD_EXIT_NONZERO"].includes(observed.start.code ?? "");
+  });
   assert.equal((await f.database.sql`SELECT id FROM runs`).length,0);
   assert.deepEqual(await f.database.sql`SELECT reservation_ref,state FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`,before);
   const claims=await f.database.sql`SELECT run_id,consumed_at FROM v3_canary_admission_claims WHERE admission_hash=${context.admissionHash}`;
