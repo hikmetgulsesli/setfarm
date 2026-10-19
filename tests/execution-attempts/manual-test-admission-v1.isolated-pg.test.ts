@@ -17,16 +17,96 @@ import { loadConvergenceSuite, convergenceCaseHash } from "../../src/evals/suite
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { seedCanonicalSetupBuildCompilerStoryAdmissionFixture } from "./helpers/compiler-story-admission-fixture.js";
 import { observeProcessIdentity } from "../../src/execution/process-identity.js";
-import { createIsolatedTestDatabase } from "./test-database.js";
+import { createIsolatedTestDatabase, type OwnedP3ReadinessObservationV1 } from "./test-database.js";
 
 const SOURCE_SHA = "b".repeat(40);
 const SOURCE_ROOT = realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const MANUAL_URL = new URL("../../src/execution/manual-test-admission-v1.js", import.meta.url);
 const PERSISTENCE_URL = new URL("../../src/execution/run-persistence.js", import.meta.url);
 
+function validateOwnedP3ReadinessBinding(input: unknown, expected: {database:string;parentPid:number;projectionRoot:string;projectedHead:string;descriptorHash:string}): asserts input is OwnedP3ReadinessObservationV1 {
+  const fail = (): never => { throw new Error("P3_READINESS_COMPONENT_BINDING_REFUSED"); };
+  const keys = (value:unknown,wanted:string[]) => value !== null && typeof value === "object"
+    && Object.getPrototypeOf(value) === Object.prototype && JSON.stringify(Object.keys(value)) === JSON.stringify(wanted);
+  if (!keys(input,["schema","database","parentPid","projectionRoot","projectedHead","markerHash","sourcePins","status","ready","descriptorHash"])) fail();
+  const value = input as OwnedP3ReadinessObservationV1;
+  if (value.schema !== "setfarm.owned-p3-readiness-observation.v1" || !Number.isSafeInteger(value.parentPid) || value.parentPid <= 0
+    || !/^setfarm_p3_[a-f0-9]{24}_clone_[a-f0-9]{12}$/.test(value.database)
+    || !/^[a-f0-9]{40}$/.test(value.projectedHead) || !/^[a-f0-9]{64}$/.test(value.markerHash)
+    || (Object.keys(expected) as (keyof typeof expected)[]).some(key=>value[key] !== expected[key])) fail();
+  const inventory = ["src/db-pg.ts","tests/execution-attempts/test-database.ts","tests/execution-attempts/manual-test-admission-v1.isolated-pg.test.ts","src/internal-production/baseline-spawner-startup-admission-v1.js"];
+  if (!Array.isArray(value.sourcePins) || value.sourcePins.length !== inventory.length
+    || value.sourcePins.some((pin,index)=>!keys(pin,["relative","sha256"]) || pin.relative !== inventory[index] || !/^[a-f0-9]{64}$/.test(pin.sha256))) fail();
+  if (!keys(value.status,["state","admissionReady"]) || value.status.state !== "normal_task0_admission_ready"
+    || !keys(value.status.admissionReady,["admissionReadyHash","admissionReadyRef"])
+    || !keys(value.ready,["state","admissionReadyRef","admissionReadyHash","manifestActivationRef","manifestActivationHash","manifestHeadRef","manifestHeadHash"])
+    || value.ready.state !== "normal-task0-admission-ready"
+    || !/^[a-f0-9]{64}$/.test(value.ready.admissionReadyHash)
+    || value.ready.admissionReadyRef !== "setfarm://tests/p3/admission-ready/sha256/"+value.ready.admissionReadyHash
+    || value.status.admissionReady.admissionReadyRef !== value.ready.admissionReadyRef
+    || value.status.admissionReady.admissionReadyHash !== value.ready.admissionReadyHash
+    || !/^[a-f0-9]{64}$/.test(value.ready.manifestActivationHash) || !/^[a-f0-9]{64}$/.test(value.ready.manifestHeadHash)
+    || typeof value.ready.manifestActivationRef !== "string" || typeof value.ready.manifestHeadRef !== "string") fail();
+  const {descriptorHash,...body} = value;
+  if (hashCanonicalJson(body) !== descriptorHash) fail();
+}
+
+function ownedP3ReadinessAdapterSource(observation: OwnedP3ReadinessObservationV1,
+  fault: "none" | "crossed_database" | "unknown_reference", faultMarker: string): string {
+  const expected = {database:observation.database,parentPid:process.pid,projectionRoot:SOURCE_ROOT,projectedHead:observation.projectedHead,descriptorHash:observation.descriptorHash};
+  validateOwnedP3ReadinessBinding(observation,expected);
+  const tree=ts.createSourceFile("binding.ts",readFileSync(fileURLToPath(import.meta.url),"utf8"),ts.ScriptTarget.Latest,true);
+  const node=tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="validateOwnedP3ReadinessBinding");assert.ok(node);
+  const validator=ts.transpileModule(node.getText(tree),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+  return `import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
+const observation=${JSON.stringify(observation)},expected=${JSON.stringify(expected)},fault=${JSON.stringify(fault)};
+const fail=()=>{throw new Error('P3_READINESS_COMPONENT_BINDING_REFUSED')};
+const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+function readPinned(file){const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const before=fs.fstatSync(fd);if(!before.isFile()||before.nlink!==1||before.uid!==process.getuid()||before.size>2000000||fs.realpathSync(file)!==file)fail();const bytes=fs.readFileSync(fd);const after=fs.fstatSync(fd),current=fs.lstatSync(file);for(const s of [after,current])for(const k of ['dev','ino','uid','mode','nlink','size','mtimeMs','ctimeMs'])if(s[k]!==before[k])fail();return bytes;}finally{fs.closeSync(fd)}}
+function assertSource(){if(process.ppid!==expected.parentPid||fs.realpathSync(expected.projectionRoot)!==expected.projectionRoot)fail();const markerFile=path.join(expected.projectionRoot,'.setfarm-p3-projection-marker.json');const bytes=readPinned(markerFile);if(hash(bytes)!==observation.markerHash)fail();const marker=JSON.parse(bytes);if(marker.projectionRoot!==expected.projectionRoot||marker.projectedHead!==expected.projectedHead)fail();for(const pin of observation.sourcePins)if(hash(readPinned(path.join(expected.projectionRoot,pin.relative)))!==pin.sha256)fail();}
+assertSource();
+const {hashCanonicalJson}=await import(${JSON.stringify(pathToFileURL(path.join(SOURCE_ROOT,"src/product-compiler/canonical-json.ts")).href)});
+${validator}
+function injectMarker(){fs.writeFileSync(${JSON.stringify(faultMarker)},JSON.stringify({fault,point:'readiness_adapter'})+'\\n',{mode:0o600,flag:'wx'})}
+if(fault==='crossed_database'){injectMarker();observation.database='setfarm_p3_'+'0'.repeat(24)+'_clone_'+'0'.repeat(12);}
+validateOwnedP3ReadinessBinding(observation,expected);assertSource();
+function freeze(value){if(value&&typeof value==='object'){for(const nested of Object.values(value))freeze(nested);Object.freeze(value)}}freeze(observation);freeze(expected);
+const db=await import(${JSON.stringify(pathToFileURL(path.join(SOURCE_ROOT,"src/db-pg.ts")).href)});assertSource();
+async function verify(){assertSource();validateOwnedP3ReadinessBinding(observation,expected);const sql=db.getSql();
+const identity=async()=>{assertSource();const rows=await sql.begin('isolation level repeatable read read only',async s=>{await s.unsafe("SET LOCAL statement_timeout = '5s'");return s.unsafe('SELECT current_database() AS database')});assertSource();if(rows.length!==1||rows[0].database!==expected.database||db.getSql()!==sql)fail()};
+await identity();assertSource();const current=await db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();assertSource();
+if(!current||current.receipt.phase!=='A'||current.receipt.activationRef!==observation.ready.manifestActivationRef||current.receipt.activationHash!==observation.ready.manifestActivationHash||current.head.headRef!==observation.ready.manifestHeadRef||current.head.headHash!==observation.ready.manifestHeadHash)fail();
+await identity();assertSource();}
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){await verify();assertSource();return observation.status}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){await verify();assertSource();if(fault==='unknown_reference'){injectMarker();pair={...pair,admissionReadyRef:'unknown'};}if(!pair||Object.getPrototypeOf(pair)!==Object.prototype||JSON.stringify(Object.keys(pair))!==JSON.stringify(['admissionReadyRef','admissionReadyHash'])||pair.admissionReadyRef!==observation.ready.admissionReadyRef||pair.admissionReadyHash!==observation.ready.admissionReadyHash)fail();return observation.ready}
+`;
+}
+
+test("P3 readonly readiness observation binding rejects crossed identities", () => {
+  // Pure synthetic descriptor contract only; no database/readiness qualification.
+  const body = {schema:"setfarm.owned-p3-readiness-observation.v1",database:"setfarm_p3_"+"a".repeat(24)+"_clone_"+"b".repeat(12),
+    parentPid:process.pid,projectionRoot:SOURCE_ROOT,projectedHead:"c".repeat(40),markerHash:"d".repeat(64),
+    sourcePins:["src/db-pg.ts","tests/execution-attempts/test-database.ts","tests/execution-attempts/manual-test-admission-v1.isolated-pg.test.ts","src/internal-production/baseline-spawner-startup-admission-v1.js"].map(relative=>({relative,sha256:"e".repeat(64)})),
+    status:{state:"normal_task0_admission_ready",admissionReady:{admissionReadyHash:"f".repeat(64),admissionReadyRef:"setfarm://tests/p3/admission-ready/sha256/"+"f".repeat(64)}},
+    ready:{state:"normal-task0-admission-ready",admissionReadyRef:"setfarm://tests/p3/admission-ready/sha256/"+"f".repeat(64),admissionReadyHash:"f".repeat(64),manifestActivationRef:"activation",manifestActivationHash:"1".repeat(64),manifestHeadRef:"head",manifestHeadHash:"2".repeat(64)}};
+  const observation={...body,descriptorHash:hashCanonicalJson(body)};
+  const expected={database:body.database,parentPid:body.parentPid,projectionRoot:body.projectionRoot,projectedHead:body.projectedHead,descriptorHash:observation.descriptorHash};
+  assert.doesNotThrow(()=>validateOwnedP3ReadinessBinding(observation,expected));
+  const serialized=JSON.parse(JSON.stringify(observation));
+  validateOwnedP3ReadinessBinding(serialized,expected);
+  for (const fault of ["none","crossed_database","unknown_reference"] as const)
+    assert.deepEqual(ts.transpileModule(ownedP3ReadinessAdapterSource(serialized,fault,"/owned/marker"),
+      {reportDiagnostics:true,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).diagnostics,[]);
+  for(const field of ["database","parentPid","projectionRoot","projectedHead","descriptorHash"] as const)
+    assert.throws(()=>validateOwnedP3ReadinessBinding(observation,{...expected,[field]:field==="parentPid"?124:"crossed"}),/P3_READINESS_COMPONENT_BINDING_REFUSED/);
+  assert.throws(()=>validateOwnedP3ReadinessBinding({...observation,extra:true},expected),/P3_READINESS_COMPONENT_BINDING_REFUSED/);
+  assert.throws(()=>validateOwnedP3ReadinessBinding({...observation,ready:{...body.ready,admissionReadyRef:"unknown"}},expected),/P3_READINESS_COMPONENT_BINDING_REFUSED/);
+});
+
 // Explicit OS fixture boundary: parent harness identity/table remain injected.
 // Only the default CLI child and its descendants use actual captured OS rows;
-// this is not a compiled selection or a whole-host admission qualification.
+// Authenticated readonly P3 readiness observations are an additional explicit
+// component boundary; this is not compiled selection/readiness qualification.
 function childTableObservationSource(owner: {pid:number;processGroupId:number}, argv: string[], repository: string): string {
   return `function processTableV1(){const rows=actualProcessTableV1();const keep=new Set([${owner.pid}]);
     for(const row of rows)if(row.parentPid===${owner.pid}&&row.command.startsWith(${JSON.stringify(argv[0]+" "+path.join(repository,"dist/cli/cli.js")+" ")}))keep.add(row.pid);
@@ -53,6 +133,7 @@ function safeStartDiagnostic(error: unknown): SafeStartDiagnostic {
     "INTERNAL_PRODUCTION_CURRENT_ENTRY_MANIFEST_A_NOT_CURRENT","INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID",
     "INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID","INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_UNKNOWN_VERSION",
     "RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID","RUN_PERSISTENCE_ADMISSION_READY_UNAVAILABLE",
+    "P3_READINESS_COMPONENT_BINDING_REFUSED",
     "RUN_PERSISTENCE_READINESS_MODULE_NAMESPACE_INVALID","TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED",
     "SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE","SETFARM_BASE_SCHEMA_VERIFY_REFUSED","DASHBOARD_CUTOVER_ORDINARY_DATABASE_REFUSED",
     "FRESH_INSTALLATION_INCOMPATIBLE_DATABASE_PROFILE","RUN_RELEASE_ADMISSION_IDENTITY_INVALID",
@@ -377,7 +458,8 @@ async function withExtraOwner(f: Awaited<ReturnType<typeof fixture>>, ref: strin
 
 async function startActualDefaultChild(f: Awaited<ReturnType<typeof fixture>>, input: PersistWorkflowRunInputV1,
   reservation: import("../../src/execution/manual-test-admission-v1.js").ManualEvaluationReservationV1,
-  contexts: readonly import("../../src/execution/v3-release-admission.js").InternalCanaryAdmissionContextV1[], fault: "none" | "proof_drift" | "foreign_child" = "none") {
+  contexts: readonly import("../../src/execution/v3-release-admission.js").InternalCanaryAdmissionContextV1[], fault: "none" | "proof_drift" | "foreign_child" = "none",
+  readinessFault: "none" | "crossed_database" | "unknown_reference" = "none") {
   // Actual Source journal implementation; no synthetic proof file or child PID.
   const workerPath=path.join(SOURCE_ROOT,"src/execution/manual-test-worker-v1.ts");
   let workerSource=readFileSync(workerPath,"utf8").replace(/from "(\.[^"]+)"/g,(_,specifier)=>`from ${JSON.stringify(pathToFileURL(path.resolve(path.dirname(workerPath),specifier.replace(/\.js$/,".ts"))).href)}`);
@@ -404,6 +486,10 @@ async function startActualDefaultChild(f: Awaited<ReturnType<typeof fixture>>, i
   const proofPath=path.join(f.evals,"manual-controls/start-children",reservation.jobId,context.slotHash+".json");
   const faultMarker=path.join(f.root,"start-fault-observed.json");
   const childDiagnosticPath=path.join(f.root,"child-diagnostic.json");
+  const readinessObservation=await f.database.observeOwnedP3ReadinessV1();
+  const readinessSource=ownedP3ReadinessAdapterSource(readinessObservation,readinessFault,faultMarker);
+  const readinessUrl=`data:text/javascript;base64,${Buffer.from(readinessSource).toString("base64")}`;
+  const databaseModuleUrl=pathToFileURL(path.join(SOURCE_ROOT,"src/db-pg.ts")).href;
   const diagnosticTree=ts.createSourceFile("diagnostic.ts",readFileSync(fileURLToPath(import.meta.url),"utf8"),ts.ScriptTarget.Latest,true);
   const diagnosticNode=diagnosticTree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="safeStartDiagnostic");
   assert.ok(diagnosticNode);
@@ -415,6 +501,7 @@ function captureFirstChildFailure(error){if(firstFailureCaptured)return;firstFai
 const {pathToFileURL,fileURLToPath}=require('node:url');const {registerHooks}=require('node:module');const ts=require(${JSON.stringify(path.join(SOURCE_ROOT,"node_modules/typescript/lib/typescript.js"))});
 const sourceRoot=${JSON.stringify(SOURCE_ROOT)},selectionUrl=${JSON.stringify(selectionUrl)},fixtureId=${JSON.stringify(f.fixtureId)},replacements=${JSON.stringify(replacements)};
 registerHooks({resolve(specifier,context,next){const parent=context.parentURL||'';
+ if(parent===${JSON.stringify(databaseModuleUrl)}&&specifier==='./internal-production/baseline-spawner-startup-admission-v1.js')return {url:${JSON.stringify(readinessUrl)},shortCircuit:true};
  if(parent.includes('manual-test-admission-v1.')&&specifier.includes('fresh-installation-selection-v1'))return {url:selectionUrl,shortCircuit:true};
  if(specifier.startsWith('.')&&/\\.js$/.test(specifier)&&parent.startsWith('file:')){const u=new URL(specifier,parent);u.pathname=u.pathname.replace(/\\.js$/,'.ts');if(fs.existsSync(fileURLToPath(u)))return {url:u.href,shortCircuit:true};}return next(specifier,context);},
  load(url,context,next){if(!url.startsWith('file:')||!new URL(url).pathname.endsWith('.ts'))return next(url,context);let source=fs.readFileSync(fileURLToPath(url),'utf8');
@@ -443,15 +530,16 @@ finally{diagnosticStage='cleanup';if(foreignDone){foreignChild.stdin.end();const
     process.env.SETFARM_PG_URL = f.database.url;
     output = await runner.createNodeConvergenceProcessPort(f.repositoryRoot).startRun({workflowId:input.run.workflowId,task:input.run.task,releaseSha:SOURCE_SHA,admission:context,startChild:{reservation,journal:head}});
   } catch(error) {
-    let injectionReached = false;
-    if (fault !== "none" && existsSync(faultMarker)) {
+    let injectionReached = false, readinessInjectionReached = false;
+    if ((fault !== "none" || readinessFault !== "none") && existsSync(faultMarker)) {
       const stat = lstatSync(faultMarker);
       if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 256 && (stat.mode & 0o777) === 0o600) {
         const expected = {fault,point:fault === "proof_drift" ? "proof_modified" : "owned_child_ready"};
         injectionReached = readFileSync(faultMarker,"utf8") === JSON.stringify(expected)+"\n";
+        readinessInjectionReached = readinessFault !== "none" && readFileSync(faultMarker,"utf8") === JSON.stringify({fault:readinessFault,point:"readiness_adapter"})+"\n";
       }
     }
-    const observation = {start:safeStartDiagnostic(error),publication:f.faults.startPublication,injectionReached,child:readSafeChildDiagnostic(childDiagnosticPath)};
+    const observation = {start:safeStartDiagnostic(error),publication:f.faults.startPublication,injectionReached,readinessInjectionReached,child:readSafeChildDiagnostic(childDiagnosticPath)};
     throw Object.assign(new Error("OWNED_COMPONENT_START_REFUSED "+JSON.stringify(observation)), {startObservation:observation});
   } finally {
     if (previousUrl === undefined) delete process.env.SETFARM_PG_URL; else process.env.SETFARM_PG_URL = previousUrl;
@@ -634,7 +722,7 @@ test("rollback after durable publication retains a pending or unknown reservatio
   assert.equal(await f.revision(input.jobId), observed.revision);
 });
 
-test("actual default child consumes exact stored canary once and canonical settlement remains usable (selection and parent OS component fixture)", async t => {
+test("actual default child consumes exact stored canary once and canonical settlement remains usable (selection, parent OS and authenticated readonly P3 readiness component fixture)", async t => {
   const f = await fixture(t,"worker",true);
   const held = await f.acquire();
   const entry = f.suite.suite.cases[0]!;
@@ -916,7 +1004,29 @@ test("terminal status without the actual canonical closed run owner cannot relea
   await assert.rejects(() => f.manual.closeSelectedManualWorkerCustodyV1(), /MANUAL_EVALUATION_RELEASE_REQUIRED/);
 });
 
-for(const fault of ["proof_drift","foreign_child"] as const)test(`actual default child ${fault} cannot mutate a run, owner or one-use claim (component selection fixture)`,async t=>{
+for(const readinessFault of ["crossed_database","unknown_reference"] as const)test(`authenticated readonly P3 readiness ${readinessFault} refuses actual child persistence before mutation`,async t=>{
+  const f=await fixture(t,"worker",true);let held=await f.acquire();
+  const repository=createV3ReleaseAdmissionRepository(f.database.sql,new ContentAddressedEvalResultStore(path.join(f.evals,"results")));
+  const created=await repository.createCanary({releaseSha:SOURCE_SHA,suiteHash:f.suite.suiteHash,preflightHash:"d".repeat(64),ttlMs:60_000,
+    slots:f.suite.suite.cases.map(entry=>({caseHash:convergenceCaseHash(entry),taskHash:hashCanonicalJson(entry.task),repetition:1,slotToken:randomUUID()+randomUUID()}))});
+  held=await f.manual.bindSelectedManualCanaryV1({reservation:held,admissionHash:created.admission.admissionHash,
+    slots:created.contexts.map(({admissionHash,slotHash,caseHash,taskHash,repetition})=>({admissionHash,slotHash,caseHash,taskHash,repetition}))});
+  const context=exactContextForEntry(created.contexts,f.suite.suite.cases[0]!);
+  const input={...f.ordinaryRunInput,run:{...f.ordinaryRunInput.run,protocol:{...f.ordinaryRunInput.run.protocol,
+    releaseAdmissionKind:"convergence_canary" as const,releaseAdmissionHash:context.admissionHash,canaryAdmission:context}}};
+  const before=await f.database.sql`SELECT reservation_ref,state FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`;
+  await assert.rejects(()=>startActualDefaultChild(f,input,held,created.contexts,"none",readinessFault),(error:unknown)=>{
+    const value=(error as {startObservation?:{publication:{state:string}|null;readinessInjectionReached:boolean;child:{stage:string;failure:SafeStartDiagnostic}|null}}).startObservation;
+    return value?.publication?.state==="published" && value.readinessInjectionReached===true && value.child?.stage==="persist_run"
+      && value.child.failure.code===(readinessFault==="crossed_database"?"RUN_PERSISTENCE_ADMISSION_READY_UNAVAILABLE":"RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
+  });
+  assert.equal((await f.database.sql`SELECT id FROM runs`).length,0);
+  assert.deepEqual(await f.database.sql`SELECT reservation_ref,state FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`,before);
+  const claims=await f.database.sql`SELECT run_id,consumed_at FROM v3_canary_admission_claims WHERE admission_hash=${context.admissionHash}`;
+  assert.equal(claims.length,8);assert.ok(claims.every(row=>row.run_id===null&&row.consumed_at===null));
+});
+
+for(const fault of ["proof_drift","foreign_child"] as const)test(`actual default child ${fault} cannot mutate a run, owner or one-use claim (selection, parent OS and authenticated readonly P3 readiness component fixture)`,async t=>{
   const f=await fixture(t,"worker",true);let held=await f.acquire();
   const repository=createV3ReleaseAdmissionRepository(f.database.sql,new ContentAddressedEvalResultStore(path.join(f.evals,"results")));
   const created=await repository.createCanary({releaseSha:SOURCE_SHA,suiteHash:f.suite.suiteHash,preflightHash:"d".repeat(64),ttlMs:60_000,slots:f.suite.suite.cases.map(value=>({caseHash:convergenceCaseHash(value),taskHash:hashCanonicalJson(value.task),repetition:1,slotToken:randomUUID()+randomUUID()}))});

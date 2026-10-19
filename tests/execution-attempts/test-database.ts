@@ -218,6 +218,15 @@ export function authenticateP3ProjectedReadinessTestCapabilityV1(): void {
 }
 
 export type TestDatabase = Awaited<ReturnType<typeof createIsolatedTestDatabase>>;
+export type OwnedP3ReadinessObservationV1 = Readonly<{
+  schema: "setfarm.owned-p3-readiness-observation.v1"; database: string; parentPid: number;
+  projectionRoot: string; projectedHead: string; markerHash: string;
+  sourcePins: readonly Readonly<{relative:string;sha256:string}>[];
+  status: Readonly<{state:"normal_task0_admission_ready";admissionReady:Readonly<{admissionReadyHash:string;admissionReadyRef:string}>}>;
+  ready: Readonly<{state:"normal-task0-admission-ready";admissionReadyRef:string;admissionReadyHash:string;
+    manifestActivationRef:string;manifestActivationHash:string;manifestHeadRef:string;manifestHeadHash:string}>;
+  descriptorHash: string;
+}>;
 
 export async function createIsolatedMigration31TestDatabase(): Promise<TestDatabase> {
   const database = await createIsolatedTestDatabase({ migrate: false });
@@ -584,6 +593,58 @@ export async function createIsolatedTestDatabase(
     get sql() { return db.getSql(); },
     db,
     applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1,
+    async observeOwnedP3ReadinessV1(): Promise<OwnedP3ReadinessObservationV1> {
+      const fail = (): never => { throw new Error("P3_READINESS_COMPONENT_BINDING_REFUSED"); };
+      if (arguments.length || cachedCapabilityRoleV1 !== "test" || !marker || options.migrate === false || cleaned) fail();
+      const pinnedMarker = readP3MarkerV1();
+      const markerPath = path.join(P3_FIXTURE_SOURCE_ROOT,".setfarm-p3-projection-marker.json");
+      const markerHash = sha256(readFileSync(markerPath));
+      const sourcePins = ["src/db-pg.ts","tests/execution-attempts/test-database.ts","tests/execution-attempts/manual-test-admission-v1.isolated-pg.test.ts","src/internal-production/baseline-spawner-startup-admission-v1.js"]
+        .map(relative => ({relative,sha256:sha256(relative.endsWith("baseline-spawner-startup-admission-v1.js")
+          ? readStableP3ReadinessShadowV1() : readFileSync(path.join(P3_FIXTURE_SOURCE_ROOT,relative)))}));
+      const assertContext = () => {
+        if (cleaned || cachedCapabilityRoleV1 !== "test" || !marker || options.migrate === false
+          || process.env.SETFARM_PG_URL !== target.toString() || JSON.stringify(readP3MarkerV1()) !== JSON.stringify(pinnedMarker)
+          || JSON.stringify(marker) !== JSON.stringify(pinnedMarker) || sha256(readFileSync(markerPath)) !== markerHash
+          || !database.startsWith(marker.runDatabasePrefix+"_clone_")) fail();
+        for (const pin of sourcePins) if (sha256(pin.relative.endsWith("baseline-spawner-startup-admission-v1.js")
+          ? readStableP3ReadinessShadowV1() : readFileSync(path.join(P3_FIXTURE_SOURCE_ROOT,pin.relative))) !== pin.sha256) fail();
+      };
+      const observeCurrent = async () => {
+        assertContext();
+        const rows = await db.getSql().begin("isolation level repeatable read read only", async sql => {
+          await sql.unsafe("SET LOCAL statement_timeout = '5s'");
+          return sql.unsafe<Array<{database:string}>>("SELECT current_database() AS database");
+        });
+        assertContext();
+        if (rows.length !== 1 || rows[0]?.database !== database) fail();
+        const current = await db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
+        assertContext();
+        if (!current || current.receipt.phase !== "A") return fail();
+        return {manifestActivationRef:current.receipt.activationRef,manifestActivationHash:current.receipt.activationHash,
+          manifestHeadRef:current.head.headRef,manifestHeadHash:current.head.headHash};
+      };
+      const before = await observeCurrent(); assertContext();
+      const readiness = await importP3ReadinessShadowV1(); assertContext();
+      const observe = readiness.observeInternalProductionPreSchemaSpawnerRebindStatusV1;
+      const resolve = readiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1;
+      if (typeof observe !== "function" || observe.length !== 0 || typeof resolve !== "function" || resolve.length !== 1) fail();
+      const status = await (observe as () => Promise<OwnedP3ReadinessObservationV1["status"]>)(); assertContext();
+      assertRecursivelyFrozenV1(status);
+      if (status.state !== "normal_task0_admission_ready" || !status.admissionReady) fail();
+      const ready = await (resolve as (pair:unknown)=>Promise<OwnedP3ReadinessObservationV1["ready"]>)({
+        admissionReadyRef:status.admissionReady.admissionReadyRef,admissionReadyHash:status.admissionReady.admissionReadyHash}); assertContext();
+      assertRecursivelyFrozenV1(ready);
+      const after = await observeCurrent(); assertContext();
+      if (ready.state !== "normal-task0-admission-ready" || ready.admissionReadyRef !== status.admissionReady.admissionReadyRef
+        || ready.admissionReadyHash !== status.admissionReady.admissionReadyHash || JSON.stringify(before) !== JSON.stringify(after)
+        || (Object.keys(before) as (keyof typeof before)[]).some(key=>ready[key] !== before[key])) fail();
+      const body = {schema:"setfarm.owned-p3-readiness-observation.v1" as const,database,parentPid:process.pid,
+        projectionRoot:P3_FIXTURE_SOURCE_ROOT,projectedHead:pinnedMarker.projectedHead,markerHash,sourcePins,status,ready};
+      const result = {...body,descriptorHash:hashCanonicalJson(body)};
+      const freeze = (value:unknown): void => { if (value && typeof value === "object") { for (const nested of Object.values(value)) freeze(nested); Object.freeze(value); } };
+      freeze(result); assertContext(); return result;
+    },
     async insertRun(runId: string) {
       await db.pgRun(
         `INSERT INTO runs (
