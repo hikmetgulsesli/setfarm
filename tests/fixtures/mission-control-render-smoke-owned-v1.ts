@@ -143,6 +143,21 @@ function readTask4FixedJsonV1(root:string,name:"policy-probe.json"|"policy-probe
     requireV1(Buffer.from(task4CanonicalV1(value)+"\n").equals(file.bytes));file.check();directory.check();return freezeV1(value);
   }finally{file.close();directory.close();}
 }
+const TASK4_FAILURE_STAGES_V1=Object.freeze(["initialization","initial_backend_census","initial_probes","inner_validation","after_probes","after_audit","after_audit_equal","watcher_settle","observer_release","observer_end","probe_release","probe_end","final_backend_census","watcher_success","restricted_absence","pg_prefix_first","pg_prefix_second","pg_prefix_equal","pg_parse","pg_chunks","pg_events","parent_query_match","inner_query_match","audit_publish","probe_calibration","sql_publish","parent_cleanup","database_cleanup","role_cleanup","finalizer_observer_release","finalizer_observer_end","finalizer_probe_release","finalizer_probe_end","finalizer_fixture_close","finalizer_admin_end","backend_census"]);
+const TASK4_FAILURE_PREDICATES_V1=Object.freeze(["none","audit_equal","watcher_success","restricted_absence","prefix_equal","census_query","census_cap","census_lsof","census_socket_parse","census_socket_unique","census_process","census_server_identity","census_backend_binding","census_existing_identity","census_backend_cap","census_server_cap","parse_identity","parse_bytes","parse_utf8","parse_message_cap","parse_continuation","parse_coverage","parse_session","parse_time","parse_scope","parse_severity","parse_backend_unique","parse_candidate_unique","parse_error_pair","parent_query_owner","parent_query_event","inner_query_event"]);
+type Task4FailureDetailV1=Readonly<{stage:string;predicate:string;cause:string}>;
+function task4FailureDetailV1(stage:string,predicate:string,error:unknown):Task4FailureDetailV1 {
+  const message=error instanceof Error?error.message:"";
+  return freezeV1({stage:TASK4_FAILURE_STAGES_V1.includes(stage)?stage:"initialization",predicate:TASK4_FAILURE_PREDICATES_V1.includes(predicate)?predicate:"none",
+    cause:message==="TASK4_SQL_ORIGINALS_UNKNOWN"||TASK4_CODES_V1.includes(message)?message:"UNCLASSIFIED"});
+}
+function publishTask4ParentFailureV1(root:string,executionId:string,first:Task4FailureDetailV1,watcher:Task4FailureDetailV1|null):void {
+  // Diagnostic publication never replaces the original refusal or changes finalizer authority.
+  try {hexV1(executionId,32);const value={schema:"setfarm.task4-parent-failure.v1",executionId,...first,watcherFailure:watcher};
+    const bytes=Buffer.from(task4CanonicalV1(value)+"\n");requireV1(bytes.length<=2048);
+    writeTask4PrivateBytesV1(path.join(root,"parent/originals"),"parent-failure.json",bytes);
+  }catch{/* Preserve the first core failure and continue the original finalizer. */}
+}
 async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4ContextV1,adminUrl:string):Promise<void> {
   const root=setup.resourceRoot.path,id=setup.executionId,sourceSha=setup.setfarm.source.sourceSha;
   let fixture:any=null,ready:Readonly<RecordV1>|null=null,projection:Readonly<RecordV1>|null=null,innerOwner:Readonly<RecordV1>|null=null,
@@ -150,6 +165,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
   let observer:any=null,probe:any=null,observerConnection:any=null,probeConnection:any=null,admin:any=null,originalChild:Promise<Readonly<RecordV1>|null>|null=null;
   let watcher:Promise<void>|null=null,stopWatcher=false,watchFailure=false,capture:ReturnType<typeof pinTask4PgAppendV1>|null=null;
   let cleanupAttempted=false;
+  let stage="initialization",predicate="none",firstFailure:Task4FailureDetailV1|null=null,watcherFailure:Task4FailureDetailV1|null=null;
   let databaseAbsent:boolean|null=null,roleAbsent:boolean|null=null,auditComplete=false,sqlComplete=false,networkComplete=false,failed=false,code="TASK4_INTEGRITY_FAILED";
   const pins:Array<{check():void;close():void}>=[],published=new Map<string,Task4RefV1>(),issued:Task4IssuedV1[]=[],backends=new Map<number,RecordV1>(),censuses:RecordV1[]=[],probeResults:RecordV1[]=[],parentCalls:RecordV1[]=[];
   let finalAudit:RecordV1|null=null;
@@ -166,28 +182,36 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     catch(error){call.outcome="error";const code=(error as {code?:unknown}).code;call.sqlstate=typeof code==="string"&&/^[A-Z0-9]{5}$/.test(code)?code:null;throw error;}
     finally{call.finishedAt=new Date().toISOString();check();}
   }});
-  const closeReader=async(client:any,connection:any)=>{if(!client)return;try{if(connection)await connection.release();await client.end({timeout:5});readers.closed++;}catch{failed=true;code="TASK4_CLEANUP_UNKNOWN";}};
+  const closeReader=async(client:any,connection:any)=>{if(!client)return;try{if(connection)await connection.release();
+    if(stage==="observer_release")stage="observer_end";else if(stage==="probe_release")stage="probe_end";
+    else if(stage==="finalizer_observer_release")stage="finalizer_observer_end";else if(stage==="finalizer_probe_release")stage="finalizer_probe_end";
+    await client.end({timeout:5});readers.closed++;
+  }catch(error){firstFailure??=task4FailureDetailV1(stage,predicate,error);failed=true;code="TASK4_CLEANUP_UNKNOWN";}};
   let observerPort:QueryPortV1|null=null,probePort:QueryPortV1|null=null;
-  const observeBackends=async()=>{
+  const observeBackends=async(diagnostic={predicate:"none"})=>{
     if(!ready||!admin)return;const at=new Date().toISOString();
-    const rows=await admin.unsafe(`SELECT pid,to_char(backend_start AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "startedAt",
+    diagnostic.predicate="census_query";const rows=await admin.unsafe(`SELECT pid,to_char(backend_start AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "startedAt",
       usename AS role,datname AS database,application_name AS "applicationName",host(client_addr) AS host,client_port AS port
       FROM pg_stat_activity WHERE usename=$1 OR (datname=$2 AND application_name LIKE 'task4_%') ORDER BY pid LIMIT 65`,[ready.database.role,ready.database.name]);
-    requireV1(rows.length<=64&&censuses.length<4096,"TASK4_SQL_ORIGINALS_UNKNOWN");
-    const raw=spawnSync("/usr/sbin/lsof",["-nP","-iTCP:"+setup.postgres.port,"-F","pfnT"],{encoding:"utf8",timeout:5000,maxBuffer:1048576,env:{PATH:"/usr/bin:/bin:/usr/sbin:/sbin",LANG:"C",LC_ALL:"C",TZ:"UTC"}});
+    diagnostic.predicate="census_cap";requireV1(rows.length<=64&&censuses.length<4096,"TASK4_SQL_ORIGINALS_UNKNOWN");
+    diagnostic.predicate="census_lsof";const raw=spawnSync("/usr/sbin/lsof",["-nP","-iTCP:"+setup.postgres.port,"-F","pfnT"],{encoding:"utf8",timeout:5000,maxBuffer:1048576,env:{PATH:"/usr/bin:/bin:/usr/sbin:/sbin",LANG:"C",LC_ALL:"C",TZ:"UTC"}});
     requireV1(!raw.error&&raw.signal===null&&raw.status===0&&raw.stderr==="","TASK4_SQL_ORIGINALS_UNKNOWN");
-    const sockets=parseTask4SocketsV1(raw.stdout,setup.postgres.port),owners=new Map<number,Readonly<RecordV1>>();
-    for(const row of rows){const matches=sockets.filter(s=>s.port===row.port);requireV1(matches.length===1,"TASK4_SQL_ORIGINALS_UNKNOWN");const pid=matches[0]!.pid;
-      let owner=owners.get(pid);if(!owner){owner=observeTask4ProcessV1(pid).pin;owners.set(pid,owner!);}
-      if(row.applicationName==="task4_mc_"+id){requireV1(innerOwner!==null&&owner!.ppid===innerOwner.pid&&owner!.executable===context.owner.executable
+    diagnostic.predicate="census_socket_parse";const sockets=parseTask4SocketsV1(raw.stdout,setup.postgres.port),owners=new Map<number,Readonly<RecordV1>>();
+    for(const row of rows){diagnostic.predicate="census_socket_unique";const matches=sockets.filter(s=>s.port===row.port);requireV1(matches.length===1,"TASK4_SQL_ORIGINALS_UNKNOWN");const pid=matches[0]!.pid;
+      diagnostic.predicate="census_process";let owner=owners.get(pid);if(!owner){owner=observeTask4ProcessV1(pid).pin;owners.set(pid,owner!);}
+      if(row.applicationName==="task4_mc_"+id){diagnostic.predicate="census_server_identity";requireV1(innerOwner!==null&&owner!.ppid===innerOwner.pid&&owner!.executable===context.owner.executable
         &&owner!.executableHash===context.owner.executableHash&&owner!.commandHash===hashV1([context.owner.executable,path.join(setup.missionControl.source.root,"dist-server/index.js")].join(" ")),"TASK4_SQL_ORIGINALS_UNKNOWN");
         if(serverOwner)requireV1(sameV1(serverOwner,owner),"TASK4_SQL_ORIGINALS_UNKNOWN");else serverOwner=owner!;}
-      const bound=bindTask4BackendV1(row,ready,context.owner,innerOwner,serverOwner,sockets,owners),prior=backends.get(row.pid);
-      if(prior){const {firstObservedAt,lastObservedAt,...identity}=prior;requireV1(sameV1(identity,bound),"TASK4_SQL_ORIGINALS_UNKNOWN");prior.lastObservedAt=at;}
-      else {requireV1(backends.size<64,"TASK4_SQL_ORIGINALS_UNKNOWN");backends.set(row.pid,{...bound,firstObservedAt:at,lastObservedAt:at});}
+      diagnostic.predicate="census_backend_binding";const bound=bindTask4BackendV1(row,ready,context.owner,innerOwner,serverOwner,sockets,owners),prior=backends.get(row.pid);
+      if(prior){diagnostic.predicate="census_existing_identity";const {firstObservedAt,lastObservedAt,...identity}=prior;requireV1(sameV1(identity,bound),"TASK4_SQL_ORIGINALS_UNKNOWN");prior.lastObservedAt=at;}
+      else {diagnostic.predicate="census_backend_cap";requireV1(backends.size<64,"TASK4_SQL_ORIGINALS_UNKNOWN");backends.set(row.pid,{...bound,firstObservedAt:at,lastObservedAt:at});}
     }
-    requireV1([...backends.values()].filter(b=>b.clientRole==="mc").length<=10,"TASK4_SQL_ORIGINALS_UNKNOWN");
+    diagnostic.predicate="census_server_cap";requireV1([...backends.values()].filter(b=>b.clientRole==="mc").length<=10,"TASK4_SQL_ORIGINALS_UNKNOWN");
     censuses.push({at,rows,sockets,stdoutHash:hashV1(raw.stdout),exit:{code:raw.status,signal:raw.signal}});
+  };
+  const observeMainBackends=async()=>{
+    const diagnostic={predicate:"none"};
+    try{await observeBackends(diagnostic);}catch(error){predicate=diagnostic.predicate;throw error;}
   };
   const observeAudit=async(phase:"Before"|"After")=>{
     check();requireV1(observerPort!==null,"TASK4_DATABASE_REFUSED");let grants:Readonly<RecordV1>;
@@ -210,7 +234,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
       check();const before=await untouched(),startedAt=new Date().toISOString();check();
       const outcome=await executeTask4ProbeV1(probePort,entry);check();const finishedAt=new Date().toISOString(),after=await untouched();
       requireV1(outcome.sqlstate==="42501"&&outcome.rollbackObserved===true&&sameV1(before,after),"TASK4_DATABASE_REFUSED");
-      probeResults.push({...outcome,beforeRef:before,afterRef:after,startedAt,finishedAt});await observeBackends();
+      probeResults.push({...outcome,beforeRef:before,afterRef:after,startedAt,finishedAt});await observeMainBackends();
     }
   };
   try {
@@ -241,7 +265,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     observerPort=tracked(observerConnection,"parent_observer","task4_observer_"+id);probePort=tracked(probeConnection,"parent_probe","task4_probe_"+id);
     const settings=await observerPort.unsafe(TASK4_PG_SETTINGS_SQL_V1);requireV1(settings.length===1,"TASK4_SQL_ORIGINALS_UNKNOWN");validateTask4PgSettingsV1(settings[0],true);
     const before=await observeAudit("Before");ready=buildTask4ReadyV1(setup,context.owner,projection,database,before.readiness,before.seed,before.grants);check();
-    await observeBackends();await probes();check();
+    stage="initial_backend_census";await observeMainBackends();stage="initial_probes";await probes();check();stage="inner_validation";
     const mc=await import(pathToFileURL(path.join(setup.missionControl.source.root,"scripts/render-smoke-owned-fixture.mjs")).href);check();
     const networkBuild=mc.captureTask4BuildV1(setup.missionControl.source.root);networkBuild.check();check();
     requireV1(networkBuild.identity.sourceSha===setup.missionControl.source.sourceSha&&networkBuild.identity.treeHash===setup.missionControl.source.treeHash
@@ -261,7 +285,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
       requireV1(innerOwner!.ppid===context.owner.pid&&innerOwner!.executable===node&&innerOwner!.executableHash===context.owner.executableHash
         &&innerOwner!.commandHash===hashV1([node,entry,"--owned-fixture-ready-v1"].join(" ")),"TASK4_BINDING_REFUSED");check();
       for(const recipe of queryRecipes)issued.push({queryId:"inner_"+recipe.queryId,statement:recipe.statement,kind:"inner_observer",applicationName:"task4_observer_"+id,clientPid:innerOwner!.pid});
-      watcher=(async()=>{while(!stopWatcher){try{await observeBackends();}catch{watchFailure=true;stopWatcher=true;}if(!stopWatcher)await new Promise(resolve=>setTimeout(resolve,100));}})();
+      watcher=(async()=>{while(!stopWatcher){const diagnostic={predicate:"none"};try{await observeBackends(diagnostic);}catch(error){watcherFailure??=task4FailureDetailV1("backend_census",diagnostic.predicate,error);watchFailure=true;stopWatcher=true;}if(!stopWatcher)await new Promise(resolve=>setTimeout(resolve,100));}})();
       writer.end(Buffer.from(task4CanonicalV1(ready)+"\n"));
     }catch(error){deliveryError=true;if(!writer.destroyed&&!writer.writableEnded)writer.end();throw error;}
     finally {await delivered;innerExit=await originalChild;originalChild=null;for(const output of outputs)writeTask4PrivateBytesV1(path.join(root,"parent/originals"),output.name,Buffer.concat(output.chunks));}
@@ -282,53 +306,62 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     await validateTask4PolicyProbeV1(root,ready,innerOwner!,network,artifacts);check();networkComplete=true;
     const mockReceipt=readTask4FixedJsonV1(root,"policy-probe-mock.json");assertTask4ConsumedArtifactsV1(innerResult,artifacts,[mockReceipt.before,mockReceipt.after]);
     if(serverOwner)requireV1(sameV1(task4ArtifactV1(artifacts,cleanup.server.observed).owner,serverOwner),"TASK4_SQL_ORIGINALS_UNKNOWN");
-    await probes();const after=await observeAudit("After");check();
+    stage="after_probes";predicate="none";await probes();stage="after_audit";const after=await observeAudit("After");check();
+    stage="after_audit_equal";predicate="audit_equal";
     requireV1(sameV1(before.seed,after.seed)&&sameV1(before.grants,after.grants)&&sameV1(before.catalog,after.catalog)
       &&sameV1(evidence.readinessBefore,evidence.readinessAfter)&&sameV1(evidence.untouchedBefore,evidence.untouchedAfter),"TASK4_DATABASE_REFUSED");auditComplete=true;
-    stopWatcher=true;if(watcher){await watcher;watcher=null;}
-    await closeReader(observer,observerConnection);observer=null;observerConnection=null;await closeReader(probe,probeConnection);probe=null;probeConnection=null;
-    await observeBackends();check();requireV1(!watchFailure&&!failed,"TASK4_SQL_ORIGINALS_UNKNOWN");
-    const live=await admin.unsafe("SELECT pid FROM pg_stat_activity WHERE usename=$1 OR (datname=$2 AND application_name LIKE 'task4_%') LIMIT 1",[role,fixture.database]);check();requireV1(live.length===0,"TASK4_SQL_ORIGINALS_UNKNOWN");
-    const firstPrefix=capture.read();await new Promise(resolve=>setTimeout(resolve,100));check();const raw=capture.read();requireV1(raw.equals(firstPrefix),"TASK4_SQL_ORIGINALS_UNKNOWN");
-    const parsed=parseTask4PgLogV1(raw,id,fixture.database,issued,[...backends.values()]),chunks=retainTask4PgChunksV1(root,raw,parsed),events=settleTask4PgEventsV1(parsed,[...backends.values()],chunks);
+    stage="watcher_settle";predicate="none";stopWatcher=true;if(watcher){await watcher;watcher=null;}
+    stage="observer_release";await closeReader(observer,observerConnection);observer=null;observerConnection=null;
+    stage="probe_release";await closeReader(probe,probeConnection);probe=null;probeConnection=null;
+    stage="final_backend_census";await observeMainBackends();check();stage="watcher_success";predicate="watcher_success";requireV1(!watchFailure&&!failed,"TASK4_SQL_ORIGINALS_UNKNOWN");
+    stage="restricted_absence";predicate="restricted_absence";const live=await admin.unsafe("SELECT pid FROM pg_stat_activity WHERE usename=$1 OR (datname=$2 AND application_name LIKE 'task4_%') LIMIT 1",[role,fixture.database]);check();requireV1(live.length===0,"TASK4_SQL_ORIGINALS_UNKNOWN");
+    stage="pg_prefix_first";predicate="none";const firstPrefix=capture.read();await new Promise(resolve=>setTimeout(resolve,100));check();
+    stage="pg_prefix_second";const raw=capture.read();stage="pg_prefix_equal";predicate="prefix_equal";requireV1(raw.equals(firstPrefix),"TASK4_SQL_ORIGINALS_UNKNOWN");
+    stage="pg_parse";predicate="none";const parsing={predicate:"none"};let parsed:ReadonlyArray<Readonly<RecordV1>>;
+    try{parsed=parseTask4PgLogV1(raw,id,fixture.database,issued,[...backends.values()],parsing);}finally{predicate=parsing.predicate;}
+    stage="pg_chunks";predicate="none";const chunks=retainTask4PgChunksV1(root,raw,parsed);
+    stage="pg_events";const events=settleTask4PgEventsV1(parsed,[...backends.values()],chunks);
     // Actual source-issued observer/probe calls must each be represented by their own received PG record.
     const used=new Set<number>();
-    for(const call of parentCalls){
+    stage="parent_query_match";for(const call of parentCalls){
+      predicate="parent_query_owner";
       const owners=[...backends.values()].filter(b=>b.applicationName===call.applicationName&&sameV1(b.clientIdentity,context.owner));requireV1(owners.length===1&&call.finishedAt!==null,"TASK4_SQL_ORIGINALS_UNKNOWN");
-      const matches=events.filter(e=>!used.has(e.seq)&&e.backendPid===owners[0]!.pid&&e.backendStartedAt===owners[0]!.startedAt&&e.statementHash===call.statementHash
+      predicate="parent_query_event";const matches=events.filter(e=>!used.has(e.seq)&&e.backendPid===owners[0]!.pid&&e.backendStartedAt===owners[0]!.startedAt&&e.statementHash===call.statementHash
         &&e.at>=call.startedAt&&e.at<=call.finishedAt&&(call.outcome==="error"?e.kind==="error"&&e.sqlstate===call.sqlstate:e.kind==="statement"&&e.sqlstate===null));
       requireV1(matches.length>=1,"TASK4_SQL_ORIGINALS_UNKNOWN");used.add(matches[0]!.seq);
     }
-    for(const query of queryLedgers[0]!.queries){
+    stage="inner_query_match";predicate="inner_query_event";for(const query of queryLedgers[0]!.queries){
       const matches=events.filter(e=>!used.has(e.seq)&&e.backendPid===query.backendPid&&e.backendStartedAt===query.backendStartedAt&&e.statementHash===query.statementHash
         &&e.kind==="statement"&&e.sqlstate===null&&e.at>=query.startedAt&&e.at<=query.finishedAt);
       requireV1(matches.length>=1,"TASK4_SQL_ORIGINALS_UNKNOWN");used.add(matches[0]!.seq);
     }
-    requireV1(finalAudit!==null,"TASK4_SQL_ORIGINALS_UNKNOWN");
+    stage="audit_publish";predicate="none";requireV1(finalAudit!==null,"TASK4_SQL_ORIGINALS_UNKNOWN");
     evidence.auditAfter=put({...finalAudit as RecordV1,backendCensuses:censuses,parentQueries:parentCalls,capture:{scope:"closed_restricted_sessions_original_pg_prefix",startOffset:capture.startOffset,
       initialPrefixHash:capture.initialPrefixHash,bytes:raw.length,sha256:hashV1(raw),stableReads:2,restrictedBackendsAbsent:true,postmasterStreamClosed:false}});
-    const settledProbes=probeResults.map(value=>{const {startedAt,finishedAt,...proof}=value;const originalEvents=events.filter(e=>e.backendPid===value.backendPid&&e.backendStartedAt===value.backendStartedAt&&e.clientRole==="probe"&&e.statementHash===value.statementHash&&e.at>=startedAt&&e.at<=finishedAt).map(e=>e.seq);
+    stage="probe_calibration";const settledProbes=probeResults.map(value=>{const {startedAt,finishedAt,...proof}=value;const originalEvents=events.filter(e=>e.backendPid===value.backendPid&&e.backendStartedAt===value.backendStartedAt&&e.clientRole==="probe"&&e.statementHash===value.statementHash&&e.at>=startedAt&&e.at<=finishedAt).map(e=>e.seq);
       requireV1(originalEvents.some(seq=>events[seq-1]!.kind==="error"&&events[seq-1]!.sqlstate==="42501"),"TASK4_SQL_ORIGINALS_UNKNOWN");return {...proof,originalEvents};});
     requireV1(settledProbes.length===14,"TASK4_SQL_ORIGINALS_UNKNOWN");
     const errorStatementsCaptured=settledProbes.every(p=>p.originalEvents.some((seq:number)=>events[seq-1]!.kind==="statement"&&events[seq-1]!.sqlstate==="42501"));
     requireV1(errorStatementsCaptured,"TASK4_SQL_ORIGINALS_UNKNOWN");
-    evidence.sqlLedger=put({schema:"setfarm.task4-parent-sql-ledger.v1",executionId:id,setupDescriptorHash:ready.setupDescriptorHash,readyDescriptorHash:hashV1(task4CanonicalV1(ready)+"\n"),
+    stage="sql_publish";evidence.sqlLedger=put({schema:"setfarm.task4-parent-sql-ledger.v1",executionId:id,setupDescriptorHash:ready.setupDescriptorHash,readyDescriptorHash:hashV1(task4CanonicalV1(ready)+"\n"),
       settings:{restrictedRole:role,logStatement:"all",parameterMaxLength:0,errorParameterMaxLength:0,errorStatementsCaptured},backends:[...backends.values()].sort((a,b)=>a.pid-b.pid),
       originals:chunks.map(({start,...ref})=>ref),events,probes:settledProbes,complete:true});sqlComplete=true;
     // All restricted readers are closed. The two helper clients and owned admin remain for the one guarded cleanup.
-    requireV1(task4ParentCleanupSafeV1({outcome:innerResult.outcome,integrity:innerResult.integrity,owner:innerOwner,exit:innerExit,auditComplete,sqlComplete,networkComplete,
+    stage="parent_cleanup";requireV1(task4ParentCleanupSafeV1({outcome:innerResult.outcome,integrity:innerResult.integrity,owner:innerOwner,exit:innerExit,auditComplete,sqlComplete,networkComplete,
       readers:{opened:2,closed:readers.closed,pending:0}}),"TASK4_CLEANUP_UNKNOWN");check();
-    cleanupAttempted=true;await fixture.cleanup();readers.closed+=2;check();
+    stage="database_cleanup";cleanupAttempted=true;await fixture.cleanup();readers.closed+=2;check();
     const absent=await admin.unsafe("SELECT datname FROM pg_database WHERE datname=$1",[fixture.database]);check();requireV1(absent.length===0,"TASK4_CLEANUP_UNKNOWN");databaseAbsent=true;
-    await admin.unsafe(`DROP ROLE "${role}"`);check();const removed=await admin.unsafe("SELECT rolname FROM pg_roles WHERE rolname=$1",[role]);check();requireV1(removed.length===0,"TASK4_CLEANUP_UNKNOWN");roleAbsent=true;
-  }catch(error){failed=true;const message=error instanceof Error?error.message:"";code=TASK4_CODES_V1.includes(message)?message:"TASK4_INTEGRITY_FAILED";}
+    stage="role_cleanup";await admin.unsafe(`DROP ROLE "${role}"`);check();const removed=await admin.unsafe("SELECT rolname FROM pg_roles WHERE rolname=$1",[role]);check();requireV1(removed.length===0,"TASK4_CLEANUP_UNKNOWN");roleAbsent=true;
+  }catch(error){firstFailure??=task4FailureDetailV1(stage,predicate,error);
+    failed=true;const message=error instanceof Error?error.message:"";code=TASK4_CODES_V1.includes(message)?message:"TASK4_INTEGRITY_FAILED";}
   finally {
     if(originalChild){innerExit=await originalChild;originalChild=null;}
     stopWatcher=true;if(watcher){await watcher;watcher=null;}
-    await closeReader(observer,observerConnection);await closeReader(probe,probeConnection);
-    if(fixture&&!cleanupAttempted){try{await fixture.db.pgClose();readers.closed++;}catch{failed=true;code="TASK4_CLEANUP_UNKNOWN";}}
-    await closeReader(admin,null);capture?.close();
+    stage="finalizer_observer_release";predicate="none";await closeReader(observer,observerConnection);stage="finalizer_probe_release";await closeReader(probe,probeConnection);
+    if(fixture&&!cleanupAttempted){stage="finalizer_fixture_close";try{await fixture.db.pgClose();readers.closed++;}catch(error){firstFailure??=task4FailureDetailV1(stage,predicate,error);failed=true;code="TASK4_CLEANUP_UNKNOWN";}}
+    stage="finalizer_admin_end";await closeReader(admin,null);capture?.close();
     readers.pending=readers.opened-readers.closed;
+    if(firstFailure)publishTask4ParentFailureV1(root,id,firstFailure,watcherFailure);
     try {if(ready&&projection&&fixture){check();const outcome=failed?"unknown":innerResult?.outcome??"unknown";
       const value={schema:"setfarm.task4-parent-result.v1",executionId:id,setupDescriptorHash:ready.setupDescriptorHash,readyDescriptorHash:hashV1(task4CanonicalV1(ready)+"\n"),fixtureOwner:context.owner,
         outcome,code:outcome==="pass"?null:failed?code:innerResult!.code,integrity:failed?"failed":"verified",projection,database:{name:fixture.database,role:ready.database.role},
@@ -761,44 +794,44 @@ function validateTask4PgSettingsV1(value:unknown,restricted:boolean):void {
 type Task4RefV1=Readonly<{sha256:string;bytes:number}>;
 // Exact pinned ordinary MC/driver statement material; classification is not permission.
 const TASK4_MC_SQL_V1=Object.freeze([{"queryId":"mc_Q01","kind":"route_read","statement":"SELECT * FROM runs ORDER BY created_at DESC LIMIT 50","statementHash":"e01492f5584dd4f6a61d4e888b56bac9d3a1469f668c8d265c2d4dc4c0e448cc"},{"queryId":"mc_Q02","kind":"route_read","statement":"SELECT * FROM steps WHERE run_id = ANY($1) ORDER BY step_index","statementHash":"27adeb017cce39e867262016ce00fd444fa51f109cfcd1d40a563a76ef55df92"},{"queryId":"mc_Q03","kind":"route_read","statement":"SELECT run_id, status, COUNT(*)::int as cnt FROM stories WHERE run_id = ANY($1) GROUP BY run_id, status","statementHash":"8c2c9126aa0de43b0e9e55e8cf63fbd3b3246a468d181a108aa734d6a3d04506"},{"queryId":"mc_Q04","kind":"route_read","statement":"\n                SELECT run_id, story_index, story_id, title, status, retry_count, max_retries, output\n                FROM stories\n                WHERE run_id = ANY($1)\n                ORDER BY story_index\n            ","statementHash":"00d2e6860c196e5ae8b0be63981212164a54189e20801684de31d5d8135629a3"},{"queryId":"mc_Q05","kind":"route_read","statement":"\n            SELECT ro.created_at AS ts, ro.status, ro.summary, ro.detail, ro.step_id, ro.agent_id, ro.run_id, r.workflow_id\n            FROM run_observations ro\n            LEFT JOIN runs r ON r.id = ro.run_id\n            ORDER BY ro.created_at DESC\n            LIMIT $1\n        ","statementHash":"444ad00ab39cfa74fee1caa1798a8d0f63bc81787632cdbc2420b3ede6d97221"},{"queryId":"mc_Q06","kind":"route_read","statement":"\n                SELECT ro.created_at AS ts, ro.status, ro.summary, ro.detail, ro.step_id, ro.agent_id, ro.run_id, r.workflow_id\n                FROM run_observations ro\n                LEFT JOIN runs r ON r.id = ro.run_id\n                ORDER BY ro.created_at DESC\n                LIMIT $1\n            ","statementHash":"4aa247daf036f9fe2a52ab1edb0c1187d0cb9e86913af24d0572b88324dca65b"},{"queryId":"mc_Q07","kind":"optional_read","statement":"SELECT agent_id, AVG(duration_ms) as avg_dur FROM step_metrics GROUP BY agent_id","statementHash":"613e5a2da38c460faf215dc5c47bce82faf83e6fcf92cdcd10b2efbc204454cd"},{"queryId":"mc_Q08","kind":"route_read","statement":"\n            SELECT ro.created_at AS ts, ro.summary, ro.detail, ro.step_id, ro.run_id, r.workflow_id\n            FROM run_observations ro\n            LEFT JOIN runs r ON r.id = ro.run_id\n            WHERE ro.status = 'fail'\n            ORDER BY ro.created_at DESC\n            LIMIT 20\n        ","statementHash":"ca625dc1feb6a64586e0717e30b80c9228464885802d0a23915cbe235b2aa352"},{"queryId":"mc_Q09","kind":"project_read","statement":"\n    SELECT id, run_number, protocol, status, updated_at\n    FROM runs\n    WHERE id = ANY($1) OR run_number = ANY($2)\n    ORDER BY run_number DESC, id ASC\n  ","statementHash":"228bec12e2380decceace59fb8ea3fb7d8bcdbe18d5d0de9f5bf2d9e61103564"},{"queryId":"mc_Q10","kind":"detail_read","statement":"SELECT * FROM runs WHERE id = $1","statementHash":"128d2fce2adfaac5b17e693c406eca718c9305498ddcb22228d179cbf8389448"},{"queryId":"mc_Q11","kind":"detail_read","statement":"SELECT * FROM steps WHERE run_id = $1 ORDER BY step_index","statementHash":"e13d080b64fbf4beeb72d391cb2d08ab93867623644aeed5842e58e22aa099fc"},{"queryId":"mc_Q12","kind":"detail_read","statement":"SELECT * FROM stories WHERE run_id = $1 ORDER BY story_index","statementHash":"66e4eba5602426b960c7feada2ee168418b942c6f89627dd9625c0c84dd0cd74"},{"queryId":"mc_Q13","kind":"known_feed_setup_attempt","statement":"\n    CREATE TABLE IF NOT EXISTS agent_feed (\n      id SERIAL PRIMARY KEY,\n      agent_id TEXT NOT NULL,\n      agent_name TEXT NOT NULL,\n      message TEXT NOT NULL,\n      session_id TEXT,\n      msg_hash TEXT UNIQUE,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    )\n  ","statementHash":"c95b18c499c98878888c6db76bb389c102b10cae0c89d0b52196b7714cb6684f"},{"queryId":"mc_Q14","kind":"known_feed_setup_attempt","statement":"CREATE INDEX IF NOT EXISTS idx_agent_feed_created ON agent_feed(created_at DESC)","statementHash":"9b0e27bc5e0089ddfa32218378ba040fa68f7853bb25fa616206c97e97112731"},{"queryId":"mc_Q15","kind":"forbidden_feed_ingest","statement":"\n      INSERT INTO agent_feed (agent_id, agent_name, message, session_id, msg_hash)\n      VALUES ($1, $2, $3, $4, $5)\n      ON CONFLICT (msg_hash) DO NOTHING\n    ","statementHash":"a0156f6213083e5db5f6eb889dce9cf20f60de05bbce1269fac420cecf808262"},{"queryId":"mc_Q16","kind":"conditional_feed_read","statement":"SELECT * FROM agent_feed ORDER BY created_at DESC LIMIT $1","statementHash":"97e384d611bd129807a2ed33193becef1e5ba2bfa23b6e574866acfe2065fe7c"},{"queryId":"mc_Q17","kind":"known_feed_prune_attempt","statement":"\n    DELETE FROM agent_feed WHERE id NOT IN (\n      SELECT id FROM agent_feed ORDER BY created_at DESC LIMIT $1\n    )\n  ","statementHash":"07bf59b93c5aa56748310370e04a0b0d5337b98f00363b98bd605c47cadd842d"},{"queryId":"mc_Q18","kind":"pipeline_read","statement":"\n    SELECT run_id, status, COUNT(*)::INTEGER as cnt\n    FROM stories\n    WHERE run_id = ANY($1)\n    GROUP BY run_id, status\n  ","statementHash":"1076ff21e4fb633bdab8acb9c8b04c12b5d874a09d05dd8f227af5f00e587ff9"},{"queryId":"mc_Q19","kind":"scheduled_read","statement":"\n      SELECT r.id, r.status, r.protocol, r.workflow_id, r.run_number,\n             r.updated_at AS cursor_timestamp\n        FROM runs r\n       WHERE r.protocol = 'v3'\n         AND lower(r.status) IN ('completed', 'done')\n         AND r.workflow_id = 'feature-dev'\n         AND r.accepted_candidate_hash IS NOT NULL\n         AND r.deploy_receipt_hash IS NOT NULL\n         AND r.project_transfer_ack_hash IS NULL\n         AND ($1::timestamptz IS NULL OR (r.updated_at, r.id) > ($1::timestamptz, $2::text))\n       ORDER BY r.updated_at ASC, r.id ASC\n       LIMIT $3\n    ","statementHash":"41ba8391da905d5e96f3e50445838165ed7980658ecad15c32ffa930e37f9216"},{"queryId":"mc_Q20","kind":"scheduled_read","statement":"\n      SELECT r.id, r.status, r.protocol, r.workflow_id, r.run_number,\n             ack.created_at AS cursor_timestamp,\n             ack.project_id, ack.projection_hash, ack.project_record_hash, ack.persisted_at\n        FROM runs r\n        JOIN v3_project_transfer_acks ack\n          ON ack.run_id = r.id\n         AND ack.ack_hash = r.project_transfer_ack_hash\n       WHERE r.protocol = 'v3'\n         AND lower(r.status) IN ('completed', 'done')\n         AND r.workflow_id = 'feature-dev'\n         AND ($1::timestamptz IS NULL OR (ack.created_at, r.id) > ($1::timestamptz, $2::text))\n       ORDER BY ack.created_at ASC, r.id ASC\n       LIMIT $3\n    ","statementHash":"d32669ad0d56ca51ed13fde7ad8016e170e55f20b81a69c3294faff532be2b44"},{"queryId":"mc_Q21","kind":"dormant_manual_read","statement":"\n      SELECT r.id, r.status, r.protocol, r.workflow_id, r.run_number,\n             r.updated_at AS cursor_timestamp\n        FROM runs r\n       WHERE r.id = $1\n         AND r.protocol = 'v3'\n         AND lower(r.status) IN ('completed', 'done')\n         AND r.workflow_id = 'feature-dev'\n       LIMIT 1\n    ","statementHash":"248f1bc5c83bee8647ca8cee146c114b49ea6bbc4897e13f06393ed63b3829e9"},{"queryId":"mc_Q22","kind":"known_startup_setup_attempt","statement":"\n    CREATE TABLE IF NOT EXISTS public.live_events (\n      id TEXT PRIMARY KEY,\n      ts TIMESTAMPTZ NOT NULL,\n      agent TEXT NOT NULL,\n      model TEXT,\n      tool TEXT,\n      action TEXT NOT NULL,\n      summary TEXT,\n      file TEXT,\n      status TEXT NOT NULL DEFAULT 'completed',\n      duration_ms INTEGER,\n      exit_code INTEGER,\n      cwd TEXT,\n      project TEXT,\n      detail TEXT,\n      output TEXT,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    )\n  ","statementHash":"897bf9ec7f8650e31ea17083474ed1f517e939b768fa5afd04d2bc5861e5fd56"},{"queryId":"mc_Q23","kind":"known_startup_setup_attempt","statement":"CREATE INDEX IF NOT EXISTS idx_live_events_ts ON public.live_events(ts)","statementHash":"2930be870a3845296fedec922a13c26e732a3d8d7e6779ff174f707d592a9bab"},{"queryId":"mc_Q24","kind":"known_startup_setup_attempt","statement":"CREATE INDEX IF NOT EXISTS idx_live_events_status ON public.live_events(status)","statementHash":"b00275158ddcbd45859db9c85fd7e0d5538582a103a4b51edb9d0e57ca0d2230"},{"queryId":"mc_Q25","kind":"known_startup_setup_attempt","statement":"CREATE INDEX IF NOT EXISTS idx_live_events_project ON public.live_events(project)","statementHash":"3c3f17bb731f92e33535a6d7a131c81cab6e135355a433b465357c911e09c0b5"},{"queryId":"mc_Q26","kind":"known_startup_setup_attempt","statement":"CREATE INDEX IF NOT EXISTS idx_live_events_agent ON public.live_events(agent)","statementHash":"98a0bc21d5d7dc2582a095577128811e7857d0dd3fd0e51c3bef88b2d7b530f9"},{"queryId":"mc_Q27","kind":"known_startup_setup_attempt","statement":"CREATE INDEX IF NOT EXISTS idx_live_events_action ON public.live_events(action)","statementHash":"c7e53752aaac5ad1b2fd4ac8189ac24c31b33de045a6bcc2804cdd9501294489"},{"queryId":"mc_Q28","kind":"known_startup_setup_attempt","statement":"CREATE INDEX IF NOT EXISTS idx_live_events_error ON public.live_events(exit_code) WHERE exit_code IS NOT NULL AND exit_code != 0","statementHash":"6104dde35a5522dcd8f5377d79375b4e793cd68e39b22cb9699d28956ee50a4e"},{"queryId":"mc_Q29","kind":"forbidden_live_ingest","statement":"\n        INSERT INTO public.live_events (id, ts, agent, model, tool, action, summary, file, status, duration_ms, exit_code, cwd, project, detail, output)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)\n        ON CONFLICT (id) DO NOTHING\n      ","statementHash":"f947f365e4bfd18a84ed821f926a5fbe82227b86a6f356b4e30a9847b6a606e4"},{"queryId":"mc_Q30","kind":"known_startup_delete_attempt","statement":"DELETE FROM public.live_events WHERE ts < NOW() - INTERVAL '30 days'","statementHash":"6b57edcd7f4ad086d7215d82b3f4155a57f9b990094e8cfce1ed72316f661652"},{"queryId":"mc_Q31","kind":"optional_health_read","statement":"SELECT COUNT(*)::int AS count FROM runs","statementHash":"e41bb5009d727b21998f2653f8d15289fa8f7f607f24cb1c3386cdd794e7da38"},{"queryId":"mc_Q32","kind":"driver_startup","statement":"\n      select b.oid, b.typarray\n      from pg_catalog.pg_type a\n      left join pg_catalog.pg_type b on b.oid = a.typelem\n      where a.typcategory = 'A'\n      group by b.oid, b.typarray\n      order by b.oid\n    ","statementHash":"b74ea9a62275c375d9cdfa66c6d29960fcff6bf8402579596b758651187a9e18"},{"queryId":"mc_Q33","kind":"conditional_driver_state","statement":"\n      show transaction_read_only;\n      select pg_catalog.pg_is_in_recovery()\n    ","statementHash":"5bb8b384061332c5c94e582c34c760c484e74cea5fb05e533fbdff1004467ec9"}].map(row=>Object.freeze(row)));
-function parseTask4PgLogV1(bytes:Uint8Array,executionId:string,database:string,issued:ReadonlyArray<Task4IssuedV1>=[],backends:ReadonlyArray<Readonly<RecordV1>>=[]):ReadonlyArray<Readonly<RecordV1>> {
+function parseTask4PgLogV1(bytes:Uint8Array,executionId:string,database:string,issued:ReadonlyArray<Task4IssuedV1>=[],backends:ReadonlyArray<Readonly<RecordV1>>=[],diagnostic?:{predicate:string}):ReadonlyArray<Readonly<RecordV1>> {
   try {
-    hexV1(executionId,32);requireV1(/^setfarm_p3_[a-f0-9]{24}_clone_[a-f0-9]{12}$/.test(database));
-    const raw=Buffer.from(bytes);requireV1(raw.length>0&&raw.length<=8388608&&raw[raw.length-1]===10);
-    const text=new TextDecoder("utf-8",{fatal:true}).decode(raw);requireV1(Buffer.from(text).equals(raw));
+    if(diagnostic)diagnostic.predicate="parse_identity";hexV1(executionId,32);requireV1(/^setfarm_p3_[a-f0-9]{24}_clone_[a-f0-9]{12}$/.test(database));
+    if(diagnostic)diagnostic.predicate="parse_bytes";const raw=Buffer.from(bytes);requireV1(raw.length>0&&raw.length<=8388608&&raw[raw.length-1]===10);
+    if(diagnostic)diagnostic.predicate="parse_utf8";const text=new TextDecoder("utf-8",{fatal:true}).decode(raw);requireV1(Buffer.from(text).equals(raw));
     const prefix=/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} UTC)\|([1-9]\d*)\|([a-f0-9]+\.[a-f0-9]+)\|([^|\r\n]*)\|([^|\r\n]*)\|([^|\r\n]*)\|([0-9A-Z]{5})\| /;
     const messages:Array<{offset:number;length:number;head:RegExpMatchArray;body:string}>=[];
     let offset=0;
     for(const line of text.split("\n").slice(0,-1)){
       const length=Buffer.byteLength(line)+1,head=line.match(prefix);
-      if(head){requireV1(messages.length<8192);messages.push({offset,length,head,body:line.slice(head[0].length)});}
-      else {const last=messages.at(-1);requireV1(last!==undefined&&!line.includes("\r")&&!/^\d{4}-\d\d-\d\d /.test(line));last.length+=length;last.body+="\n"+line;}
+      if(head){if(diagnostic)diagnostic.predicate="parse_message_cap";requireV1(messages.length<8192);messages.push({offset,length,head,body:line.slice(head[0].length)});}
+      else {if(diagnostic)diagnostic.predicate="parse_continuation";const last=messages.at(-1);requireV1(last!==undefined&&!line.includes("\r")&&!/^\d{4}-\d\d-\d\d /.test(line));last.length+=length;last.body+="\n"+line;}
       offset+=length;
     }
-    requireV1(messages.length>0&&offset===raw.length);
+    if(diagnostic)diagnostic.predicate="parse_coverage";requireV1(messages.length>0&&offset===raw.length);
     const results:RecordV1[]=[],errors=new Map<string,RecordV1>();
     for(const message of messages){
       const h=message.head,pid=Number(h[2]),session=h[3]!,role=h[4]!,db=h[5]!,app=h[6]!,sqlstate=h[7]!;
-      integerV1(pid);requireV1(Number.parseInt(session.split(".")[1]!,16)===pid);
-      const capturedAt=h[1]!.replace(" ","T").replace(" UTC","Z");timeV1(capturedAt);
-      const restricted=role==="mc_task4_"+executionId;
+      if(diagnostic)diagnostic.predicate="parse_session";integerV1(pid);requireV1(Number.parseInt(session.split(".")[1]!,16)===pid);
+      if(diagnostic)diagnostic.predicate="parse_time";const capturedAt=h[1]!.replace(" ","T").replace(" UTC","Z");timeV1(capturedAt);
+      if(diagnostic)diagnostic.predicate="parse_scope";const restricted=role==="mc_task4_"+executionId;
       if(restricted)requireV1(db===database&&["task4_mc_","task4_observer_","task4_probe_"].some(p=>app===p+executionId));
       else requireV1(role===""&&db===""&&app==="");
-      const severity=/^(LOG|ERROR|STATEMENT|DETAIL|HINT|WARNING|FATAL|PANIC|CONTEXT):  /.exec(message.body);requireV1(severity!==null);
+      if(diagnostic)diagnostic.predicate="parse_severity";const severity=/^(LOG|ERROR|STATEMENT|DETAIL|HINT|WARNING|FATAL|PANIC|CONTEXT):  /.exec(message.body);requireV1(severity!==null);
       const kind=severity[1]!,content=message.body.slice(severity[0].length);
       const envelope=kind==="STATEMENT"?content:kind==="LOG"?/^(?:execute (?:<unnamed>|[a-zA-Z0-9_]+)|statement): ([\s\S]*)$/.exec(content)?.[1]:undefined;
       // PostgreSQL's stderr continuation tab is envelope formatting, not SQL normalization.
-      const owners=backends.filter(b=>b.pid===pid);requireV1(owners.length<=1);
+      if(diagnostic)diagnostic.predicate="parse_backend_unique";const owners=backends.filter(b=>b.pid===pid);requireV1(owners.length<=1);
       const candidates=[...TASK4_MC_SQL_V1.filter(q=>app==="task4_mc_"+executionId||q.kind==="driver_startup"),...issued.filter(q=>q.applicationName===app&&owners.length===1&&q.clientPid===owners[0]!.clientIdentity.pid).map(q=>({queryId:q.queryId,kind:q.kind,statement:q.statement,statementHash:hashV1(q.statement)}))];
       const matches=envelope===undefined?[]:candidates.filter(q=>envelope===q.statement||envelope===q.statement.replaceAll("\n","\n\t"));
-      requireV1(matches.length<=1);const known=matches[0];
+      if(diagnostic)diagnostic.predicate="parse_candidate_unique";requireV1(matches.length<=1);const known=matches[0];
       const row:RecordV1={offset:message.offset,length:message.length,rawHash:hashV1(raw.subarray(message.offset,message.offset+message.length)),
         capturedAt,pid,session,scope:restricted?"restricted":"postmaster",applicationName:app,kind,sqlstate,
         queryId:known?.queryId??"unknown",statementHash:known?.statementHash??(envelope===undefined?null:hashV1(envelope)),classification:known?.kind??"unknown"};
       const key=pid+":"+session;
       if(kind==="ERROR")errors.set(key,row);
       if(kind==="STATEMENT"){
-        const prior=errors.get(key);requireV1(prior!==undefined&&prior.sqlstate===sqlstate);
+        if(diagnostic)diagnostic.predicate="parse_error_pair";const prior=errors.get(key);requireV1(prior!==undefined&&prior.sqlstate===sqlstate);
         prior.queryId=row.queryId;prior.statementHash=row.statementHash;prior.classification=row.classification;errors.delete(key);
       }
       results.push(row);
@@ -1842,11 +1875,11 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     assert.deepEqual(result.grants,{restricted:true});assert.equal(calls[0],"BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");assert.equal(calls.at(-1),"COMMIT");
   });
   test("descriptor parent joins the original census watcher before closing its socket owners",async()=>{
-    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),start=source.indexOf('auditComplete=true;')+'auditComplete=true;'.length,end=source.indexOf('    const live=',start);
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),start=source.indexOf('auditComplete=true;')+'auditComplete=true;'.length,end=source.indexOf('    stage="restricted_absence";',start);
     assert.ok(start>0&&end>start);const fragment=source.slice(start,end),js=ts.transpileModule("async function settle(){"+fragment+"}",{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
     let joined=false;const watcher={then(resolve:()=>void){joined=true;resolve();}},calls:string[]=[];
-    const bindings={watcher,stopWatcher:false,observer:{},observerConnection:{},probe:{},probeConnection:{},watchFailure:false,failed:false,check(){},requireV1,
-      closeReader:async()=>{assert.equal(joined,true);calls.push("close");},observeBackends:async()=>{calls.push("final");}};
+    const bindings={stage:"watcher_settle",predicate:"none",watcher,stopWatcher:false,observer:{},observerConnection:{},probe:{},probeConnection:{},watchFailure:false,failed:false,check(){},requireV1,
+      closeReader:async()=>{assert.equal(joined,true);calls.push("close");},observeMainBackends:async()=>{calls.push("final");}};
     await new Function(...Object.keys(bindings),js+";return settle")(...Object.values(bindings))();assert.deepEqual(calls,["close","close","final"]);
   });
   test("descriptor identical observer SQL is classified by original backend and client identity",()=>{
@@ -2301,6 +2334,87 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
       (v:any)=>{v.routes[0].screenshot=null;},(v:any)=>{v.network=null;},(v:any)=>{v.stop.kind="unknown";}]){
       const altered=structuredClone(render);change(altered);assert.throws(()=>validateTask4InnerRenderV1(altered,ready,"pass"),{message:"TASK4_INTEGRITY_FAILED"});
     }
+  });
+  test("descriptor parent private failure retains the actual catch cause without changing public outcomes",async()=>{
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),ast=ts.createSourceFile("fixture.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+    const fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="runTask4OwnedFixtureV1") as import("typescript").FunctionDeclaration;
+    const attempt=fn.body!.statements.find(n=>ts.isTryStatement(n)&&n.catchClause?.getText(ast).includes("TASK4_CODES_V1.includes")) as import("typescript").TryStatement;
+    const detail=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="task4FailureDetailV1");
+    const declarations=ast.statements.filter(n=>ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>["TASK4_FAILURE_STAGES_V1","TASK4_FAILURE_PREDICATES_V1"].includes(d.name.getText(ast))));
+    const prelude=declarations.map(n=>n.getText(ast)).join("\n")+(detail?detail.getText(ast):"");
+    const js=ts.transpileModule(prelude+';let failed=false,code="",firstFailure=prior;'+attempt.catchClause!.block.getText(ast)+';return {failed,code,firstFailure};',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const run=(error:unknown,prior:unknown=null,stage="pg_parse",predicate="parse_candidate_unique")=>new Function("error","prior","stage","predicate","TASK4_CODES_V1","freezeV1",js)(error,prior,stage,predicate,TASK4_CODES_V1,freezeV1);
+    const sql=run(new Error("TASK4_SQL_ORIGINALS_UNKNOWN"));assert.equal(sql.code,"TASK4_INTEGRITY_FAILED");assert.equal(sql.failed,true);
+    assert.deepEqual(sql.firstFailure,{stage:"pg_parse",predicate:"parse_candidate_unique",cause:"TASK4_SQL_ORIGINALS_UNKNOWN"});assert.equal(Object.isFrozen(sql.firstFailure),true);
+    for(const stage of ["initial_backend_census","after_probes","final_backend_census"])assert.deepEqual(run(new Error("TASK4_SQL_ORIGINALS_UNKNOWN"),null,stage,"census_lsof").firstFailure,{stage,predicate:"census_lsof",cause:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+    const unknown=run(new Error("postgres://secret@private SELECT password"));assert.deepEqual(unknown.firstFailure,{stage:"pg_parse",predicate:"parse_candidate_unique",cause:"UNCLASSIFIED"});
+    assert.doesNotMatch(JSON.stringify(unknown),/secret|password|postgres:/);
+    const first=sql.firstFailure;assert.equal(run(new Error("TASK4_DATABASE_REFUSED"),first).firstFailure,first);assert.equal(run(new Error("TASK4_DATABASE_REFUSED")).code,"TASK4_DATABASE_REFUSED");
+  });
+  test("descriptor private parser predicate identifies original refusal without changing error",()=>{
+    const diagnostic={stage:"pg_parse",predicate:"none"};
+    assert.throws(()=>Reflect.apply(parseTask4PgLogV1,null,[Buffer.from("not-a-pg-frame\n"),"a".repeat(32),"setfarm_p3_"+"b".repeat(24)+"_clone_"+"c".repeat(12),[],[],diagnostic]),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+    assert.equal(diagnostic.predicate,"parse_continuation");
+  });
+  test("descriptor parent private diagnostic is exclusive canonical private and absent on success",async()=>{
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),start=source.indexOf('    readers.pending=readers.opened-readers.closed;'),end=source.indexOf('    try {if(ready&&projection&&fixture)',start);
+    assert.ok(start>0&&end>start);const js=ts.transpileModule(source.slice(start,end),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const root=fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(),"task4-private-diagnostic-")));fs.chmodSync(root,0o700);
+    fs.mkdirSync(path.join(root,"parent/originals"),{recursive:true,mode:0o700});const file=path.join(root,"parent/originals/parent-failure.json"),id="a".repeat(32);
+    const first=task4FailureDetailV1("pg_parse","parse_candidate_unique",new Error("TASK4_SQL_ORIGINALS_UNKNOWN")),watcher=task4FailureDetailV1("backend_census","census_socket_unique",new Error("TASK4_SQL_ORIGINALS_UNKNOWN"));
+    let finalized=0;const invoke=(failure:Task4FailureDetailV1|null)=>{try{new Function("readers","firstFailure","publishTask4ParentFailureV1","root","id","watcherFailure",js)({opened:5,closed:4,pending:0},failure,publishTask4ParentFailureV1,root,id,watcher);}finally{finalized++;}};
+    try {
+      invoke(null);assert.equal(fs.existsSync(file),false);invoke(first);assert.equal(finalized,2);
+      const bytes=fs.readFileSync(file),value=JSON.parse(bytes.toString());assert.equal(bytes.toString(),task4CanonicalV1(value)+"\n");assert.ok(bytes.length<=2048);
+      assert.deepEqual(value,{schema:"setfarm.task4-parent-failure.v1",executionId:id,...first,watcherFailure:watcher});
+      const stat=fs.lstatSync(file);assert.equal(stat.mode&0o777,0o600);assert.equal(stat.nlink,1);assert.equal(stat.uid,process.getuid!());
+      invoke(task4FailureDetailV1("after_audit_equal","audit_equal",new Error("TASK4_DATABASE_REFUSED")));assert.equal(finalized,3);assert.deepEqual(fs.readFileSync(file),bytes);
+      const absent=path.join(root,"missing");assert.doesNotThrow(()=>publishTask4ParentFailureV1(absent,id,first,watcher));assert.equal(fs.existsSync(absent),false);
+    }finally{fs.rmSync(root,{recursive:true,force:true});}
+  });
+  test("descriptor parent watcher retains its first actual bounded census predicate",async()=>{
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),ast=ts.createSourceFile("fixture.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+    let census:import("typescript").VariableDeclaration|undefined,watcherCatch:import("typescript").CatchClause|undefined;
+    const visit=(node:import("typescript").Node)=>{if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==="observeBackends")census=node;
+      if(ts.isCatchClause(node)&&node.getText(ast).includes('watcherFailure??='))watcherCatch=node;ts.forEachChild(node,visit);};visit(ast);assert.ok(census&&watcherCatch);
+    const body='const diagnostic={predicate:"none"};const '+census!.getText(ast)+';return observeBackends(diagnostic).then(()=>null,error=>({error,predicate:diagnostic.predicate}));';
+    const js=ts.transpileModule(body,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const outcome=await new Function("ready","admin","setup","requireV1","spawnSync","censuses",js)({database:{role:"component",name:"component"}}, {unsafe:async()=>[]},{postgres:{port:15432}},requireV1,()=>({error:undefined,signal:null,status:1,stderr:""}),[]);
+    assert.equal(outcome.error.message,"TASK4_SQL_ORIGINALS_UNKNOWN");assert.equal(outcome.predicate,"census_lsof");
+    const catchJs=ts.transpileModule(watcherCatch!.block.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const retain=new Function("task4FailureDetailV1","first","second",'let watcherFailure=null,watchFailure=false,stopWatcher=false;const diagnostic={predicate:"census_lsof"};let error=first;'+catchJs+';const retained=watcherFailure;diagnostic.predicate="census_socket_unique";error=second;'+catchJs+';return {retained,watcherFailure,watchFailure,stopWatcher};');
+    const state=retain(task4FailureDetailV1,outcome.error,new Error("postgres://private"));assert.equal(state.retained,state.watcherFailure);assert.equal(Object.isFrozen(state.watcherFailure),true);
+    assert.deepEqual(state.watcherFailure,{stage:"backend_census",predicate:"census_lsof",cause:"TASK4_SQL_ORIGINALS_UNKNOWN"});assert.equal(state.watchFailure,true);assert.equal(state.stopWatcher,true);
+  });
+  test("descriptor concurrent census rejection keeps its own original watcher and main predicate",async(t)=>{
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),ast=ts.createSourceFile("fixture.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+    const fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="runTask4OwnedFixtureV1") as import("typescript").FunctionDeclaration;
+    let census:import("typescript").VariableDeclaration|undefined,main:import("typescript").VariableDeclaration|undefined,watcher:import("typescript").BinaryExpression|undefined;
+    const visit=(node:import("typescript").Node)=>{if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==="observeBackends")census=node;
+      if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==="observeMainBackends")main=node;
+      if(ts.isBinaryExpression(node)&&node.left.getText(ast)==="watcher"&&node.right.getText(ast).includes("while(!stopWatcher)"))watcher=node;
+      ts.forEachChild(node,visit);};visit(fn);assert.ok(census&&watcher);
+    // Execute the original census and watcher. Only SQL/OS ports and the timer are component inputs.
+    const body='return (async()=>{let backendPredicate="none",predicate="none",watcher=null,watcherFailure=null,watchFailure=false,stopWatcher=false;'+
+      'const setTimeout=(resolve)=>{stopWatcher=true;resolve();};const '+census!.getText(ast)+';'+
+      (main?'const '+main.getText(ast)+';':'const observeMainBackends=observeBackends;')+
+      watcher!.getText(ast)+';const second=observeMainBackends().then(()=>({error:null,predicate}),error=>({error,predicate}));'+
+      'release();const result=await second;await watcher;return {result,watcherFailure,watchFailure,stopWatcher};})();';
+    const js=ts.transpileModule(body,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    for(const failingCall of [1,2])await t.test(failingCall===1?"watcher rejects while main completes":"main rejects while watcher completes",async()=>{
+      const pending:Array<(rows:unknown[])=>void>=[],censuses:unknown[]=[],original=new Error("TASK4_SQL_ORIGINALS_UNKNOWN"),trace:string[]=[];let calls=0,retainedError:unknown=null;
+      const ports={ready:{database:{role:"component",name:"component"}},admin:{unsafe:()=>new Promise(resolve=>pending.push(resolve))},setup:{postgres:{port:15432}},
+        requireV1:(ok:unknown)=>{if(!ok)throw original;},spawnSync:()=>{calls++;trace.push("census_"+calls);return {error:undefined,signal:null,status:calls===failingCall?1:0,stderr:"",stdout:""};},
+        censuses,parseTask4SocketsV1:()=>[],backends:new Map(),hashV1,
+        task4FailureDetailV1:(stage:string,predicate:string,error:unknown)=>{retainedError=error;trace.push("watcher_catch");return task4FailureDetailV1(stage,predicate,error);},
+        release:()=>{assert.equal(pending.length,2);pending[0]!([]);pending[1]!([]);}};
+      const state=await new Function(...Object.keys(ports),js)(...Object.values(ports));
+      assert.equal(calls,2);assert.equal(censuses.length,1);
+      if(failingCall===1){assert.deepEqual(trace,["census_1","census_2","watcher_catch"]);assert.equal(retainedError,original);
+        assert.deepEqual(state.watcherFailure,{stage:"backend_census",predicate:"census_lsof",cause:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+        assert.equal(Object.isFrozen(state.watcherFailure),true);assert.equal(state.result.error,null);assert.equal(state.result.predicate,"none");assert.equal(state.watchFailure,true);
+      }else{assert.equal(state.result.error,original);assert.equal(state.result.predicate,"census_lsof");assert.equal(state.watcherFailure,null);assert.equal(state.watchFailure,false);}
+    });
   });
   test("descriptor parent envelope binds fixture owner and refuses incomplete cleanup or crossed evidence",()=>{
     const ready=JSON.parse(GOLDEN_READY_V1),ref={sha256:"a".repeat(64),bytes:100},innerOwner={...ready.fixtureOwner,pid:41006,ppid:ready.fixtureOwner.pid};
