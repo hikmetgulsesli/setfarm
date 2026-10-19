@@ -1,6 +1,6 @@
 # Controls Setfarm Producer Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Root is the sole delivery owner; execute one implementation worker at a time and return reviewed diffs to root without staging, committing, pushing, or deploying from a worker.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Root is the sole delivery owner; execute at most one implementation worker per repository at a time and return reviewed diffs to root without staging, committing, pushing, or deploying from a worker.
 
 **Goal:** Supply the guarded Setfarm execution, durable evaluation exclusion, exact cancellation, and nonmutating evidence projection needed by the Controls UI.
 
