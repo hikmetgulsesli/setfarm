@@ -1323,6 +1323,7 @@ async function recoverClaimEnvelopeFromDatabase(input: Readonly<{
   storyId?: string;
   storyDbId?: string;
   claimAgentId?: string;
+  expectedClaimId?: number;
   runtimeAgentId: string;
   workdir?: string;
 }>): Promise<ClaimEnvelopeV1 | undefined> {
@@ -1347,15 +1348,17 @@ async function recoverClaimEnvelopeFromDatabase(input: Readonly<{
         AND cl.story_id IS NOT DISTINCT FROM $4
         AND ($5::text IS NULL OR cl.agent_id = $5)
         AND cl.outcome IS NULL
+        AND ($6::bigint IS NULL OR cl.id = $6)
       ORDER BY cl.id DESC
       LIMIT 2`,
-    [input.runId, input.stepDbId, input.workflowStepId, input.storyId ?? null, input.claimAgentId ?? null],
+    [input.runId, input.stepDbId, input.workflowStepId, input.storyId ?? null, input.claimAgentId ?? null, input.expectedClaimId ?? null],
   );
   if (claims.length === 0) return undefined;
   if (claims.length !== 1) throw new Error("RECOVERY_CLAIM_AUTHORITY_AMBIGUOUS");
   const claim = claims[0]!;
   const claimId = Number(claim.claim_id);
   if (!Number.isSafeInteger(claimId) || claimId <= 0) throw new Error("RECOVERY_CLAIM_ID_INVALID");
+  if (input.expectedClaimId !== undefined && claimId !== input.expectedClaimId) return undefined;
 
   let attempt: ClaimAttemptFenceV1 | undefined;
   if (claim.protocol !== "legacy" && input.storyId) {
@@ -1475,6 +1478,12 @@ const activeProcesses = new Map<string, ActiveProcess>();
 const drainingProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
 const claimingSpawns = new Set<string>();
+const pendingClaimInvocations = new Map<string, Readonly<{
+  sessionId: string;
+  ownerInstanceId: string;
+  claimAgentId: string;
+  runtimeAgentId: string;
+}>>();
 const task6aV2RetainedPostClaimRuntimes = new Map<string, Readonly<{ claimId: number; ownerInstanceId: string }>>();
 let task6aV2UnboundPostClaimRefusals = 0;
 const inFlightSpawnPromises = new Set<Promise<void>>();
@@ -4395,16 +4404,19 @@ async function waitForClaimRuntimeQuiescence(
   storyId: string | undefined,
   claimAgentId: string,
   timeoutMs = 7_000,
+  expectedClaimId?: number,
 ): Promise<void> {
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   const matching = [...drainingProcesses.values()].filter((active) =>
     active.runId === runId
     && (active.storyId ?? null) === (storyId ?? null)
     && active.claimAgentId === claimAgentId
+    && (expectedClaimId === undefined || active.claimId === expectedClaimId)
   );
   const durable = (await runtimeSessions.listRecoverable({ runId, limit: 500 })).filter((session) =>
     (session.storyId ?? undefined) === storyId
     && session.claimAgentId === claimAgentId
+    && (expectedClaimId === undefined || session.claimId === expectedClaimId)
     && session.state !== "released"
   );
   const quarantined = durable.find((session) => session.state === "quarantined");
@@ -4415,8 +4427,9 @@ async function waitForClaimRuntimeQuiescence(
         `SELECT id::text FROM claim_log
           WHERE run_id = $1 AND story_id IS NOT DISTINCT FROM $2
             AND agent_id = $3 AND outcome IS NULL
+            AND ($4::bigint IS NULL OR id = $4)
           LIMIT 1`,
-        [runId, storyId ?? null, claimAgentId],
+        [runId, storyId ?? null, claimAgentId, expectedClaimId ?? null],
       );
       if (openClaim) throw new Error(`RUNTIME_QUIESCENCE_OWNER_MISSING:${openClaim.id}`);
       return;
@@ -4520,14 +4533,18 @@ async function retrySingleStepClaimWithAuthority(input: Readonly<{
   runtimeAgentId: string;
   diagnostic: string;
   envelope?: ClaimEnvelopeV1;
-}>): Promise<void> {
+  expectedClaimId?: number;
+}>): Promise<boolean> {
   const envelope = input.envelope ?? await recoverClaimEnvelopeFromDatabase({
     runId: input.runId,
     stepDbId: input.stepDbId,
     workflowStepId: input.workflowStepId,
     claimAgentId: input.claimAgentId,
+    expectedClaimId: input.expectedClaimId,
     runtimeAgentId: input.runtimeAgentId,
   });
+  // A stale selected candidate must never recover authority for its replacement.
+  if (input.expectedClaimId !== undefined && envelope?.claimId !== input.expectedClaimId) return false;
   if (!envelope) throw new Error("CLAIM_ORPHAN_RECOVERY_ENVELOPE_UNAVAILABLE");
   await failStep(
     input.stepDbId,
@@ -4538,6 +4555,7 @@ async function retrySingleStepClaimWithAuthority(input: Readonly<{
   await pgRun("SELECT pg_notify('step_pending', $1)", [
     JSON.stringify({ agentId: input.claimAgentId, runId: input.runId, stepId: input.workflowStepId }),
   ]);
+  return true;
 }
 
 async function retryActiveSingleStepClaim(active: ActiveProcess, stepIdName: string, diagnostic: string): Promise<void> {
@@ -6932,10 +6950,38 @@ async function requeueUntrackedRunningLoopStoryClaims(): Promise<void> {
   }
 }
 
+function hasPendingClaimInvocation(row: Readonly<{
+  agent_id: string;
+  pending_runtime_session_id: string | null;
+  pending_runtime_owner_instance_id: string | null;
+  pending_runtime_claim_agent_id: string | null;
+  pending_runtime_agent_id: string | null;
+}>): boolean {
+  if (!row.pending_runtime_session_id) return false;
+  const pending = pendingClaimInvocations.get(row.pending_runtime_session_id);
+  return pending !== undefined
+    && pending.sessionId === row.pending_runtime_session_id
+    && pending.ownerInstanceId === row.pending_runtime_owner_instance_id
+    && pending.claimAgentId === row.agent_id
+    && pending.claimAgentId === row.pending_runtime_claim_agent_id
+    && pending.runtimeAgentId === row.pending_runtime_agent_id;
+}
+
 async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
   const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
-  const rows = await pgQuery<{ claim_id: string; step_db_id: string; step_id: string; run_id: string; run_number: number; agent_id: string; claimed_at: string }>(
-    `SELECT cl.id::text AS claim_id, s.id as step_db_id, s.step_id, s.run_id, r.run_number, s.agent_id, cl.claimed_at
+  const rows = await pgQuery<{
+    claim_id: string; step_db_id: string; step_id: string; run_id: string;
+    run_number: number; agent_id: string; claimed_at: string;
+    pending_runtime_session_id: string | null;
+    pending_runtime_owner_instance_id: string | null;
+    pending_runtime_claim_agent_id: string | null;
+    pending_runtime_agent_id: string | null;
+  }>(
+    `SELECT cl.id::text AS claim_id, s.id as step_db_id, s.step_id, s.run_id, r.run_number, s.agent_id, cl.claimed_at,
+            pending_runtime.session_id AS pending_runtime_session_id,
+            pending_runtime.owner_instance_id AS pending_runtime_owner_instance_id,
+            pending_runtime.claim_agent_id AS pending_runtime_claim_agent_id,
+            pending_runtime.runtime_agent_id AS pending_runtime_agent_id
      FROM steps s
      JOIN runs r ON r.id = s.run_id
      JOIN claim_log cl
@@ -6944,6 +6990,12 @@ async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
       AND cl.story_id IS NULL
       AND cl.agent_id = s.agent_id
       AND cl.outcome IS NULL
+     LEFT JOIN runtime_sessions pending_runtime
+       ON pending_runtime.claim_id = cl.id
+      AND pending_runtime.run_id = s.run_id
+      AND pending_runtime.step_db_id = s.id
+      AND pending_runtime.workflow_step_id = s.step_id
+      AND pending_runtime.claim_agent_id = cl.agent_id
      WHERE s.status = 'running'
        AND s.type <> 'loop'
        AND r.status = 'running'
@@ -6975,22 +7027,39 @@ async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
       && active.stepId === row.step_db_id
       && active.claimAgentId === row.agent_id
     );
-    if (tracked) continue;
+    // A compiler preClaim can own a reserved runtime before any child exists.
+    if (tracked || hasPendingClaimInvocation(row)) continue;
 
     const claimedAtMs = new Date(row.claimed_at).getTime();
     const ageMs = Number.isFinite(claimedAtMs) ? Date.now() - claimedAtMs : thresholdMs;
     const diagnostic = `UNTRACKED_RUNNING_SINGLE_STEP: ${row.agent_id} has an open ${row.step_id} claim for ${formatDurationMs(ageMs)} but no active spawner process is tracking it; retrying instead of leaving the run idle.`;
     try {
-      await waitForClaimRuntimeQuiescence(row.run_id, undefined, row.agent_id);
-      await retrySingleStepClaimWithAuthority({
+      const claimId = Number(row.claim_id);
+      if (!Number.isSafeInteger(claimId) || claimId <= 0) continue;
+      // The candidate can become stale while prior rows or durable reads await.
+      // Recover C1 only, then keep C1 through every effect; never discover C2.
+      const candidateEnvelope = await recoverClaimEnvelopeFromDatabase({
+        runId: row.run_id,
+        stepDbId: row.step_db_id,
+        workflowStepId: row.step_id,
+        claimAgentId: row.agent_id,
+        runtimeAgentId: "spawner-untracked-recovery",
+        expectedClaimId: claimId,
+      });
+      if (!candidateEnvelope || hasPendingClaimInvocation(row)) continue;
+      await waitForClaimRuntimeQuiescence(row.run_id, undefined, row.agent_id, undefined, claimId);
+      if (hasPendingClaimInvocation(row)) continue;
+      const retried = await retrySingleStepClaimWithAuthority({
         runId: row.run_id,
         stepDbId: row.step_db_id,
         workflowStepId: row.step_id,
         claimAgentId: row.agent_id,
         runtimeAgentId: "spawner-untracked-recovery",
         diagnostic,
+        expectedClaimId: claimId,
       });
-      await releaseReservedRuntimeForClaimIfPresent(Number(row.claim_id), diagnostic);
+      if (!retried) continue;
+      await releaseReservedRuntimeForClaimIfPresent(claimId, diagnostic);
     } catch (error) {
       if (isClaimMutationAuthorityError(error)) continue;
       throw error;
@@ -7776,6 +7845,16 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   try { fs.unlinkSync(bootstrapFile); } catch { /* didnt exist, fine */ }
 
   const fullAgentId = `${wfId}_${role}`;
+  // Keep exact invocation ownership through preClaim, publication and transfer
+  // cleanup; claimingSpawns is only a role-level duplicate-spawn guard.
+  const pendingInvocation = {
+    sessionId: runtimeSessionId,
+    ownerInstanceId: SPAWNER_INSTANCE_ID,
+    claimAgentId: fullAgentId,
+    runtimeAgentId: agentId,
+  };
+  pendingClaimInvocations.set(runtimeSessionId, pendingInvocation);
+  try {
   let claim: Awaited<ReturnType<typeof claimStep>>;
   try {
     const recoveryDispatchClass = recoveryDispatchClassForRole(role);
@@ -8383,6 +8462,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
         }
         throw cleanupError;
       }
+    }
+  }
+  } finally {
+    if (pendingClaimInvocations.get(runtimeSessionId) === pendingInvocation) {
+      pendingClaimInvocations.delete(runtimeSessionId);
     }
   }
 }

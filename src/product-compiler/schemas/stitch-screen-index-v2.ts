@@ -112,7 +112,15 @@ export const StitchScreenObservableV2Schema = z.object({
   sourceLocator: NormalizedRelativeLocatorSchema,
   generatedSourceLocator: NormalizedRelativeLocatorSchema,
   selector: z.string().min(1).max(2_000),
+  readonlyDisplay: z.object({
+    kind: z.literal("input"),
+    inputType: z.literal("text"),
+    readOnly: z.literal(true),
+  }).strict().optional(),
 }).strict().superRefine((value, context) => {
+  if (value.readonlyDisplay && (value.selectorKind !== "accessibility" || value.role !== "textbox")) {
+    context.addIssue({ code: "custom", path: ["readonlyDisplay"], message: "Readonly displays require exact accessibility textbox authority" });
+  }
   if (value.selectorKind === "control" && !value.controlSlotRef) {
     context.addIssue({
       code: "custom",
@@ -360,6 +368,25 @@ export const StitchScreenIndexEntryV2Schema = z.object({
   }
 
   const rawCounts = value.projection.rawInteractiveCounts;
+  const displayElements = new Set<string>();
+  for (const observable of value.observables.filter((entry) => entry.readonlyDisplay)) {
+    const sameElement = value.observables.filter((entry) => entry.sourceElementRef === observable.sourceElementRef);
+    if (
+      observable.generatedSourceLocator !== value.file
+      || sameElement.some((entry) => !entry.readonlyDisplay
+        || JSON.stringify(entry.readonlyDisplay) !== JSON.stringify(observable.readonlyDisplay)
+        || entry.sourceLocator !== observable.sourceLocator
+        || entry.generatedSourceLocator !== observable.generatedSourceLocator)
+      || value.controls.some((control) => control.sourceElementRef === observable.sourceElementRef)
+      || value.rejectedControls.some((control) => control.sourceElementRef === observable.sourceElementRef)
+    ) {
+      context.addIssue({
+        code: "custom", path: ["observables"],
+        message: "Readonly display elements must have consistent exact source metadata and be disjoint from accepted and rejected controls",
+      });
+    }
+    displayElements.add(observable.sourceElementRef);
+  }
   const declaredCounts = {
     buttons: value.buttons,
     links: value.links,
@@ -382,12 +409,13 @@ export const StitchScreenIndexEntryV2Schema = z.object({
     ["select", "selects"],
   ] as const) {
     const covered = value.controls.filter((control) => control.kind === kind).length
-      + value.rejectedControls.filter((control) => control.kind === kind).length;
+      + value.rejectedControls.filter((control) => control.kind === kind).length
+      + (kind === "input" ? displayElements.size : 0);
     if (covered !== rawCounts[countField]) {
       context.addIssue({
         code: "custom",
         path: ["rejectedControls"],
-        message: `Every rendered ${kind} must be exactly accepted or inert-rejected`,
+        message: `Every rendered ${kind} must be exactly accepted, inert-rejected, or an indexed readonly display`,
       });
     }
   }

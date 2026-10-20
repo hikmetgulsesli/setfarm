@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { produceDesignInteractionGraphV2 } from "../../src/product-compiler/producers/design-graph-v2.js";
 import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
 import { produceImplementationSourceMapV1 } from "../../src/product-compiler/producers/implementation-source-map-v1.js";
+import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
 import { captureStitchRenderedSemanticsV2 } from "../../src/product-compiler/producers/stitch-rendered-semantics-v2.js";
 import {
   bindStitchTargetCandidateSelectionsV3,
@@ -22,7 +26,7 @@ import {
   StitchScreenIndexV2Schema,
   type StitchScreenIndexEntryV2,
 } from "../../src/product-compiler/schemas/stitch-screen-index-v2.js";
-import { buildContainedGameProductSpecV2 } from "./fixtures/product-semantics-v2.js";
+import { buildContainedGameProductSpecV2, containedGamePlanProposalV2, CONTAINED_GAME_TASK } from "./fixtures/product-semantics-v2.js";
 import { buildNoDesignProductBuildPacketV3Contracts } from "./fixtures/product-build-packet-v3.js";
 import {
   stitchDownloadReceipts,
@@ -160,8 +164,22 @@ function topologyFor(
   });
 }
 
-async function exactStitchInput() {
-  const productSpec = buildContainedGameProductSpecV2();
+async function exactStitchInput(options: { readonlyTextbox?: boolean; sharedReadonlyObservable?: boolean } = {}) {
+  let productSpec = buildContainedGameProductSpecV2();
+  if (options.readonlyTextbox) {
+    // Establish real required selectors/evidence before capture. Shared refs
+    // receive separate authentic browser receipts for the same native element.
+    const proposal = containedGamePlanProposalV2();
+    const action = proposal.actions[0];
+    const observable = action.observables.find((entry: any) => entry.selector.kind === "accessibility");
+    observable.selector.role = "textbox";
+    observable.assertions = [{ phase: "after", property: "value", operator: "equals", expected: "Playing" }];
+    if (options.sharedReadonlyObservable) action.observables.push({ ...structuredClone(observable), key: "status_value_shared" });
+    const compiled = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
+    assert.equal(compiled.status, "canonicalized", JSON.stringify(compiled));
+    if (compiled.status !== "canonicalized") throw new Error("unreachable");
+    productSpec = ProductSpecV2Schema.parse(compiled.productSpec);
+  }
   const targetsResult = produceDesignGenerationTargetsV2(productSpec);
   assert.equal(targetsResult.status, "produced", JSON.stringify(targetsResult));
   if (targetsResult.status !== "produced") throw new Error("unreachable");
@@ -179,7 +197,9 @@ async function exactStitchInput() {
     `<main data-surface-id="${target.surfaceRef}">`,
     `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
     `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
-    `<section data-surface-id="${statusSurface}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+    options.readonlyTextbox
+      ? `<section data-surface-id="${statusSurface}"><input type="text" readonly aria-label="Game status" value="Playing" /><input hidden aria-label="Undeclared adjacent input" /></section>`
+      : `<section data-surface-id="${statusSurface}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
     "</main>",
   ].join(""), "implementation-source-map-v1");
   const screenshotBytes = validStitchPng(241);
@@ -268,6 +288,12 @@ async function exactStitchInput() {
   };
   const observables: StitchScreenIndexEntryV2["observables"] = designGraph.observables.map((observable) => {
     const element = observable.elementBindings[0]!;
+    const readonlyDisplay = options.readonlyTextbox && observable.selector.kind === "accessibility";
+    if (readonlyDisplay) {
+      const native = renderedCandidate.elements.find((entry) => entry.elementRef === element.elementRef)!;
+      assert.equal(native.tagName, "input");
+      assert.deepEqual(native.nativeInputState, { inputType: "text", readOnly: true, contentEditable: false });
+    }
     return {
       observableRef: observable.observableRef,
       actionRef: observable.actionRef,
@@ -283,8 +309,20 @@ async function exactStitchInput() {
       sourceLocator: renderedCandidate.semanticDom.locator,
       generatedSourceLocator: GENERATED_PATH,
       selector: `[data-observable-refs~="${observable.observableRef}"]`,
+      ...(readonlyDisplay ? { readonlyDisplay: { kind: "input" as const, inputType: "text" as const, readOnly: true as const } } : {}),
     };
   });
+  const rejectedInput = options.readonlyTextbox
+    ? renderedCandidate.elements.find((element) => element.tagName === "input" && element.ariaLabel === "Undeclared adjacent input")
+    : undefined;
+  if (options.readonlyTextbox) assert.ok(rejectedInput);
+  const rejectedControls: StitchScreenIndexEntryV2["rejectedControls"] = rejectedInput ? [{
+    rejectionId: "undeclared-adjacent-input", kind: "input", label: "Undeclared adjacent input", index: 1,
+    reasonCode: "outside_canonical_rendered_contract", sourceElementRef: rejectedInput.elementRef,
+    sourceLocator: renderedCandidate.semanticDom.locator, generatedSourceLocator: GENERATED_PATH,
+    selector: '[data-setfarm-rejected-control="undeclared-adjacent-input"]',
+  }] : [];
+  const inputCount = renderedCandidate.elements.filter((element) => element.tagName === "input").length;
   const { generatedSourceLocator: _generatedSourceLocator, ...physicalAction } = physicalControl;
   const screenIndex = StitchScreenIndexV2Schema.parse([{
     screenId,
@@ -292,7 +330,7 @@ async function exactStitchInput() {
     componentName: "PlayPage",
     file: GENERATED_PATH,
     buttons: 1,
-    inputs: 0,
+    inputs: inputCount,
     textareas: 0,
     selects: 0,
     links: 0,
@@ -304,7 +342,7 @@ async function exactStitchInput() {
       mode: "contract_only",
       targetRef: target.targetId,
       authoritySchema: "setfarm.design-interaction-graph.v2",
-      rawInteractiveCounts: { buttons: 1, links: 0, inputs: 0, textareas: 0, selects: 0 },
+      rawInteractiveCounts: { buttons: 1, links: 0, inputs: inputCount, textareas: 0, selects: 0 },
       requiredObservableRefs: observables.map((observable) => observable.observableRef).sort(),
     },
     componentApi: {
@@ -317,7 +355,7 @@ async function exactStitchInput() {
       }],
       inputTransports: [],
     },
-    rejectedControls: [],
+    rejectedControls,
   }]);
 
   const observableGroups = new Map<string, StitchScreenIndexEntryV2["observables"]>();
@@ -363,7 +401,8 @@ async function exactStitchInput() {
       const surface = bindings.find((observable) => observable.selectorKind === "surface");
       const accessibility = bindings.find((observable) =>
         observable.selectorKind === "accessibility");
-      const tagName = accessibility ? "output" : "section";
+      const readonlyDisplay = bindings.some((observable) => observable.readonlyDisplay);
+      const tagName = readonlyDisplay ? "input" : accessibility ? "output" : "section";
       const attributes = [
         `data-observable-refs=${JSON.stringify(bindings
           .map((observable) => observable.observableRef)
@@ -376,7 +415,9 @@ async function exactStitchInput() {
         ...(accessibility?.role ? [`role=${JSON.stringify(accessibility.role)}`] : []),
         ...(accessibility?.name ? [`aria-label=${JSON.stringify(accessibility.name)}`] : []),
       ];
-      return `      <${tagName} ${attributes.join(" ")}>Evidence</${tagName}>`;
+      return readonlyDisplay
+        ? `      <input ${attributes.join(" ")} type="text" readOnly={true} value="Playing" />`
+        : `      <${tagName} ${attributes.join(" ")}>Evidence</${tagName}>`;
     });
   const generatedSourceText = [
     "export function PlayPage({ actions }: { actions?: Record<string, () => void> }) {",
@@ -384,6 +425,7 @@ async function exactStitchInput() {
     "    <main>",
     `      <${physicalControl.tagName} ${physicalAttributes.join(" ")}>Start Game</${physicalControl.tagName}>`,
     ...generatedObservableElements,
+    ...rejectedControls.map((control) => `      <input disabled hidden={true} aria-hidden={true} aria-label="Undeclared adjacent input" data-setfarm-element-ref=${JSON.stringify(control.sourceElementRef)} data-setfarm-rejected-control=${JSON.stringify(control.rejectionId)} />`),
     "    </main>",
     "  );",
     "}",
@@ -447,7 +489,97 @@ async function exactStitchInput() {
   };
 }
 
+function writePrivateSourceMapJson(root: string, name: string, value: unknown): void {
+  fs.writeFileSync(path.join(root, name), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+}
+
+function rebindScreenIndexSource(input: Awaited<ReturnType<typeof exactStitchInput>>): void {
+  input.screenIndexSource.text = JSON.stringify(input.screenIndex, null, 2);
+  input.screenIndexSource.source.hash = sha256(input.screenIndexSource.text);
+  input.screenIndexSource.source.byteLength = Buffer.byteLength(input.screenIndexSource.text, "utf8");
+}
+
+// These cases exercise REAL capture via exactStitchInput. Builder authors only;
+// Root separately admits exact focused native RED/GREEN. No fixture cleanup.
+async function verifyReadonlySourceMap(sharedReadonlyObservable: boolean): Promise<void> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-source-map-readonly-W1-"));
+  try {
+    fs.chmodSync(root, 0o700);
+    writePrivateSourceMapJson(root, "options.json", { readonlyTextbox: true, sharedReadonlyObservable });
+    const input = await exactStitchInput({ readonlyTextbox: true, sharedReadonlyObservable });
+    writePrivateSourceMapJson(root, "input.json", input);
+    const result = produceImplementationSourceMapV1(input);
+    // Preserve genuine original input/result before the first producer success
+    // assertion, including its expected pre-fix OUTPUT_INVALID cardinality RED.
+    writePrivateSourceMapJson(root, "result.json", result);
+    assert.equal(result.status, "produced", JSON.stringify(result));
+    if (result.status !== "produced") throw new Error("unreachable");
+    const sourceMap = ImplementationSourceMapV1Schema.parse(result.sourceMap);
+    assert.equal(sourceMap.designSourceKind, "stitch");
+    if (sourceMap.designSourceKind !== "stitch") throw new Error("unreachable");
+    const indexed = input.screenIndex[0]!;
+    const screen = sourceMap.screens[0]!;
+    const displayObservables = indexed.observables.filter((observable) => observable.readonlyDisplay);
+    assert.equal(displayObservables.length, sharedReadonlyObservable ? 2 : 1);
+    assert.equal(new Set(displayObservables.map((observable) => observable.sourceElementRef)).size, 1);
+    assert.deepEqual(indexed.projection.rawInteractiveCounts, { buttons: 1, links: 0, inputs: 2, textareas: 0, selects: 0 });
+    assert.equal(indexed.inputs, 2);
+    assert.deepEqual(screen.cardinality, {
+      raw: { buttons: 1, links: 0, inputs: 2, textareas: 0, selects: 0 },
+      accepted: { buttons: 1, links: 0, inputs: 1, textareas: 0, selects: 0 },
+      rejected: { buttons: 0, links: 0, inputs: 1, textareas: 0, selects: 0 },
+    });
+    assert.equal(screen.controls.length, 1);
+    assert.equal(indexed.controls.length, 1);
+    assert.deepEqual(screen.actionInputs, []);
+    assert.deepEqual(screen.componentApi.inputTransports, []);
+    assert.deepEqual(screen.componentApi, indexed.componentApi);
+    assert.equal(screen.rejectedControls.length, 1);
+    assert.equal(screen.controls.some((control) => control.sourceElementRef === displayObservables[0]!.sourceElementRef), false);
+    assert.equal(screen.rejectedControls.some((control) => control.contract.sourceElementRef === displayObservables[0]!.sourceElementRef), false);
+    assert.equal(sourceMap.screenIndexV2PayloadHash, hashCanonicalJson(input.screenIndex));
+    assert.equal(sourceMap.screenIndexSourceHash, sha256(input.screenIndexSource.text));
+    assert.equal(sourceMap.screenIndexSourceHash, input.screenIndexSource.source.hash);
+    assert.deepEqual(JSON.parse(input.screenIndexSource.text), input.screenIndex);
+    assert.equal(result.payloadHash, implementationSourceMapPayloadHashV1(sourceMap));
+
+    const mutations: [string, (copy: any) => void][] = [
+      ["missing-metadata", (copy) => { delete copy.screenIndex[0].observables.find((observable: any) => observable.readonlyDisplay).readonlyDisplay; }],
+      ["wrong-metadata", (copy) => { copy.screenIndex[0].observables.find((observable: any) => observable.readonlyDisplay).readonlyDisplay.inputType = "number"; }],
+      ["overlapping-metadata", (copy) => { copy.screenIndex[0].rejectedControls[0].sourceElementRef = displayObservables[0]!.sourceElementRef; }],
+      ["inconsistent-count", (copy) => { copy.screenIndex[0].inputs = 3; copy.screenIndex[0].projection.rawInteractiveCounts.inputs = 3; }],
+    ];
+    for (const [name, mutate] of mutations) {
+      const copy = structuredClone(input);
+      mutate(copy);
+      // Keep exact index bytes/ref current: the metadata/count contract, not
+      // unrelated stale artifact bytes, must cause these rejections.
+      rebindScreenIndexSource(copy);
+      writePrivateSourceMapJson(root, `${name}-input.json`, copy);
+      const rejected = produceImplementationSourceMapV1(copy);
+      writePrivateSourceMapJson(root, `${name}-result.json`, rejected);
+      assert.equal(rejected.status, "rejected", name);
+      if (rejected.status !== "rejected") throw new Error("unreachable");
+      assert.deepEqual(rejected.rejectionCodes, ["IMPLEMENTATION_SOURCE_MAP_V1_INPUT_INVALID"], name);
+      assert.ok(rejected.diagnostics.every((diagnostic) => diagnostic.reference?.startsWith("screenIndex/")), name);
+    }
+  } catch (error) {
+    writePrivateSourceMapJson(root, "failure.json", { message: error instanceof Error ? error.message : String(error) });
+    throw error;
+  } finally {
+    console.log(JSON.stringify({ code: "IMPLEMENTATION_SOURCE_MAP_READONLY_W1_FIXTURE_RETAINED", path: root, sharedReadonlyObservable }));
+  }
+}
+
 describe("ImplementationSourceMapV1", { concurrency: 1 }, () => {
+  it("accounts a readonly textbox plus adjacent rejected input in the genuine source-map producer", async () => {
+    await verifyReadonlySourceMap(false);
+  });
+
+  it("counts shared readonly textbox observables once in the genuine source-map producer", async () => {
+    await verifyReadonlySourceMap(true);
+  });
+
   it("materializes exact Stitch screen, source, owner, control, and observable mappings deterministically", async () => {
     const input = await exactStitchInput();
     const first = produceImplementationSourceMapV1(input);

@@ -1712,6 +1712,46 @@ function isStaticallyInteractive(element: JsxElementRecord): boolean {
   return [...element.attributes.keys()].some((attribute) => /^on[A-Z]/.test(attribute));
 }
 
+function isExactReadonlyObservableDisplay(
+  screen: StitchScreenIndexEntryV2,
+  element: JsxElementRecord,
+): boolean {
+  if (element.tagName !== "input" || element.hasSpreadAttribute) return false;
+  if ([...element.attributes.values()].some((occurrences) => occurrences.length !== 1)) return false;
+  const sourceRef = exactLiteralAttribute(element, "data-setfarm-element-ref");
+  const marker = exactLiteralAttribute(element, "data-observable-refs");
+  if (!sourceRef || !marker) return false;
+  const refs = observableRefTokens(marker);
+  if (refs.length === 0 || new Set(refs).size !== refs.length) return false;
+  const observables = screen.observables.filter((entry) => entry.sourceElementRef === sourceRef);
+  if (observables.length !== refs.length || !sameSortedValues(refs, observables.map((entry) => entry.observableRef))) return false;
+  if (observables.some((entry) => entry.selectorKind !== "accessibility" || entry.role !== "textbox"
+    || entry.readonlyDisplay?.kind !== "input" || entry.readonlyDisplay.inputType !== "text" || entry.readonlyDisplay.readOnly !== true
+    || entry.generatedSourceLocator !== screen.file
+    || entry.sourceLocator !== observables[0]!.sourceLocator
+    || exactLiteralAttribute(element, "role") !== entry.role
+    || exactLiteralAttribute(element, "aria-label") !== entry.name)) return false;
+  if (screen.controls.some((entry) => entry.sourceElementRef === sourceRef)
+    || screen.rejectedControls.some((entry) => entry.sourceElementRef === sourceRef)) return false;
+  const readonly = element.attributes.get("readOnly") ?? [];
+  if (readonly.length !== 1 || !readonly[0]!.booleanTrue
+    || (readonly[0]!.expression && readonly[0]!.expression.kind !== ts.SyntaxKind.TrueKeyword)) return false;
+  const types = element.attributes.get("type") ?? [];
+  if (types.length > 1 || (types.length === 1 && (types[0]!.value !== "text" || types[0]!.expression))) return false;
+  const values = element.attributes.get("value") ?? [];
+  if (values.length !== 1 || typeof values[0]!.value !== "string" || values[0]!.expression) return false;
+  const names = [...element.attributes.keys()];
+  const foldedNames = names.map((name) => name.toLowerCase());
+  if (new Set(foldedNames).size !== names.length) return false;
+  if (names.some((name) => (name.toLowerCase() === "readonly" && name !== "readOnly")
+    || (name.toLowerCase() === "type" && name !== "type")
+    || (name.toLowerCase() === "value" && name !== "value"))) return false;
+  return !names.some((name) => /^on/i.test(name) || [
+    "data-action", "data-action-input", "data-action-id", "data-control-id", "data-control-slot",
+    "data-setfarm-link-action", "data-setfarm-rejected-control", "contenteditable", "defaultvalue",
+  ].includes(name.toLowerCase()));
+}
+
 function validateInteractiveCompletenessAndSpreads(
   screen: StitchScreenIndexEntryV2,
   rejectedControls: readonly RejectedControlContractV2[],
@@ -1772,6 +1812,7 @@ function validateInteractiveCompletenessAndSpreads(
       && actionId === undefined
       && inputId === undefined
       && !indexedRejected
+      && !isExactReadonlyObservableDisplay(screen, element)
     ) {
       diagnostics.push(diagnostic({
         code: "STITCH_SCREEN_INTERACTIVE_ELEMENT_UNINDEXED",

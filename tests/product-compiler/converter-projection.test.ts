@@ -33,11 +33,20 @@ async function writeNativeV2Projection(
     customRoleControl?: boolean;
     implicitStatusRole?: boolean;
     materialIcons?: boolean;
+    readonlyStatusInput?: boolean;
   } = {},
 ) {
   const stitch = path.join(root, "stitch");
   fs.mkdirSync(stitch, { recursive: true });
   const productSpec = buildContainedGameProductSpecV2();
+  if (options.readonlyStatusInput) {
+    const observable = productSpec.actions.flatMap((action) => action.observableEffects)
+      .find((effect) => effect.selector.kind === "accessibility")!;
+    assert.equal(observable.selector.kind, "accessibility");
+    if (observable.selector.kind !== "accessibility") throw new Error("unreachable");
+    observable.selector.role = "textbox";
+    observable.assertions = [{ phase: "after", property: "value", operator: "equals", expected: "Playing" }];
+  }
   const producedTargets = produceDesignGenerationTargetsV2(productSpec);
   assert.equal(producedTargets.status, "produced", JSON.stringify(producedTargets));
   if (producedTargets.status !== "produced") throw new Error("unreachable");
@@ -56,7 +65,9 @@ async function writeNativeV2Projection(
   const materialIconDecorations = options.materialIcons
     ? `<div aria-label="Static icon samples"><span class="material-symbols-outlined h-5 w-5">play_arrow</span><i class="material-icons icon-shell" data-icon="search"></i><span class="material-symbols-outlined text-slate-500">project_specific_unknown_icon</span></div>`
     : "";
-  const statusElement = options.implicitStatusRole
+  const statusElement = options.readonlyStatusInput
+    ? `<input type="text" readonly aria-label="${statusObservable.selector.name}" value="Playing" /><input hidden aria-label="Undeclared adjacent input" />`
+    : options.implicitStatusRole
     ? `<output hidden aria-label="${statusObservable.selector.name}">Playing</output>`
     : `<div hidden role="${statusObservable.selector.role}" aria-label="${statusObservable.selector.name}">Playing</div>`;
   const htmlBytes = validStitchHtml([
@@ -370,6 +381,43 @@ describe("Stitch converter semantic projection", () => {
       assert.match(generatedTag, /aria-label="Game status"/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Real native-v2 capture/conversion regression. Authored here; explicitly
+  // UNRUN by the Task2 builder, pending Root's separate native admission.
+  it("preserves a browser-proven visible readonly textbox observable without inventing control semantics", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-v2-readonly-observable-"));
+    try {
+      await writeNativeV2Projection(root, { readonlyStatusInput: true });
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], { cwd: process.cwd(), stdio: "pipe" });
+      const rawIndex = JSON.parse(fs.readFileSync(path.join(root, "src/screens/SCREEN_INDEX.json"), "utf8"));
+      const screen = StitchScreenIndexEntryV2Schema.parse(rawIndex[0]);
+      const observable = screen.observables.find((entry) => entry.selectorKind === "accessibility")!;
+      assert.deepEqual(observable.readonlyDisplay, { kind: "input", inputType: "text", readOnly: true });
+      const rendered = JSON.parse(fs.readFileSync(path.join(root, "stitch/STITCH_RENDERED_SEMANTICS_V2.json"), "utf8"));
+      const native = rendered.candidates[0].elements.find((entry: any) => entry.elementRef === observable.sourceElementRef);
+      assert.equal(native.role, null); // The browser's native input role is implicit.
+      assert.equal(native.renderState, "rendered");
+      assert.equal(native.nativeInputState.readOnly, true);
+      const sourceText = fs.readFileSync(path.join(root, screen.file), "utf8");
+      const tag = sourceText.match(new RegExp(`<input[^>]*data-setfarm-element-ref="${observable.sourceElementRef}"[^>]*>`))?.[0];
+      assert.ok(tag);
+      assert.match(tag, /role="textbox"/);
+      assert.match(tag, /aria-label="Game status"/);
+      assert.match(tag, /value="Playing"/);
+      assert.match(tag, /readOnly=\{true\}/);
+      assert.doesNotMatch(tag, /disabled|hidden|data-action=|data-action-input=|data-action-id=|data-control-id=|data-control-slot=|data-setfarm-rejected-control=|on[A-Z]/);
+      assert.equal(screen.inputs, 2);
+      assert.equal(screen.projection.rawInteractiveCounts.inputs, 2);
+      assert.equal(screen.controls.some((entry) => entry.sourceElementRef === observable.sourceElementRef), false);
+      assert.equal(screen.rejectedControls.some((entry) => entry.sourceElementRef === observable.sourceElementRef), false);
+      assert.equal(screen.rejectedControls.length, 1);
+      assert.equal(screen.rejectedControls[0]!.label, "Undeclared adjacent input");
+      assert.deepEqual(screen.componentApi.inputTransports, []);
+      assert.deepEqual(validateStitchScreenSourceV2({ screen, sourceText }), { status: "valid", diagnostics: [] });
+    } finally {
+      console.log(JSON.stringify({ code: "STITCH_READONLY_OBSERVABLE_NATIVE_FIXTURE_RETAINED", path: root }));
     }
   });
 
