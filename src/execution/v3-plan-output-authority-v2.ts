@@ -36,6 +36,7 @@ const PRODUCT_SPEC_V2_BLOCK_RE = /```product-spec-v2\s*\n([\s\S]*?)\n```/g;
 const PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_V1_BLOCK_RE = /```product-runtime-behavior-contract-v1\s*\n([\s\S]*?)\n```/g;
 const PLAN_PRODUCT_BUILD_AUTHORITY_V1_BLOCK_RE = /```plan-product-build-authority-v1\s*\n([\s\S]*?)\n```/g;
 const PRODUCT_SPEC_REJECTION_BLOCK_RE = /```product-spec-rejection-v1\s*\n([\s\S]*?)\n```/g;
+const BARE_PLAN_REJECTION_V1_RE = /^\s*STATUS: done\r?\n\s*```product-spec-rejection-v1\r?\n([\s\S]*?)\r?\n```\s*$/u;
 const LEGACY_TYPED_BLOCK_RE = /```(?:plan-semantic-proposal-v1|product-spec-v1)\s*\n([\s\S]*?)\n```/g;
 export const PLAN_V2_PRD_MAX_BYTES = 4 * 1024 * 1024;
 
@@ -142,13 +143,84 @@ function boundedParsedSnapshot(value: unknown, code: string): unknown {
   }
 }
 
+function isPlanWhitespace(code: number): boolean {
+  return (code >= 0x09 && code <= 0x0d)
+    || code === 0x20 || code === 0xa0 || code === 0x1680
+    || (code >= 0x2000 && code <= 0x200a)
+    || code === 0x2028 || code === 0x2029 || code === 0x202f
+    || code === 0x205f || code === 0x3000 || code === 0xfeff;
+}
+
+/** Inspect only the leading envelope, with constant auxiliary state and no body scan. */
+function selectsBarePlanRejectionV1(raw: string): boolean {
+  let cursor = 0;
+  while (cursor < raw.length && isPlanWhitespace(raw.charCodeAt(cursor))) cursor += 1;
+  const statusLine = "STATUS: done";
+  if (!raw.startsWith(statusLine, cursor)) return false;
+  cursor += statusLine.length;
+  if (raw.charCodeAt(cursor) === 0x0d) cursor += 1;
+  if (raw.charCodeAt(cursor) !== 0x0a) return false;
+  cursor += 1;
+  while (cursor < raw.length && isPlanWhitespace(raw.charCodeAt(cursor))) cursor += 1;
+  const openingFence = "```product-spec-rejection-v1";
+  if (!raw.startsWith(openingFence, cursor)) return false;
+  cursor += openingFence.length;
+  if (raw.charCodeAt(cursor) === 0x0d) cursor += 1;
+  return raw.charCodeAt(cursor) === 0x0a;
+}
+
+function readBarePlanRejectionV1(raw: string | undefined, parsed: ParsedOutput): string | undefined {
+  if (raw === undefined) return undefined;
+  const bytes = Buffer.byteLength(raw, "utf8");
+  const selected = selectsBarePlanRejectionV1(raw);
+  const hasPrd = parsed.prd !== undefined && parsed.prd !== null && parsed.prd !== "";
+  if (bytes > PLAN_V2_PRD_MAX_BYTES && (selected || !hasPrd)) {
+    throw rejection(
+      "V3_PLAN_V2_RAW_OUTPUT_TOO_LARGE",
+      "/rawOutput",
+      `Bare PLAN refusal exceeds ${PLAN_V2_PRD_MAX_BYTES} UTF-8 bytes`,
+    );
+  }
+  if (!selected) return undefined;
+  // Only a byte-bounded selected candidate reaches the full-body matcher or decoder.
+  const match = BARE_PLAN_REJECTION_V1_RE.exec(raw);
+  if (!match || match[1]!.includes("\n```")) {
+    throw rejection(
+      "V3_PLAN_V2_BARE_REJECTION_TRANSPORT_INVALID",
+      "/rawOutput",
+      "Bare PLAN refusal must be the entire exact STATUS and rejection-fence output",
+    );
+  }
+  if (hasPrd || Object.keys(parsed).some((key) => key !== "status" && key !== "prd")) {
+    throw rejection(
+      "V3_PLAN_V2_BARE_REJECTION_PARSED_SIBLING_FORBIDDEN",
+      "/rawOutput",
+      "Bare PLAN refusal cannot coexist with PRD or other parsed output keys",
+    );
+  }
+  return match[1]!;
+}
+
+function decodePlanRejectionV1(task: string, raw: string): ProductSpecRejectionV1 {
+  const parsed = ProductSpecRejectionV1Schema.parse(boundedParsedSnapshot(
+    decode(raw, "V3_PLAN_V2_REJECTION_JSON_INVALID"),
+    "V3_PLAN_V2_REJECTION_INPUT_INVALID",
+  ));
+  return canonicalizeProductSpecRejectionV1({ task, rejection: parsed });
+}
+
 /** New v2 prompts emit one atomic build proposal; semantic-only v2 stays readable. */
 export function resolveV3PlanOutputAuthorityV2(input: Readonly<{
   task: string;
   parsed: ParsedOutput;
+  rawOutput?: string;
   requestedStackPackId?: string;
   allowSemanticOnlyCompatibility?: boolean;
 }>): V3PlanOutputAuthorityV2 {
+  const bareRejection = readBarePlanRejectionV1(input.rawOutput, input.parsed);
+  if (bareRejection !== undefined) {
+    return { status: "rejection", rejection: decodePlanRejectionV1(input.task, bareRejection) };
+  }
   const prd = prdText(input.parsed);
   const builds = blocks(prd, PLAN_PRODUCT_BUILD_PROPOSAL_V1_BLOCK_RE);
   const semantic = blocks(prd, PLAN_SEMANTIC_PROPOSAL_V2_BLOCK_RE);
@@ -190,13 +262,9 @@ export function resolveV3PlanOutputAuthorityV2(input: Readonly<{
     );
   }
   if (rejections.length === 1) {
-    const parsed = ProductSpecRejectionV1Schema.parse(boundedParsedSnapshot(
-      decode(rejections[0]!, "V3_PLAN_V2_REJECTION_JSON_INVALID"),
-      "V3_PLAN_V2_REJECTION_INPUT_INVALID",
-    ));
     return {
       status: "rejection",
-      rejection: canonicalizeProductSpecRejectionV1({ task: input.task, rejection: parsed }),
+      rejection: decodePlanRejectionV1(input.task, rejections[0]!),
     };
   }
   if (semantic.length === 1 && input.allowSemanticOnlyCompatibility !== true) {

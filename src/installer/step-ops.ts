@@ -8989,7 +8989,7 @@ export async function completeStep(
       };
       const semanticsV2 = context["product_semantics_version"] === "v2";
       nativeV3PlanAuthority = semanticsV2
-        ? resolveV3PlanOutputAuthorityV2(planInput)
+        ? resolveV3PlanOutputAuthorityV2({ ...planInput, rawOutput: output })
         : resolveV3PlanOutputAuthorityV1(planInput);
       if (nativeV3PlanAuthority.status === "proposal") {
         const canonicalPrd = semanticsV2
