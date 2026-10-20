@@ -19,6 +19,8 @@ Execution: subagent-driven-development with fresh non-delivery builder, genuine 
 | tests/product-compiler/readonly-observable-projection.test.ts (new) | Genuine complete converter functions with inert private projection fixtures and strict validator round trip; no browser/process/DB/provider |
 | tests/product-compiler/stitch-screen-source-validator-v2.test.ts | Positive exact displays and spoofing/mutability/handler/spread/overlap negative regressions |
 | tests/product-compiler/converter-projection.test.ts | Real native-v2 readonly input round trip; builder authors only, Root separately admits/executes native coverage |
+| src/product-compiler/producers/implementation-source-map-v1.ts | Final W1: count distinct strict indexed readonly displays as aggregate accepted native inputs; keep source-map schema/raw equality unchanged |
+| tests/product-compiler/implementation-source-map-v1.test.ts | Final W1: genuine producer/output-schema readonly and deduplication regression; existing fixture uses native capture, Root alone runs exact focused cases and retains new evidence |
 
 ## Constraints
 

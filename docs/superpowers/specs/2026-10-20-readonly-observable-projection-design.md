@@ -83,3 +83,31 @@ Normal reviewed PR merge precedes the genuine stock build, whose maintained
 clean-main/HEAD==origin/main guard remains intact. New runtime qualification
 waits current full8 settlement and fresh rollout guards. Existing failed runs
 stay failed evidence. No full8 GO or overall completion follows from unit tests.
+
+## Final review W1: downstream source-map cardinality
+
+Whole-branch review traced the required setup-build consumer after local source
+validation. The implementation-source-map producer copies exact raw counts but
+counts only controls as accepted and rejectedControls as rejected. A readonly
+display leaves a deficit and its existing output schema correctly rejects it.
+The retained native fixture has2raw inputs,0accepted input controls,1rejected
+input and1readonly display. This must not be delivered as a complete root fix.
+
+Count distinct strict indexed readonlyDisplay source elements in the producer's
+aggregate accepted.inputs in addition to accepted input controls. Here accepted
+describes admitted native elements; it creates no control, action, transport or
+component-API entry. The existing source-map schema and exact raw=accepted+rejected
+guard remain unchanged. Strict input index parsing, actual generated-source
+validation and screenIndexV2PayloadHash already bind this classification. Never
+infer a display from a raw-count deficit or reduce raw counts.
+
+Add only the direct producer and its existing focused regression file to the
+File Map. Exercise genuine produceImplementationSourceMapV1 through output
+schema parsing, with one readonly display plus rejected input, multiple
+observables sharing that display, old artifacts and invalid/missing/overlapping
+metadata. Its existing fixture uses actual browser capture: the builder authors
+test-only changes and freezes them; Root alone admits a single focused native
+RED before any producer edit, then GREEN afterward. Existing unrelated native
+cases are excluded unless Root explicitly selects the one baseline. Retain new
+fixture input/output evidence on all outcomes. This is the single final-review
+fix dispatch and scoped re-review, not an unrelated new feature.
