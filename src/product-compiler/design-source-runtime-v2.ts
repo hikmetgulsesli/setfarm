@@ -34,6 +34,7 @@ import { produceDesignInteractionGraphV2 } from "./producers/design-graph-v2.js"
 import { decodeStitchDirectBatchV2 } from "./producers/stitch-direct-response.js";
 import {
   captureStitchRenderedSemanticsV2,
+  StitchRenderedSemanticsInfrastructureErrorV2,
   type StitchRenderedSemanticsCaptureV2,
 } from "./producers/stitch-rendered-semantics-v2.js";
 import {
@@ -52,6 +53,7 @@ import {
 import type { ProductCompilationAttemptV1 } from "./schemas/product-compilation-attempt-v1.js";
 import {
   STITCH_RENDERED_SEMANTICS_POLICY_V2,
+  STITCH_READONLY_TEXT_OBSERVABLE_POLICY_V1,
   StitchRenderedSemanticsV2Schema,
   type StitchRenderedSemanticsV2,
 } from "./schemas/stitch-rendered-semantics-v2.js";
@@ -78,6 +80,7 @@ import {
   inspectEnglishTextV1,
 } from "./english-text-contract-v1.js";
 import {
+  DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1,
   buildV3BatchStitchPromptV2,
   type V3DesignContractV2,
 } from "./v3-design-contract-v2.js";
@@ -89,6 +92,14 @@ export const DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1 = Object.freeze
   boundary: "product_compiler.design_source.semantic_closure",
   failureClass: "contract_invalid",
   failureCode: "DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED",
+} satisfies OperationalFailureCauseV1);
+
+export const DESIGN_SOURCE_RENDER_PREFETCH_OPERATIONAL_CAUSE_V1 = Object.freeze({
+  schema: "setfarm.operational-failure-cause.v1",
+  workflowStepId: "design",
+  boundary: "product_compiler.design_source.resource_prefetch",
+  failureClass: "infrastructure_failure",
+  failureCode: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
 } satisfies OperationalFailureCauseV1);
 
 const AttemptTransportSchema = z.object({
@@ -457,12 +468,39 @@ async function materializeAcceptedAuthority(input: Readonly<{
     }
     artifactsById.set(artifact.screenId, artifact);
   }
-  const renderedCapture = await captureStitchRenderedSemanticsV2({
-    generationTargets: input.contract.generationTargets,
-    directResponseEvidence,
-    artifacts,
-    deviceType: input.deviceType,
-  });
+  let renderedCapture: StitchRenderedSemanticsCaptureV2;
+  try {
+    renderedCapture = await captureStitchRenderedSemanticsV2({
+      generationTargets: input.contract.generationTargets,
+      directResponseEvidence,
+      artifacts,
+      deviceType: input.deviceType,
+    });
+  } catch (error) {
+    if (!(error instanceof StitchRenderedSemanticsInfrastructureErrorV2)
+      || error.code !== "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED"
+      || error.phase !== "resource_prefetch") throw error;
+    const cause = DESIGN_SOURCE_RENDER_PREFETCH_OPERATIONAL_CAUSE_V1;
+    throw new DesignSourceMaterializationFailureV2({
+      disposition: "infrastructure_failure",
+      failure: {
+        failureFingerprint: hashCanonicalJson({
+          schema: "setfarm.design-source-failure-fingerprint.v1",
+          requestHash: input.attempt.requestHash,
+          phase: error.phase,
+          errorName: error.name,
+          errorCode: error.code,
+        }),
+        operationalCauseHash: hashCanonicalJson(cause),
+        reasonCodes: [error.code],
+        evidence: {
+          cause,
+          phase: error.phase,
+          error: { name: error.name, code: error.code, phase: error.phase },
+        },
+      },
+    });
+  }
   const renderedRef = await writeCanonicalPayload({
     area: "render",
     locator: "rendered-semantics.json",
@@ -718,11 +756,18 @@ function authorityFor(input: DesignSourceAuthorityRuntimeInputV2): DesignSourceG
       generationTargetsSchema: generationTargets.schema,
       projectId: input.projectId,
       semanticRetryPolicy: DESIGN_SOURCE_SEMANTIC_RETRY_EVIDENCE_POLICY_V1,
+      selectedHtmlPromptDisclosure: DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1,
       selectedHtmlAdmissionPolicy: DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2,
       providerRejectionPolicy: STITCH_STAGE_PROVIDER_REJECTION_POLICY_V1,
     }),
-    renderPolicyHash: hashCanonicalJson(STITCH_RENDERED_SEMANTICS_POLICY_V2),
-    selectionPolicyHash: hashCanonicalJson(STITCH_TARGET_CANDIDATE_SELECTION_POLICY_V2),
+    renderPolicyHash: hashCanonicalJson({
+      policy: STITCH_RENDERED_SEMANTICS_POLICY_V2,
+      nativeInputObservation: STITCH_READONLY_TEXT_OBSERVABLE_POLICY_V1,
+    }),
+    selectionPolicyHash: hashCanonicalJson({
+      policy: STITCH_TARGET_CANDIDATE_SELECTION_POLICY_V2,
+      readOnlyObservableAdmission: STITCH_READONLY_TEXT_OBSERVABLE_POLICY_V1,
+    }),
     producerReleaseSha: input.producerReleaseSha,
     provider: input.provider,
     model: input.model,

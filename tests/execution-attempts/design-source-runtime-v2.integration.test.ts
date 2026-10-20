@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -12,9 +12,10 @@ import {
   runDesignSourceAuthorityV2,
   serializeAttemptTransportV2,
 } from "../../src/product-compiler/design-source-runtime-v2.js";
-import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { canonicalJsonBytes, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
   DesignSourceGenerationRetryDeltaV1Schema,
+  createInitialDesignSourceGenerationRequestV2,
 } from "../../src/product-compiler/design-source-compilation-attempt-runner.js";
 import {
   DesignSourceSemanticRetryEvidenceV1Schema,
@@ -31,7 +32,21 @@ import {
   validStitchHtml,
   validStitchPng,
 } from "../product-compiler/fixtures/stitch-artifacts.js";
+import { OperationalFailureCauseV1Schema } from "../../src/execution/schemas/operational-failure-cause-v1.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
+
+const expectedSelectedHtmlDisclosure = {
+  schema: "setfarm.design-source-selected-html-prompt-disclosure.v1" as const,
+  rules: [
+    "- Return valid UTF-8 HTML of at most 800000 bytes and 200000 UTF-16 code units after decoding.",
+    "- Setfarm checks the complete decoded HTML source, including markup, attributes, styles, comments and permitted data scripts, not only visible text.",
+    "- Source characters may use printable ASCII U+0020-U+007E and structural whitespace TAB U+0009, LF U+000A and CR U+000D.",
+    "- The only additional English typography is U+2013, U+2014, U+2018, U+2019, U+201C, U+201D and U+2026.",
+    "- U+00A9 COPYRIGHT SIGN is the only extra neutral source character: Setfarm substitutes a space only for English inspection and retains the original HTML bytes.",
+    "- Other non-ASCII source characters, including literal U+2022 BULLET, are rejected. Omit unsupported decorative glyphs; use ordinary supported punctuation where needed.",
+    "- Other control characters, including DEL U+007F, are rejected. English admission also rejects known localized ASCII lexemes; ASCII spelling alone does not establish English.",
+  ] as const,
+} as const;
 
 describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
   it("keeps the selected-HTML admission policy deeply immutable", () => {
@@ -48,6 +63,127 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2.neutralCodePoints,
       ["U+00A9"],
     );
+  });
+
+  it("seals offline resource prefetch as infrastructure without semantic retry or projection", async () => {
+    const database = await createIsolatedTestDatabase();
+    const originalFetch = globalThis.fetch;
+    const repos: string[] = [];
+    const cause = {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "design",
+      boundary: "product_compiler.design_source.resource_prefetch",
+      failureClass: "infrastructure_failure",
+      failureCode: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+    };
+    try {
+      const releaseSha = "a".repeat(40);
+      const admissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+      const compiled = compilePlanSemanticProposalV2({
+        task: CONTAINED_GAME_TASK, proposal: containedGamePlanProposalV2(),
+      });
+      assert.equal(compiled.status, "canonicalized");
+      if (compiled.status !== "canonicalized") return;
+      const targets = produceDesignGenerationTargetsV2(compiled.productSpec);
+      assert.equal(targets.status, "produced");
+      if (targets.status !== "produced") return;
+      const target = targets.generationTargets.targets[0]!;
+      const screenId = "offline-render-screen";
+      const htmlBytes = validStitchHtml(
+        `<script src="https://cdn.tailwindcss.com"></script><main data-surface-id="${target.surfaceRef}">Offline render fixture</main>`,
+        "offline-render",
+      );
+      const screenshotBytes = validStitchPng(231);
+      const transport = {
+        schema: "setfarm.stitch-attempt-transport.v1", total: 1,
+        screens: [{ screenId, title: target.expectedScreenTitle }], screenSource: "direct",
+        directCandidateTotal: 1, excludedDirectTotal: 0,
+        directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
+        directScreenEvidence: [{
+          screenId, title: target.expectedScreenTitle, responsePaths: ["$result.screens[0]"],
+          htmlAvailable: true, screenshotAvailable: true,
+          ...stitchDownloadReceipts(screenId, htmlBytes, screenshotBytes),
+          identityConflicts: [], disposition: "admitted_renderable_screen", missingEvidence: [],
+        }],
+        downloaded: [{ screenId, title: target.expectedScreenTitle,
+          htmlFile: `${screenId}.html`, screenshotFile: `${screenId}.png` }],
+      };
+      for (const [index, message] of ["fetch failed", "different private endpoint diagnostic"].entries()) {
+        const repo = await mkdtemp(path.join(tmpdir(), "setfarm-prefetch-cause-"));
+        repos.push(repo);
+        const runId = `run-prefetch-cause-${index}`;
+        await database.sql`
+          INSERT INTO runs (id, workflow_id, task, status, protocol, protocol_version,
+            compiler_release_sha, activation_preflight_hash, release_admission_hash)
+          VALUES (${runId}, 'feature-dev', 'Offline prefetch fixture', 'running', 'v3', 1,
+            ${releaseSha}, ${"b".repeat(64)}, ${admissionHash})
+        `;
+        const claims = await database.sql<Array<{ id: string }>>`
+          INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+          VALUES (${runId}, 'design', NULL, 'offline-prefetch-test') RETURNING id::text AS id
+        `;
+        const claimId = Number(claims[0]!.id);
+        let dispatches = 0;
+        let fetches = 0;
+        globalThis.fetch = (async () => {
+          fetches += 1;
+          throw new TypeError(message, { cause: Object.assign(new Error("offline fixture"), { code: "ECONNRESET" }) });
+        }) as typeof fetch;
+        const repository = new ProductCompilationAttemptRepository(database.sql);
+        const input = {
+          repo, runId, projectId: "offline-prefetch-project",
+          contract: { productSpec: compiled.productSpec, generationTargets: targets.generationTargets },
+          originClaimId: claimId, ownerClaimId: claimId, ownerInstanceId: "offline-prefetch-owner",
+          producerReleaseSha: releaseSha, provider: "stitch", model: "GEMINI_3_8_FLASH",
+          deviceType: "DESKTOP" as const,
+        };
+        const dependencies = { repository, generateStage: async () => {
+          dispatches += 1;
+          return { disposition: "accepted" as const, response: transport,
+            rawEvidence: serializeAttemptTransportV2(transport),
+            artifacts: [{ screenId, htmlBytes, screenshotBytes }] };
+        } };
+        const result = await runDesignSourceAuthorityV2(input, dependencies);
+        assert.equal(result.runner.status, "infrastructure_failure", JSON.stringify(result.runner));
+        if (result.runner.status !== "infrastructure_failure") return;
+        assert.deepEqual(result.runner.failure.reasonCodes, ["STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED"]);
+        assert.equal(result.runner.failure.operationalCauseHash, hashCanonicalJson(cause));
+        assert.equal(result.runner.stopReason, "no_retry");
+        assert.equal(result.runner.attempts.length, 1);
+        assert.equal(result.runner.attempt.ordinal, 1);
+        assert.equal(result.runner.attempt.outputRefs, null);
+        assert.deepEqual(await repository.get(result.runner.attempt.attemptId), result.runner.attempt);
+        assert.equal(dispatches, 1);
+        assert.equal(fetches, 1);
+        const attemptRoot = path.join(repo, result.runner.attempt.attemptLocator);
+        const bytes = await readFile(path.join(attemptRoot, "raw/failure.json"));
+        const artifact = JSON.parse(bytes.toString("utf8"));
+        assert.deepEqual(bytes, canonicalJsonBytes(artifact));
+        assert.equal(createHash("sha256").update(bytes).digest("hex"), result.runner.failure.failureArtifactHash);
+        assert.equal(artifact.disposition, "infrastructure_failure");
+        assert.equal(artifact.requestHash, result.runner.attempt.requestHash);
+        assert.deepEqual(OperationalFailureCauseV1Schema.parse(artifact.evidence.cause), cause);
+        assert.deepEqual(artifact.evidence, { cause, phase: "resource_prefetch", error: {
+          name: "StitchRenderedSemanticsInfrastructureErrorV2",
+          code: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED", phase: "resource_prefetch",
+        } });
+        assert.doesNotMatch(bytes.toString("utf8"), /fetch failed|private endpoint|ECONNRESET|cdn\.tailwindcss/);
+        assert.deepEqual(await readdir(path.join(attemptRoot, "render")), []);
+        await assert.rejects(readFile(path.join(repo, "stitch/DESIGN_MANIFEST.json")));
+        const replay = await runDesignSourceAuthorityV2(input, dependencies);
+        assert.equal(replay.runner.status, "infrastructure_failure");
+        if (replay.runner.status === "infrastructure_failure") {
+          assert.equal(replay.runner.attempt.attemptId, result.runner.attempt.attemptId);
+          assert.deepEqual(replay.runner.failure, result.runner.failure);
+        }
+        assert.equal(dispatches, 1);
+        assert.equal(fetches, 1);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      await Promise.all(repos.map((repo) => rm(repo, { recursive: true, force: true })));
+      await database.cleanup();
+    }
   });
 
   it("materializes one exact attempt, projects only selected authority, and replays without redispatch", async () => {
@@ -184,6 +320,7 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
           maximumCorrectionRecordsPerStage: 400,
           maximumCorrectionBytesPerStage: 64 * 1024,
         },
+        selectedHtmlPromptDisclosure: expectedSelectedHtmlDisclosure,
         selectedHtmlAdmissionPolicy: {
           schema: "setfarm.design-source-selected-html-admission-policy.v2",
           maximumBytes: 800_000,
@@ -200,6 +337,17 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         },
       } as const;
       assert.equal(first.authority.promptContractHash, hashCanonicalJson(expectedPromptContract));
+      const { selectedHtmlPromptDisclosure: _disclosure, ...oldPromptContract } = expectedPromptContract;
+      const changedRulePromptContract = {
+        ...expectedPromptContract,
+        selectedHtmlPromptDisclosure: {
+          ...expectedSelectedHtmlDisclosure,
+          rules: ["- Changed admission rule.", ...expectedSelectedHtmlDisclosure.rules.slice(1)],
+        },
+      };
+      assert.notEqual(first.authority.promptContractHash, hashCanonicalJson(oldPromptContract));
+      assert.notEqual(first.authority.promptContractHash, hashCanonicalJson(changedRulePromptContract));
+
       assert.notEqual(first.authority.promptContractHash, hashCanonicalJson({
         ...expectedPromptContract,
         semanticRetryPolicy: {
@@ -230,6 +378,53 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       assert.equal(first.artifacts?.designGraph.controls.length, 1);
       assert.equal(first.artifacts?.designGraph.controls[0]?.identity.controlSlotRef, placement.controlSlotRef);
       const acceptedAttemptRoot = path.join(repo, first.runner.attempt.attemptLocator);
+      // Independent policy literals make omission of either capability a real
+      // authority/attempt-identity regression, even when this fixture has no inputs.
+      const expectedRenderPolicy = {
+        policy: "chromium-offline-role-receipts-control-slots.v2",
+        nativeInputObservation: "native-text-readonly-exact-role-receipt.v1",
+      };
+      const expectedSelectionPolicy = {
+        policy: "exact-v2-rendered-slots-surfaces-role-receipts-hash-ranked.v2",
+        readOnlyObservableAdmission: "native-text-readonly-exact-role-receipt.v1",
+      };
+      assert.equal(first.authority.renderPolicyHash, hashCanonicalJson(expectedRenderPolicy));
+      assert.equal(first.authority.selectionPolicyHash, hashCanonicalJson(expectedSelectionPolicy));
+      assert.equal(first.authority.producerReleaseSha, releaseSha);
+      const legacyAuthority = {
+        ...first.authority,
+        renderPolicyHash: hashCanonicalJson(expectedRenderPolicy.policy),
+        selectionPolicyHash: hashCanonicalJson(expectedSelectionPolicy.policy),
+      };
+      assert.notEqual(first.authority.renderPolicyHash, legacyAuthority.renderPolicyHash);
+      assert.notEqual(first.authority.selectionPolicyHash, legacyAuthority.selectionPolicyHash);
+      const stages = [{
+        stageId: "DSGS_001",
+        targetRefs: [target.targetId],
+        prompt: await readFile(path.join(acceptedAttemptRoot, "request", "stages", "DSGS_001", "prompt.md"), "utf8"),
+      }];
+      const currentRequest = createInitialDesignSourceGenerationRequestV2({ authority: first.authority, stages });
+      assert.equal(currentRequest.authorityHash, first.runner.attempt.authorityHash);
+      assert.equal(hashCanonicalJson(currentRequest), first.runner.attempt.requestHash);
+      for (const [label, authority] of [
+        ["pre-disclosure prompt authority", { ...first.authority,
+          promptContractHash: hashCanonicalJson(oldPromptContract) }],
+        ["changed disclosure rule", { ...first.authority,
+          promptContractHash: hashCanonicalJson(changedRulePromptContract) }],
+        ["old string-only policies", legacyAuthority],
+        ["render capability", { ...first.authority, renderPolicyHash: hashCanonicalJson({
+          ...expectedRenderPolicy, nativeInputObservation: "native-text-readonly-exact-role-receipt.v2",
+        }) }],
+        ["selection capability", { ...first.authority, selectionPolicyHash: hashCanonicalJson({
+          ...expectedSelectionPolicy, readOnlyObservableAdmission: "native-text-readonly-exact-role-receipt.v2",
+        }) }],
+        ["producer release", { ...first.authority, producerReleaseSha: "c".repeat(40) }],
+      ] as const) {
+        const changed = createInitialDesignSourceGenerationRequestV2({ authority, stages });
+        assert.notEqual(changed.authorityHash, currentRequest.authorityHash, label);
+        assert.notEqual(hashCanonicalJson(changed), first.runner.attempt.requestHash, label);
+      }
+
       const acceptedScreenKey = createHash("sha256").update(screenId, "utf8").digest("hex");
       assert.deepEqual(
         await readFile(path.join(
@@ -267,6 +462,9 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       assert.equal(replay.runner.status, "accepted", JSON.stringify(replay.runner));
       if (replay.runner.status !== "accepted") return;
       assert.equal(replay.runner.replayed, true);
+      assert.deepEqual(replay.authority, first.authority);
+      assert.equal(replay.runner.attempt.attemptId, first.runner.attempt.attemptId);
+      assert.equal(replay.runner.attempt.requestHash, first.runner.attempt.requestHash);
       assert.equal(dispatches, 1);
       assert.deepEqual(
         replay.artifacts,
@@ -629,6 +827,19 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       assert.equal(ambiguous.runner.attempt.lease, null);
 
       const selectedHtmlCases = [
+        {
+          id: "literal-bullet",
+          activationHash: "2".repeat(64),
+          htmlBytes: validStitchHtml([
+            `<main data-surface-id="${target.surfaceRef}">`,
+            `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+            `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
+            `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+            `<p>${String.fromCharCode(0x2022)}</p>`,
+            "</main>",
+          ].join(""), "design-source-runtime-v2-literal-bullet"),
+          diagnostic: "ENGLISH_TEXT_NON_ASCII at / code unit 0x2022",
+        },
         {
           id: "non-english",
           activationHash: "d".repeat(64),

@@ -1023,6 +1023,13 @@ async function assignRefsAndObserve(
         ariaLabel: element.getAttribute("aria-label"),
         href: element.getAttribute("href"),
         nativeControlKind,
+        ...(tagName === "input" ? {
+          nativeInputState: {
+            inputType: String(element.type),
+            readOnly: element.readOnly === true,
+            contentEditable: element.isContentEditable === true,
+          },
+        } : {}),
         interactiveRole: interactiveRoles.has(String(role || "").toLowerCase()),
         renderState,
         renderBlockers: orderedBlockers,
@@ -1737,6 +1744,11 @@ export async function verifyStitchRenderedSemanticsReplayV2(input: Readonly<{
           }
         } catch (error) {
           throw infrastructure("STITCH_RENDERER_V2_REPLAY_MISMATCH", "replay_observation", error);
+        }
+        if (candidate.elements.every((element) => element.nativeInputState === undefined)) {
+          // Compare legacy evidence in its recorded shape without enriching or
+          // rewriting the stored artifact returned to downstream selection.
+          elements = elements.map(({ nativeInputState: _state, ...recordedFields }) => recordedFields);
         }
         const observationHash = hashCanonicalJson({ elements, roleReceipts });
         if (

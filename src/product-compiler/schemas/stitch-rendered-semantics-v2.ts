@@ -18,6 +18,9 @@ import {
 export const STITCH_RENDERED_SEMANTICS_POLICY_V2 =
   "chromium-offline-role-receipts-control-slots.v2" as const;
 
+export const STITCH_READONLY_TEXT_OBSERVABLE_POLICY_V1 =
+  "native-text-readonly-exact-role-receipt.v1" as const;
+
 export const StitchRenderedSemanticsInfrastructurePhaseV2Schema = z.enum([
   "input_validation",
   "source_validation",
@@ -42,7 +45,20 @@ export type StitchRenderedSemanticsInfrastructurePhaseV2 = z.infer<
 export const StitchRenderedElementV2Schema = z.object({
   ...StitchRenderedElementV1Schema.shape,
   dataControlSlot: ControlSlotIdSchema.nullable(),
+  nativeInputState: z.object({
+    inputType: z.string().min(1).max(50),
+    readOnly: z.boolean(),
+    contentEditable: z.boolean(),
+  }).strict().optional(),
 }).strict().superRefine((value, context) => {
+  if (value.nativeInputState !== undefined
+    && (value.tagName !== "input" || value.nativeControlKind !== "input")) {
+    context.addIssue({
+      code: "custom",
+      path: ["nativeInputState"],
+      message: "Native input state is allowed only on native input elements",
+    });
+  }
   if ((value.renderBlockers.length === 0) !== (value.renderState === "rendered")) {
     context.addIssue({
       code: "custom",
@@ -176,6 +192,16 @@ export const StitchRenderedCandidateV2Schema = z.object({
   roleReceipts: z.array(StitchGetByRoleReceiptV2Schema).max(2_000),
   observationHash: Sha256Schema.nullable(),
 }).strict().superRefine((value, context) => {
+  const nativeInputs = value.elements.filter((element) =>
+    element.tagName === "input" && element.nativeControlKind === "input");
+  const inputsWithState = nativeInputs.filter((element) => element.nativeInputState !== undefined);
+  if (inputsWithState.length > 0 && inputsWithState.length !== nativeInputs.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["elements"],
+      message: "Native inputs must either all include state or all preserve the legacy shape",
+    });
+  }
   const refs = value.elements.map((element) => element.elementRef);
   const ordinals = value.elements.map((element) => element.sourceOrdinal);
   if (!hasUniqueStrings(refs) || new Set(ordinals).size !== ordinals.length) {

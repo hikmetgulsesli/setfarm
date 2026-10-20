@@ -11,6 +11,7 @@ import {
   selectStitchTargetCandidatesV2,
   StitchCandidateSelectionInfrastructureErrorV2,
 } from "../../src/product-compiler/producers/stitch-target-candidate-selection-v2.js";
+import { StitchRenderedSemanticsV2Schema } from "../../src/product-compiler/schemas/stitch-rendered-semantics-v2.js";
 import { DesignGenerationTargetsV2Schema } from "../../src/product-compiler/schemas/design-generation-targets-v2.js";
 import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
 import {
@@ -39,20 +40,40 @@ type FixtureOptions = Readonly<{
   extraSurface?: boolean;
   extraInteractive?: boolean;
   executableScript?: boolean;
+  readonlyDisplay?: boolean;
+  displayMarkup?: string;
+  omitAction?: boolean;
+  displayVisibleBefore?: boolean;
 }>;
 
 function generationTargets(options: FixtureOptions) {
+  const proposal = containedGamePlanProposalV2();
+  if (options.readonlyDisplay) {
+    const display = proposal.actions[0].observables.find((item: any) => item.key === "status_text");
+    display.selector = { kind: "accessibility", surfaceKey: "status_panel", role: "textbox", name: "Display value" };
+    display.assertions = [
+      { phase: "after", property: "value", operator: "equals", expected: "ready" },
+      { phase: "after", property: "visibility", operator: "equals", expected: true },
+      { phase: "reload", property: "value", operator: "equals", expected: "ready" },
+      { phase: "reload", property: "visibility", operator: "equals", expected: true },
+    ];
+    if (options.displayVisibleBefore) display.assertions.unshift({
+      phase: "before", property: "visibility", operator: "equals", expected: true,
+    });
+  }
   const compiled = compilePlanSemanticProposalV2({
     task: CONTAINED_GAME_TASK,
-    proposal: containedGamePlanProposalV2(),
+    proposal,
   });
   assert.equal(compiled.status, "canonicalized", JSON.stringify(compiled));
   if (compiled.status !== "canonicalized") throw new Error("unreachable");
   const productSpec: any = structuredClone(compiled.productSpec);
   const action = productSpec.actions[0]!;
-  action.input.fields = [{ name: "phase", valueType: "string", required: true }];
-  action.evidenceScenario.targetInputValues = { phase: "playing" };
-  action.stateDeltas[0]!.valueFrom = { kind: "input", field: "phase" };
+  if (!options.readonlyDisplay) {
+    action.input.fields = [{ name: "phase", valueType: "string", required: true }];
+    action.evidenceScenario.targetInputValues = { phase: "playing" };
+    action.stateDeltas[0]!.valueFrom = { kind: "input", field: "phase" };
+  }
   const strictProductSpec = ProductSpecV2Schema.parse(productSpec);
   const result = produceDesignGenerationTargetsV2(strictProductSpec);
   assert.equal(result.status, "produced", JSON.stringify(result));
@@ -82,12 +103,16 @@ async function fixture(options: FixtureOptions = {}) {
     const inputRef = `${placement.actionRef}.${placement.inputFields[0]}`;
     const htmlBytes = validStitchHtml([
       `<main data-surface-id="${target.surfaceRef}" data-variant="${variant}">`,
-      `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}" data-action-input="${inputRef}${options.duplicateInput ? ` ${inputRef}` : ""}">Start Game</button>`,
+      options.omitAction ? "" : options.readonlyDisplay
+        ? `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`
+        : `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}" data-action-input="${inputRef}${options.duplicateInput ? ` ${inputRef}` : ""}">Start Game</button>`,
       `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
       options.duplicateCanvas
         ? `<section data-surface-id="${canvasSurface}"><canvas></canvas></section>`
         : "",
-      `<section data-surface-id="${statusSurface}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+      `<section data-surface-id="${statusSurface}">${options.readonlyDisplay
+        ? options.displayMarkup ?? '<input type="text" readonly aria-label="Display value" value="ready">'
+        : '<div hidden role="status" aria-label="Game status">Playing</div>'}</section>`,
       options.extraSurface
         ? '<aside data-surface-id="SURF_UNDECLARED_PANEL">Undeclared</aside>'
         : "",
@@ -340,4 +365,211 @@ describe("Stitch target candidate selection v2", { concurrency: 1 }, () => {
     );
     assert.notEqual(sha256(changedArtifacts[0]!.htmlBytes!), sha256(value.artifacts[0]!.htmlBytes!));
   });
+});
+
+// These tests exercise the selector through the genuine local capture entrypoint.
+// Synthetic mutations below are isolated selector/schema boundary fixtures, never
+// historical artifacts, replay evidence, or a substitute for captured admission.
+describe("required readonly display admission", { concurrency: 1 }, () => {
+  it("selects and binds a genuinely captured exact required readonly textbox", async () => {
+    const value = await fixture({ readonlyDisplay: true });
+    assert.deepEqual(value.placement.inputFields, []);
+    const candidate = value.renderedSemantics.candidates[0]!;
+    assert.equal(candidate.status, "rendered");
+    const display = candidate.elements.find((element) => element.ariaLabel === "Display value")!;
+    const receipt = candidate.roleReceipts.find((item) => item.query.name === "Display value")!;
+    assert.equal(display.tagName, "input");
+    assert.equal(display.nativeControlKind, "input");
+    assert.deepEqual([display.dataAction, display.dataActionInput, display.dataControlSlot], [null, null, null]);
+    assert.deepEqual(receipt.cardinality, { expected: 1, observed: 1, visible: 1 });
+    assert.deepEqual(receipt.phases, ["after", "reload"]);
+    assert.deepEqual(receipt.elementRefs, [display.elementRef]);
+    assert.deepEqual(receipt.nearestSurfaceRefs, [value.statusSurface]);
+    const result = selectStitchTargetCandidatesV2(value);
+    const evaluation = result.candidateSelection.selections[0]!.evaluations[0]!;
+    const observable = evaluation.semanticChecks.find((item) =>
+      item.kind === "observable" && item.semanticRef === receipt.observableRef)!;
+    assert.equal(observable.disposition, "exact", JSON.stringify(observable));
+    assert.equal(observable.observedCount, 1);
+    if (result.status === "rejected") {
+      assert.deepEqual(evaluation.rejectionCodes, ["CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL"]);
+      assert.deepEqual(result.rejectionCodes, ["DESIGN_CANDIDATE_SELECTION_V2_UNRESOLVED"]);
+    }
+    // On baseline this assertion is causal RED: the exact observable passes,
+    // while CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL is the sole rejection.
+    assert.equal(result.status, "produced", JSON.stringify(evaluation));
+    assert.deepEqual(evaluation.rejectionCodes, []);
+    const bound = bindStitchTargetCandidateSelectionsV3({
+      generationTargets: value.generationTargets,
+      candidateSelection: result.candidateSelection,
+      renderedSemantics: value.renderedSemantics,
+    });
+    assert.equal(bound.status, "produced", JSON.stringify(bound));
+    if (bound.status !== "produced") return;
+    const binding = bound.responseBindings.bindings[0]!;
+    assert.deepEqual(binding.actionInputBindings, []);
+    const observableBinding = binding.observableBindings.find((item) => item.observableRef === receipt.observableRef)!;
+    assert.deepEqual(observableBinding.elementRefs, [display.elementRef]);
+    assert.equal(observableBinding.roleReceiptHash, hashCanonicalJson(receipt));
+  });
+
+  for (const [label, markup] of [
+    ["editable text", '<input type="text" aria-label="Display value" value="ready">'],
+    ["aria-readonly alone", '<input type="text" aria-readonly="true" aria-label="Display value" value="ready">'],
+    ["disabled alone", '<input type="text" disabled aria-label="Display value" value="ready">'],
+    ["non-input textbox", '<textarea readonly aria-label="Display value">ready</textarea>'],
+    ["readonly email textbox", '<input type="email" readonly aria-label="Display value" value="ready">'],
+    ["contenteditable native input", '<input type="text" readonly contenteditable="true" aria-label="Display value" value="ready">'],
+    ["undeclared readonly textbox", '<input type="text" readonly aria-label="Display value" value="ready"><input type="text" readonly aria-label="Unrequired display">'],
+    ["unrelated extra button", '<input type="text" readonly aria-label="Display value" value="ready"><button>Extra action</button>'],
+  ] as const) {
+    it(`retains undeclared-interactive rejection for ${label}`, async () => {
+      const value = await fixture({ readonlyDisplay: true, displayMarkup: markup });
+      const candidate = value.renderedSemantics.candidates[0]!;
+      assert.equal(candidate.status, "rendered");
+      if (label === "non-input textbox" || label === "readonly email textbox") {
+        const display = candidate.elements.find((element) => element.ariaLabel === "Display value")!;
+        assert.equal(display.nativeControlKind, label === "non-input textbox" ? "textarea" : "input");
+        const receipt = candidate.roleReceipts.find((item) => item.query.name === "Display value")!;
+        assert.equal(receipt.query.role, "textbox");
+        assert.deepEqual(receipt.elementRefs, [display.elementRef]);
+        assert.deepEqual(receipt.cardinality, { expected: 1, observed: 1, visible: 1 });
+        if (label === "readonly email textbox") {
+          assert.deepEqual((display as any).nativeInputState, {
+            inputType: "email", readOnly: true, contentEditable: false,
+          });
+        }
+      }
+      const result = selectStitchTargetCandidatesV2(value);
+      assert.equal(result.status, "rejected", label);
+      assert.equal(result.candidateSelection.selections[0]!.evaluations[0]!.rejectionCodes
+        .includes("CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL"), true, label);
+    });
+  }
+
+  it("keeps missing actions and hidden before-visible required displays rejected", async () => {
+    for (const options of [
+      { omitAction: true },
+      { displayVisibleBefore: true, displayMarkup: '<input type="text" readonly hidden aria-label="Display value" value="ready">' },
+    ]) {
+      const value = await fixture({ readonlyDisplay: true, ...options });
+      const result = selectStitchTargetCandidatesV2(value);
+      assert.equal(result.status, "rejected", JSON.stringify({ options, result }));
+      if ("displayVisibleBefore" in options) {
+        assert.equal(value.renderedSemantics.candidates[0]!.status, "source_rejected");
+        assert.deepEqual(value.renderedSemantics.candidates[0]!.failureCodes, ["OBSERVABLE_BEFORE_VISIBLE_MISSING"]);
+      }
+    }
+  });
+
+  it("requires every exact receipt and native-state condition independently", async () => {
+    const value = await fixture({ readonlyDisplay: true });
+    const mutations: ReadonlyArray<readonly [string, (candidate: any, element: any, receipt: any) => void]> = [
+      ["missing native state", (_c, e) => { delete e.nativeInputState; }],
+      ["readOnly false", (_c, e) => { e.nativeInputState.readOnly = false; }],
+      ["contentEditable true", (_c, e) => { e.nativeInputState.contentEditable = true; }],
+      ...["checkbox", "radio", "range"].map((inputType) => [
+        `${inputType} with readOnly true`, (_c: any, e: any) => { e.nativeInputState.inputType = inputType; },
+      ] as const),
+      ["wrong explicit role", (_c, e) => { e.role = "combobox"; }],
+      ["disabled readonly", (_c, e) => { e.enabled = false; e.pointerOperable = false; }],
+      ["data-action", (_c, e) => { e.dataAction = "ACT_UNDECLARED"; }],
+      ["data-action-input", (_c, e) => { e.dataActionInput = "ACT_UNDECLARED.value"; }],
+      ["data-control-slot", (_c, e) => { e.dataControlSlot = value.placement.controlSlotRef; }],
+      ["missing receipt", (c) => { c.roleReceipts = []; }],
+      ["receipt resolves another element", (c, _e, r) => {
+        r.elementRefs = [c.elements.find((item: any) => item.ownSurfaceRef === value.statusSurface).elementRef];
+      }],
+      ["wrong observable", (_c, _e, r) => { r.observableRef = "OBS_UNDECLARED"; }],
+      ["wrong surface query", (_c, _e, r) => { r.surfaceRef = value.target.surfaceRef; }],
+      ["wrong nearest surface", (_c, e, r) => { e.nearestSurfaceRef = value.target.surfaceRef; r.nearestSurfaceRefs = [value.target.surfaceRef]; }],
+      ["wrong name", (_c, _e, r) => { r.query.name = "Another value"; }],
+      ["wrong query role", (_c, _e, r) => { r.query.role = "combobox"; }],
+      ["wrong selector hash", (_c, _e, r) => { r.selectorHash = "1".repeat(64); }],
+      ["wrong action", (_c, _e, r) => { r.actionRef = "ACT_UNDECLARED"; }],
+      ["wrong phases", (_c, _e, r) => { r.phases = ["after"]; }],
+      ["wrong visibility requirement", (_c, _e, r) => { r.visibilityRequirement = "must_be_visible_before"; }],
+      ["not visible in receipt", (_c, _e, r) => { r.cardinality.visible = 0; }],
+    ];
+    for (const [label, mutate] of mutations) {
+      const artifact: any = structuredClone(value.renderedSemantics);
+      const candidate = artifact.candidates[0];
+      const element = candidate.elements.find((item: any) => item.ariaLabel === "Display value");
+      // Pure boundary fixture: seed the specified new shape independently of
+      // baseline census so absence and each field can be tested separately.
+      element.nativeInputState = { inputType: "text", readOnly: true, contentEditable: false };
+      const receipt = candidate.roleReceipts.find((item: any) => item.query.name === "Display value");
+      mutate(candidate, element, receipt);
+      candidate.observationHash = hashCanonicalJson({ elements: candidate.elements, roleReceipts: candidate.roleReceipts });
+      assert.equal(StitchRenderedSemanticsV2Schema.safeParse(artifact).success, true, label);
+      const result = selectStitchTargetCandidatesV2({ ...value, renderedSemantics: artifact });
+      assert.equal(result.status, "rejected", label);
+      assert.equal(result.candidateSelection.selections[0]!.evaluations[0]!.rejectionCodes
+        .includes("CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL"), true, label);
+    }
+  });
+
+  it("rejects a wrong target and malformed duplicate receipt without broadening admission", async () => {
+    const value = await fixture({ readonlyDisplay: true });
+    const wrongTarget: any = structuredClone(value.renderedSemantics);
+    wrongTarget.candidates[0].targetRef = "TARGET_UNDECLARED";
+    assert.notEqual(wrongTarget.candidates[0].targetRef, value.target.targetId);
+    assert.throws(() => selectStitchTargetCandidatesV2({ ...value, renderedSemantics: wrongTarget }),
+      (error: unknown) => error instanceof StitchCandidateSelectionInfrastructureErrorV2
+        && error.code === "STITCH_SELECTION_V2_AUTHORITY_CHAIN_MISMATCH");
+    const duplicate: any = structuredClone(value.renderedSemantics);
+    const candidate = duplicate.candidates[0];
+    candidate.roleReceipts.push(structuredClone(candidate.roleReceipts[0]));
+    candidate.observationHash = hashCanonicalJson({ elements: candidate.elements, roleReceipts: candidate.roleReceipts });
+    assert.equal(StitchRenderedSemanticsV2Schema.safeParse(duplicate).success, false);
+    assert.throws(() => selectStitchTargetCandidatesV2({ ...value, renderedSemantics: duplicate }),
+      (error: unknown) => error instanceof StitchCandidateSelectionInfrastructureErrorV2
+        && error.code === "STITCH_SELECTION_V2_INPUT_INVALID");
+  });
+});
+
+it("preserves after-only hidden traceability without granting a readonly exception", async () => {
+  const value = await fixture({
+    readonlyDisplay: true,
+    displayMarkup: '<input type="text" readonly hidden aria-label="Display value" value="ready">',
+  });
+  const legacy: any = structuredClone(value.renderedSemantics);
+  const candidate = legacy.candidates[0];
+  assert.equal(candidate.status, "rendered");
+  const display = candidate.elements.find((item: any) => item.ariaLabel === "Display value");
+  assert.equal(display.renderState, "not_rendered");
+  delete display.nativeInputState;
+  candidate.observationHash = hashCanonicalJson({ elements: candidate.elements, roleReceipts: candidate.roleReceipts });
+  const receipt = candidate.roleReceipts.find((item: any) => item.query.name === "Display value");
+  assert.deepEqual(receipt.cardinality, { expected: 1, observed: 1, visible: 0 });
+  assert.equal(receipt.visibilityRequirement, "traceable_hidden_allowed");
+  const result = selectStitchTargetCandidatesV2({ ...value, renderedSemantics: legacy });
+  assert.equal(result.status, "produced", JSON.stringify(result));
+  assert.equal(result.candidateSelection.selections[0]!.evaluations[0]!.semanticChecks
+    .some((item) => item.kind === "undeclared_interactive"), false);
+});
+
+describe("required readonly display source receipts", { concurrency: 1 }, () => {
+  it("admits the exact explicit textbox role as well as the implicit native role", async () => {
+    const value = await fixture({ readonlyDisplay: true,
+      displayMarkup: '<input type="text" readonly role="textbox" aria-label="Display value" value="ready">',
+    });
+    const result = selectStitchTargetCandidatesV2(value);
+    assert.equal(result.status, "produced", JSON.stringify(result));
+  });
+  for (const [label, markup] of [
+    ["missing", '<input type="text" readonly aria-label="Different display" value="ready">'],
+    ["duplicate", '<input type="text" readonly aria-label="Display value" value="ready"><input type="text" readonly aria-label="Display value" value="ready">'],
+  ] as const) {
+    it(`keeps ${label} captured role matches a source rejection`, async () => {
+      const value = await fixture({ readonlyDisplay: true, displayMarkup: markup });
+      const candidate = value.renderedSemantics.candidates[0]!;
+      assert.equal(candidate.status, "source_rejected");
+      assert.deepEqual(candidate.failureCodes, ["OBSERVABLE_ROLE_CARDINALITY_MISMATCH"]);
+      const result = selectStitchTargetCandidatesV2(value);
+      assert.equal(result.status, "rejected");
+      assert.equal(result.candidateSelection.selections[0]!.evaluations[0]!.rejectionCodes
+        .includes("CANDIDATE_RENDERED_SEMANTICS_SOURCE_REJECTED"), true);
+    });
+  }
 });

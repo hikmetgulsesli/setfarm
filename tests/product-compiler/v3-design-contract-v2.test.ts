@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import * as designContractModule from "../../src/product-compiler/v3-design-contract-v2.js";
+
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
 import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
 import {
@@ -12,6 +14,19 @@ import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
 } from "./fixtures/product-semantics-v2.js";
+
+const expectedSelectedHtmlDisclosure = {
+  schema: "setfarm.design-source-selected-html-prompt-disclosure.v1" as const,
+  rules: [
+    "- Return valid UTF-8 HTML of at most 800000 bytes and 200000 UTF-16 code units after decoding.",
+    "- Setfarm checks the complete decoded HTML source, including markup, attributes, styles, comments and permitted data scripts, not only visible text.",
+    "- Source characters may use printable ASCII U+0020-U+007E and structural whitespace TAB U+0009, LF U+000A and CR U+000D.",
+    "- The only additional English typography is U+2013, U+2014, U+2018, U+2019, U+201C, U+201D and U+2026.",
+    "- U+00A9 COPYRIGHT SIGN is the only extra neutral source character: Setfarm substitutes a space only for English inspection and retains the original HTML bytes.",
+    "- Other non-ASCII source characters, including literal U+2022 BULLET, are rejected. Omit unsupported decorative glyphs; use ordinary supported punctuation where needed.",
+    "- Other control characters, including DEL U+007F, are rejected. English admission also rejects known localized ASCII lexemes; ASCII spelling alone does not establish English.",
+  ] as const,
+} as const;
 
 function planPrd(): string {
   const compiled = compilePlanSemanticProposalV2({
@@ -87,6 +102,37 @@ describe("v3 ProductSpec v2 DESIGN contract", () => {
       /owning_surface_ref: SURF_(?:GAME_CANVAS|STATUS_PANEL)/,
     );
     assert.equal(canonicalJsonStringify(contract.generationTargets).includes("surfaceRefs"), false);
+  });
+
+  it("discloses complete selected HTML admission exactly once in deterministic requests", () => {
+    const contract = prepareV3DesignContractV2(planPrd());
+    const input = {
+      contract,
+      targetRefs: contract.generationTargets.targets.map((target) => target.targetId),
+      deviceType: "DESKTOP" as const,
+      stageId: "STAGE_01",
+    };
+    const prompt = buildV3BatchStitchPromptV2(input);
+    // First assertion must expose missing behavior through the real builder.
+    assert.match(prompt, /^## SELECTED_HTML_SOURCE_ADMISSION$/m);
+    const section = [
+      "## SELECTED_HTML_SOURCE_ADMISSION",
+      `disclosure_schema: ${expectedSelectedHtmlDisclosure.schema}`,
+      ...expectedSelectedHtmlDisclosure.rules,
+    ].join("\n");
+    assert.equal(prompt.split("## SELECTED_HTML_SOURCE_ADMISSION").length - 1, 1);
+    assert.ok(prompt.includes(`All visible user-facing text must be in English.\n\n${section}\n\n## EXACT_SCREEN_TARGETS`));
+    assert.equal(buildV3BatchStitchPromptV2(input), prompt);
+    const disclosure = (designContractModule as unknown as Record<string, unknown>)
+      .DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1;
+    assert.deepEqual(disclosure, expectedSelectedHtmlDisclosure);
+    assert.equal(Object.isFrozen(disclosure), true);
+    const rules = (disclosure as { rules: readonly string[] }).rules;
+    assert.equal(Object.isFrozen(rules), true);
+    assert.throws(() => (rules as string[]).push("unsupported rule"), TypeError);
+    assert.throws(() => {
+      (disclosure as { schema: string }).schema = "changed";
+    }, TypeError);
   });
 
   it("rejects a canonical ProductSpec whose publication text is not English", () => {

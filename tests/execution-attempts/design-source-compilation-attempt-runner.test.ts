@@ -805,6 +805,85 @@ describe("design-source product compilation attempt runner", () => {
     assert.equal(result.stopReason, "no_retry");
   });
 
+  it("seals typed prefetch infrastructure and replays its canonical failure without dispatch", async () => {
+    const root = await repoRoot("typed-prefetch-infrastructure");
+    const value = fixture(1);
+    const repository = new FakeAttemptRepository();
+    const cause = {
+      schema: "setfarm.operational-failure-cause.v1", workflowStepId: "design",
+      boundary: "product_compiler.design_source.resource_prefetch",
+      failureClass: "infrastructure_failure", failureCode: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+    };
+    const failure = {
+      failureFingerprint: sha("offline-prefetch-occurrence"),
+      operationalCauseHash: hashCanonicalJson(cause),
+      reasonCodes: ["STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED"],
+      evidence: { cause, phase: "resource_prefetch", error: {
+        name: "StitchRenderedSemanticsInfrastructureErrorV2",
+        code: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED", phase: "resource_prefetch",
+      } },
+    };
+    let dispatches = 0;
+    let materializations = 0;
+    let projections = 0;
+    const dependencies = {
+      repository,
+      dispatchStage: async (): Promise<DesignSourceGenerationDispatchResultV2> => {
+        dispatches += 1;
+        return { disposition: "accepted", response: {}, rawEvidence: "offline accepted fixture" };
+      },
+      materializeAccepted: async (): Promise<DesignSourceAcceptedArtifactSetV2> => {
+        materializations += 1;
+        throw new DesignSourceMaterializationFailureV2({ disposition: "infrastructure_failure", failure });
+      },
+      projectAccepted: async () => {
+        projections += 1;
+        throw new Error("Infrastructure failure must never project");
+      },
+    };
+    const result = await runDesignSourceCompilationAttemptsV2(runnerInput(root, value), dependencies);
+    assert.equal(result.status, "infrastructure_failure");
+    if (result.status !== "infrastructure_failure") return;
+    assert.equal(result.stopReason, "no_retry");
+    assert.equal(result.attempt.ordinal, 1);
+    assert.equal(result.attempt.outputRefs, null);
+    assert.equal(result.failure.operationalCauseHash, hashCanonicalJson(cause));
+    assert.deepEqual(result.failure.reasonCodes, ["STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED"]);
+    const bytes = await readFile(path.join(root, result.attempt.attemptLocator, "raw/failure.json"));
+    assert.deepEqual(bytes, canonicalJsonBytes({
+      schema: "setfarm.design-source-generation-failure-artifact.v1",
+      attemptId: result.attempt.attemptId, requestHash: result.attempt.requestHash,
+      disposition: "infrastructure_failure", ...failure,
+    }));
+    assert.equal(sha(bytes), result.failure.failureArtifactHash);
+    const replay = await runDesignSourceCompilationAttemptsV2(runnerInput(root, value), dependencies);
+    assert.equal(replay.status, "infrastructure_failure");
+    if (replay.status === "infrastructure_failure") assert.deepEqual(replay.failure, result.failure);
+    assert.equal(dispatches, 1);
+    assert.equal(materializations, 1);
+    assert.equal(projections, 0);
+    await writeFile(path.join(root, result.attempt.attemptLocator, "raw/failure.json"), "{}");
+    const tampered = await runDesignSourceCompilationAttemptsV2(runnerInput(root, value), dependencies);
+    assert.equal(tampered.status, "runner_failure");
+    if (tampered.status === "runner_failure") assert.equal(tampered.code, "DESIGN_SOURCE_RUNNER_REPLAY_INVALID");
+    assert.equal(dispatches, 1);
+  });
+
+  it("keeps ordinary accepted-artifact exceptions on the conservative contract-invalid cause", async () => {
+    const root = await repoRoot("untyped-materialization-error");
+    const result = await runDesignSourceCompilationAttemptsV2(runnerInput(root, fixture(1)), {
+      repository: new FakeAttemptRepository(), dispatchStage: acceptedDispatch("invalid artifact fixture"),
+      materializeAccepted: async () => { throw new Error("invalid accepted artifact fixture"); },
+    });
+    assert.equal(result.status, "infrastructure_failure");
+    if (result.status !== "infrastructure_failure") return;
+    assert.deepEqual(result.failure.reasonCodes, ["DESIGN_SOURCE_ACCEPTED_ARTIFACT_INVALID"]);
+    const artifact = JSON.parse(await readFile(path.join(root, result.attempt.attemptLocator, "raw/failure.json"), "utf8"));
+    assert.equal(artifact.evidence.cause.failureClass, "contract_invalid");
+    assert.equal(result.stopReason, "no_retry");
+    assert.equal(result.attempt.outputRefs, null);
+  });
+
   it("redispatches only proven changed stages and carries unchanged parent evidence forward", async () => {
     const root = await repoRoot("stage-scoped-retry");
     const value = fixture(6);
