@@ -612,6 +612,12 @@ export async function writeSetupHandoff(
     });
   } catch (e) {
     const err = e as any;
+    if (stage === "before_native_stitch_regeneration" && err?.code === "SETUP_GENERATED_SCREEN_ADMISSION_REJECTED") {
+      logger.warn(`[module:setup-build preclaim] setup handoff deferred native source admission until Stitch regeneration`, {
+        runId: ctx.runId,
+      });
+      return;
+    }
     const code = err?.code || "SETUP_HANDOFF_FAILED";
     const details = [
       `${code}: ${String(err?.message || e).slice(0, 800)}`,
@@ -1024,7 +1030,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   // Resolve logical story targets to deterministic stack-pack file paths before
   // the setup-owned baseline is sealed. This also installs approved requested
   // dependencies from STORIES; implement may not add ad hoc packages later.
-  await writeSetupHandoff(ctx, repo, buildCmd);
+  const hasStitchRegenerationInputs = fs.existsSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"))
+    && fs.existsSync(resolvePlatformScript("stitch-to-jsx.mjs"));
+  await writeSetupHandoff(ctx, repo, buildCmd,
+    hasStitchRegenerationInputs ? "before_native_stitch_regeneration" : "strict");
 
   // 4. Tailwind install/config (if Stitch HTML uses utility classes).
   // Keep the setup-repo baseline on one path: Tailwind v3 + PostCSS. A later

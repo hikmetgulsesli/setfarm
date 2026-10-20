@@ -845,17 +845,21 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
         throw error;
       }
     };
-    const handoffRetained = async (call: "before-regeneration" | "after-regeneration") => {
+    const handoffRetained = async (
+      call: "before-regeneration" | "after-regeneration",
+      claim: ClaimContext = ctx,
+      logLabel: string = call,
+    ) => {
       // A refused writer logs through the actual wrapper, before the writer's
       // success-only [setup-handoff] marker used by the existing helper.
       assert.equal(selectedFreshInstallationRootV1(), null, "retry log isolation requires the admitted ordinary fixture context");
-      const logRoot = fs.mkdtempSync(path.join(diagnosticRoot, `retry-handoff-${call}-`));
+      const logRoot = fs.mkdtempSync(path.join(diagnosticRoot, `retry-handoff-${logLabel}-`));
       const loggingSelectionPath = path.join(logRoot, "logging-selection.db");
       const logFile = path.join(logRoot, "logs", "workflow.log");
       const previousSelectionPresent = Object.hasOwn(process.env, "SETFARM_DB_PATH");
       const previousSelection = process.env.SETFARM_DB_PATH;
       writeJson(path.join(logRoot, "input.json"), {
-        call, ctx, repo: fixture.repo, buildCommand: "npm run build", loggingSelectionPath, logFile,
+        call, ctx: claim, repo: fixture.repo, buildCommand: "npm run build", loggingSelectionPath, logFile,
         previousSelectionPresent,
         stage: call === "before-regeneration" ? "before_native_stitch_regeneration" : "strict",
       });
@@ -864,9 +868,9 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
       try {
         process.env.SETFARM_DB_PATH = loggingSelectionPath;
         if (call === "before-regeneration") {
-          await writeSetupHandoff(ctx, fixture.repo, "npm run build", "before_native_stitch_regeneration");
+          await writeSetupHandoff(claim, fixture.repo, "npm run build", "before_native_stitch_regeneration");
         } else {
-          await writeSetupHandoff(ctx, fixture.repo, "npm run build");
+          await writeSetupHandoff(claim, fixture.repo, "npm run build");
         }
       } catch (error) {
         callThrew = true;
@@ -879,7 +883,7 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
         const restoredValue = process.env.SETFARM_DB_PATH === previousSelection;
         const logBytes = fs.existsSync(logFile) ? fs.readFileSync(logFile) : undefined;
         writeJson(path.join(logRoot, "outcome.json"), {
-          call, ctx, status: callThrew ? "threw" : "returned",
+          call, ctx: claim, status: callThrew ? "threw" : "returned",
           ...(callThrew ? { error: errorEvidence(callError) } : {}),
           logFile, logExists: Boolean(logBytes), byteLength: logBytes?.byteLength,
           sha256: logBytes ? createHash("sha256").update(logBytes).digest("hex") : undefined,
@@ -979,6 +983,154 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
       assert.equal(ctx.context.setup_certificate_path, ".setfarm/setup/SETUP_CERTIFICATE.json");
       assert.equal(ctx.context.file_tree_manifest_path, ".setfarm/setup/FILE_TREE_MANIFEST.json");
       writeJson(path.join(diagnosticRoot, "retry-outcome.json"), { status: "ready", ctx });
+
+      // Controls begin only after the original causal packet/readiness oracle.
+      // Keep their contexts separate from that original retry ClaimContext.
+      const newControlClaim = (): ClaimContext => ({
+        runId: fixture.runId, stepId: "setup-build", task: CONTAINED_GAME_TASK, retryCount: 1,
+        context: { ...fixture.writerContext!, repo: fixture.repo },
+      });
+      const blockerKeys = ["baseline_fail", "compat_fail", "previous_failure", "failure_category", "failure_suggestion"];
+      const blockerSnapshot = (claim: ClaimContext) => Object.fromEntries(blockerKeys.map((key) => [
+        key, { present: Object.hasOwn(claim.context, key), value: claim.context[key] },
+      ]));
+      const assertAdmissionBlocker = (claim: ClaimContext) => {
+        assert.match(claim.context.baseline_fail!, /^SETUP_GENERATED_SCREEN_ADMISSION_REJECTED:/);
+        assert.equal(claim.context.previous_failure, `SETUP_BUILD_PRECLAIM_BLOCKER:\n${claim.context.baseline_fail}`);
+        assert.equal(claim.context.failure_category, "setup_contract_failure");
+        assert.equal(claim.context.failure_suggestion, "Fix SETUP_CERTIFICATE/FILE_TREE_MANIFEST generation, then rerun setup-build preclaim.");
+      };
+      const repairedSource = fs.readFileSync(sourcePath);
+      const staleSource = fs.readFileSync(path.join(diagnosticRoot, "retry-stale-sources", fixture.generatedFile));
+      phase = "control-default-strict-stale";
+      try {
+        fs.writeFileSync(sourcePath, staleSource);
+        const strictClaim = newControlClaim();
+        await handoffRetained("after-regeneration", strictClaim, "control-default-strict-stale");
+        writeJson(path.join(diagnosticRoot, "retry-control-default-strict-stale.json"), strictClaim);
+        assertAdmissionBlocker(strictClaim);
+      } finally {
+        fs.writeFileSync(sourcePath, repairedSource);
+      }
+
+      phase = "control-unrelated-blockers-before-regeneration";
+      const baselineClaim = newControlClaim();
+      Object.assign(baselineClaim.context, {
+        baseline_fail: "Existing unrelated baseline build failure",
+        previous_failure: "Existing unrelated baseline failure detail",
+        failure_category: "setup_build_failure",
+        failure_suggestion: "Repair the existing unrelated build failure",
+        compat_fail: "Existing unrelated compatibility failure",
+      });
+      const compatClaim = newControlClaim();
+      compatClaim.context.compat_fail = "Existing compatibility-only failure";
+      const conservation = [
+        { name: "baseline-and-compat", claim: baselineClaim, expected: blockerSnapshot(baselineClaim) },
+        { name: "compat-only", claim: compatClaim, expected: blockerSnapshot(compatClaim) },
+      ];
+      writeJson(path.join(diagnosticRoot, "retry-control-conservation-input.json"), conservation);
+      try {
+        fs.writeFileSync(sourcePath, staleSource);
+        for (const control of conservation) {
+          await handoffRetained("before-regeneration", control.claim, `control-${control.name}-defer`);
+          const actual = blockerSnapshot(control.claim);
+          writeJson(path.join(diagnosticRoot, `retry-control-${control.name}-after-defer.json`), {
+            ctx: control.claim, expected: control.expected, actual,
+          });
+          assert.deepEqual(actual, control.expected, `${control.name}: preparation must neither set nor clear unrelated blockers`);
+        }
+
+        phase = "control-real-regeneration";
+        const controlConverterSource = executeAttestedStitchConverter(converterPath, fixture.repo);
+        writeJson(path.join(diagnosticRoot, "retry-control-converter-source.json"), controlConverterSource);
+        const controlConversionResult = JSON.parse(fs.readFileSync(path.join(fixture.repo, ".setfarm/setup/STITCH_TO_JSX_RESULT.json"), "utf8"));
+        writeJson(path.join(diagnosticRoot, "retry-control-conversion-result.json"), controlConversionResult);
+        assert.deepEqual(controlConversionResult, { schema: "setfarm.stitch-to-jsx-result.v1", status: "passed" });
+        phase = "control-generated-screen-validator";
+        const controlValidatorStdout = execFileSync("node", [validatorPath, fixture.repo, "--fix"], {
+          cwd: fixture.repo, timeout: 60000, stdio: "pipe", encoding: "utf8",
+        });
+        fs.writeFileSync(path.join(diagnosticRoot, "retry-control-validator.stdout.txt"), controlValidatorStdout);
+        const controlValidatorReport = JSON.parse(fs.readFileSync(path.join(fixture.repo, ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json"), "utf8"));
+        writeJson(path.join(diagnosticRoot, "retry-control-validator-report.json"), controlValidatorReport);
+        assert.equal(controlValidatorReport.status, "pass", JSON.stringify(controlValidatorReport));
+        assert.equal(controlValidatorReport.fixMode, true);
+        assert.deepEqual(controlValidatorReport.failedRules, []);
+        phase = "control-unrelated-blockers-after-regeneration";
+        for (const control of conservation) {
+          await handoffRetained("after-regeneration", control.claim, `control-${control.name}-strict`);
+          const actual = blockerSnapshot(control.claim);
+          writeJson(path.join(diagnosticRoot, `retry-control-${control.name}-after-repair.json`), {
+            ctx: control.claim, expected: control.expected, actual,
+          });
+          assert.deepEqual(actual, control.expected, `${control.name}: strict successful repair must preserve unrelated blockers`);
+          assert.equal(control.claim.context.setup_certificate_path, ".setfarm/setup/SETUP_CERTIFICATE.json");
+        }
+        await assembleRetained("controls-repaired", controlConverterSource);
+
+        phase = "control-invalid-post-regeneration-strict";
+        const validControlSource = fs.readFileSync(sourcePath);
+        try {
+          fs.writeFileSync(sourcePath, staleSource);
+          const invalidPostRegenerationClaim = newControlClaim();
+          await handoffRetained("after-regeneration", invalidPostRegenerationClaim, "control-invalid-post-regeneration-strict");
+          writeJson(path.join(diagnosticRoot, "retry-control-invalid-post-regeneration-strict.json"), invalidPostRegenerationClaim);
+          assertAdmissionBlocker(invalidPostRegenerationClaim);
+        } finally {
+          fs.writeFileSync(sourcePath, validControlSource);
+        }
+      } finally {
+        try {
+          retainSources("controls-before-source-restoration");
+        } finally {
+          fs.writeFileSync(sourcePath, repairedSource);
+          writeJson(path.join(diagnosticRoot, "retry-control-source-restoration.json"), {
+            restored: fs.readFileSync(sourcePath).equals(repairedSource),
+            sourceHash: createHash("sha256").update(fs.readFileSync(sourcePath)).digest("hex"),
+          });
+          assert.deepEqual(fs.readFileSync(sourcePath), repairedSource);
+        }
+      }
+
+      phase = "control-real-non-admission-writer-error";
+      const storyRows = await database.sql<Array<{ scope_targets: string | null }>>`
+        SELECT scope_targets FROM stories WHERE run_id = ${fixture.runId} AND story_id = 'US-001'
+      `;
+      assert.equal(storyRows.length, 1);
+      const originalScopeTargets = storyRows[0]!.scope_targets;
+      assert.equal(typeof originalScopeTargets, "string");
+      const invalidScopeTargets = JSON.parse(originalScopeTargets!);
+      invalidScopeTargets[0].role = "unmapped_retry_control";
+      writeJson(path.join(diagnosticRoot, "retry-control-story-input.json"), {
+        runId: fixture.runId, storyId: "US-001", originalScopeTargets, invalidScopeTargets,
+      });
+      try {
+        await database.sql`
+          UPDATE stories SET scope_targets = ${JSON.stringify(invalidScopeTargets)}
+          WHERE run_id = ${fixture.runId} AND story_id = 'US-001'
+        `;
+        const unresolvedRoleClaim = newControlClaim();
+        await handoffRetained("before-regeneration", unresolvedRoleClaim, "control-unresolved-story-role");
+        writeJson(path.join(diagnosticRoot, "retry-control-unresolved-story-role.json"), unresolvedRoleClaim);
+        assert.match(unresolvedRoleClaim.context.baseline_fail!, /^SCOPE_TARGET_UNRESOLVED:/);
+        assert.match(unresolvedRoleClaim.context.baseline_fail!, /missingRole=unmapped_retry_control/);
+        assert.equal(unresolvedRoleClaim.context.failure_category, "setup_contract_failure");
+        assert.equal(unresolvedRoleClaim.context.previous_failure, `SETUP_BUILD_PRECLAIM_BLOCKER:\n${unresolvedRoleClaim.context.baseline_fail}`);
+      } finally {
+        await database.sql`
+          UPDATE stories SET scope_targets = ${originalScopeTargets}
+          WHERE run_id = ${fixture.runId} AND story_id = 'US-001'
+        `;
+        const restoredStoryRows = await database.sql<Array<{ scope_targets: string | null }>>`
+          SELECT scope_targets FROM stories WHERE run_id = ${fixture.runId} AND story_id = 'US-001'
+        `;
+        writeJson(path.join(diagnosticRoot, "retry-control-story-restoration.json"), {
+          originalScopeTargets, restoredStoryRows,
+        });
+        assert.deepEqual(restoredStoryRows.map((row) => row.scope_targets), [originalScopeTargets]);
+      }
+      retainSources("controls-final");
+      writeJson(path.join(diagnosticRoot, "retry-controls-outcome.json"), { status: "passed", causalContext: ctx });
     } catch (error) {
       retainSources("failure");
       writeJson(path.join(diagnosticRoot, "retry-outcome.json"), {
