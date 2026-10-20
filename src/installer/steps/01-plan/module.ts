@@ -81,7 +81,8 @@ function buildV3Prompt(ctx: PromptContext): string {
       : "No explicit stack prefix was requested; the compiler selects delivery from product.class.",
     "",
     "## Proposal rules",
-    `- Emit exactly one ${proposalFence} JSON fence. Pretty or unsorted JSON is allowed.`,
+    "- Choose exactly one decision: proposal or typed rejection.",
+    `- For a proposal, emit exactly one ${proposalFence} JSON fence. Pretty or unsorted JSON is allowed.`,
     ...(atomicBuildProposal
       ? [
           "- The envelope schema is setfarm.plan-product-build-proposal.v1. Put the complete PlanSemanticProposalV2 under semantics and the complete setfarm.plan-runtime-behavior-proposal.v1 under runtimeBehavior; never emit either half as a separate fence.",
@@ -142,6 +143,16 @@ function buildV3Prompt(ctx: PromptContext): string {
     "",
     "## Typed rejection output",
     "Use STATUS: done and exactly one product-spec-rejection-v1 fence with schema, exact sourceTaskHash, and one or more reasons. Allowed reason codes: PRODUCT_SPEC_TASK_AMBIGUOUS, PRODUCT_SPEC_SEMANTIC_UNSUPPORTED, PRODUCT_SPEC_REQUIREMENT_CONFLICT, PRODUCT_SPEC_REQUIRED_INFORMATION_MISSING. Every reason cites exact requirementRefs and a concrete message.",
+    atomicBuildProposal
+      ? "The following bare refusal is the entire submission. Do not add PRD, other output keys, prose, or another fence."
+      : "The following PRD-wrapped refusal is the entire submission. Do not add other output keys, prose, or another fence.",
+    "````text",
+    "STATUS: done",
+    ...(atomicBuildProposal ? [] : ["PRD:"]),
+    "```product-spec-rejection-v1",
+    '{"schema":"setfarm.product-spec-rejection.v1","sourceTaskHash":"<exact sourceTaskHash from requirement index>","reasons":[{"code":"PRODUCT_SPEC_TASK_AMBIGUOUS","requirementRefs":["<exact requirement ID>"],"message":"<concrete reason>"}]}',
+    "```",
+    "````",
   ].join("\n");
 }
 
