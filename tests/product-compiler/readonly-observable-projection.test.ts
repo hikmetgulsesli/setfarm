@@ -106,7 +106,7 @@ describe("readonly observable projection through genuine inert converter functio
   ] as const) {
     it(`preserves exact ${kind} display while neutralizing an adjacent undeclared input`, () => {
       const projection = syntheticProjection(tagName, inputType);
-      const html = `<main>${displayHtml} data-setfarm-element-ref="${displayElementRef}">${tagName === "textarea" ? "Open</textarea>" : ""}<input aria-label="Undeclared" data-setfarm-element-ref="E000008"></main>`;
+      const html = `<main>${displayHtml} data-setfarm-element-ref="${displayElementRef}"><input aria-label="Undeclared" data-setfarm-element-ref="E000008"></main>`;
       const observable = converter.annotateObservableElements(html, projection);
       const projected = converter.annotateInteractiveElements(observable.html, projection, observable.readonlyDisplayElementRefs);
       const displayTag = projected.html.match(new RegExp(`<${tagName}[^>]*data-setfarm-element-ref="${displayElementRef}"[^>]*>`))?.[0];
