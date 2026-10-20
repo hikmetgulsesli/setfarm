@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -77,291 +77,435 @@ type NativeFixture = Readonly<{
   screenId: string;
   generatedFile: string;
   manifestPath: string;
+  diagnosticRoot?: string;
+  writerContext?: Record<string, string>;
 }>;
+
+type RetainedWriterWitness = Readonly<{ runId: string; diagnosticRoot: string }>;
 
 async function createNativeV2Fixture(input: Readonly<{
   database: TestDatabase;
   roots: string[];
+  actualWriter?: boolean;
+  noncanonicalAssertions?: boolean;
+  retainedWitnesses?: RetainedWriterWitness[];
+  prepareWriterDatabase?: () => Promise<void>;
+  diagnostic?: (message: string) => void;
 }>): Promise<NativeFixture> {
-  const runId = "setup-packet-native-v2";
-  const repo = fs.mkdtempSync(path.join(tmpdir(), "setfarm-setup-packet-native-v2-"));
-  const artifactParent = fs.mkdtempSync(path.join(tmpdir(), "setfarm-setup-packet-native-v2-cas-"));
+  const identity = input.actualWriter
+    ? `writer-${input.noncanonicalAssertions ? "noncanonical" : "stock"}-${randomUUID()}`
+    : "native-v2";
+  const runId = input.actualWriter ? `setup-packet-${identity}` : "setup-packet-native-v2";
+  const repo = fs.mkdtempSync(path.join(tmpdir(), `setfarm-setup-packet-${identity}-`));
+  const artifactParent = fs.mkdtempSync(path.join(tmpdir(), `setfarm-setup-packet-${identity}-cas-`));
   input.roots.push(repo, artifactParent);
   const artifactRoot = path.join(artifactParent, "sha256");
-  const releaseAdmissionHash = await input.database.seedV3ReleaseGoAdmission(RELEASE_SHA);
-  await input.database.sql.unsafe(
-    `INSERT INTO runs (
-       id, workflow_id, task, status, protocol, protocol_version,
-       compiler_release_sha, activation_preflight_hash, release_admission_hash
-     ) VALUES ($1, 'feature-dev', $2, 'running', 'v3', 1, $3, $4, $5)`,
-    [runId, CONTAINED_GAME_TASK, RELEASE_SHA, "f".repeat(64), releaseAdmissionHash],
-  );
-  const claims = await input.database.sql<Array<{ id: string }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${runId}, 'design', NULL, 'setup-packet-native-v2-test')
-    RETURNING id::text AS id
-  `;
-  const claimId = Number(claims[0]!.id);
-
-  const compiled = compilePlanSemanticProposalV2({
-    task: CONTAINED_GAME_TASK,
-    proposal: containedGamePlanProposalV2(),
-  });
-  assert.equal(compiled.status, "canonicalized", JSON.stringify(compiled));
-  if (compiled.status !== "canonicalized") throw new Error("native ProductSpecV2 fixture rejected");
-  const targets = produceDesignGenerationTargetsV2(compiled.productSpec);
-  assert.equal(targets.status, "produced", JSON.stringify(targets));
-  if (targets.status !== "produced") throw new Error("native DesignGenerationTargetsV2 fixture rejected");
-  const target = targets.generationTargets.targets[0]!;
-  const placement = target.requiredControlPlacements[0]!;
-  const statusObservable = target.requiredObservableSelectors.find((observable) =>
-    observable.selector.kind === "accessibility");
-  assert.equal(statusObservable?.selector.kind, "accessibility");
-  if (!statusObservable || statusObservable.selector.kind !== "accessibility") {
-    throw new Error("native design fixture lacks accessibility status observable");
+  const diagnosticRoot = input.actualWriter ? path.join(artifactParent, "writer-role-witness") : undefined;
+  let phase = "owned-database-admission";
+  if (diagnosticRoot) {
+    input.retainedWitnesses!.push({ runId, diagnosticRoot });
+    input.diagnostic?.(`Retained actual-writer witness: ${diagnosticRoot}`);
+    writeJson(path.join(diagnosticRoot, "identity.json"), {
+      runId, repo, artifactRoot, diagnosticRoot, database: input.database.database,
+      actualWriter: true, noncanonicalAssertions: Boolean(input.noncanonicalAssertions),
+      cleanupPolicy: "retain new repo/CAS/diagnostics; dispose only fresh owned database",
+    });
   }
-  const canvasSurface = target.containedSurfaceRefs.find((surfaceRef) =>
-    surfaceRef !== statusObservable.selector.surfaceRef);
-  assert.ok(canvasSurface);
-  const screenId = "screen-setup-packet-native-v2";
-  const htmlBytes = validStitchHtml([
-    `<main data-surface-id="${target.surfaceRef}">`,
-    `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
-    `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
-    `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
-    "</main>",
-  ].join(""), "setup-packet-native-v2");
-  const screenshotBytes = validStitchPng(251);
-  const transport = {
-    schema: "setfarm.stitch-attempt-transport.v1",
-    total: 1,
-    screens: [{ screenId, title: target.expectedScreenTitle }],
-    screenSource: "direct",
-    directCandidateTotal: 1,
-    excludedDirectTotal: 0,
-    directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
-    directScreenEvidence: [{
-      screenId,
-      title: target.expectedScreenTitle,
-      responsePaths: ["$result.screens[0]"],
-      htmlAvailable: true,
-      screenshotAvailable: true,
-      ...stitchDownloadReceipts(screenId, htmlBytes, screenshotBytes),
-      identityConflicts: [],
-      disposition: "admitted_renderable_screen",
-      missingEvidence: [],
-    }],
-    downloaded: [{
-      screenId,
-      title: target.expectedScreenTitle,
-      htmlFile: `${screenId}.html`,
-      screenshotFile: `${screenId}.png`,
-    }],
-  };
-  const repository = new ProductCompilationAttemptRepository(input.database.sql);
-  const authority = await runDesignSourceAuthorityV2({
-    repo,
-    runId,
-    projectId: "stitch-setup-packet-native-v2",
-    contract: {
+  try {
+    if (input.actualWriter) {
+      assert.ok(input.prepareWriterDatabase);
+      await input.prepareWriterDatabase();
+    }
+    phase = "accepted-design-source";
+    const releaseAdmissionHash = await input.database.seedV3ReleaseGoAdmission(RELEASE_SHA);
+    await input.database.sql.unsafe(
+      `INSERT INTO runs (
+         id, workflow_id, task, status, protocol, protocol_version,
+         compiler_release_sha, activation_preflight_hash, release_admission_hash
+       ) VALUES ($1, 'feature-dev', $2, 'running', 'v3', 1, $3, $4, $5)`,
+      [runId, CONTAINED_GAME_TASK, RELEASE_SHA, "f".repeat(64), releaseAdmissionHash],
+    );
+    const claims = await input.database.sql<Array<{ id: string }>>`
+      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+      VALUES (${runId}, 'design', NULL, 'setup-packet-native-v2-test')
+      RETURNING id::text AS id
+    `;
+    const claimId = Number(claims[0]!.id);
+
+    const proposal = containedGamePlanProposalV2();
+    if (input.noncanonicalAssertions) {
+      const control = proposal.actions[0]!.observables.find((item: any) => item.selector.kind === "control");
+      assert.ok(control);
+      control.assertions = [
+        { phase: "before", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "before", property: "visibility", operator: "equals", expected: true },
+        { phase: "before", property: "enabled", operator: "equals", expected: true },
+        { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "after", property: "visibility", operator: "equals", expected: true },
+        { phase: "after", property: "enabled", operator: "equals", expected: true },
+      ];
+    }
+    const compiled = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
+    assert.equal(compiled.status, "canonicalized", JSON.stringify(compiled));
+    if (compiled.status !== "canonicalized") throw new Error("native ProductSpecV2 fixture rejected");
+    const targets = produceDesignGenerationTargetsV2(compiled.productSpec);
+    assert.equal(targets.status, "produced", JSON.stringify(targets));
+    if (targets.status !== "produced") throw new Error("native DesignGenerationTargetsV2 fixture rejected");
+    const target = targets.generationTargets.targets[0]!;
+    const placement = target.requiredControlPlacements[0]!;
+    const statusObservable = target.requiredObservableSelectors.find((observable) =>
+      observable.selector.kind === "accessibility");
+    assert.equal(statusObservable?.selector.kind, "accessibility");
+    if (!statusObservable || statusObservable.selector.kind !== "accessibility") {
+      throw new Error("native design fixture lacks accessibility status observable");
+    }
+    const canvasSurface = target.containedSurfaceRefs.find((surfaceRef) =>
+      surfaceRef !== statusObservable.selector.surfaceRef);
+    assert.ok(canvasSurface);
+    const screenId = input.actualWriter ? `screen-${identity}` : "screen-setup-packet-native-v2";
+    const htmlBytes = validStitchHtml([
+      `<main data-surface-id="${target.surfaceRef}">`,
+      `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+      `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
+      `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+      "</main>",
+    ].join(""), "setup-packet-native-v2");
+    const screenshotBytes = validStitchPng(251);
+    const transport = {
+      schema: "setfarm.stitch-attempt-transport.v1",
+      total: 1,
+      screens: [{ screenId, title: target.expectedScreenTitle }],
+      screenSource: "direct",
+      directCandidateTotal: 1,
+      excludedDirectTotal: 0,
+      directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
+      directScreenEvidence: [{
+        screenId,
+        title: target.expectedScreenTitle,
+        responsePaths: ["$result.screens[0]"],
+        htmlAvailable: true,
+        screenshotAvailable: true,
+        ...stitchDownloadReceipts(screenId, htmlBytes, screenshotBytes),
+        identityConflicts: [],
+        disposition: "admitted_renderable_screen",
+        missingEvidence: [],
+      }],
+      downloaded: [{
+        screenId,
+        title: target.expectedScreenTitle,
+        htmlFile: `${screenId}.html`,
+        screenshotFile: `${screenId}.png`,
+      }],
+    };
+    const repository = new ProductCompilationAttemptRepository(input.database.sql);
+    const authority = await runDesignSourceAuthorityV2({
+      repo,
+      runId,
+      projectId: input.actualWriter ? `stitch-${identity}` : "stitch-setup-packet-native-v2",
+      contract: {
+        productSpec: compiled.productSpec,
+        generationTargets: targets.generationTargets,
+      },
+      originClaimId: claimId,
+      ownerClaimId: claimId,
+      ownerInstanceId: "setup-packet-native-v2-test",
+      producerReleaseSha: RELEASE_SHA,
+      provider: "stitch",
+      model: "GEMINI_3_1_PRO",
+      deviceType: "DESKTOP",
+      duplicateWaitMs: 500,
+      duplicatePollMs: 10,
+    }, {
+      repository,
+      generateStage: async ({ stageId, targetRefs }) => {
+        assert.equal(stageId, "DSGS_001");
+        assert.deepEqual(targetRefs, [target.targetId]);
+        return {
+          disposition: "accepted",
+          response: transport,
+          rawEvidence: serializeAttemptTransportV2(transport),
+          artifacts: [{ screenId, htmlBytes, screenshotBytes }],
+        };
+      },
+    });
+    assert.equal(authority.runner.status, "accepted", JSON.stringify(authority.runner));
+    if (authority.runner.status !== "accepted") throw new Error("native design-source attempt was not accepted");
+    const projected = await readProjectedDesignSourceAuthorityV2(repo, {
       productSpec: compiled.productSpec,
       generationTargets: targets.generationTargets,
-    },
-    originClaimId: claimId,
-    ownerClaimId: claimId,
-    ownerInstanceId: "setup-packet-native-v2-test",
-    producerReleaseSha: RELEASE_SHA,
-    provider: "stitch",
-    model: "GEMINI_3_1_PRO",
-    deviceType: "DESKTOP",
-    duplicateWaitMs: 500,
-    duplicatePollMs: 10,
-  }, {
-    repository,
-    generateStage: async ({ stageId, targetRefs }) => {
-      assert.equal(stageId, "DSGS_001");
-      assert.deepEqual(targetRefs, [target.targetId]);
-      return {
-        disposition: "accepted",
-        response: transport,
-        rawEvidence: serializeAttemptTransportV2(transport),
-        artifacts: [{ screenId, htmlBytes, screenshotBytes }],
+    });
+    const binding = projected.responseBindings.bindings[0]!;
+    assert.equal(binding.targetRef, target.targetId);
+    assert.equal(binding.responseScreenId, screenId);
+
+    const converterPath = path.resolve("scripts/stitch-to-jsx.mjs");
+    phase = "executed-converter-attestation";
+    let converterSource: SetupConverterSourceV1;
+    if (input.actualWriter) {
+      // Import only after the unsuffixed client is admitted to the owned clone.
+      const { executeAttestedStitchConverter } = await import("../../src/installer/steps/05-setup-build/preclaim.js");
+      converterSource = executeAttestedStitchConverter(converterPath, repo);
+      const conversionResult = JSON.parse(fs.readFileSync(
+        path.join(repo, ".setfarm", "setup", "STITCH_TO_JSX_RESULT.json"), "utf8",
+      ));
+      assert.deepEqual(conversionResult, { schema: "setfarm.stitch-to-jsx-result.v1", status: "passed" });
+      writeJson(path.join(diagnosticRoot!, "converter-source.json"), converterSource);
+      writeJson(path.join(diagnosticRoot!, "conversion-result.json"), conversionResult);
+    } else {
+      const converterText = fs.readFileSync(converterPath, "utf8");
+      const converterBytes = Buffer.from(converterText, "utf8");
+      converterSource = {
+        source: {
+          schema: "setfarm.source-artifact-ref.v1",
+          hash: createHash("sha256").update(converterBytes).digest("hex"),
+          mediaType: "text/javascript",
+          locator: "scripts/stitch-to-jsx.mjs",
+          byteLength: converterBytes.byteLength,
+        },
+        text: converterText,
       };
-    },
-  });
-  assert.equal(authority.runner.status, "accepted", JSON.stringify(authority.runner));
-  if (authority.runner.status !== "accepted") throw new Error("native design-source attempt was not accepted");
-  const projected = await readProjectedDesignSourceAuthorityV2(repo, {
-    productSpec: compiled.productSpec,
-    generationTargets: targets.generationTargets,
-  });
-  const binding = projected.responseBindings.bindings[0]!;
-  assert.equal(binding.targetRef, target.targetId);
-  assert.equal(binding.responseScreenId, screenId);
+      execFileSync(process.execPath, [converterPath, repo], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+    }
+    const projectedScreenIndex = JSON.parse(
+      fs.readFileSync(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), "utf8"),
+    );
+    const projectedScreen = projectedScreenIndex.find((entry: any) => entry.screenId === screenId);
+    assert.ok(projectedScreen);
+    const generatedFile = String(projectedScreen.file);
+    assert.equal(projectedScreen.projection.authoritySchema, "setfarm.design-interaction-graph.v2");
+    assert.equal(projectedScreen.projection.targetRef, target.targetId);
+    assert.equal(projectedScreen.controls[0]?.controlSlotRef, placement.controlSlotRef);
+    assert.equal(
+      projectedScreen.observables.length,
+      target.requiredObservableSelectors.length,
+    );
 
-  const converterPath = path.resolve("scripts/stitch-to-jsx.mjs");
-  const converterText = fs.readFileSync(converterPath, "utf8");
-  const converterBytes = Buffer.from(converterText, "utf8");
-  const converterSource: SetupConverterSourceV1 = {
-    source: {
-      schema: "setfarm.source-artifact-ref.v1",
-      hash: createHash("sha256").update(converterBytes).digest("hex"),
-      mediaType: "text/javascript",
-      locator: "scripts/stitch-to-jsx.mjs",
-      byteLength: converterBytes.byteLength,
-    },
-    text: converterText,
-  };
-  execFileSync(process.execPath, [converterPath, repo], {
-    cwd: process.cwd(),
-    stdio: "pipe",
-  });
-  const projectedScreenIndex = JSON.parse(
-    fs.readFileSync(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), "utf8"),
-  );
-  const projectedScreen = projectedScreenIndex.find((entry: any) => entry.screenId === screenId);
-  assert.ok(projectedScreen);
-  const generatedFile = String(projectedScreen.file);
-  assert.equal(projectedScreen.projection.authoritySchema, "setfarm.design-interaction-graph.v2");
-  assert.equal(projectedScreen.projection.targetRef, target.targetId);
-  assert.equal(projectedScreen.controls[0]?.controlSlotRef, placement.controlSlotRef);
-  assert.equal(
-    projectedScreen.observables.length,
-    target.requiredObservableSelectors.length,
-  );
+    fs.mkdirSync(path.join(repo, ".setfarm", "setup"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "package.json"), `${JSON.stringify({
+      name: "contained-game",
+      private: true,
+      scripts: { build: "vite build", test: "vitest run" },
+    }, null, 2)}\n`);
+    fs.writeFileSync(path.join(repo, "src", "main.tsx"), "export const main = true;\n");
+    fs.writeFileSync(path.join(repo, "src", "game.ts"), "export const phase = 'ready';\n");
+    const dependencyEvidence = { requested: [], approved: [], installed: [], rejected: [] };
+    const manifestPath = path.join(repo, ".setfarm", "setup", "FILE_TREE_MANIFEST.json");
+    const writerContext = input.actualWriter ? {
+      task: CONTAINED_GAME_TASK,
+      prd: renderProductSpecV2Compatibility(compiled.productSpec),
+      platform: "game", tech_stack: "browser-game", stack_pack_id: "browser-game-canvas",
+      product_semantics_version: "v2", project_name: "Contained Game",
+      project_display_name: "Contained Game", project_slug: "contained-game",
+    } : undefined;
+    phase = "actual-setup-writer";
+    if (input.actualWriter) {
+      const actionRef = placement.actionRef;
+      const actionFile = `src/features/game/${actionRef.toLowerCase()}.ts`;
+      fs.mkdirSync(path.dirname(path.join(repo, actionFile)), { recursive: true });
+      fs.writeFileSync(path.join(repo, actionFile), "export const startGame = () => 'playing';\n");
+      fs.mkdirSync(path.join(repo, "src", "game"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "game", "game-runtime.ts"), "export const phase = 'ready';\n");
+      const scopeTargets = [
+        { role: "surface_component", surface_id: target.surfaceRef, screen_id: screenId },
+        { role: "action_handler", domain_slug: "game", target_slug: "start-game", action_ids: [actionRef] },
+        { role: "game_runtime", domain_slug: "game", target_slug: "game-runtime" },
+      ];
+      await input.database.sql`
+        INSERT INTO stories (
+          id, run_id, story_index, story_id, title, description, acceptance_criteria,
+          status, retry_count, max_retries, depends_on, scope_files, shared_files,
+          scope_targets, requested_dependencies, shared_edit_requests, resolved_scope_files,
+          scope_description, file_skeletons, implementation_contract
+        ) VALUES (
+          ${`${runId}-US-001`}, ${runId}, 0, 'US-001', 'Start the contained game',
+          'Start the game from its exact generated play screen.',
+          ${JSON.stringify(["Start Game updates the contained game canvas and status panel."])},
+          'pending', 0, 5, '[]', '[]', '[]', ${JSON.stringify(scopeTargets)},
+          '[]', '[]', '[]', 'Own the play screen and game start runtime.', '{}', '{}'
+        )
+      `;
+      writeJson(path.join(diagnosticRoot!, "writer-input.json"), {
+        runId, repo, context: writerContext, buildCommand: "npm run build", scopeTargets,
+        requested_dependencies: [], productSpec: compiled.productSpec,
+        generationTargets: targets.generationTargets, proposal,
+      });
+      const { materializeSetupBuildContracts } = await import("../../src/installer/setup-handoff.js");
+      const written = await materializeSetupBuildContracts(runId, repo, writerContext!, "npm run build");
+      writeJson(path.join(diagnosticRoot!, "actual-writer-result.json"), written);
+      assert.equal(written.certificate.stackPackId, "browser-game-canvas");
+      assert.equal(written.manifest.resolvedTargets.filter((item) =>
+        item.path === generatedFile && item.role === "surface_component"
+        && item.surfaceId === target.surfaceRef && item.screenId === screenId
+        && item.storyId === "US-001").length, 1);
+      assert.deepEqual(written.certificate.dependencyEvidence, dependencyEvidence);
+      assert.deepEqual(written.manifest.dependencyPlan, dependencyEvidence);
+      assert.equal(fs.existsSync(path.join(repo, "package-lock.json")), false);
+      assert.equal(fs.existsSync(path.join(repo, "node_modules")), false);
+    } else {
+      writeJson(path.join(repo, ".setfarm", "setup", "SETUP_CERTIFICATE.json"), {
+        schema: "setfarm.setup-certificate.v1",
+        runId,
+        projectName: "Contained Game",
+        projectSlug: "contained-game",
+        platform: "game",
+        techStack: "browser-game",
+        stackPackId: "browser-game-canvas",
+        commands: { build: "npm run build", test: "npm test" },
+        entrypoints: ["src/main.tsx", "src/App.tsx"],
+        setupOwnedFiles: ["package.json"],
+        forbiddenDuringImplement: ["package.json"],
+        sharedFiles: [],
+        scaffoldSnapshot: [
+          "package.json",
+          "src/main.tsx",
+          "src/game.ts",
+          "src/screens/SCREEN_INDEX.json",
+          "src/screens/index.ts",
+          ...(fs.existsSync(path.join(repo, "src", "index.css")) ? ["src/index.css"] : []),
+          generatedFile,
+        ],
+        generatedDesignFiles: [generatedFile],
+        designAuthority: {
+          required: true,
+          source: "stitch",
+          screenMap: "stitch/SCREEN_MAP.json",
+          rules: ["ProductSpecV2 target, response screen, and generated source must bind exactly."],
+          conversionPolicy: "wrap_jsx",
+          conversionNote: "Generated JSX is an immutable setup input.",
+        },
+        fileTreeManifestPath: ".setfarm/setup/FILE_TREE_MANIFEST.json",
+        sharedGrantsPath: ".setfarm/setup/SHARED_GRANTS.json",
+        targetResolutionRules: {},
+        dependencyEvidence,
+        buildEvidence: {
+          buildCommand: "npm run build",
+          artifactPath: "dist/index.html",
+          stdoutPath: "",
+          stderrPath: "",
+        },
+        createdAt: "2026-07-17T00:00:00.000Z",
+      });
+      writeJson(manifestPath, {
+        schema: "setfarm.file-tree-manifest.v1",
+        runId,
+        stackPackId: "browser-game-canvas",
+        resolvedTargets: [
+          {
+            storyId: "US-001",
+            role: "action_handler",
+            domainSlug: "game",
+            targetSlug: "game-runtime",
+            path: "src/game.ts",
+            resolvedPath: "src/game.ts",
+            ruleId: "browser-game.action_handler",
+            collisionStatus: "unique",
+            source: "scope_target",
+          },
+          {
+            storyId: "US-001",
+            role: "surface_component",
+            surfaceId: target.surfaceRef,
+            screenId,
+            domainSlug: "game",
+            targetSlug: "play-page",
+            path: generatedFile,
+            resolvedPath: generatedFile,
+            ruleId: "browser-game.surface_component",
+            collisionStatus: "unique",
+            source: "scope_target",
+          },
+        ],
+        dependencyPlan: dependencyEvidence,
+        mockInjectionPoints: [],
+        routeRegistrationPlan: [],
+      });
+      writeJson(path.join(repo, ".setfarm", "setup", "SHARED_GRANTS.json"), {
+        schema: "setfarm.shared-grants.v1",
+        version: 1,
+        runId,
+        grants: [],
+      });
+    }
 
-  fs.mkdirSync(path.join(repo, ".setfarm", "setup"), { recursive: true });
-  fs.writeFileSync(path.join(repo, "package.json"), `${JSON.stringify({
-    name: "contained-game",
-    private: true,
-    scripts: { build: "vite build", test: "vitest run" },
-  }, null, 2)}\n`);
-  fs.writeFileSync(path.join(repo, "src", "main.tsx"), "export const main = true;\n");
-  fs.writeFileSync(path.join(repo, "src", "game.ts"), "export const phase = 'ready';\n");
-  const dependencyEvidence = { requested: [], approved: [], installed: [], rejected: [] };
-  const manifestPath = path.join(repo, ".setfarm", "setup", "FILE_TREE_MANIFEST.json");
-  writeJson(path.join(repo, ".setfarm", "setup", "SETUP_CERTIFICATE.json"), {
-    schema: "setfarm.setup-certificate.v1",
-    runId,
-    projectName: "Contained Game",
-    projectSlug: "contained-game",
-    platform: "game",
-    techStack: "browser-game",
-    stackPackId: "browser-game-canvas",
-    commands: { build: "npm run build", test: "npm test" },
-    entrypoints: ["src/main.tsx", "src/App.tsx"],
-    setupOwnedFiles: ["package.json"],
-    forbiddenDuringImplement: ["package.json"],
-    sharedFiles: [],
-    scaffoldSnapshot: [
-      "package.json",
-      "src/main.tsx",
-      "src/game.ts",
-      "src/screens/SCREEN_INDEX.json",
-      "src/screens/index.ts",
-      ...(fs.existsSync(path.join(repo, "src", "index.css")) ? ["src/index.css"] : []),
-      generatedFile,
-    ],
-    generatedDesignFiles: [generatedFile],
-    designAuthority: {
-      required: true,
-      source: "stitch",
-      screenMap: "stitch/SCREEN_MAP.json",
-      rules: ["ProductSpecV2 target, response screen, and generated source must bind exactly."],
-      conversionPolicy: "wrap_jsx",
-      conversionNote: "Generated JSX is an immutable setup input.",
-    },
-    fileTreeManifestPath: ".setfarm/setup/FILE_TREE_MANIFEST.json",
-    sharedGrantsPath: ".setfarm/setup/SHARED_GRANTS.json",
-    targetResolutionRules: {},
-    dependencyEvidence,
-    buildEvidence: {
-      buildCommand: "npm run build",
-      artifactPath: "dist/index.html",
-      stdoutPath: "",
-      stderrPath: "",
-    },
-    createdAt: "2026-07-17T00:00:00.000Z",
-  });
-  writeJson(manifestPath, {
-    schema: "setfarm.file-tree-manifest.v1",
-    runId,
-    stackPackId: "browser-game-canvas",
-    resolvedTargets: [
-      {
-        storyId: "US-001",
-        role: "action_handler",
-        domainSlug: "game",
-        targetSlug: "game-runtime",
-        path: "src/game.ts",
-        resolvedPath: "src/game.ts",
-        ruleId: "browser-game.action_handler",
-        collisionStatus: "unique",
-        source: "scope_target",
-      },
-      {
-        storyId: "US-001",
-        role: "surface_component",
-        surfaceId: target.surfaceRef,
-        screenId,
-        domainSlug: "game",
-        targetSlug: "play-page",
-        path: generatedFile,
-        resolvedPath: generatedFile,
-        ruleId: "browser-game.surface_component",
-        collisionStatus: "unique",
-        source: "scope_target",
-      },
-    ],
-    dependencyPlan: dependencyEvidence,
-    mockInjectionPoints: [],
-    routeRegistrationPlan: [],
-  });
-  writeJson(path.join(repo, ".setfarm", "setup", "SHARED_GRANTS.json"), {
-    schema: "setfarm.shared-grants.v1",
-    version: 1,
-    runId,
-    grants: [],
-  });
-
-  git(repo, ["init", "-q"]);
-  git(repo, ["config", "user.email", "setfarm-test@example.invalid"]);
-  git(repo, ["config", "user.name", "Setfarm Test"]);
-  git(repo, ["add", "."]);
-  git(repo, ["commit", "-q", "-m", "native v2 fixture"]);
-  await bootstrapArtifactIndex({
-    index: createArtifactIndex(input.database.sql),
-    store: new ContentAddressedArtifactStore(artifactRoot, { limits: LIMITS }),
-    quotaBytes: LIMITS.rootQuotaBytes,
-    maxPayloadBytes: LIMITS.maxPayloadBytes,
-  });
-  return {
-    runId,
-    repo,
-    artifactRoot,
-    planText: renderProductSpecV2Compatibility(compiled.productSpec),
-    attemptId: authority.runner.attempt.attemptId,
-    designSourceExpectation: {
+    phase = "fixture-git-and-artifact-index";
+    git(repo, ["init", "-q"]);
+    git(repo, ["config", "user.email", "setfarm-test@example.invalid"]);
+    git(repo, ["config", "user.name", "Setfarm Test"]);
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "native v2 fixture"]);
+    await bootstrapArtifactIndex({
+      index: createArtifactIndex(input.database.sql),
+      store: new ContentAddressedArtifactStore(artifactRoot, { limits: LIMITS }),
+      quotaBytes: LIMITS.rootQuotaBytes,
+      maxPayloadBytes: LIMITS.maxPayloadBytes,
+    });
+    return {
+      runId,
+      repo,
+      artifactRoot,
+      planText: renderProductSpecV2Compatibility(compiled.productSpec),
       attemptId: authority.runner.attempt.attemptId,
-      authorityHash: authority.runner.attempt.authorityHash,
-      requestHash: authority.runner.attempt.requestHash,
-      outputSealHash: authority.runner.attempt.outputSealHash!,
-      productSpecHash: hashCanonicalJson(compiled.productSpec),
-      generationTargetsHash: hashCanonicalJson(targets.generationTargets),
-      compilerReleaseSha: RELEASE_SHA,
-    },
-    converterSource,
-    targetRef: target.targetId,
-    surfaceRef: target.surfaceRef,
-    screenId,
-    generatedFile,
-    manifestPath,
-  };
+      designSourceExpectation: {
+        attemptId: authority.runner.attempt.attemptId,
+        authorityHash: authority.runner.attempt.authorityHash,
+        requestHash: authority.runner.attempt.requestHash,
+        outputSealHash: authority.runner.attempt.outputSealHash!,
+        productSpecHash: hashCanonicalJson(compiled.productSpec),
+        generationTargetsHash: hashCanonicalJson(targets.generationTargets),
+        compilerReleaseSha: RELEASE_SHA,
+      },
+      converterSource,
+      targetRef: target.targetId,
+      surfaceRef: target.surfaceRef,
+      screenId,
+      generatedFile,
+      manifestPath,
+      ...(diagnosticRoot ? { diagnosticRoot, writerContext } : {}),
+    };
+  } catch (error) {
+    if (diagnosticRoot) writeJson(path.join(diagnosticRoot, "fixture-failure.json"), {
+      phase, name: error instanceof Error ? error.name : undefined,
+      message: error instanceof Error ? error.message : String(error),
+      code: (error as { code?: unknown })?.code,
+      evidence: (error as { evidence?: unknown })?.evidence,
+    });
+    throw error;
+  }
 }
 
 describe("setup-build native Product Build Packet v3 orchestration", { concurrency: 1 }, () => {
   const roots: string[] = [];
+  // New causal witnesses are retained; the original fixture still owns roots cleanup.
+  const retainedRoots: string[] = [];
+  const retainedWitnesses: RetainedWriterWitness[] = [];
   let database: TestDatabase;
+  let writerDatabase: typeof import("../../src/db-pg.js") | undefined;
+  let writerDatabaseConfigured = false;
+  let writerDatabasePreparation: Promise<void> | undefined;
+
+  async function prepareWriterDatabase(): Promise<void> {
+    if (!writerDatabasePreparation) writerDatabasePreparation = (async () => {
+      writerDatabase = await import("../../src/db-pg.js");
+      writerDatabase.pgConfigureIsolatedTestDatabase(database.url);
+      writerDatabaseConfigured = true;
+      await writerDatabase.initializeInternalProductionCurrentEntryDatabaseV1();
+    })();
+    // Cache a refusal too; never reset/rebind an already-connected module.
+    await writerDatabasePreparation;
+    const selectedDatabases: string[] = [];
+    for (const sql of [database.sql, writerDatabase!.getSql()]) {
+      const rows = await sql.unsafe<Array<{ database: string }>>("SELECT current_database() AS database");
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]!.database, database.database);
+      selectedDatabases.push(rows[0]!.database);
+    }
+    for (const witness of retainedWitnesses) writeJson(path.join(witness.diagnosticRoot, "database-selection.json"), {
+      expectedDatabase: database.database, selectedDatabases,
+    });
+  }
 
   before(async () => {
     database = await createIsolatedTestDatabase();
@@ -369,7 +513,137 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
 
   after(async () => {
     roots.splice(0).forEach((root) => fs.rmSync(root, { recursive: true, force: true }));
-    await database.cleanup();
+    // Snapshot only this fixture's neutral rows before normal owned-clone disposal.
+    try {
+      for (const witness of retainedWitnesses) {
+        const runs = await database.sql`SELECT id, status, protocol, compiler_release_sha FROM runs WHERE id = ${witness.runId}`;
+        const stories = await database.sql`
+          SELECT story_id, scope_targets, requested_dependencies, scope_files,
+                 resolved_scope_files, implementation_contract
+          FROM stories WHERE run_id = ${witness.runId} ORDER BY story_index
+        `;
+        const attempts = await database.sql`
+          SELECT attempt_id, state, disposition, authority_hash, request_hash, output_seal_hash
+          FROM product_compilation_attempts WHERE run_id = ${witness.runId}
+        `;
+        writeJson(path.join(witness.diagnosticRoot, "owned-database-rows-before-disposal.json"), {
+          database: database.database, runs, stories, attempts,
+        });
+      }
+    } finally {
+      try {
+        if (writerDatabaseConfigured) await writerDatabase!.pgClose();
+        for (const witness of retainedWitnesses) writeJson(path.join(witness.diagnosticRoot, "unsuffixed-client-close.json"), {
+          status: writerDatabaseConfigured ? "closed" : "not-configured", beforeOwnedDatabaseCleanup: true,
+        });
+      } finally {
+        await database.cleanup();
+        for (const witness of retainedWitnesses) writeJson(path.join(witness.diagnosticRoot, "owned-database-cleanup.json"), {
+          status: "disposed", database: database.database, retainedRoots,
+        });
+      }
+    }
+  });
+
+  async function assertActualWriterPacket(noncanonicalAssertions: boolean, diagnostic: (message: string) => void): Promise<void> {
+    const fixture = await createNativeV2Fixture({
+      database, roots: retainedRoots, actualWriter: true, noncanonicalAssertions,
+      retainedWitnesses, prepareWriterDatabase, diagnostic,
+    });
+    const producer = {
+      pass: "setup-build-product-packet-v3", codeSha: RELEASE_SHA,
+      toolVersions: {
+        node: process.versions.node, productCompiler: "4.0.0", stackTopologyCatalog: "1.0.0",
+        productDeliveryProfileCatalog: "1.0.0", productEvidenceCapabilityPolicy: "1.0.0",
+        runtimeEvidenceContractProducer: "1.0.0",
+      },
+    };
+    const assemblyInput = {
+      runId: fixture.runId, repo: fixture.repo, planText: fixture.planText, producer,
+      converterSource: fixture.converterSource, designSourceExpectation: fixture.designSourceExpectation,
+    };
+    const exactSources = [
+      ".setfarm/setup/SETUP_CERTIFICATE.json", ".setfarm/setup/FILE_TREE_MANIFEST.json",
+      ".setfarm/setup/SHARED_GRANTS.json", "src/screens/SCREEN_INDEX.json", fixture.generatedFile,
+    ].map((locator) => {
+      const bytes = fs.readFileSync(path.join(fixture.repo, locator));
+      return { locator, hash: createHash("sha256").update(bytes).digest("hex"), byteLength: bytes.byteLength, text: bytes.toString("utf8") };
+    });
+    writeJson(path.join(fixture.diagnosticRoot!, "assembly-input.json"), {
+      database: database.database, ...assemblyInput, targetRef: fixture.targetRef,
+      surfaceRef: fixture.surfaceRef, screenId: fixture.screenId, generatedFile: fixture.generatedFile,
+      exactSources,
+      topologyInput: "Actual certificate, manifest, shared grants, ProductSpec and repo bytes retained above/in repo; private assembler constructs topology.",
+    });
+    let assembled: Awaited<ReturnType<typeof assembleSetupBuildPacketContractsV2>> | undefined;
+    let assemblyError: unknown;
+    let assemblyThrew = false;
+    try {
+      assembled = await assembleSetupBuildPacketContractsV2({ sql: database.sql, ...assemblyInput });
+    } catch (error) {
+      assemblyThrew = true;
+      assemblyError = error;
+    }
+    // Preserve the real outcome before any permanent acceptance/RED qualification assertion.
+    writeJson(path.join(fixture.diagnosticRoot!, "assembly-outcome.json"), assembled ? {
+      status: "assembled", contracts: assembled,
+    } : {
+      status: "threw", name: assemblyError instanceof Error ? assemblyError.name : undefined,
+      message: assemblyError instanceof Error ? assemblyError.message : String(assemblyError),
+      stack: assemblyError instanceof Error ? assemblyError.stack : undefined,
+      code: (assemblyError as { code?: unknown })?.code,
+      evidence: (assemblyError as { evidence?: unknown })?.evidence,
+    });
+    if (assemblyThrew) {
+      assert.ok(assemblyError instanceof SetupBuildPacketError, "writer qualification must reach the actual SourceMap gate");
+      assert.equal(assemblyError.code, "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED");
+      assert.deepEqual(assemblyError.evidence.rejectionCodes, ["IMPLEMENTATION_SOURCE_MAP_V1_SOURCE_OWNERSHIP_MISMATCH"]);
+      const diagnostics = assemblyError.evidence.diagnostics as Array<{ code: string; reference?: string }>;
+      assert.ok(diagnostics.some((item) => item.code === "IMPLEMENTATION_SOURCE_MAP_V1_SOURCE_OWNERSHIP_MISMATCH"
+        && item.reference === fixture.targetRef));
+      assert.equal(diagnostics.some((item) => item.code === "IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH"), false);
+      assert.ifError(assemblyError); // Intended acceptance stays RED until the actual writer is fixed.
+    }
+    assert.ok(assembled, "actual setup writer must assemble the native packet");
+    const certificate = JSON.parse(exactSources[0]!.text);
+    assert.deepEqual(certificate.generatedDesignFiles.filter((locator: string) => /\.(tsx|jsx)$/i.test(locator)), [fixture.generatedFile]);
+    assert.equal(assembled.implementationSourceMapV1.screens.length, 1);
+    const mappedScreen = assembled.implementationSourceMapV1.screens[0]!;
+    assert.equal(mappedScreen.targetRef, fixture.targetRef);
+    assert.equal(mappedScreen.responseScreenId, fixture.screenId);
+    assert.equal(mappedScreen.path, fixture.generatedFile);
+    assert.equal(mappedScreen.contentHash, exactSources[4]!.hash);
+    assert.equal(mappedScreen.storyId, "US-001");
+    const binding = assembled.buildTopologyV1.pathBindings.find((item) => item.path === fixture.generatedFile);
+    assert.ok(binding);
+    assert.equal(binding.role, "generated");
+    assert.equal(binding.presence, "present");
+    assert.equal(binding.knownContentHash, exactSources[4]!.hash);
+    const owner = assembled.buildTopologyV1.owners.find((item) => item.id === binding.ownerRef);
+    assert.ok(owner?.kind === "story");
+    assert.equal(owner.storyRef, "US-001");
+    const story = assembled.storyPlanV2.stories.find((item) => item.id === "US-001");
+    assert.ok(story);
+    assert.equal(story.ownerRef, binding.ownerRef);
+    assert.equal(mappedScreen.ownerRef, binding.ownerRef);
+    assert.equal(mappedScreen.pathRef, binding.id);
+    assert.ok(story.ownedPathRefs.includes(binding.id));
+    const { materializeSetupBuildContracts } = await import("../../src/installer/setup-handoff.js");
+    const repeated = await materializeSetupBuildContracts(fixture.runId, fixture.repo, fixture.writerContext!, "npm run build");
+    writeJson(path.join(fixture.diagnosticRoot!, "actual-writer-second-result.json"), repeated);
+    assert.deepEqual(repeated.certificate.generatedDesignFiles, certificate.generatedDesignFiles);
+    assert.deepEqual(repeated.certificate.generatedDesignFiles.filter((locator) => /\.(tsx|jsx)$/i.test(locator)), [fixture.generatedFile]);
+    assert.deepEqual(repeated.certificate.dependencyEvidence, { requested: [], approved: [], installed: [], rejected: [] });
+    assert.equal(fs.existsSync(path.join(fixture.repo, "package-lock.json")), false);
+    assert.equal(fs.existsSync(path.join(fixture.repo, "node_modules")), false);
+  }
+
+  it("sixth source-map actual-writer stock assertions", async (t) => {
+    await assertActualWriterPacket(false, (message) => t.diagnostic(message));
+  });
+
+  it("sixth source-map actual-writer noncanonical assertions", async (t) => {
+    await assertActualWriterPacket(true, (message) => t.diagnostic(message));
   });
 
   it("activates and deep-replays a native v2 design closure, rejecting wrong attempts and topology drift", async () => {
