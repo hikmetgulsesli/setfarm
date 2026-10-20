@@ -2526,6 +2526,7 @@ function readonlyDisplayAttributes(attrs) {
     const match = pattern.exec(source);
     if (!match) return undefined;
     const name = match[1].toLowerCase();
+    if (name === "value" && match[1] !== "value") return undefined;
     if (attributes.has(name)) return undefined;
     attributes.set(name, match[2] ?? match[3] ?? match[4] ?? null);
     cursor = pattern.lastIndex;
@@ -2544,6 +2545,7 @@ function exactReadonlyObservableDisplay(tagName, attrs, projection, annotated = 
   if (required.length === 0 || required.some((entry) => entry.selectorKind !== "accessibility" || entry.role !== "textbox")) return false;
   if (!attributes.has("readonly") || ![null, "", "true", "readonly"].includes(attributes.get("readonly"))) return false;
   if (attributes.has("type") && attributes.get("type") !== "text") return false;
+  if (typeof attributes.get("value") !== "string" || attributes.has("defaultvalue")) return false;
   if ([...attributes.keys()].some((name) => /^on/i.test(name) || [
     "data-action", "data-action-input", "data-action-id", "data-control-id", "data-control-slot",
     "data-setfarm-link-action", "data-setfarm-rejected-control", "contenteditable",

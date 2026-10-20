@@ -99,7 +99,57 @@ function screenFor(observables: any[], rejectedControls: any[] = []): StitchScre
   };
 }
 
+function projectReadonlyValue(valueAttributes: string, shared = false, script = "") {
+  const projection = syntheticProjection();
+  if (shared) projection.requiredObservables.push({ ...requiredObservable, observableRef: "OBS_DISPLAY_RELOADED" });
+  const observable = converter.annotateObservableElements(`<main><input type="text" readonly="" ${valueAttributes} data-setfarm-element-ref="E000007">${script}</main>`, projection);
+  const projected = converter.annotateInteractiveElements(observable.html, projection, observable.readonlyDisplayElementRefs);
+  return { observable, projected, sourceText: `export function StateScreen() { return (${converter.htmlToJsx(projected.html)}); }` };
+}
+
 describe("readonly observable projection through genuine inert converter functions", () => {
+  it("neutralizes readonly displays without one literal value or with any default value", () => {
+    for (const attrs of ["", "value", "VALUE=\"Open\"", 'value="Open" value="Open"', 'value="Open" VALUE="Open"', "value={stateValue}", 'defaultValue="Open"', 'value="Open" defaultValue="Open"', 'value="Open" defaultValue="Other"', 'value="Open" defaultValue={stateValue}', 'value="Open" DEFAULTVALUE="Open"']) {
+      const { observable, projected } = projectReadonlyValue(attrs);
+      assert.equal(projected.rejectedControls.length, 1, attrs);
+      assert.equal(projected.rejectedControls[0].sourceElementRef, displayElementRef);
+      assert.equal(observable.observables[0].readonlyDisplay, undefined, attrs);
+      assert.equal(projected.actions.length, 0);
+      assert.equal(projected.valueControls.length, 0);
+    }
+  });
+
+  it("does not preserve a script-only value in a synthetic inert projection", () => {
+    // This is string data, never executed and never claimed as admitted native
+    // script evidence (capture rejects arbitrary inline application scripts).
+    const { observable, projected, sourceText } = projectReadonlyValue("", false, '<script>document.querySelector("input").value="Open";</script>');
+    assert.doesNotMatch(sourceText, /<script|querySelector/);
+    assert.equal(projected.rejectedControls.length, 1);
+    assert.equal(observable.observables[0].readonlyDisplay, undefined);
+  });
+
+  it("preserves direct empty, encoded and brace-containing literal display values", () => {
+    for (const literal of ["", "Open", "A &amp; B &quot;ready&quot;", "{state}"]) {
+      const { observable, projected, sourceText } = projectReadonlyValue(`value="${literal}"`, true);
+      assert.equal(projected.rejectedControls.length, 0, literal);
+      assert.equal(projected.valueControls.length, 0);
+      assert.equal(projected.actionInputFields.size, 0);
+      assert.ok(sourceText.includes(`value="${literal}"`));
+      const screen = StitchScreenIndexEntryV2Schema.parse(screenFor(observable.observables));
+      assert.equal(screen.inputs, 1);
+      assert.equal(validateStitchScreenSourceV2({ screen, sourceText }).status, "valid", literal);
+    }
+  });
+
+  it("does not let shared observable markers authorize missing or default-conflicted values", () => {
+    for (const attrs of ["", "value={stateValue}", 'value="Open" defaultValue="Other"']) {
+      const { observable, projected } = projectReadonlyValue(attrs, true);
+      assert.equal(observable.observables.length, 2);
+      assert.equal(observable.observables.some((entry: any) => entry.readonlyDisplay), false, attrs);
+      assert.equal(projected.rejectedControls.length, 1, attrs);
+    }
+  });
+
   for (const [kind, displayHtml, tagName, inputType] of [
     ["text input", '<input type="text" readonly="" value="Open"', "input", "text"],
     ["default input", '<input readonly="" value="Open"', "input", "text"],
@@ -193,7 +243,7 @@ describe("readonly observable projection through genuine inert converter functio
   });
 
   it("requires native v2 proof even for exact readonly observable markup", () => {
-    const html = '<input readonly="" data-setfarm-element-ref="E000007">';
+    const html = '<input readonly="" value="Open" data-setfarm-element-ref="E000007">';
     for (const mutation of [
       (projection: any) => { projection.readonlyObservableDisplays.clear(); },
       (projection: any) => { projection.readonlyObservableDisplays.get(displayElementRef).readOnly = false; },

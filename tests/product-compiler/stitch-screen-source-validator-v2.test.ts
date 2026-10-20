@@ -268,6 +268,33 @@ function readonlyDisplayFixture() {
 }
 
 describe("native Stitch SCREEN_INDEX v2 generated-source validator", () => {
+  it("requires a direct quoted readonly value and forbids every defaultValue source", () => {
+    const { screen, sourceText } = readonlyDisplayFixture();
+    for (const attrs of ["", "value", 'VALUE="Open"', 'value="Open" value="Open"', 'value="Open" VALUE="Open"', "value={stateValue}", 'value={"Open"}', "value={`Open`}", "value={`Open ${stateValue}`}", "value={1}", "value={true}", "value={null}", "value={undefined}", 'defaultValue="Open"', 'value="Open" defaultValue="Open"', 'value="Open" defaultValue="Other"', 'value="Open" defaultValue={stateValue}', 'value="Open" DEFAULTVALUE="Open"']) {
+      const result = validateStitchScreenSourceV2({ screen, sourceText: sourceText.replace('value="Open"', attrs) });
+      assert.equal(result.status, "invalid", attrs);
+      if (result.status !== "invalid") throw new Error("unreachable");
+      assert.ok(result.rejectionCodes.includes("STITCH_SCREEN_INTERACTIVE_ELEMENT_UNINDEXED"), attrs);
+    }
+  });
+
+  it("accepts direct quoted empty and encoded readonly values with exact indexed identity", () => {
+    const { screen, sourceText } = readonlyDisplayFixture();
+    for (const literal of ["", "Open", "A &amp; B &quot;ready&quot;", "{state}"]) {
+      assert.equal(validateStitchScreenSourceV2({ screen, sourceText: sourceText.replace('value="Open"', `value="${literal}"`) }).status, "valid", literal);
+    }
+  });
+
+  it("rejects nonliteral values on a shared readonly observable element", () => {
+    const { screen, sourceText } = readonlyDisplayFixture();
+    screen.observables.push({ ...screen.observables[0]!, observableRef: "OBS_RECORD_STATE", selector: '[data-observable-refs~="OBS_RECORD_STATE"]' });
+    screen.projection.requiredObservableRefs.push("OBS_RECORD_STATE");
+    const source = sourceText.replace('data-observable-refs="OBS_RECORD_SAVED"', 'data-observable-refs="OBS_RECORD_SAVED OBS_RECORD_STATE"');
+    for (const attrs of ["", "value={stateValue}", 'value="Open" defaultValue="Other"']) {
+      assert.equal(validateStitchScreenSourceV2({ screen, sourceText: source.replace('value="Open"', attrs) }).status, "invalid", attrs);
+    }
+  });
+
   it("accepts exact indexed readonly text/default inputs without input transports", () => {
     const { screen, sourceText } = readonlyDisplayFixture();
     for (const source of [sourceText, sourceText.replace('type="text" ', ""), sourceText.replace("readOnly={true}", "readOnly"), sourceText.replace("readOnly={true}", 'readOnly="true"'), sourceText.replace('value="Open"', 'value="Open" hidden={true}')]) {

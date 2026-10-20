@@ -1738,14 +1738,17 @@ function isExactReadonlyObservableDisplay(
     || (readonly[0]!.expression && readonly[0]!.expression.kind !== ts.SyntaxKind.TrueKeyword)) return false;
   const types = element.attributes.get("type") ?? [];
   if (types.length > 1 || (types.length === 1 && (types[0]!.value !== "text" || types[0]!.expression))) return false;
+  const values = element.attributes.get("value") ?? [];
+  if (values.length !== 1 || typeof values[0]!.value !== "string" || values[0]!.expression) return false;
   const names = [...element.attributes.keys()];
   const foldedNames = names.map((name) => name.toLowerCase());
   if (new Set(foldedNames).size !== names.length) return false;
   if (names.some((name) => (name.toLowerCase() === "readonly" && name !== "readOnly")
-    || (name.toLowerCase() === "type" && name !== "type"))) return false;
+    || (name.toLowerCase() === "type" && name !== "type")
+    || (name.toLowerCase() === "value" && name !== "value"))) return false;
   return !names.some((name) => /^on/i.test(name) || [
     "data-action", "data-action-input", "data-action-id", "data-control-id", "data-control-slot",
-    "data-setfarm-link-action", "data-setfarm-rejected-control", "contenteditable",
+    "data-setfarm-link-action", "data-setfarm-rejected-control", "contenteditable", "defaultvalue",
   ].includes(name.toLowerCase()));
 }
 
