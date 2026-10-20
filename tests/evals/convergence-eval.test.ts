@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 
 import { createAcceptedCandidateV1 } from "../../src/evidence/accepted-candidate-v1.js";
 import {
@@ -11,6 +11,8 @@ import {
 } from "../../src/execution/schemas/v3-deploy-receipt-v1.js";
 import { V3ProjectTransferAckV1Schema } from "../../src/execution/schemas/v3-project-transfer-ack-v1.js";
 import { computeRunOperationalSnapshotHash } from "../../src/server/run-operational-snapshot.js";
+import { computeRunOperationalSnapshotHashV3, RunOperationalSnapshotV3Schema } from "../../src/server/schemas/run-operational-snapshot-v3.js";
+import { convergenceAcceptedOperationalSnapshotFixtureV1, convergenceOperationalSnapshotV3Fixture } from "./fixtures/convergence-operational-snapshot-v3.js";
 import { RunOperationalSnapshotV2Schema } from "../../src/server/schemas/run-operational-snapshot-v2.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
@@ -63,8 +65,38 @@ import {
   evaluateTaskIntentOracleTaskBindingV2,
   taskIntentOracleHashV2,
 } from "../../src/evals/task-intent-oracle-v2.js";
+import { assertFreshInstallationSelectionUnchangedV1, freshInstallationSelectionV1 } from "../../src/installation/fresh-installation-selection-v1.js";
 import { createIsolatedTestDatabase } from "../execution-attempts/test-database.js";
 import { buildNoVolumeRuntimeAuthorityFixture } from "../execution-attempts/fixtures/v3-runtime-authority.js";
+
+
+// ESM dependencies load before these hooks. Root's unchanged eager-import
+// no-log/no-event-write audit remains an execution prerequisite. Runtime error
+// paths resolve logger/events from this marker for the entire admitted file.
+const previousLogEventDbPath = process.env.SETFARM_DB_PATH;
+let ownedLogEventRoot: string | undefined;
+before(async () => {
+  // Never serialize the credential-bearing captured selection in an assertion.
+  assert.equal(freshInstallationSelectionV1 === null, true, "isolated whole-file tests require no captured fresh installation");
+  assertFreshInstallationSelectionUnchangedV1();
+  ownedLogEventRoot = await mkdtemp(path.join(tmpdir(), "setfarm-task3-eval-log-events-"));
+  process.env.SETFARM_DB_PATH = path.join(ownedLogEventRoot, "setfarm.db");
+});
+after(async () => {
+  // All test finally blocks (owned pools/DB/effects/artifacts) and afterEach
+  // hooks finish before this file-level teardown restores public config.
+  try {
+    if (ownedLogEventRoot) {
+      assert.equal(process.env.SETFARM_DB_PATH === path.join(ownedLogEventRoot, "setfarm.db"), true,
+        "whole-file log/event containment must survive owned fixture cleanup");
+      assertFreshInstallationSelectionUnchangedV1();
+    }
+  } finally {
+    if (previousLogEventDbPath === undefined) delete process.env.SETFARM_DB_PATH;
+    else process.env.SETFARM_DB_PATH = previousLogEventDbPath;
+    if (ownedLogEventRoot) await rm(ownedLogEventRoot, { recursive: true, force: true });
+  }
+});
 
 const SHA = "a".repeat(40);
 const HASH = "b".repeat(64);
@@ -588,6 +620,7 @@ function snapshot(
 }
 
 type HarnessOptions = Readonly<{
+  projectionVersion?: "v3";
   activeAtPreflight?: boolean;
   artifactIndexUnready?: boolean;
   pass?: boolean;
@@ -723,6 +756,14 @@ function harness(loaded: LoadedSuiteFixture, options: HarnessOptions = {}) {
     health: async (service) => ({ ok: true, evidenceHash: hashCanonicalJson({ service, ok: true }) }),
     operationalSnapshot: async (service, runId) => {
       const rejected = runCases.get(runId)?.oracle.expectedDecision.kind === "typed_rejection";
+      if (options.projectionVersion === "v3") {
+        const decision = runCases.get(runId)!.oracle.expectedDecision;
+        return decision.kind === "typed_rejection"
+          ? convergenceOperationalSnapshotV3Fixture(runId,
+              runCases.get(runId)!.caseId === "negative-ambiguous-product"
+                ? "PRODUCT_SPEC_TASK_AMBIGUOUS" : "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED")
+          : convergenceAcceptedOperationalSnapshotFixtureV1({ runId, version: "v3" });
+      }
       const projected = snapshot(
         options.projectionWrongRun ? "different-run" : runId,
         rejected,
@@ -1630,4 +1671,158 @@ it("default start awaits its original actual child after private proof publicati
     await assert.rejects(()=>port.startRun({workflowId:"feature-dev",task:"owned test",releaseSha:SHA,admission:{schema:"setfarm.internal-convergence-admission.v1",admissionHash:"a".repeat(64),slotHash:"b".repeat(64),caseHash:"c".repeat(64),taskHash:"d".repeat(64),repetition:1,slotToken:"t".repeat(32)},startChild:{reservation:{} as never,journal:{revision:1,hash:"e".repeat(64)}}}),/CONTROL_START_UNRESOLVED/);
     assert.equal(await readFile(marker,"utf8"),"one");
   } finally {await rm(root,{recursive:true,force:true});}
+});
+
+
+// These are explicit in-memory HTTP/process/admission fixtures. The real suite
+// runner and its private collector execute; no live HTTP/provider qualification
+// is implied by the eight harness runs below. Accepted V2 controls stay above.
+describe("strict V3 runner HTTP-port projection wiring", () => {
+  const capabilities = ["attempts", "claimBinding", "runtimeOwnership", "managerCompletion",
+    "effectLedger", "findingRecovery", "evidenceLedger", "acceptedCandidate",
+    "deploymentReceipt", "projectTransferAck"].sort();
+
+  async function firstCase(caseId: string) {
+    const original = await suite();
+    const selected = original.suite.cases.find(item => item.caseId === caseId)!;
+    const value = ProductConvergenceSuiteV1Schema.parse({ ...original.suite,
+      cases: [selected, ...original.suite.cases.filter(item => item.caseId !== caseId)] });
+    return { suite: value, suiteHash: hashCanonicalJson(value) };
+  }
+
+  it("accepts complete accepted V3 with exact transfer identities and both strict refusals", async () => {
+    const loaded = await suite(), h = harness(loaded, { projectionVersion: "v3" });
+    const bodies = new Map<string, ReturnType<typeof RunOperationalSnapshotV3Schema.parse>>();
+    const project = h.ports.http.operationalSnapshot;
+    let syncs = 0;
+    h.ports.http.syncProject = async () => { syncs++; return { ok: true, evidenceHash: HASH }; };
+    h.ports.http.operationalSnapshot = async (service, id) => {
+      const body = RunOperationalSnapshotV3Schema.parse(await project(service, id));
+      assert.equal(body.summary.operatorActions.stop.allowed, false);
+      assert.equal(body.summary.operatorActions.resume.allowed, false);
+      bodies.set(`${service}/${id}`, body);
+      return body;
+    };
+    const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, h.ports);
+    assert.equal(output.result.status, "pass");
+    assert.equal(output.result.runs.length, 8);
+    assert.equal(syncs, 6, "accepted-only initial synchronization remains mandatory");
+    for (const run of output.result.runs) {
+      const body = bodies.get(`setfarm/${run.runId}`)!;
+      assert.equal(run.passed, true);
+      assert.equal(run.projection.setfarmProjection, "complete");
+      assert.equal(run.projection.missionControlProjection, "complete");
+      assert.equal(run.projection.exactHashMatch, true);
+      assert.equal(run.projection.operationalSettled, true);
+      assert.deepEqual(Object.keys(run.projection.capabilities).sort(), capabilities);
+      assert.ok(Object.values(run.projection.capabilities).every(value => value === true));
+      assert.equal(run.projection.setfarmSnapshotHash, body.snapshotHash);
+      assert.equal(run.projection.missionControlSnapshotHash, bodies.get(`mission_control/${run.runId}`)!.snapshotHash);
+      if (run.expectedDecision === "accepted_candidate") {
+        assert.equal(body.operationalFailure, null);
+        assert.equal(run.projection.transferAcknowledged, true);
+        assert.equal(run.projection.projectTransferAckHash, body.projectTransferAck!.acknowledgement.ackHash);
+        assert.equal(run.projection.projectRecordHash, body.projectTransferAck!.acknowledgement.projectRecordHash);
+      } else {
+        assert.ok(body.operationalFailure);
+        assert.equal(body.terminationRequests.length, 1);
+        assert.equal(body.terminationRequests[0]!.state, "terminalized");
+        assert.equal(body.terminationRequests[0]!.evidence.modelRedispatchBudget, 0);
+        assert.equal(run.projection.transferAcknowledged, false);
+        assert.equal(run.projection.projectTransferAckHash, null);
+        assert.equal(run.projection.projectRecordHash, null);
+        assert.deepEqual(run.canonical.invariantCodes, []);
+        assert.deepEqual(run.canonical.oracle.mismatchCodes, []);
+        assert.equal(run.canonical.evidence.missingExpectedPredicates, 0);
+      }
+    }
+    assert.deepEqual(output.result.runs.filter(run => run.expectedDecision === "typed_rejection")
+      .map(run => run.caseId).sort(), ["negative-ambiguous-product", "negative-unsupported-kernel"]);
+  });
+
+  it("keeps individually valid unequal V3 acknowledgements unequal through accepted-only synchronization", async () => {
+    const loaded = await firstCase("utility-status-baseline"), h = harness(loaded, { projectionVersion: "v3" });
+    let syncs = 0, reads = 0, cancelled = false;
+    const sleep = h.ports.clock.sleep;
+    const sleeps: number[] = [];
+    h.ports.clock.sleep = async ms => { sleeps.push(ms); await sleep(ms); };
+    h.ports.http.syncProject = async () => { syncs++; return { ok: true, evidenceHash: HASH }; };
+    h.ports.http.operationalSnapshot = async (service, runId) => {
+      reads++;
+      return RunOperationalSnapshotV3Schema.parse(convergenceAcceptedOperationalSnapshotFixtureV1({
+        runId, version: "v3", persistedAt: service === "mission_control" ? "2026-07-13T12:00:01.000Z" : undefined,
+      }));
+    };
+    const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true,
+      control: controlHarness({ onRunResult: async () => { cancelled = true; },
+        cancellationRequested: async () => cancelled }) }, h.ports);
+    const projection = output.result.runs[0]!.projection;
+    assert.equal(projection.operationalSettled, true);
+    assert.equal(projection.exactHashMatch, false);
+    assert.equal(projection.transferAcknowledged, false);
+    assert.equal(projection.projectTransferAckHash, null);
+    assert.equal(projection.projectRecordHash, null);
+    assert.equal(reads, 26);
+    assert.equal(syncs, 4);
+    assert.equal(sleeps.length, 12);
+    assert.ok(sleeps.every(ms => ms >= 250 && ms <= 5000));
+    assert.equal(h.starts(), 1);
+    assert.equal(h.promotions.length, 0);
+    assert.equal(output.gate.decision, "no_go");
+  });
+
+  for (const boundary of ["rejected_read", "pending_drain", "cancel_pending", "cancel_malformed"] as const) {
+    it(`retains V3 ${boundary} polling and cancellation policy through the private collector`, async () => {
+      const loaded = await firstCase("negative-ambiguous-product"), h = harness(loaded, { projectionVersion: "v3" });
+      let observations = 0, polls = 0, stops = 0, syncs = 0, cancelled = false;
+      const sleeps: number[] = [], sleep = h.ports.clock.sleep, read = h.ports.sql.readRun;
+      const duringCancellation = boundary.startsWith("cancel_");
+      h.ports.clock.sleep = async ms => { sleeps.push(ms); await sleep(ms); };
+      h.ports.sql.readRun = async id => {
+        polls++;
+        const value = await read(id);
+        return duringCancellation ? { ...value, status: stops ? "failed" : "running", terminal: stops > 0 } : value;
+      };
+      h.ports.http.syncProject = async () => { syncs++; throw new Error("unexpected refusal synchronization"); };
+      h.ports.http.operationalSnapshot = async (service, id) => {
+        observations++;
+        if (boundary === "rejected_read" && service === "mission_control") throw new Error("fixture HTTP-port failure");
+        if (boundary === "cancel_malformed") return {};
+        const value = convergenceOperationalSnapshotV3Fixture(id, "PRODUCT_SPEC_TASK_AMBIGUOUS");
+        if (boundary === "cancel_pending" || (boundary === "pending_drain" && observations <= 4)) {
+          value.summary.unpublishedOutbox = 1;
+          value.outbox = [{ ref: "setfarm://outbox/fixture-terminal", outboxId: "fixture-terminal", requestRef: null,
+            eventKey: "fixture-terminal", eventType: "run_terminal", aggregateType: "run", aggregateId: id,
+            state: "pending", attemptCount: 0, publishedAt: null, createdAt: NOW, updatedAt: NOW }];
+        }
+        return RunOperationalSnapshotV3Schema.parse({ ...value, snapshotHash: computeRunOperationalSnapshotHashV3(value) });
+      };
+      const execute = () => runConvergenceSuite(loaded, { releaseSha: SHA, execute: true, control: controlHarness({
+        cancellationRequested: async () => duringCancellation ? polls > 0 : cancelled,
+        requestOwnedRunStop: async () => { stops++; return "requested"; },
+        onRunResult: async () => { cancelled = true; },
+      }) }, h.ports);
+      if (duringCancellation) {
+        await assert.rejects(execute, /CONTROL_SETTLEMENT_UNCERTAIN/);
+        assert.equal(stops, 1);
+        assert.equal(observations, boundary === "cancel_pending" ? 26 : 2);
+        assert.equal(sleeps.length, boundary === "cancel_pending" ? 13 : 1);
+        assert.equal(h.artifacts.length, 0);
+      } else {
+        const output = await execute(), projection = output.result.runs[0]!.projection;
+        assert.equal(projection.operationalSettled, boundary === "pending_drain");
+        assert.equal(projection.exactHashMatch, boundary === "pending_drain");
+        assert.equal(projection.setfarmProjection, boundary === "pending_drain" ? "complete" : "unavailable");
+        assert.equal(observations, boundary === "pending_drain" ? 6 : 26);
+        assert.equal(sleeps.length, boundary === "pending_drain" ? 2 : 12);
+        assert.equal(stops, 0);
+        assert.equal(output.result.status, "blocked");
+        assert.equal(output.gate.decision, "no_go");
+      }
+      assert.equal(h.starts(), 1);
+      assert.equal(h.promotions.length, 0);
+      assert.equal(syncs, 0);
+      assert.ok(sleeps.every(ms => ms >= 250 && ms <= 5000));
+    });
+  }
 });
