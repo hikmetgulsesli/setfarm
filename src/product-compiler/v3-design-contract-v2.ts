@@ -6,6 +6,19 @@ import {
   type ProductSpecV2,
 } from "./schemas/product-spec-v2.js";
 
+export const DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1 = Object.freeze({
+  schema: "setfarm.design-source-selected-html-prompt-disclosure.v1" as const,
+  rules: Object.freeze([
+    "- Return valid UTF-8 HTML of at most 800000 bytes and 200000 UTF-16 code units after decoding.",
+    "- Setfarm checks the complete decoded HTML source, including markup, attributes, styles, comments and permitted data scripts, not only visible text.",
+    "- Source characters may use printable ASCII U+0020-U+007E and structural whitespace TAB U+0009, LF U+000A and CR U+000D.",
+    "- The only additional English typography is U+2013, U+2014, U+2018, U+2019, U+201C, U+201D and U+2026.",
+    "- U+00A9 COPYRIGHT SIGN is the only extra neutral source character: Setfarm substitutes a space only for English inspection and retains the original HTML bytes.",
+    "- Other non-ASCII source characters, including literal U+2022 BULLET, are rejected. Omit unsupported decorative glyphs; use ordinary supported punctuation where needed.",
+    "- Other control characters, including DEL U+007F, are rejected. English admission also rejects known localized ASCII lexemes; ASCII spelling alone does not establish English.",
+  ] as const),
+});
+
 export type V3DesignContractV2 = Readonly<{
   productSpec: ProductSpecV2;
   generationTargets: DesignGenerationTargetsV2;
@@ -134,6 +147,10 @@ export function buildV3BatchStitchPromptV2(input: Readonly<{
     `Generate exactly ${targets.length} screens and no others in this response.`,
     `Target device type: ${input.deviceType}.`,
     "All visible user-facing text must be in English.",
+    "",
+    "## SELECTED_HTML_SOURCE_ADMISSION",
+    `disclosure_schema: ${DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1.schema}`,
+    ...DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1.rules,
     "",
     "## EXACT_SCREEN_TARGETS",
     targetSpecs,

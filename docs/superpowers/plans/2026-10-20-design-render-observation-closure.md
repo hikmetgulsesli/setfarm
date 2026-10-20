@@ -335,3 +335,10 @@ Ruling: Preserve existing traceable-hidden after/reload semantics and constrain 
 ### Task2 fixture review refinement
 
 Independent fixture review v1 C0/I2/M0 found two test-only issues before actual RED. Preserve isInteractive unchanged: the non-input exclusion negative must use a native interactive readonly textarea with exact textbox receipt, not a div role=textbox that current census deliberately does not classify interactive. No broader classifier/policy change follows. Replay inputType mutation must preserve the existing textbox receipt (text→email with no datalist), and establish equivalence of old census/receipt fields so only the new inputType difference causes mismatch. Add a literal readonly email selector-boundary negative while preserving checkbox/radio/range and all other cases. Source/runtime guards and new exception's literal type=text restriction remain strict.
+
+
+### Task3A bounded builder-only sequencing
+
+Task2 private-PG milestone remains OPEN. Root separately nominated and ran only the5-case pure builder file with physical Node22,128MiB V8 heap and5sec test deadline: original08b24f naturaltestexit1,4controlsPASS/one missing-section assertion at117:12, no skip/cancel/todo, sourceunchanged, both Python pipeEOF/wait returned. ChildmaxRSS130498560B, elapsed0.346sec. This has no native/PG/8GiB admission credit; runtimepromptauthority RED remains unrun.
+
+Permit Task3A only: implement the exact deeply frozen disclosure object and emission in src/product-compiler/v3-design-contract-v2.ts after this causal RED, preserving policies and allotherSource. Run same small builderfile GREEN and independentstaticreview. No runtime hash edit until its own actual PG RED and Task2 PG gate; do not deliver a partialprompt/authority change. Task3overall/build/live/full8 remain OPEN.
