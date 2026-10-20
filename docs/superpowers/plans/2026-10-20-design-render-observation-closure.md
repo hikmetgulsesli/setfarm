@@ -342,3 +342,14 @@ Independent fixture review v1 C0/I2/M0 found two test-only issues before actual 
 Task2 private-PG milestone remains OPEN. Root separately nominated and ran only the5-case pure builder file with physical Node22,128MiB V8 heap and5sec test deadline: original08b24f naturaltestexit1,4controlsPASS/one missing-section assertion at117:12, no skip/cancel/todo, sourceunchanged, both Python pipeEOF/wait returned. ChildmaxRSS130498560B, elapsed0.346sec. This has no native/PG/8GiB admission credit; runtimepromptauthority RED remains unrun.
 
 Permit Task3A only: implement the exact deeply frozen disclosure object and emission in src/product-compiler/v3-design-contract-v2.ts after this causal RED, preserving policies and allotherSource. Run same small builderfile GREEN and independentstaticreview. No runtime hash edit until its own actual PG RED and Task2 PG gate; do not deliver a partialprompt/authority change. Task3overall/build/live/full8 remain OPEN.
+
+
+## Combined Task2 and Task3B runtime gate
+
+Root reconciled the actual shared integration fixture after Task3A GREEN. Its new disclosure-hash assertion343 precedes the Task2 native-input authority/replay checks in the same successful-runtime leaf. Requiring Task2 whole-file GREEN before Task3B missing-hash RED/production is circular on these exact combined fixtures. Do not rewind Source, omit the new assertion, duplicate acceptance fixtures or claim Task2 complete frompartialobservations.
+
+| Shared interface | Dependency found | Binding sequencing |
+|---|---|---|
+| Task2/Task3B runtime and integration fixture | Missing disclosure assertion blocks later Task2 replay on the same real attempt | After unchanged9GiB admission, run a fresh owned combined runtime RED on frozenTask2 production plus Task3 fixtures/Task3A builder. Only a genuine missing-disclosure hash assertion qualifies. Then permit only the planned Task3B runtime hash property; independent review and fresh combined GREEN must execute all Task2 capabilities/replay and Task3 authority/repository/English controls before either runtime milestone closes. |
+
+This supersedes earlier Task3B text requiring Task2 PG milestone before Task3B production. Source edits stayserialized; no PG/Source milestone, build, delivery, rollout, provider/full8 success is waived. Currentcapacity remainsbelow8GiB, so no newPG/browser/heavy run. Task3A purebuilder actualGREEN2cddb4 passed5/5; Task2 producer49/49 at eccf4892 is retained, not a whole-current-branch claim.
