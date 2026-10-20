@@ -37,8 +37,8 @@ Files: new `src/product-compiler/setup-generated-screen-admission-v2.ts`, new `t
 
 ### Task 3: Integration, review and delivery
 
-- [ ] Root reviews combined File Map, production tsc, relevant native/source/packet/setup overlap only, expands on causal evidence.
-- [ ] Fresh mostcapable whole-branch reviewer on exact deliveredbase→currenthead. One finalfixwave then scopedreview; rulings explicit and no silent guard waiver.
+- [x] Root reviews combined File Map, production tsc, relevant native/source/packet/setup overlap only, expands on causal evidence.
+- [x] Fresh mostcapable whole-branch reviewer on exact deliveredbase→currenthead. One finalfixwave then scopedreview; rulings explicit and no silent guard waiver.
 - [ ] Normal PR/check/comment review delivery; genuine clean final main stockbuild before live qualification. Keep SF/MCsource/build identities and currently unqualifiedfull8 explicit. Fresh maintained full8 only after all known platform roots delivered and qualified, not after this isolated wave alone.
 
 Verified source phase: Task1 review C0 and native5/pure3/type PASS; Task2 independent spec/quality approved C0/I0/M1 (unchanged loader deprecation deferred), data43/type/native3 PASS at99cb99ff. Root retains both genuine RED originals and exact GREEN material/DB/logging/owner qualifications in this plan’s SDD workspace. Delivery, clean-main build, live qualification, negative PLAN/V3 consumer fixes and full8 GO remain separate pending outcomes.
@@ -48,8 +48,10 @@ Verified source phase: Task1 review C0 and native5/pure3/type PASS; Task2 indepe
 
 Whole-branch review of f844 is complete C0/I0/M1deferred; later GitHub review found a real P1 and integration remains held. Root's appended spec refinement controls this single final-fix wave.
 
-- [ ] Fresh scoped implementer prepares ONLY unchanged exported actual handoff wrapper with inert default-strict stage signature and the real stale-source → actual regeneration → strict writer/packet → readiness regression in the two refined File Map files. Preserve existing three tests byte-for-byte. No execution by author.
-- [ ] Root reads exact source/test diff, admits actual effects/closure, commits clean scoped test-seam preparation and runs maintained one-file guarded P3 Node26 with original capture. Require exact stale-admission blocker, real repaired converter/validator/packet success, final readiness RED; preserve all originals.
-- [ ] Same implementer adds only exact-code stage deferral and code-owned forthcoming converter caller selection after Root qualifies RED; adds scoped conservation/non-admission/strict negative controls. No broader failure clear or skip.
-- [ ] Root executes identical causal witness GREEN with complete capture, relevant type/overlap; independent scoped review against pre-fix f844 plus exact refinements. Record component-only/full-flow limits.
+- [x] Fresh scoped implementer prepares ONLY unchanged exported actual handoff wrapper with inert default-strict stage signature and the real stale-source → actual regeneration → strict writer/packet → readiness regression in the two refined File Map files. Preserve existing three tests byte-for-byte. No execution by author.
+- [x] Root reads exact source/test diff, admits actual effects/closure, commits clean scoped test-seam preparation and runs maintained one-file guarded P3 Node26 with original capture. Require exact stale-admission blocker, real repaired converter/validator/packet success, final readiness RED; preserve all originals.
+- [x] Same implementer adds only exact-code stage deferral and code-owned forthcoming converter caller selection after Root qualifies RED; adds scoped conservation/non-admission/strict negative controls. No broader failure clear or skip.
+- [x] Root executes identical causal witness GREEN with complete capture, relevant type/overlap; independent scoped review against pre-fix f844 plus exact refinements. Record component-only/full-flow limits.
 - [ ] Normal PR301 update, current checks and comment reconciliation, reviewed merge. No stockbuild until final necessary actual clean main after remaining negative PLAN/projection root fixes.
+
+Verified P1 final-fix source88dcc70d: genuine guarded RED original59652, 4tests3PASS1FAIL solely stale baseline after actual repair; same causal code/fixture authority GREEN original94774 natural0/bothEOF/fulltrackedsourceunchanged/no faults,4/4PASS with7nested safety probes. Productiontsc original91369 natural0/empty streams/sourceunchanged. Root verified9wrapper logger restorations, exact SQL/source restoration, ownedclients closed/DBdisposed/preexistingtemplate preserved,256retained witnessfiles. Scoped finalfix review specPASS/staticqualityPASS C0/I0/M0, previous DEP0205M1 remainsdeferred; wholebranchreview earlierf844 unchanged. Component proof only, not whole nativeV3preClaim/autocomplete. PR301delivery pending; SF final actualcleanmainstockbuild deferred until subsequent negativePLAN/projection rootfix delivery, then qualified rollout/freshfull8.
