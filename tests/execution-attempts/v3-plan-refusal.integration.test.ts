@@ -1026,7 +1026,8 @@ async function collectOwnedRefusalThroughRunner(database: OwnedDatabase, origina
   const existing = await db.readRun(runId);
   assert.equal(existing.terminal, true);
   assert.equal(existing.compilerReleaseSha, projectedHead);
-  let started = 0, forbidden = 0, cancelled = false, time = Date.now(), inspections = 0, canaries = 0, preparations = 0, releaseInspections = 0;
+  let started = 0, forbidden = 0, cancelled = false, time = Date.now(), canaries = 0, preparations = 0, releaseInspections = 0;
+  const inspections: Awaited<ReturnType<typeof db.inspectPlatform>>[] = [];
   const collections: ConvergenceRunCollection[] = [], bodies: Array<{ service: string; value: RunOperationalSnapshotV3 }> = [];
   const polls: Awaited<ReturnType<typeof db.readRun>>[] = [], artifacts: unknown[] = [], phases: unknown[] = [];
   const health: string[] = [], github: unknown[] = [], sleeps: number[] = [];
@@ -1035,7 +1036,7 @@ async function collectOwnedRefusalThroughRunner(database: OwnedDatabase, origina
   const runnerHash = createHash("sha256").update(await readFile(path.resolve("src/evals/convergence-runner.ts"))).digest("hex");
   const ports: ConvergenceRunnerPorts = {
     sql: {
-      inspectPlatform: async () => { inspections++; return db.inspectPlatform(); },
+      inspectPlatform: async () => { const value = await db.inspectPlatform(); inspections.push(value); return value; },
       readRun: async id => { assert.equal(id, runId); const value = await db.readRun(id); polls.push(value); return value; },
       collectRun: async (id, input) => { assert.equal(id, runId); assert.equal(input.task, selected.task);
         assert.deepEqual(input.oracle, selected.oracle); const value = await db.collectRun(id, input); collections.push(value); return value; },
@@ -1095,7 +1096,9 @@ async function collectOwnedRefusalThroughRunner(database: OwnedDatabase, origina
     beforeFinalization: async () => "cancel",
   };
   const output = await runConvergenceSuite(loaded, { releaseSha: projectedHead, execute: true, control }, ports);
-  assert.equal(started, 1); assert.equal(forbidden, 0); assert.equal(inspections, 1); assert.equal(canaries, 1);
+  assert.equal(started, 1); assert.equal(forbidden, 0); assert.equal(inspections.length, 2);
+  assert.deepEqual(inspections, [inspected, inspected]);
+  assert.equal(canaries, 1);
   assert.equal(preparations, 1); assert.ok(releaseInspections >= 2);
   assert.ok(polls.length >= 1); assert.ok(polls.every(item => item.runId === runId && item.terminal));
   assert.equal(collections.length, 1); assert.equal(github.length, 1); assert.equal(sleeps.length, 0);
