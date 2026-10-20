@@ -83,6 +83,50 @@ type NativeFixture = Readonly<{
 
 type RetainedWriterWitness = Readonly<{ runId: string; diagnosticRoot: string }>;
 
+async function withRetainedWriterLog<T>(
+  diagnosticRoot: string,
+  call: "first" | "second",
+  materialize: () => Promise<T>,
+): Promise<T> {
+  const { selectedFreshInstallationRootV1 } = await import("../../src/installation/fresh-installation-selection-v1.js");
+  // Logger prioritizes a selected fresh installation over SETFARM_DB_PATH.
+  // Refuse that context; never clear or retarget its captured authority.
+  assert.equal(selectedFreshInstallationRootV1(), null, "writer log isolation requires the admitted ordinary fixture context");
+  const logRoot = fs.mkdtempSync(path.join(diagnosticRoot, `writer-log-${call}-`));
+  const loggingSelectionPath = path.join(logRoot, "logging-selection.db");
+  const logFile = path.join(logRoot, "logs", "workflow.log");
+  const hadPreviousSelection = Object.hasOwn(process.env, "SETFARM_DB_PATH");
+  const previousSelection = process.env.SETFARM_DB_PATH;
+  try {
+    // This path configures only the existing dynamic logger; SQL remains bound
+    // explicitly to the owned clone through pgConfigureIsolatedTestDatabase.
+    process.env.SETFARM_DB_PATH = loggingSelectionPath;
+    writeJson(path.join(logRoot, "logging-scope.json"), {
+      call, loggingSelectionPath, logFile, previousSelectionPresent: hadPreviousSelection,
+      scope: "only this real materializeSetupBuildContracts invocation",
+    });
+    const result = await materialize();
+    const logBytes = fs.readFileSync(logFile);
+    assert.match(logBytes.toString("utf8"), /\[setup-handoff\]/);
+    writeJson(path.join(logRoot, "logging-result.json"), {
+      logFile, byteLength: logBytes.byteLength,
+      sha256: createHash("sha256").update(logBytes).digest("hex"),
+    });
+    return result;
+  } finally {
+    if (hadPreviousSelection) process.env.SETFARM_DB_PATH = previousSelection!;
+    else delete process.env.SETFARM_DB_PATH;
+    const restoredPresence = Object.hasOwn(process.env, "SETFARM_DB_PATH") === hadPreviousSelection;
+    const restoredValue = process.env.SETFARM_DB_PATH === previousSelection;
+    writeJson(path.join(logRoot, "logging-restoration.json"), {
+      call, logFile, restoredPresence, restoredValue,
+      logExists: fs.existsSync(logFile),
+    });
+    assert.equal(restoredPresence, true);
+    assert.equal(restoredValue, true);
+  }
+}
+
 async function createNativeV2Fixture(input: Readonly<{
   database: TestDatabase;
   roots: string[];
@@ -333,7 +377,8 @@ async function createNativeV2Fixture(input: Readonly<{
         generationTargets: targets.generationTargets, proposal,
       });
       const { materializeSetupBuildContracts } = await import("../../src/installer/setup-handoff.js");
-      const written = await materializeSetupBuildContracts(runId, repo, writerContext!, "npm run build");
+      const written = await withRetainedWriterLog(diagnosticRoot!, "first", () =>
+        materializeSetupBuildContracts(runId, repo, writerContext!, "npm run build"));
       writeJson(path.join(diagnosticRoot!, "actual-writer-result.json"), written);
       assert.equal(written.certificate.stackPackId, "browser-game-canvas");
       assert.equal(written.manifest.resolvedTargets.filter((item) =>
@@ -629,7 +674,8 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
     assert.equal(mappedScreen.pathRef, binding.id);
     assert.ok(story.ownedPathRefs.includes(binding.id));
     const { materializeSetupBuildContracts } = await import("../../src/installer/setup-handoff.js");
-    const repeated = await materializeSetupBuildContracts(fixture.runId, fixture.repo, fixture.writerContext!, "npm run build");
+    const repeated = await withRetainedWriterLog(fixture.diagnosticRoot!, "second", () =>
+      materializeSetupBuildContracts(fixture.runId, fixture.repo, fixture.writerContext!, "npm run build"));
     writeJson(path.join(fixture.diagnosticRoot!, "actual-writer-second-result.json"), repeated);
     assert.deepEqual(repeated.certificate.generatedDesignFiles, certificate.generatedDesignFiles);
     assert.deepEqual(repeated.certificate.generatedDesignFiles.filter((locator) => /\.(tsx|jsx)$/i.test(locator)), [fixture.generatedFile]);
