@@ -682,6 +682,87 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
     assert.deepEqual(repeated.certificate.dependencyEvidence, { requested: [], approved: [], installed: [], rejected: [] });
     assert.equal(fs.existsSync(path.join(fixture.repo, "package-lock.json")), false);
     assert.equal(fs.existsSync(path.join(fixture.repo, "node_modules")), false);
+
+    // These post-acceptance probes leave the causal writer/packet inputs and
+    // acceptance assertions above unchanged. Every temporary projection/source
+    // mutation is restored; new witness files and the handwritten file remain.
+    const sourcePath = path.join(fixture.repo, fixture.generatedFile);
+    const indexPath = path.join(fixture.repo, "src/screens/SCREEN_INDEX.json");
+    const originalSource = fs.readFileSync(sourcePath);
+    const originalIndex = fs.readFileSync(indexPath);
+    const handwrittenFile = "src/screens/UnindexedHandwritten.tsx";
+    fs.writeFileSync(path.join(fixture.repo, handwrittenFile), originalSource);
+    const materialize = () => withRetainedWriterLog(fixture.diagnosticRoot!, "second", () =>
+      materializeSetupBuildContracts(fixture.runId, fixture.repo, fixture.writerContext!, "npm run build"));
+    const withHandwritten = await materialize();
+    writeJson(path.join(fixture.diagnosticRoot!, "actual-writer-unindexed-result.json"), withHandwritten);
+    assert.deepEqual(withHandwritten.certificate.generatedDesignFiles.filter((locator) => /\.(tsx|jsx)$/i.test(locator)), [fixture.generatedFile]);
+    assert.equal(withHandwritten.certificate.generatedDesignFiles.includes(handwrittenFile), false);
+
+    const assertAdmissionRejected = async (name: string): Promise<void> => {
+      let refusal: unknown;
+      try { await materialize(); } catch (error) { refusal = error; }
+      writeJson(path.join(fixture.diagnosticRoot!, `admission-${name}-outcome.json`), {
+        code: (refusal as { code?: unknown })?.code,
+        message: refusal instanceof Error ? refusal.message : String(refusal),
+      });
+      assert.equal((refusal as { code?: unknown })?.code, "SETUP_GENERATED_SCREEN_ADMISSION_REJECTED", name);
+    };
+    try {
+      const forgedIndex = JSON.parse(originalIndex.toString("utf8"));
+      forgedIndex[0].file = handwrittenFile;
+      for (const entry of [...forgedIndex[0].controls, ...forgedIndex[0].observables, ...forgedIndex[0].rejectedControls]) {
+        entry.generatedSourceLocator = handwrittenFile;
+      }
+      writeJson(indexPath, forgedIndex);
+      await assertAdmissionRejected("handwritten-without-direct-manifest-binding");
+    } finally {
+      fs.writeFileSync(indexPath, originalIndex);
+    }
+    for (const projection of [
+      "stitch/GENERATION_TARGETS.json", "stitch/STITCH_RESPONSE_BINDINGS.json",
+      "stitch/DESIGN_INTERACTION_GRAPH_V2.json",
+    ]) {
+      const projectionPath = path.join(fixture.repo, projection);
+      const retainedPath = path.join(fixture.diagnosticRoot!, `temporarily-missing-${path.basename(projection)}`);
+      fs.renameSync(projectionPath, retainedPath);
+      try { await assertAdmissionRejected(`missing-${path.basename(projection)}`); }
+      finally { fs.renameSync(retainedPath, projectionPath); }
+    }
+    const graphPath = path.join(fixture.repo, "stitch/DESIGN_INTERACTION_GRAPH_V2.json");
+    const originalGraph = fs.readFileSync(graphPath);
+    try {
+      const driftedGraph = JSON.parse(originalGraph.toString("utf8"));
+      driftedGraph.generationTargetsHash = "0".repeat(64);
+      writeJson(graphPath, driftedGraph);
+      await assertAdmissionRejected("graph-generation-target-hash-drift");
+    } finally {
+      fs.writeFileSync(graphPath, originalGraph);
+    }
+    try {
+      // A replacement decoder would leave this invalid byte only in a comment,
+      // so source validation alone cannot stand in for fatal UTF-8 decoding.
+      fs.writeFileSync(sourcePath, Buffer.concat([originalSource, Buffer.from("\n// invalid UTF-8: "), Buffer.from([0xff])]));
+      await assertAdmissionRejected("invalid-utf8-source");
+      fs.writeFileSync(sourcePath, Buffer.concat([originalSource, Buffer.from("\n// "), Buffer.alloc(16 * 1024 * 1024, 0x20)]));
+      await assertAdmissionRejected("oversize-source");
+    } finally {
+      fs.writeFileSync(sourcePath, originalSource);
+    }
+    const retainedIndex = path.join(fixture.diagnosticRoot!, "preconversion-SCREEN_INDEX.json");
+    fs.renameSync(indexPath, retainedIndex);
+    try {
+      const preparing = await materialize();
+      writeJson(path.join(fixture.diagnosticRoot!, "actual-writer-preconversion-result.json"), preparing);
+      assert.deepEqual(preparing.certificate.generatedDesignFiles.filter((locator) => /\.(tsx|jsx)$/i.test(locator)), []);
+    } finally {
+      fs.renameSync(retainedIndex, indexPath);
+    }
+    const restored = await materialize();
+    writeJson(path.join(fixture.diagnosticRoot!, "actual-writer-restored-result.json"), restored);
+    assert.deepEqual(restored.certificate.generatedDesignFiles, certificate.generatedDesignFiles);
+    assert.deepEqual(fs.readFileSync(sourcePath), originalSource);
+    assert.deepEqual(fs.readFileSync(indexPath), originalIndex);
   }
 
   it("sixth source-map actual-writer stock assertions", async (t) => {
