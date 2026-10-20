@@ -15,6 +15,7 @@ import {
 import { canonicalJsonBytes, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
   DesignSourceGenerationRetryDeltaV1Schema,
+  createInitialDesignSourceGenerationRequestV2,
 } from "../../src/product-compiler/design-source-compilation-attempt-runner.js";
 import {
   DesignSourceSemanticRetryEvidenceV1Schema,
@@ -352,6 +353,49 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       assert.equal(first.artifacts?.designGraph.controls.length, 1);
       assert.equal(first.artifacts?.designGraph.controls[0]?.identity.controlSlotRef, placement.controlSlotRef);
       const acceptedAttemptRoot = path.join(repo, first.runner.attempt.attemptLocator);
+      // Independent policy literals make omission of either capability a real
+      // authority/attempt-identity regression, even when this fixture has no inputs.
+      const expectedRenderPolicy = {
+        policy: "chromium-offline-role-receipts-control-slots.v2",
+        nativeInputObservation: "native-text-readonly-exact-role-receipt.v1",
+      };
+      const expectedSelectionPolicy = {
+        policy: "exact-v2-rendered-slots-surfaces-role-receipts-hash-ranked.v2",
+        readOnlyObservableAdmission: "native-text-readonly-exact-role-receipt.v1",
+      };
+      assert.equal(first.authority.renderPolicyHash, hashCanonicalJson(expectedRenderPolicy));
+      assert.equal(first.authority.selectionPolicyHash, hashCanonicalJson(expectedSelectionPolicy));
+      assert.equal(first.authority.producerReleaseSha, releaseSha);
+      const legacyAuthority = {
+        ...first.authority,
+        renderPolicyHash: hashCanonicalJson(expectedRenderPolicy.policy),
+        selectionPolicyHash: hashCanonicalJson(expectedSelectionPolicy.policy),
+      };
+      assert.notEqual(first.authority.renderPolicyHash, legacyAuthority.renderPolicyHash);
+      assert.notEqual(first.authority.selectionPolicyHash, legacyAuthority.selectionPolicyHash);
+      const stages = [{
+        stageId: "DSGS_001",
+        targetRefs: [target.targetId],
+        prompt: await readFile(path.join(acceptedAttemptRoot, "request", "stages", "DSGS_001", "prompt.md"), "utf8"),
+      }];
+      const currentRequest = createInitialDesignSourceGenerationRequestV2({ authority: first.authority, stages });
+      assert.equal(currentRequest.authorityHash, first.runner.attempt.authorityHash);
+      assert.equal(hashCanonicalJson(currentRequest), first.runner.attempt.requestHash);
+      for (const [label, authority] of [
+        ["old string-only policies", legacyAuthority],
+        ["render capability", { ...first.authority, renderPolicyHash: hashCanonicalJson({
+          ...expectedRenderPolicy, nativeInputObservation: "native-text-readonly-exact-role-receipt.v2",
+        }) }],
+        ["selection capability", { ...first.authority, selectionPolicyHash: hashCanonicalJson({
+          ...expectedSelectionPolicy, readOnlyObservableAdmission: "native-text-readonly-exact-role-receipt.v2",
+        }) }],
+        ["producer release", { ...first.authority, producerReleaseSha: "c".repeat(40) }],
+      ] as const) {
+        const changed = createInitialDesignSourceGenerationRequestV2({ authority, stages });
+        assert.notEqual(changed.authorityHash, currentRequest.authorityHash, label);
+        assert.notEqual(hashCanonicalJson(changed), first.runner.attempt.requestHash, label);
+      }
+
       const acceptedScreenKey = createHash("sha256").update(screenId, "utf8").digest("hex");
       assert.deepEqual(
         await readFile(path.join(
@@ -389,6 +433,9 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       assert.equal(replay.runner.status, "accepted", JSON.stringify(replay.runner));
       if (replay.runner.status !== "accepted") return;
       assert.equal(replay.runner.replayed, true);
+      assert.deepEqual(replay.authority, first.authority);
+      assert.equal(replay.runner.attempt.attemptId, first.runner.attempt.attemptId);
+      assert.equal(replay.runner.attempt.requestHash, first.runner.attempt.requestHash);
       assert.equal(dispatches, 1);
       assert.deepEqual(
         replay.artifacts,

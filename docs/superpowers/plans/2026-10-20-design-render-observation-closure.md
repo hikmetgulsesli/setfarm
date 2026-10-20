@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Preserve the actual prefetch infrastructure cause and admit an exactly required, browser-proven readonly text observable without admitting uncontracted operations.
+**Goal:** Preserve the actual prefetch infrastructure cause, admit an exactly required browser-proven readonly text observable, and disclose existing full-source HTML admission requirements to generation without weakening admission.
 
-**Architecture:** Two serialized Source tasks: narrowly translate a typed renderer failure through existing sealed materialization and preclaim cause custody; then extend owned native-input observation with strict, backward-compatible evidence and join only exact required readonly text observables into candidate admission. Rendering, semantic retry budgets, runtime ownership and downstream implementation evidence remain authoritative.
+**Architecture:** Three serialized Source tasks: narrowly translate a typed renderer failure through existing sealed materialization and preclaim cause custody; then extend owned native-input observation with strict, backward-compatible evidence and join only exact required readonly text observables into candidate admission. A final authority-bound prompt disclosure states the existing full-source policy. Rendering, semantic retry budgets, runtime ownership and downstream implementation evidence remain authoritative.
 
 **Tech Stack:** Existing TypeScript/ESM, Zod, owned Playwright capture/replay, node:test and private isolated PostgreSQL test runner. No new dependency.
 
@@ -15,7 +15,7 @@
 - Root alone stages, commits, pushes and delivers; one Source implementation worker in the selected existing SF writer, branch `fix/design-render-observation-20261020`, base `83ccbbb819134408fed4f24849440b3a43c6654a`. Preserve prior branches, scratch, evidence and dirty files.
 - Freeze live SF83/MCfa41/I4 and full8 job `1a2c2b5f-3c85-4d98-9968-9fafa8499e4e`; no service/build/runtime transition until its original owned closure. Source work and isolated tests only.
 - Preserve the first and second failed full8 cases, all original artifacts and historical UNKNOWNs. Never repair/adopt generated evidence, pretend the suite passed, or substitute a model/tool failure for a failed test.
-- No provider/real network calls, live DB selection, credentials/ACL effects, prompt edits, resource/TLS/allowlist changes, retry-budget changes, guard bypass, new dependencies or broad cleanup.
+- No provider/real network calls, live DB selection, credentials/ACL effects, prompt edits outside the exact approved Task 3 disclosure, resource/TLS/allowlist changes, retry-budget changes, guard bypass, new dependencies or broad cleanup.
 - Pure/compiler producer tests and production builds retain physical provisioned Node `/opt/homebrew/Cellar/node@22/22.23.1/bin/node` (v22.23.1). Maintained owner-backed P3 tests require pinned `/Users/setrox/ai/setrox/.task4-toolchain-v1/Cellar/node/26.4.0/bin/node`, SHA256 `59cd4fb59cf5bc239f43d5db8c0cd8c23c22db79419612b92da3b7cf34de8553`, because the unchanged runner sets --test-isolation=none. Prepend the nominated driver directory to command PATH; existing dependencies only. Test DBs only through maintained isolated owners; retain original exit/EOF/cleanup evidence. Stop new heavy work if observed disk falls below 8,589,934,592 bytes; do not weaken any existing resource guard.
 - Keep English source/copy and existing schema/policy literals, phase/rejection codes, sealed request/artifact hashes, source/release binding and legacy conservative replay. Missing native-input evidence grants no readonly admission permission.
 - Task 1 promises typed persisted/terminal cause, not a corrected legacy operational-model UI badge or original transport repair. Task 2 grants only a declared readonly display observable, not after/reload runtime correctness. Actual full8/GO remain unqualified.
@@ -154,11 +154,11 @@ node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --
 node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts
 node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 tests/steps/02-design.test.ts
 node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 tests/steps/02-design-runtime-v2.test.ts
-# Root alone: clean stock build, physical Node 22 after reviews/current gates.
+# Root alone: stock build on reviewed clean main == origin/main after merge; physical Node 22.
 npm run build
 ```
 
-Build only after clean scoped commit; no `SETFARM_ALLOW_DIRTY_BUILD=1` or `SETFARM_SKIP_RUNTIME_GUARD=1`. Product suite entrypoint is `node --import tsx --test tests/product-compiler/*.test.ts`; execution entrypoint is `scripts/run-execution-attempt-tests.ts`, which clears live PG selection and isolates owner-backed tests. Build runs build-info/version/English/path/migration-digest/MC-contract prechecks, tsc, asset copy/version injection and finalization. No checks were executed here.
+Stock build requires reviewed merged clean main exactly equal to origin/main; a clean private-branch commit alone is insufficient. No `SETFARM_ALLOW_DIRTY_BUILD=1` or `SETFARM_SKIP_RUNTIME_GUARD=1`. Product suite entrypoint is `node --import tsx --test tests/product-compiler/*.test.ts`; execution entrypoint is `scripts/run-execution-attempt-tests.ts`, which clears live PG selection and isolates owner-backed tests. Build runs build-info/version/English/path/migration-digest/MC-contract prechecks, tsc, asset copy/version injection and finalization. No checks were executed here.
 
 #### Operational outcome and limits
 
@@ -240,11 +240,11 @@ No DB migration: hashes already use Sha256Schema. Existing literal schema/policy
 #### Red/green and compatibility acceptance
 
 - [ ] First reproduce old result from genuinely captured valid `<input type="text" readonly aria-label="Display value" value="ready">` on the required surface with exact role receipt and declared action button. Baseline must reject `CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL`; verify that exact observable check passes. Implement census/schema then selector refinement. Result must select/bind exact observable element, without requiring action inputFields for a display.
-- [ ] Table negatives retain undeclared rejection: editable text; missing state; state readOnly=false; aria-readonly only; checkbox/radio/range with readOnly=true; non-input role textbox; contentEditable=true; missing/wrong/duplicate receipt; wrong target/surface/name/actionRef/phases; non-rendered/hidden element; undeclared readonly textbox; present data-action/data-action-input/data-control-slot; unrelated extra button; missing required action. Wrong/unknown schema values fail schema rather than becoming infrastructure exceptions invented by selector. Preserve existing `CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL`, unresolved selection and source failure codes.
+- [ ] Table negatives retain undeclared rejection: editable text; missing state; state readOnly=false; aria-readonly only; checkbox/radio/range with readOnly=true; non-input role textbox; contentEditable=true; missing/wrong/duplicate receipt; wrong target/surface/name/actionRef/phases; a required-before-visible hidden element (existing receipt rejection); undeclared readonly textbox; present data-action/data-action-input/data-control-slot; unrelated extra button; missing required action. Wrong/unknown schema values fail schema rather than becoming infrastructure exceptions invented by selector. Preserve existing `CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL`, unresolved selection and source failure codes.
 - [ ] Renderer tests assert observed state against native DOM properties; all inputs carry it and non-inputs do not. New strict schema rejects partial/extra state fields and mixed legacy/new candidates. Recompute observationHash in deliberate pure-schema fixtures so tests fail on intended validation, not stale hashes.
 - [ ] Real replay: new capture round-trips with exact state/hash. Changing readonly/type in sealed DOM (with controlled test sidecar hash setup) fails semantic replay equality; changing sidecar bytes without hash update still fails existing sidecar guard. Legacy fixture without state, original observationHash and genuine DOM replays through recorded-shape projection but remains unqualified for the readonly selection exception. No return-path enrichment or reclassification of historical artifacts.
 - [ ] Runtime integration verifies new render/selection hashes differ from old string-only hashes, bind current capability, and changing either capability changes authority. Existing successful accepted replay remains accepted under same new authority. Old request identity is never reused for new semantics. Preserve task 1 infrastructure and all semantic/English/schema/ownership negatives.
-- [ ] Run focused existing entrypoints below and clean build after primary-owner scoped commit. Tests may be completed independently of task 1, but changes to shared runtime/tests must be serialized. Review task 2 separately for false acceptance; no runtime cutover until original suite and owner gates close.
+- [ ] Run focused existing entrypoints below and Source-only noEmit checking after primary-owner scoped commit; final stock build runs only on reviewed merged clean main equal to origin/main. Tests may be completed independently of task 1, but changes to shared runtime/tests must be serialized. Review task 2 separately for false acceptance; no runtime cutover until original suite and owner gates close.
 
 ```sh
 env -u SETFARM_PG_URL node --import tsx --test --test-concurrency=1 tests/product-compiler/stitch-rendered-semantics-v2.test.ts tests/product-compiler/stitch-target-candidate-selection-v2.test.ts
@@ -256,7 +256,7 @@ Expected owner/retry behavior: proven readonly display now qualifies; actual edi
 ## Primary-owner delivery
 
 - [ ] Each task retains causal RED, exact GREEN commands, covering outputs and Source pins in its own SDD report; Root obtains independent task review before completing it.
-- [ ] Root serializes commits and obtains the most capable independent whole-branch review after both tasks. Clean stock build and source/product identity checks are required before PR delivery; never edit or rebuild the live checkout.
+- [ ] Root serializes commits and obtains the most capable independent whole-branch review after all three tasks. Covering tests and Source-only noEmit checks precede reviewed PR delivery. The unchanged stock build requires reviewed merged clean main exactly equal to origin/main and remains mandatory before rollout/source-product qualification; never edit or rebuild the live checkout.
 - [ ] Preserve every original full8/UI failure. Guarded merged-main rollout and fresh actual workflow/UI qualification happen only after the active original full8 owner closes and all current gates hold.
 
 ## Rulings
@@ -274,3 +274,64 @@ Root first checkpoints the four frozen RED fixture files and this plan as an exp
 Ruling: Use clean explicitly unqualified RED/GREEN checkpoints instead of broadening the P3 dirty-source scope — the maintained guard authenticates all indexed bytes and excludes this task's dirty Source; private commits preserve exact provenance while actual tests/review/build still gate delivery — if wrong, the unchanged projection refuses or tests remain unqualified; no guard may be bypassed.
 
 Ruling: Use the existing pinned Node 26 driver only for maintained owner-backed P3 tests, retaining Node 22 production builds/runtime and pure producer checks — Root's actual Node22 probe exits9 on --test-isolation=none, which the maintained runner requires; earlier Node22-only plan wording was overbroad — if wrong, material/driver admission or original tests fail; do not change runner flags or runtime pins to force a pass.
+
+
+## Actual main-only build sequencing correction
+
+Task1 bounded five-file GREEN at `a2dcb123cfe081a4bb0937a1871698be2195b0bd` is independently qualified by `private-pg-green-actual-whole-phase-review-v1.md`, SHA256 `969759ea8cf090de0c42e9e7186cf4a446cc7bf7bc87b2b4f05fd7fdf25aa564`:38 passing leaves plus one parent, original PG/Node/SQL/stream custody closed. Separate Node22 pure files passed13 and24 tests. Source-only `tsc --noEmit -p tsconfig.json` exited0; it generates no build/release artifact.
+
+The original stock `npm run build` exited1 at prebuild with `[write-build-info] HEAD does not equal origin/main`. Existing `derivePinnedInputSet` additionally requires branch main. The earlier assumption that a clean feature checkpoint permits stock build was wrong. Keep the exact guard, refs, scripts, topology and build authority unchanged; do not spoof origin/main, rename a feature branch to main, bypass prebuild or claim a successful build from noEmit/P3. Task-level implementation/test review may close the Source milestone; stock build/delivery/rollout remain separately open until the complete reviewed wave is merged and built on clean main. Current live services stay frozen.
+
+### Task 3: Disclose exact selected HTML admission and bind its authority
+
+**Consumes:** Actual case3 correct U+2022 rejection and evidenced generation/admission disclosure mismatch; proposal `logs/2026-10-20-mc-only-rollout-v1/selected-html-prompt-disclosure-task-proposal-v1.md`, SHA256 `de16827e73e991d70e705c4e958e4f4134ceda5ab3058e6c04ff1b80235b63c1`. Current selected-HTML predicate, decoder and immutable English/copyright policy remain authoritative.
+
+**Produces:** One deeply immutable code-owned disclosure object emitted by the existing builder and hashed verbatim into prompt authority. No acceptance-policy, scalar allowlist, language-detector, transport, retry, generated-product or migration change.
+
+The source builder currently asks for visible English only, while admission inspects the complete decoded source. Changing prompt text alone is insufficient: accepted attempt reuse is keyed by authority even for a different request. Bind the full exact disclosure object into promptContractHash so old accepted authority cannot satisfy new-disclosure generation. Existing release binding stays independent.
+
+#### File Map
+
+- `src/product-compiler/v3-design-contract-v2.ts`: export deeply frozen object below; emit one `## SELECTED_HTML_SOURCE_ADMISSION` section, `disclosure_schema:` marker and exact ordered rules immediately after the existing visible-English requirement. Keep builder signature and target/completeness checks.
+- `src/product-compiler/design-source-runtime-v2.ts`: import the object beside builder; add `selectedHtmlPromptDisclosure: DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1` to existing `setfarm.design-source-prompt-contract.v2` hash payload. Preserve all existing inputs including Task2 capability and release binding.
+- `tests/product-compiler/v3-design-contract-v2.test.ts`: independent literal content/order/single-section/schema/deep-freeze/deterministic request assertions and existing target controls.
+- `tests/execution-attempts/design-source-runtime-v2.integration.test.ts`: independent expected prompt hash; old/new/changed-rule authority+request distinction; exact new-authority replay; unchanged bullet rejection and copyright-byte preservation plus existing language/encoding/capacity negatives.
+- `tests/execution-attempts/product-compilation-attempt-repository.test.ts`: use normal reserve/dispatch/seal to prove accepted old authority does not satisfy reserve under new authority; preserve same-authority accepted reuse.
+- This Root plan only documentation deliverable. Read-only English policy/canonical-json/runner/schema/installer/provider wrapper stay unchanged.
+
+```ts
+export const DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1 = Object.freeze({
+  schema: "setfarm.design-source-selected-html-prompt-disclosure.v1" as const,
+  rules: Object.freeze([
+    "- Return valid UTF-8 HTML of at most 800000 bytes and 200000 UTF-16 code units after decoding.",
+    "- Setfarm checks the complete decoded HTML source, including markup, attributes, styles, comments and permitted data scripts, not only visible text.",
+    "- Source characters may use printable ASCII U+0020-U+007E and structural whitespace TAB U+0009, LF U+000A and CR U+000D.",
+    "- The only additional English typography is U+2013, U+2014, U+2018, U+2019, U+201C, U+201D and U+2026.",
+    "- U+00A9 COPYRIGHT SIGN is the only extra neutral source character: Setfarm substitutes a space only for English inspection and retains the original HTML bytes.",
+    "- Other non-ASCII source characters, including literal U+2022 BULLET, are rejected. Omit unsupported decorative glyphs; use ordinary supported punctuation where needed.",
+    "- Other control characters, including DEL U+007F, are rejected. English admission also rejects known localized ASCII lexemes; ASCII spelling alone does not establish English.",
+  ] as const),
+});
+```
+
+#### Serialized TDD and review
+
+- [ ] After Task2 Source milestone closes and Root reconciles current writer/pins, freeze new regression fixtures first. Builder RED must fail on the missing section; runtime RED must fail on missing exact authority disclosure, with all other inputs fixed. Setup/infrastructure failure is unqualified. No old-artifact rewrite or task-specific provider call.
+- [ ] Old/new promptContractHash, full authorityHash and requestHash differ; changed rule changes enclosing hash. A stage-only prompt difference with unchanged authority is insufficient. Normal repository fixture must reserve a distinct attempt under new authority rather than already_accepted; same new authority replay remains identical without redispatch.
+- [ ] Literal U+2022 still rejects at selected_html_english_admission with exact existing reason/diagnostic, no projection/bundle/no semantic retry. Copyright remains accepted with original bytes/hash. Preserve accented/Cyrillic/hidden-format/invalidUTF8/byte/code-unit/localized-ASCII/control negatives. These invariant tests are GREEN controls, not the task's missing-disclosure RED.
+- [ ] Implement only the object/emission/authority input; focused builder/runtime/repository/English suites through current owned harness and independent review. No wildcard, bypass, dirty build, encoding workaround, broad policy refactor or new dependency.
+- [ ] Root Source noEmit plus task review; final whole-branch review and guarded clean-main stock build before rollout. Provider adherence and actual fresh full8 remain separate live qualification, never guaranteed by disclosure.
+
+Ruling: Add Task3 exact authority-bound disclosure as a causally necessary refinement of the unchanged full8 objective — case3's rejection was correct and the generator omitted its full-source requirements; preserve the policy and correct the producer instructions — if wrong, the provider may still violate the policy or authority tests may reject reuse, requiring Source rework/fresh qualification, never gate weakening.
+
+
+## Task2 hidden-observable scope clarification
+
+Existing selector semantics check undeclared interactivity only for `renderState === "rendered"`; exact observable receipts explicitly permit `traceable_hidden_allowed` when no before-visible assertion exists. Existing genuine browser tests preserve hidden after-only observables. Keep that behavior unchanged. The hidden negative above means a display explicitly required visible before, which existing role/visibility validation must reject. Characterize an after-only non-rendered display under existing policy without attributing its acceptance to the new readonly exception. A rendered control can receive the new exception only with exact required textbox receipt and observed=visible=expected1; invalid/hidden receipts grant no exception. Do not broaden the undeclared loop or claim static capture proves after/reload behavior.
+
+Ruling: Preserve existing traceable-hidden after/reload semantics and constrain Task2 hidden negative to an explicitly before-visible requirement — the original plan's unconditional hidden-rejection wording conflicts with the current intentional policy, while the proven full8 false positive concerns visible read-only displays — if wrong, later runtime evidence may expose a separate hidden-state defect; no visibility/receipt condition of the new exception is relaxed and after/reload correctness remains unqualified.
+
+
+### Task2 fixture review refinement
+
+Independent fixture review v1 C0/I2/M0 found two test-only issues before actual RED. Preserve isInteractive unchanged: the non-input exclusion negative must use a native interactive readonly textarea with exact textbox receipt, not a div role=textbox that current census deliberately does not classify interactive. No broader classifier/policy change follows. Replay inputType mutation must preserve the existing textbox receipt (text→email with no datalist), and establish equivalence of old census/receipt fields so only the new inputType difference causes mismatch. Add a literal readonly email selector-boundary negative while preserving checkbox/radio/range and all other cases. Source/runtime guards and new exception's literal type=text restriction remain strict.
