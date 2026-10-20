@@ -53,6 +53,7 @@ import {
 import type { ProductCompilationAttemptV1 } from "./schemas/product-compilation-attempt-v1.js";
 import {
   STITCH_RENDERED_SEMANTICS_POLICY_V2,
+  STITCH_READONLY_TEXT_OBSERVABLE_POLICY_V1,
   StitchRenderedSemanticsV2Schema,
   type StitchRenderedSemanticsV2,
 } from "./schemas/stitch-rendered-semantics-v2.js";
@@ -757,8 +758,14 @@ function authorityFor(input: DesignSourceAuthorityRuntimeInputV2): DesignSourceG
       selectedHtmlAdmissionPolicy: DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2,
       providerRejectionPolicy: STITCH_STAGE_PROVIDER_REJECTION_POLICY_V1,
     }),
-    renderPolicyHash: hashCanonicalJson(STITCH_RENDERED_SEMANTICS_POLICY_V2),
-    selectionPolicyHash: hashCanonicalJson(STITCH_TARGET_CANDIDATE_SELECTION_POLICY_V2),
+    renderPolicyHash: hashCanonicalJson({
+      policy: STITCH_RENDERED_SEMANTICS_POLICY_V2,
+      nativeInputObservation: STITCH_READONLY_TEXT_OBSERVABLE_POLICY_V1,
+    }),
+    selectionPolicyHash: hashCanonicalJson({
+      policy: STITCH_TARGET_CANDIDATE_SELECTION_POLICY_V2,
+      readOnlyObservableAdmission: STITCH_READONLY_TEXT_OBSERVABLE_POLICY_V1,
+    }),
     producerReleaseSha: input.producerReleaseSha,
     provider: input.provider,
     model: input.model,

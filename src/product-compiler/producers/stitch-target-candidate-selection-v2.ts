@@ -385,6 +385,17 @@ function isInteractive(element: StitchRenderedElementV2): boolean {
   return element.nativeControlKind !== null || element.interactiveRole;
 }
 
+function isReadOnlyTextObservableElement(element: StitchRenderedElementV2): boolean {
+  return element.tagName === "input" && element.nativeControlKind === "input"
+    && element.nativeInputState?.inputType === "text"
+    && element.nativeInputState.readOnly === true
+    && element.nativeInputState.contentEditable === false
+    && (element.role === null || element.role === "textbox")
+    && element.renderState === "rendered" && element.enabled
+    && element.dataAction === null && element.dataActionInput === null
+    && element.dataControlSlot === null;
+}
+
 function isOperable(element: StitchRenderedElementV2): boolean {
   return element.renderState === "rendered" && element.enabled && element.pointerOperable;
 }
@@ -596,25 +607,10 @@ function semanticEvidence(
     }
   }
 
-  const declaredInteractiveRefs = new Set([...declaredControlRefs, ...declaredInputElementRefs]);
-  for (const element of elements) {
-    if (
-      element.renderState === "rendered"
-      && isInteractive(element)
-      && !declaredInteractiveRefs.has(element.elementRef)
-    ) {
-      checks.push(check({
-        kind: "undeclared_interactive",
-        semanticRef: `${element.elementRef}@interactive_control`,
-        expectedCount: 0,
-        elementRefs: [element.elementRef],
-      }));
-    }
-  }
-
   const receiptByObservable = new Map(roleReceipts.map((receipt) =>
     [receipt.observableRef, receipt] as const));
   const observableElements = new Map<string, StitchRenderedElementV2[]>();
+  const exactObservableRefs = new Set<string>();
   const elementByRef = new Map(elements.map((element) => [element.elementRef, element] as const));
   for (const observable of [...target.requiredObservableSelectors]
     .sort((left, right) => compareUtf16(left.observableRef, right.observableRef))) {
@@ -635,7 +631,7 @@ function semanticEvidence(
       if (receipt) observedValue = hashCanonicalJson(observedReceiptProjection(receipt));
     }
     observableElements.set(observable.observableRef, exactElements);
-    checks.push(check({
+    const observableCheck = check({
       kind: "observable",
       semanticRef: observable.observableRef,
       expectedCount: 1,
@@ -644,7 +640,9 @@ function semanticEvidence(
         ? hashCanonicalJson(expectedReceiptProjection(observable))
         : selectorHash,
       ...(observedValue ? { observedValue } : {}),
-    }));
+    });
+    checks.push(observableCheck);
+    if (observableCheck.disposition === "exact") exactObservableRefs.add(observable.observableRef);
   }
   const expectedObservableRefs = new Set(target.requiredObservableSelectors.map((observable) =>
     observable.observableRef));
@@ -655,6 +653,46 @@ function semanticEvidence(
         semanticRef: receipt.observableRef,
         expectedCount: 0,
         elementRefs: receipt.elementRefs,
+      }));
+    }
+  }
+
+  const declaredReadOnlyObservableRefs = new Set<string>();
+  for (const observable of target.requiredObservableSelectors) {
+    if (observable.selector.kind !== "accessibility" || observable.selector.role !== "textbox") continue;
+    const receipt = receiptByObservable.get(observable.observableRef);
+    const matches = observableElements.get(observable.observableRef) ?? [];
+    const element = matches.length === 1 ? matches[0] : undefined;
+    if (
+      exactObservableRefs.has(observable.observableRef)
+      && receipt?.elementRefs.length === 1
+      && receipt.cardinality.expected === 1
+      && receipt.cardinality.observed === 1
+      && receipt.cardinality.visible === 1
+      && receipt.nearestSurfaceRefs.length === 1
+      && receipt.nearestSurfaceRefs[0] === observable.selector.surfaceRef
+      && element
+      && receipt.elementRefs[0] === element.elementRef
+      && element.nearestSurfaceRef === observable.selector.surfaceRef
+      && isReadOnlyTextObservableElement(element)
+    ) {
+      declaredReadOnlyObservableRefs.add(element.elementRef);
+    }
+  }
+
+  const declaredInteractiveRefs = new Set([...declaredControlRefs, ...declaredInputElementRefs]);
+  for (const element of elements) {
+    if (
+      element.renderState === "rendered"
+      && isInteractive(element)
+      && !declaredInteractiveRefs.has(element.elementRef)
+      && !declaredReadOnlyObservableRefs.has(element.elementRef)
+    ) {
+      checks.push(check({
+        kind: "undeclared_interactive",
+        semanticRef: `${element.elementRef}@interactive_control`,
+        expectedCount: 0,
+        elementRefs: [element.elementRef],
       }));
     }
   }
