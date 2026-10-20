@@ -164,22 +164,43 @@ function topologyFor(
   });
 }
 
-async function exactStitchInput(options: { readonlyTextbox?: boolean; sharedReadonlyObservable?: boolean } = {}) {
+async function exactStitchInput(options: {
+  readonlyTextbox?: boolean;
+  sharedReadonlyObservable?: boolean;
+  noncanonicalControlAssertions?: boolean;
+} = {}) {
   let productSpec = buildContainedGameProductSpecV2();
-  if (options.readonlyTextbox) {
+  if (options.readonlyTextbox || options.noncanonicalControlAssertions) {
     // Establish real required selectors/evidence before capture. Shared refs
     // receive separate authentic browser receipts for the same native element.
     const proposal = containedGamePlanProposalV2();
     const action = proposal.actions[0];
-    const observable = action.observables.find((entry: any) => entry.selector.kind === "accessibility");
-    observable.selector.role = "textbox";
-    observable.assertions = [{ phase: "after", property: "value", operator: "equals", expected: "Playing" }];
-    if (options.sharedReadonlyObservable) action.observables.push({ ...structuredClone(observable), key: "status_value_shared" });
+    if (options.readonlyTextbox) {
+      const observable = action.observables.find((entry: any) => entry.selector.kind === "accessibility");
+      observable.selector.role = "textbox";
+      observable.assertions = [{ phase: "after", property: "value", operator: "equals", expected: "Playing" }];
+      if (options.sharedReadonlyObservable) action.observables.push({ ...structuredClone(observable), key: "status_value_shared" });
+    }
+    if (options.noncanonicalControlAssertions) {
+      const control = action.observables.find((entry: any) => entry.selector.kind === "control");
+      assert.ok(control);
+      // Preserve the proposal's genuine before-then-after authority. The graph
+      // producer, not this fixture, owns its canonical assertion projection.
+      control.assertions = [
+        { phase: "before", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "before", property: "visibility", operator: "equals", expected: true },
+        { phase: "before", property: "enabled", operator: "equals", expected: true },
+        { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "after", property: "visibility", operator: "equals", expected: true },
+        { phase: "after", property: "enabled", operator: "equals", expected: true },
+      ];
+    }
     const compiled = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
     assert.equal(compiled.status, "canonicalized", JSON.stringify(compiled));
     if (compiled.status !== "canonicalized") throw new Error("unreachable");
     productSpec = ProductSpecV2Schema.parse(compiled.productSpec);
   }
+  const originalProductSpec = options.noncanonicalControlAssertions ? structuredClone(productSpec) : null;
   const targetsResult = produceDesignGenerationTargetsV2(productSpec);
   assert.equal(targetsResult.status, "produced", JSON.stringify(targetsResult));
   if (targetsResult.status !== "produced") throw new Error("unreachable");
@@ -439,6 +460,9 @@ async function exactStitchInput(options: { readonlyTextbox?: boolean; sharedRead
   const screenIndexText = JSON.stringify(screenIndex, null, 2);
   const converterText = "// exact test converter source\n";
 
+  if (originalProductSpec) {
+    assert.deepEqual(productSpec, originalProductSpec, "fixture producers must preserve the original ProductSpec");
+  }
   return {
     designSourceKind: "stitch" as const,
     productSpec,
@@ -578,6 +602,104 @@ describe("ImplementationSourceMapV1", { concurrency: 1 }, () => {
 
   it("counts shared readonly textbox observables once in the genuine source-map producer", async () => {
     await verifyReadonlySourceMap(true);
+  });
+
+  it("accepts genuine noncanonical observable assertion order without changing original authority", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-source-map-assertion-order-"));
+    try {
+      fs.chmodSync(root, 0o700);
+      writePrivateSourceMapJson(root, "options.json", { noncanonicalControlAssertions: true });
+      const input = await exactStitchInput({ noncanonicalControlAssertions: true });
+      const originalInput = structuredClone(input);
+      const originalProductSpec = structuredClone(input.productSpec);
+      const originalGraph = structuredClone(input.designGraph);
+      const control = originalProductSpec.actions[0]!.observableEffects.find((observable) =>
+        observable.selector.kind === "control");
+      assert.ok(control);
+      const graphControl = input.designGraph.observables.find((observable) =>
+        observable.observableRef === control.id);
+      assert.ok(graphControl);
+      const rawAssertions = [
+        { phase: "before", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "before", property: "visibility", operator: "equals", expected: true },
+        { phase: "before", property: "enabled", operator: "equals", expected: true },
+        { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "after", property: "visibility", operator: "equals", expected: true },
+        { phase: "after", property: "enabled", operator: "equals", expected: true },
+      ];
+      // Independent literal expectation: UTF-16 phase/property order retains
+      // every complete assertion, including its operator and expected value.
+      const canonicalAssertions = [
+        { phase: "after", property: "enabled", operator: "equals", expected: true },
+        { phase: "after", property: "visibility", operator: "equals", expected: true },
+        { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "before", property: "enabled", operator: "equals", expected: true },
+        { phase: "before", property: "visibility", operator: "equals", expected: true },
+        { phase: "before", property: "visible_text", operator: "equals", expected: "Start Game" },
+      ];
+      writePrivateSourceMapJson(root, "input.json", input);
+      writePrivateSourceMapJson(root, "authority.json", {
+        originalProductSpec,
+        originalGraph,
+        observableRef: control.id,
+        rawAssertions,
+        canonicalAssertions,
+        productSpecHash: hashCanonicalJson(originalProductSpec),
+        productObservableHash: hashCanonicalJson(control),
+        rawAssertionsHash: hashCanonicalJson(rawAssertions),
+        graphHash: hashCanonicalJson(originalGraph),
+        graphProductObservableHash: graphControl.productObservableHash,
+        graphAssertions: graphControl.assertions,
+        graphAssertionsHash: graphControl.assertionsHash,
+        expectedCanonicalAssertionsHash: hashCanonicalJson(canonicalAssertions),
+      });
+      assert.deepEqual(control.assertions, rawAssertions);
+      assert.deepEqual(input.generationTargets.targets[0]!.requiredObservableSelectors.find((observable) =>
+        observable.observableRef === control.id)!.assertions, rawAssertions);
+      assert.equal(graphControl.productObservableHash, hashCanonicalJson(control));
+      assert.deepEqual(graphControl.assertions, canonicalAssertions);
+      assert.equal(graphControl.assertionsHash, hashCanonicalJson(canonicalAssertions));
+      assert.notEqual(graphControl.assertionsHash, hashCanonicalJson(control.assertions));
+
+      const first = produceImplementationSourceMapV1(input);
+      writePrivateSourceMapJson(root, "result.json", first);
+      assert.deepEqual(input.productSpec, originalProductSpec);
+      assert.deepEqual(input.designGraph, originalGraph);
+      assert.deepEqual(input, originalInput);
+      if (first.status === "rejected") {
+        // Qualify the intended RED before the permanent success assertion.
+        // This branch never turns an expected rejection into a passing test.
+        assert.deepEqual(first.rejectionCodes, ["IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH"], JSON.stringify(first));
+        assert.deepEqual(first.diagnostics.map(({ code, reference }) => ({ code, reference })), [{
+          code: "IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH",
+          reference: control.id,
+        }], JSON.stringify(first));
+      }
+      assert.equal(first.status, "produced", JSON.stringify(first));
+      if (first.status !== "produced") throw new Error("unreachable");
+      assert.deepEqual(ImplementationSourceMapV1Schema.parse(first.sourceMap), first.sourceMap);
+      assert.equal(first.sourceMap.designSourceKind, "stitch");
+      if (first.sourceMap.designSourceKind !== "stitch") throw new Error("unreachable");
+      assert.equal(first.sourceMap.productSpecV2PayloadHash, hashCanonicalJson(originalProductSpec));
+      assert.equal(first.sourceMap.designGraphV2PayloadHash, hashCanonicalJson(originalGraph));
+      const mappedControl = first.sourceMap.screens[0]!.observables.find((observable) =>
+        observable.observableRef === control.id);
+      assert.ok(mappedControl);
+      assert.equal(mappedControl.assertionsHash, hashCanonicalJson(canonicalAssertions));
+      assert.equal(first.payloadHash, implementationSourceMapPayloadHashV1(first.sourceMap));
+      const second = produceImplementationSourceMapV1(structuredClone(input));
+      writePrivateSourceMapJson(root, "repeat-result.json", second);
+      assert.equal(second.status, "produced", JSON.stringify(second));
+      if (second.status !== "produced") throw new Error("unreachable");
+      assert.deepEqual(second.sourceMap, first.sourceMap);
+      assert.equal(second.payloadHash, first.payloadHash);
+      assert.deepEqual(input, originalInput);
+    } catch (error) {
+      writePrivateSourceMapJson(root, "failure.json", { message: error instanceof Error ? error.message : String(error) });
+      throw error;
+    } finally {
+      console.log(JSON.stringify({ code: "IMPLEMENTATION_SOURCE_MAP_ASSERTION_ORDER_FIXTURE_RETAINED", path: root }));
+    }
   });
 
   it("materializes exact Stitch screen, source, owner, control, and observable mappings deterministically", async () => {
