@@ -39,8 +39,7 @@ import {
   type ArtifactStorePublicationAuthorityMode,
 } from "../runtime-config.js";
 import { readOpenClawConfig } from "../installer/openclaw-config.js";
-import { computeRunOperationalSnapshotHash } from "../server/run-operational-snapshot.js";
-import { RunOperationalSnapshotV2Schema } from "../server/schemas/run-operational-snapshot-v2.js";
+import { evaluateConvergenceProjectionPairV1 } from "./convergence-projection-v1.js";
 import type { ConvergenceCaseV1 } from "./suite-schema.js";
 import {
   ConvergenceStackPackV1Schema,
@@ -125,18 +124,6 @@ export interface ConvergenceJobControlV1 {
 
 const execFileAsync = promisify(execFile);
 const TERMINAL_RUN_STATUSES = new Set(["completed", "done", "failed", "cancelled", "canceled", "error", "blocked"]);
-const REQUIRED_CAPABILITIES = [
-  "attempts",
-  "claimBinding",
-  "runtimeOwnership",
-  "managerCompletion",
-  "effectLedger",
-  "findingRecovery",
-  "evidenceLedger",
-  "acceptedCandidate",
-  "deploymentReceipt",
-  "projectTransferAck",
-] as const;
 const REQUIRED_PACKET_ARTIFACT_TYPES_V1: Readonly<Record<string, string>> = Object.freeze({
   PRODUCT_SPEC: "setfarm.product-spec.v1",
   DESIGN_GRAPH: "setfarm.design-interaction-graph.v1",
@@ -605,22 +592,6 @@ function emptyCanonical(
   return createCanonicalEvidenceVersioned(input.oracle, payload);
 }
 
-function unavailableProjection(): z.infer<typeof ConvergenceProjectionEvidenceV1Schema> {
-  const hash = safeHash({ projection: "unavailable" });
-  return ConvergenceProjectionEvidenceV1Schema.parse({
-    setfarmSnapshotHash: hash,
-    missionControlSnapshotHash: hash,
-    exactHashMatch: false,
-    setfarmProjection: "unavailable",
-    missionControlProjection: "unavailable",
-    capabilities: Object.fromEntries(REQUIRED_CAPABILITIES.map((key) => [key, false])),
-    operationalSettled: false,
-    transferAcknowledged: false,
-    projectTransferAckHash: null,
-    projectRecordHash: null,
-  });
-}
-
 async function collectProjection(
   ports: ConvergenceRunnerPorts,
   runId: string,
@@ -629,64 +600,15 @@ async function collectProjection(
     settle(() => ports.http.operationalSnapshot("setfarm", runId)),
     settle(() => ports.http.operationalSnapshot("mission_control", runId)),
   ]);
-  if (!setfarmRead.ok || !missionControlRead.ok) return { projection: unavailableProjection(), ordinaryPending: false };
-  const setfarm = RunOperationalSnapshotV2Schema.safeParse(setfarmRead.value);
-  const missionControl = RunOperationalSnapshotV2Schema.safeParse(missionControlRead.value);
-  if (!setfarm.success || !missionControl.success) return { projection: unavailableProjection(), ordinaryPending: false };
-  const { snapshotHash: setfarmSnapshotHash, ...setfarmHashable } = setfarm.data;
-  const { snapshotHash: missionControlSnapshotHash, ...missionControlHashable } = missionControl.data;
-  if (
-    setfarm.data.run.id !== runId
-    || missionControl.data.run.id !== runId
-    || computeRunOperationalSnapshotHash(setfarmHashable) !== setfarmSnapshotHash
-    || computeRunOperationalSnapshotHash(missionControlHashable) !== missionControlSnapshotHash
-    || !setfarm.data.source.capabilities.implementationSubmissionEvidence
-    || !missionControl.data.source.capabilities.implementationSubmissionEvidence
-  ) return { projection: unavailableProjection(), ordinaryPending: false };
-  const capabilities = Object.fromEntries(REQUIRED_CAPABILITIES.map((key) => [
-    key,
-    setfarm.data.source.capabilities[key] === true
-      && missionControl.data.source.capabilities[key] === true,
-  ]));
-  const setfarmAck = setfarm.data.projectTransferAck?.acknowledgement ?? null;
-  const missionControlAck = missionControl.data.projectTransferAck?.acknowledgement ?? null;
-  const transferAcknowledged = Boolean(
-    setfarmAck
-    && missionControlAck
-    && setfarmAck.ackHash === missionControlAck.ackHash
-    && setfarmAck.projectRecordHash === missionControlAck.projectRecordHash
-    && setfarmAck.sourceSnapshotHash === missionControlAck.sourceSnapshotHash,
-  );
-  const snapshots = [setfarm.data, missionControl.data];
-  const knownTerminal = snapshots.every(snapshot => snapshot.run.terminal
-    && snapshot.summary.lifecycleState === "terminal" && snapshot.summary.health === "ok"
-    && snapshot.summary.invariantViolations === 0 && snapshot.invariants.length === 0
-    && snapshot.source.projection === "complete"
-    && snapshot.outbox.every(item => ["pending", "leased", "published"].includes(item.state))
-    && snapshot.summary.unpublishedOutbox === snapshot.outbox.filter(item => item.state !== "published").length);
-  const pendingOwners = (snapshot: typeof setfarm.data) => snapshot.summary.activeClaims + snapshot.summary.activeAttempts
-    + snapshot.summary.activeRuntimes + snapshot.summary.openCompletions + snapshot.summary.mandatoryEffectsPending
-    + snapshot.summary.unpublishedOutbox;
-  const ordinaryPending = knownTerminal && snapshots.some(snapshot => pendingOwners(snapshot) > 0);
-  const operationalSettled = knownTerminal && snapshots.every((snapshot) =>
-    snapshot.summary.lifecycleState === "terminal"
-    && snapshot.summary.health === "ok"
-    && snapshot.summary.invariantViolations === 0
-    && pendingOwners(snapshot) === 0
-    && snapshot.invariants.length === 0
-    && snapshot.outbox.every((item) => item.state === "published"));
-  return { ordinaryPending, projection: ConvergenceProjectionEvidenceV1Schema.parse({
-    setfarmSnapshotHash: setfarm.data.snapshotHash,
-    missionControlSnapshotHash: missionControl.data.snapshotHash,
-    exactHashMatch: setfarm.data.snapshotHash === missionControl.data.snapshotHash,
-    setfarmProjection: setfarm.data.source.projection,
-    missionControlProjection: missionControl.data.source.projection,
-    capabilities,
-    operationalSettled,
-    transferAcknowledged,
-    projectTransferAckHash: transferAcknowledged ? setfarmAck!.ackHash : null,
-    projectRecordHash: transferAcknowledged ? setfarmAck!.projectRecordHash : null,
-  }) };
+  const evaluated = evaluateConvergenceProjectionPairV1({
+    runId,
+    setfarm: setfarmRead.ok ? setfarmRead.value : undefined,
+    missionControl: missionControlRead.ok ? missionControlRead.value : undefined,
+  });
+  return {
+    ordinaryPending: evaluated.ordinaryPending,
+    projection: ConvergenceProjectionEvidenceV1Schema.parse(evaluated.projection),
+  };
 }
 
 async function waitForCanonicalProjection(
