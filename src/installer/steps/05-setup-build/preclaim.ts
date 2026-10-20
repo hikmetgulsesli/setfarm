@@ -595,7 +595,12 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
   }
 }
 
-async function writeSetupHandoff(ctx: ClaimContext, repo: string, buildCmd: string): Promise<void> {
+export async function writeSetupHandoff(
+  ctx: ClaimContext,
+  repo: string,
+  buildCmd: string,
+  stage: "strict" | "before_native_stitch_regeneration" = "strict",
+): Promise<void> {
   try {
     const { manifest, certificate } = await materializeSetupBuildContracts(ctx.runId, repo, ctx.context, buildCmd);
     ctx.context["setup_certificate_path"] = ".setfarm/setup/SETUP_CERTIFICATE.json";

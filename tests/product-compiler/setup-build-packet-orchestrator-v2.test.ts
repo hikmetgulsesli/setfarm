@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
+import type { ClaimContext } from "../../src/installer/steps/types.js";
 import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
 import {
@@ -771,6 +772,228 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
 
   it("sixth source-map actual-writer noncanonical assertions", async (t) => {
     await assertActualWriterPacket(true, (message) => t.diagnostic(message));
+  });
+
+  it("keeps native retry ready after real regeneration repairs stale indexed source", async (t) => {
+    const fixture = await createNativeV2Fixture({
+      database, roots: retainedRoots, actualWriter: true,
+      retainedWitnesses, prepareWriterDatabase, diagnostic: (message) => t.diagnostic(message),
+    });
+    const diagnosticRoot = fixture.diagnosticRoot!;
+    const { executeAttestedStitchConverter, writeSetupHandoff } = await import("../../src/installer/steps/05-setup-build/preclaim.js");
+    const { resolvePlatformScript } = await import("../../src/installer/paths.js");
+    const { selectedFreshInstallationRootV1 } = await import("../../src/installation/fresh-installation-selection-v1.js");
+    const ctx: ClaimContext = {
+      runId: fixture.runId, stepId: "setup-build", task: CONTAINED_GAME_TASK, retryCount: 1,
+      context: { ...fixture.writerContext!, repo: fixture.repo },
+    };
+    const producer = {
+      pass: "setup-build-product-packet-v3", codeSha: RELEASE_SHA,
+      toolVersions: {
+        node: process.versions.node, productCompiler: "4.0.0", stackTopologyCatalog: "1.0.0",
+        productDeliveryProfileCatalog: "1.0.0", productEvidenceCapabilityPolicy: "1.0.0",
+        runtimeEvidenceContractProducer: "1.0.0",
+      },
+    };
+    const errorEvidence = (error: unknown) => {
+      const detail = error as { code?: unknown; evidence?: unknown; status?: unknown; signal?: unknown; stdout?: Buffer | string; stderr?: Buffer | string } | undefined;
+      return {
+        name: error instanceof Error ? error.name : undefined,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        code: detail?.code, evidence: detail?.evidence, status: detail?.status, signal: detail?.signal,
+        stdout: detail?.stdout?.toString(), stderr: detail?.stderr?.toString(),
+      };
+    };
+    const sourceLocators = [
+      ".setfarm/setup/SETUP_CERTIFICATE.json", ".setfarm/setup/FILE_TREE_MANIFEST.json",
+      ".setfarm/setup/SHARED_GRANTS.json", "src/screens/SCREEN_INDEX.json", fixture.generatedFile,
+      "stitch/GENERATION_TARGETS.json", "stitch/STITCH_RESPONSE_BINDINGS.json",
+      "stitch/DESIGN_INTERACTION_GRAPH_V2.json", "stitch/DESIGN_MANIFEST.json",
+      ".setfarm/setup/STITCH_TO_JSX_RESULT.json", ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json",
+    ];
+    const retainSources = (phase: string) => {
+      const exactSources = sourceLocators.map((locator) => {
+        const sourcePath = path.join(fixture.repo, locator);
+        if (!fs.existsSync(sourcePath)) return { locator, presence: "absent" };
+        const bytes = fs.readFileSync(sourcePath);
+        const retainedPath = path.join(diagnosticRoot, `retry-${phase}-sources`, locator);
+        fs.mkdirSync(path.dirname(retainedPath), { recursive: true });
+        fs.writeFileSync(retainedPath, bytes);
+        return {
+          locator, presence: "present", retainedPath, byteLength: bytes.byteLength,
+          hash: createHash("sha256").update(bytes).digest("hex"), text: bytes.toString("utf8"),
+        };
+      });
+      writeJson(path.join(diagnosticRoot, `retry-${phase}-sources.json`), exactSources);
+      return exactSources;
+    };
+    const assembleRetained = async (phase: string, converterSource: SetupConverterSourceV1) => {
+      const assemblyInput = {
+        runId: fixture.runId, repo: fixture.repo, planText: fixture.planText, producer,
+        converterSource, designSourceExpectation: fixture.designSourceExpectation,
+      };
+      writeJson(path.join(diagnosticRoot, `retry-${phase}-assembly-input.json`), {
+        database: database.database, ...assemblyInput, exactSources: retainSources(phase),
+      });
+      try {
+        const contracts = await assembleSetupBuildPacketContractsV2({ sql: database.sql, ...assemblyInput });
+        writeJson(path.join(diagnosticRoot, `retry-${phase}-assembly-outcome.json`), { status: "assembled", contracts });
+        return contracts;
+      } catch (error) {
+        writeJson(path.join(diagnosticRoot, `retry-${phase}-assembly-outcome.json`), { status: "threw", ...errorEvidence(error) });
+        throw error;
+      }
+    };
+    const handoffRetained = async (call: "before-regeneration" | "after-regeneration") => {
+      // A refused writer logs through the actual wrapper, before the writer's
+      // success-only [setup-handoff] marker used by the existing helper.
+      assert.equal(selectedFreshInstallationRootV1(), null, "retry log isolation requires the admitted ordinary fixture context");
+      const logRoot = fs.mkdtempSync(path.join(diagnosticRoot, `retry-handoff-${call}-`));
+      const loggingSelectionPath = path.join(logRoot, "logging-selection.db");
+      const logFile = path.join(logRoot, "logs", "workflow.log");
+      const previousSelectionPresent = Object.hasOwn(process.env, "SETFARM_DB_PATH");
+      const previousSelection = process.env.SETFARM_DB_PATH;
+      writeJson(path.join(logRoot, "input.json"), {
+        call, ctx, repo: fixture.repo, buildCommand: "npm run build", loggingSelectionPath, logFile,
+        previousSelectionPresent,
+        stage: call === "before-regeneration" ? "before_native_stitch_regeneration" : "strict",
+      });
+      let callError: unknown;
+      let callThrew = false;
+      try {
+        process.env.SETFARM_DB_PATH = loggingSelectionPath;
+        if (call === "before-regeneration") {
+          await writeSetupHandoff(ctx, fixture.repo, "npm run build", "before_native_stitch_regeneration");
+        } else {
+          await writeSetupHandoff(ctx, fixture.repo, "npm run build");
+        }
+      } catch (error) {
+        callThrew = true;
+        callError = error;
+        throw error;
+      } finally {
+        if (previousSelectionPresent) process.env.SETFARM_DB_PATH = previousSelection!;
+        else delete process.env.SETFARM_DB_PATH;
+        const restoredPresence = Object.hasOwn(process.env, "SETFARM_DB_PATH") === previousSelectionPresent;
+        const restoredValue = process.env.SETFARM_DB_PATH === previousSelection;
+        const logBytes = fs.existsSync(logFile) ? fs.readFileSync(logFile) : undefined;
+        writeJson(path.join(logRoot, "outcome.json"), {
+          call, ctx, status: callThrew ? "threw" : "returned",
+          ...(callThrew ? { error: errorEvidence(callError) } : {}),
+          logFile, logExists: Boolean(logBytes), byteLength: logBytes?.byteLength,
+          sha256: logBytes ? createHash("sha256").update(logBytes).digest("hex") : undefined,
+          restoredPresence, restoredValue,
+        });
+        assert.equal(restoredPresence, true);
+        assert.equal(restoredValue, true);
+      }
+      assert.match(fs.readFileSync(logFile, "utf8"), /\[module:setup-build preclaim\]/);
+    };
+
+    const sourcePath = path.join(fixture.repo, fixture.generatedFile);
+    const originalSource = fs.readFileSync(sourcePath);
+    let phase = "original-packet";
+    let regenerationPassed = false;
+    writeJson(path.join(diagnosticRoot, "retry-initial-context.json"), ctx);
+    try {
+      await assembleRetained("original", fixture.converterSource);
+      phase = "stale-source";
+      const sourceText = originalSource.toString("utf8");
+      const closingMain = sourceText.lastIndexOf("</main>");
+      assert.ok(closingMain >= 0, "fixture generated source must contain its real main element");
+      fs.writeFileSync(sourcePath, `${sourceText.slice(0, closingMain)}<button>Stale retry control</button>${sourceText.slice(closingMain)}`);
+      retainSources("stale");
+      phase = "before-regeneration-handoff";
+      await handoffRetained("before-regeneration");
+      writeJson(path.join(diagnosticRoot, "retry-before-regeneration-context.json"), ctx);
+
+      phase = "attested-regeneration";
+      const converterPath = resolvePlatformScript("stitch-to-jsx.mjs");
+      writeJson(path.join(diagnosticRoot, "retry-regeneration-input.json"), { converterPath, repo: fixture.repo });
+      const converterSource = executeAttestedStitchConverter(converterPath, fixture.repo);
+      writeJson(path.join(diagnosticRoot, "retry-converter-source.json"), converterSource);
+      const conversionResult = JSON.parse(fs.readFileSync(path.join(fixture.repo, ".setfarm/setup/STITCH_TO_JSX_RESULT.json"), "utf8"));
+      writeJson(path.join(diagnosticRoot, "retry-conversion-result.json"), conversionResult);
+      assert.deepEqual(conversionResult, { schema: "setfarm.stitch-to-jsx-result.v1", status: "passed" });
+      phase = "generated-screen-validator";
+      const validatorPath = resolvePlatformScript("generated-screen-validator.mjs");
+      writeJson(path.join(diagnosticRoot, "retry-validator-input.json"), {
+        executable: "node", args: [validatorPath, fixture.repo, "--fix"], cwd: fixture.repo, timeout: 60000,
+      });
+      const validatorStdout = execFileSync("node", [validatorPath, fixture.repo, "--fix"], {
+        cwd: fixture.repo, timeout: 60000, stdio: "pipe", encoding: "utf8",
+      });
+      fs.writeFileSync(path.join(diagnosticRoot, "retry-validator.stdout.txt"), validatorStdout);
+      const validatorReport = JSON.parse(fs.readFileSync(path.join(fixture.repo, ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json"), "utf8"));
+      writeJson(path.join(diagnosticRoot, "retry-validator-report.json"), validatorReport);
+      assert.equal(validatorReport.status, "pass", JSON.stringify(validatorReport));
+      assert.equal(validatorReport.fixMode, true);
+      assert.deepEqual(validatorReport.failedRules, []);
+      regenerationPassed = true;
+
+      phase = "strict-handoff-after-regeneration";
+      await handoffRetained("after-regeneration");
+      writeJson(path.join(diagnosticRoot, "retry-after-regeneration-context.json"), ctx);
+      phase = "repaired-packet";
+      // Assemble and retain the healthy real authority BEFORE the context oracle.
+      const assembled = await assembleRetained("repaired", converterSource);
+      const certificate = JSON.parse(fs.readFileSync(path.join(fixture.repo, ".setfarm/setup/SETUP_CERTIFICATE.json"), "utf8"));
+      const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
+      const currentSourceHash = createHash("sha256").update(fs.readFileSync(sourcePath)).digest("hex");
+      assert.deepEqual(certificate.generatedDesignFiles.filter((locator: string) => /\.(tsx|jsx)$/i.test(locator)), [fixture.generatedFile]);
+      assert.equal(manifest.resolvedTargets.filter((item: any) =>
+        item.path === fixture.generatedFile && item.role === "surface_component"
+        && item.surfaceId === fixture.surfaceRef && item.screenId === fixture.screenId
+        && item.storyId === "US-001").length, 1);
+      assert.equal(assembled.implementationSourceMapV1.screens.length, 1);
+      const mappedScreen = assembled.implementationSourceMapV1.screens[0]!;
+      assert.equal(mappedScreen.targetRef, fixture.targetRef);
+      assert.equal(mappedScreen.responseScreenId, fixture.screenId);
+      assert.equal(mappedScreen.path, fixture.generatedFile);
+      assert.equal(mappedScreen.contentHash, currentSourceHash);
+      assert.equal(mappedScreen.storyId, "US-001");
+      const binding = assembled.buildTopologyV1.pathBindings.find((item) => item.path === fixture.generatedFile);
+      assert.ok(binding);
+      assert.equal(binding.role, "generated");
+      assert.equal(binding.presence, "present");
+      assert.equal(binding.knownContentHash, currentSourceHash);
+      const owner = assembled.buildTopologyV1.owners.find((item) => item.id === binding.ownerRef);
+      assert.ok(owner?.kind === "story");
+      assert.equal(owner.storyRef, "US-001");
+      const story = assembled.storyPlanV2.stories.find((item) => item.id === "US-001");
+      assert.ok(story);
+      assert.equal(story.ownerRef, binding.ownerRef);
+      assert.equal(mappedScreen.ownerRef, binding.ownerRef);
+      assert.equal(mappedScreen.pathRef, binding.id);
+      assert.ok(story.ownedPathRefs.includes(binding.id));
+      assert.deepEqual(certificate.dependencyEvidence, { requested: [], approved: [], installed: [], rejected: [] });
+      assert.equal(fs.existsSync(path.join(fixture.repo, "package-lock.json")), false);
+      assert.equal(fs.existsSync(path.join(fixture.repo, "node_modules")), false);
+
+      phase = "final-readiness";
+      writeJson(path.join(diagnosticRoot, "retry-final-readiness-context.json"), ctx);
+      for (const key of ["baseline_fail", "compat_fail", "previous_failure", "failure_category", "failure_suggestion"]) {
+        assert.equal(ctx.context[key], undefined, `healthy regenerated native retry must not retain ${key}`);
+      }
+      assert.equal(ctx.context.setup_certificate_path, ".setfarm/setup/SETUP_CERTIFICATE.json");
+      assert.equal(ctx.context.file_tree_manifest_path, ".setfarm/setup/FILE_TREE_MANIFEST.json");
+      writeJson(path.join(diagnosticRoot, "retry-outcome.json"), { status: "ready", ctx });
+    } catch (error) {
+      retainSources("failure");
+      writeJson(path.join(diagnosticRoot, "retry-outcome.json"), {
+        status: "threw", phase, regenerationPassed, ctx, error: errorEvidence(error),
+      });
+      throw error;
+    } finally {
+      // Only undo this test's temporary stale source if actual repair failed.
+      // Keep the failed/stale bytes, all logs, repo and CAS witnesses retained.
+      if (!regenerationPassed) fs.writeFileSync(sourcePath, originalSource);
+      writeJson(path.join(diagnosticRoot, "retry-source-restoration.json"), {
+        regenerationPassed, originalSourceRestored: !regenerationPassed,
+        sourceHash: createHash("sha256").update(fs.readFileSync(sourcePath)).digest("hex"),
+      });
+    }
   });
 
   it("activates and deep-replays a native v2 design closure, rejecting wrong attempts and topology drift", async () => {
