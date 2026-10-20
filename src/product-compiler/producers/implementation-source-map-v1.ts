@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../canonical-json.js";
+import { canonicalizeObservableAssertionsV2 } from "../observable-assertion-identity-v2.js";
 import {
   makeCompilationDiagnostic,
   sortCompilationDiagnostics,
@@ -854,6 +855,7 @@ function mappedObservables(
       }));
       continue;
     }
+    const canonicalAssertions = canonicalizeObservableAssertionsV2(product.effect.assertions);
     if (
       required.actionRef !== product.action.id
       || !sameCanonical(required.selector, product.effect.selector)
@@ -861,7 +863,9 @@ function mappedObservables(
       || graph.actionRef !== product.action.id
       || !sameCanonical(graph.selector, product.effect.selector)
       || graph.selectorHash !== hashCanonicalJson(product.effect.selector)
-      || graph.assertionsHash !== hashCanonicalJson(product.effect.assertions)
+      || graph.productObservableHash !== hashCanonicalJson(product.effect)
+      || !sameCanonical(graph.assertions, canonicalAssertions)
+      || graph.assertionsHash !== hashCanonicalJson(canonicalAssertions)
       || graph.evidenceRef !== product.effect.evidenceRef
       || graph.source.responseScreenId !== response.responseScreenId
       || graph.elementBindings.length !== 1

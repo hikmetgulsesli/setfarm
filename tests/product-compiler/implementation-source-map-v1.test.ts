@@ -17,11 +17,14 @@ import {
 } from "../../src/product-compiler/producers/stitch-target-candidate-selection-v2.js";
 import { produceStoryPlanV2 } from "../../src/product-compiler/producers/story-plan-v2.js";
 import { BuildTopologyV1Schema } from "../../src/product-compiler/schemas/build-topology-v1.js";
+import { DesignInteractionGraphV2Schema } from "../../src/product-compiler/schemas/design-interaction-graph-v2.js";
+import { DesignSourceClosureV2Schema } from "../../src/product-compiler/schemas/design-source-closure-v2.js";
 import {
   ImplementationSourceMapV1Schema,
   implementationSourceMapPayloadHashV1,
 } from "../../src/product-compiler/schemas/implementation-source-map-v1.js";
 import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
+import { StoryPlanV2Schema } from "../../src/product-compiler/schemas/story-plan-v2.js";
 import {
   StitchScreenIndexV2Schema,
   type StitchScreenIndexEntryV2,
@@ -164,22 +167,43 @@ function topologyFor(
   });
 }
 
-async function exactStitchInput(options: { readonlyTextbox?: boolean; sharedReadonlyObservable?: boolean } = {}) {
+async function exactStitchInput(options: {
+  readonlyTextbox?: boolean;
+  sharedReadonlyObservable?: boolean;
+  noncanonicalControlAssertions?: boolean;
+} = {}) {
   let productSpec = buildContainedGameProductSpecV2();
-  if (options.readonlyTextbox) {
+  if (options.readonlyTextbox || options.noncanonicalControlAssertions) {
     // Establish real required selectors/evidence before capture. Shared refs
     // receive separate authentic browser receipts for the same native element.
     const proposal = containedGamePlanProposalV2();
     const action = proposal.actions[0];
-    const observable = action.observables.find((entry: any) => entry.selector.kind === "accessibility");
-    observable.selector.role = "textbox";
-    observable.assertions = [{ phase: "after", property: "value", operator: "equals", expected: "Playing" }];
-    if (options.sharedReadonlyObservable) action.observables.push({ ...structuredClone(observable), key: "status_value_shared" });
+    if (options.readonlyTextbox) {
+      const observable = action.observables.find((entry: any) => entry.selector.kind === "accessibility");
+      observable.selector.role = "textbox";
+      observable.assertions = [{ phase: "after", property: "value", operator: "equals", expected: "Playing" }];
+      if (options.sharedReadonlyObservable) action.observables.push({ ...structuredClone(observable), key: "status_value_shared" });
+    }
+    if (options.noncanonicalControlAssertions) {
+      const control = action.observables.find((entry: any) => entry.selector.kind === "control");
+      assert.ok(control);
+      // Preserve the proposal's genuine before-then-after authority. The graph
+      // producer, not this fixture, owns its canonical assertion projection.
+      control.assertions = [
+        { phase: "before", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "before", property: "visibility", operator: "equals", expected: true },
+        { phase: "before", property: "enabled", operator: "equals", expected: true },
+        { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "after", property: "visibility", operator: "equals", expected: true },
+        { phase: "after", property: "enabled", operator: "equals", expected: true },
+      ];
+    }
     const compiled = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
     assert.equal(compiled.status, "canonicalized", JSON.stringify(compiled));
     if (compiled.status !== "canonicalized") throw new Error("unreachable");
     productSpec = ProductSpecV2Schema.parse(compiled.productSpec);
   }
+  const originalProductSpec = options.noncanonicalControlAssertions ? structuredClone(productSpec) : null;
   const targetsResult = produceDesignGenerationTargetsV2(productSpec);
   assert.equal(targetsResult.status, "produced", JSON.stringify(targetsResult));
   if (targetsResult.status !== "produced") throw new Error("unreachable");
@@ -439,6 +463,9 @@ async function exactStitchInput(options: { readonlyTextbox?: boolean; sharedRead
   const screenIndexText = JSON.stringify(screenIndex, null, 2);
   const converterText = "// exact test converter source\n";
 
+  if (originalProductSpec) {
+    assert.deepEqual(productSpec, originalProductSpec, "fixture producers must preserve the original ProductSpec");
+  }
   return {
     designSourceKind: "stitch" as const,
     productSpec,
@@ -578,6 +605,266 @@ describe("ImplementationSourceMapV1", { concurrency: 1 }, () => {
 
   it("counts shared readonly textbox observables once in the genuine source-map producer", async () => {
     await verifyReadonlySourceMap(true);
+  });
+
+  it("accepts genuine noncanonical observable assertion order without changing original authority", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-source-map-assertion-order-"));
+    try {
+      fs.chmodSync(root, 0o700);
+      writePrivateSourceMapJson(root, "options.json", { noncanonicalControlAssertions: true });
+      const input = await exactStitchInput({ noncanonicalControlAssertions: true });
+      const originalInput = structuredClone(input);
+      const originalProductSpec = structuredClone(input.productSpec);
+      const originalGraph = structuredClone(input.designGraph);
+      const control = originalProductSpec.actions[0]!.observableEffects.find((observable) =>
+        observable.selector.kind === "control");
+      assert.ok(control);
+      const graphControl = input.designGraph.observables.find((observable) =>
+        observable.observableRef === control.id);
+      assert.ok(graphControl);
+      const rawAssertions = [
+        { phase: "before", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "before", property: "visibility", operator: "equals", expected: true },
+        { phase: "before", property: "enabled", operator: "equals", expected: true },
+        { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "after", property: "visibility", operator: "equals", expected: true },
+        { phase: "after", property: "enabled", operator: "equals", expected: true },
+      ];
+      // Independent literal expectation: UTF-16 phase/property order retains
+      // every complete assertion, including its operator and expected value.
+      const canonicalAssertions = [
+        { phase: "after", property: "enabled", operator: "equals", expected: true },
+        { phase: "after", property: "visibility", operator: "equals", expected: true },
+        { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" },
+        { phase: "before", property: "enabled", operator: "equals", expected: true },
+        { phase: "before", property: "visibility", operator: "equals", expected: true },
+        { phase: "before", property: "visible_text", operator: "equals", expected: "Start Game" },
+      ];
+      writePrivateSourceMapJson(root, "input.json", input);
+      writePrivateSourceMapJson(root, "authority.json", {
+        originalProductSpec,
+        originalGraph,
+        observableRef: control.id,
+        rawAssertions,
+        canonicalAssertions,
+        productSpecHash: hashCanonicalJson(originalProductSpec),
+        productObservableHash: hashCanonicalJson(control),
+        rawAssertionsHash: hashCanonicalJson(rawAssertions),
+        graphHash: hashCanonicalJson(originalGraph),
+        graphProductObservableHash: graphControl.productObservableHash,
+        graphAssertions: graphControl.assertions,
+        graphAssertionsHash: graphControl.assertionsHash,
+        expectedCanonicalAssertionsHash: hashCanonicalJson(canonicalAssertions),
+      });
+      assert.deepEqual(control.assertions, rawAssertions);
+      assert.deepEqual(input.generationTargets.targets[0]!.requiredObservableSelectors.find((observable) =>
+        observable.observableRef === control.id)!.assertions, rawAssertions);
+      assert.equal(graphControl.productObservableHash, hashCanonicalJson(control));
+      assert.deepEqual(graphControl.assertions, canonicalAssertions);
+      assert.equal(graphControl.assertionsHash, hashCanonicalJson(canonicalAssertions));
+      assert.notEqual(graphControl.assertionsHash, hashCanonicalJson(control.assertions));
+
+      const first = produceImplementationSourceMapV1(input);
+      writePrivateSourceMapJson(root, "result.json", first);
+      assert.deepEqual(input.productSpec, originalProductSpec);
+      assert.deepEqual(input.designGraph, originalGraph);
+      assert.deepEqual(input, originalInput);
+      if (first.status === "rejected") {
+        // Qualify the intended RED before the permanent success assertion.
+        // This branch never turns an expected rejection into a passing test.
+        assert.deepEqual(first.rejectionCodes, ["IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH"], JSON.stringify(first));
+        assert.deepEqual(first.diagnostics.map(({ code, reference }) => ({ code, reference })), [{
+          code: "IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH",
+          reference: control.id,
+        }], JSON.stringify(first));
+      }
+      assert.equal(first.status, "produced", JSON.stringify(first));
+      if (first.status !== "produced") throw new Error("unreachable");
+      assert.deepEqual(ImplementationSourceMapV1Schema.parse(first.sourceMap), first.sourceMap);
+      assert.equal(first.sourceMap.designSourceKind, "stitch");
+      if (first.sourceMap.designSourceKind !== "stitch") throw new Error("unreachable");
+      assert.equal(first.sourceMap.productSpecV2PayloadHash, hashCanonicalJson(originalProductSpec));
+      assert.equal(first.sourceMap.designGraphV2PayloadHash, hashCanonicalJson(originalGraph));
+      const mappedControl = first.sourceMap.screens[0]!.observables.find((observable) =>
+        observable.observableRef === control.id);
+      assert.ok(mappedControl);
+      assert.equal(mappedControl.assertionsHash, hashCanonicalJson(canonicalAssertions));
+      assert.equal(first.payloadHash, implementationSourceMapPayloadHashV1(first.sourceMap));
+      const second = produceImplementationSourceMapV1(structuredClone(input));
+      writePrivateSourceMapJson(root, "repeat-result.json", second);
+      assert.equal(second.status, "produced", JSON.stringify(second));
+      if (second.status !== "produced") throw new Error("unreachable");
+      assert.deepEqual(second.sourceMap, first.sourceMap);
+      assert.equal(second.payloadHash, first.payloadHash);
+      assert.deepEqual(input, originalInput);
+    } catch (error) {
+      writePrivateSourceMapJson(root, "failure.json", { message: error instanceof Error ? error.message : String(error) });
+      throw error;
+    } finally {
+      console.log(JSON.stringify({ code: "IMPLEMENTATION_SOURCE_MAP_ASSERTION_ORDER_FIXTURE_RETAINED", path: root }));
+    }
+  });
+
+  it("rejects schema-valid observable assertion and screen identity drift against unchanged original authority", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-source-map-observable-drift-"));
+    try {
+      fs.chmodSync(root, 0o700);
+      const input = await exactStitchInput({ noncanonicalControlAssertions: true });
+      const originalInput = structuredClone(input);
+      const control = input.productSpec.actions[0]!.observableEffects.find((observable) =>
+        observable.selector.kind === "control");
+      assert.ok(control);
+      const observableRef = control.id;
+      const originalObservableHash = hashCanonicalJson(control);
+      writePrivateSourceMapJson(root, "original-input.json", input);
+      writePrivateSourceMapJson(root, "original-authority.json", {
+        observableRef,
+        productSpec: input.productSpec,
+        productSpecHash: hashCanonicalJson(input.productSpec),
+        productObservableHash: originalObservableHash,
+        generationTargets: input.generationTargets,
+        generationTargetsHash: hashCanonicalJson(input.generationTargets),
+        designGraph: input.designGraph,
+        designGraphHash: hashCanonicalJson(input.designGraph),
+      });
+      const baseline = produceImplementationSourceMapV1(input);
+      writePrivateSourceMapJson(root, "baseline-result.json", baseline);
+      assert.equal(baseline.status, "produced", JSON.stringify(baseline));
+
+      type Assertion = typeof input.designGraph.observables[number]["assertions"][number];
+      const assertionMutations: readonly [string, (assertions: Assertion[]) => void][] = [
+        ["expected", (assertions) => {
+          assertions.find((entry) => entry.phase === "before" && entry.property === "visible_text")!.expected = "Different original requirement";
+        }],
+        ["phase", (assertions) => {
+          assertions.find((entry) => entry.phase === "before" && entry.property === "visible_text")!.phase = "reload";
+        }],
+        ["property", (assertions) => {
+          assertions.find((entry) => entry.phase === "before" && entry.property === "visible_text")!.property = "value";
+        }],
+        ["operator", (assertions) => {
+          assertions.find((entry) => entry.phase === "before" && entry.property === "visible_text")!.operator = "contains";
+        }],
+      ];
+      for (const [name, mutate] of assertionMutations) {
+        const copy = structuredClone(input);
+        const graph = copy.designGraph.observables.find((observable) =>
+          observable.observableRef === observableRef)!;
+        mutate(graph.assertions);
+        // Repair representation and upstream bindings, keeping the complete
+        // original ProductSpec observable fixed. A stale hash/schema refusal
+        // would not exercise the SourceMap semantic assertion comparison.
+        graph.assertions.sort((left, right) => {
+          const a = `${left.phase}\0${left.property}`;
+          const b = `${right.phase}\0${right.property}`;
+          return a < b ? -1 : a > b ? 1 : 0;
+        });
+        graph.assertionsHash = hashCanonicalJson(graph.assertions);
+        assert.equal(graph.productObservableHash, originalObservableHash);
+        assert.deepEqual(DesignInteractionGraphV2Schema.parse(copy.designGraph), copy.designGraph);
+        copy.designSourceClosure.designGraph.payloadHash = hashCanonicalJson(copy.designGraph);
+        assert.deepEqual(DesignSourceClosureV2Schema.parse(copy.designSourceClosure), copy.designSourceClosure);
+        const story = produceStoryPlanV2({
+          productSpec: copy.productSpec, designGraph: copy.designGraph, buildTopology: copy.buildTopology,
+        });
+        writePrivateSourceMapJson(root, `${name}-story-result.json`, story);
+        assert.equal(story.status, "produced", JSON.stringify(story));
+        if (story.status !== "produced") throw new Error("upstream projection must admit the controlled assertion mutation");
+        copy.storyPlan = story.storyPlan;
+        assert.deepEqual(StoryPlanV2Schema.parse(copy.storyPlan), copy.storyPlan);
+        assert.deepEqual(copy.productSpec, originalInput.productSpec);
+        assert.deepEqual(copy.generationTargets, originalInput.generationTargets);
+        const before = structuredClone(copy);
+        writePrivateSourceMapJson(root, `${name}-input.json`, copy);
+        const result = produceImplementationSourceMapV1(copy);
+        writePrivateSourceMapJson(root, `${name}-result.json`, result);
+        assert.equal(result.status, "rejected", JSON.stringify(result));
+        if (result.status !== "rejected") throw new Error("assertion drift must not produce a source map");
+        assert.deepEqual(result.rejectionCodes, ["IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH"], JSON.stringify(result));
+        assert.deepEqual(result.diagnostics.map(({ code, reference }) => ({ code, reference })), [{
+          code: "IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH", reference: observableRef,
+        }], JSON.stringify(result));
+        const repeat = produceImplementationSourceMapV1(structuredClone(copy));
+        writePrivateSourceMapJson(root, `${name}-repeat-result.json`, repeat);
+        assert.deepEqual(repeat, result);
+        assert.deepEqual(copy, before);
+      }
+
+      for (const name of ["selector", "evidence"] as const) {
+        const copy = structuredClone(input);
+        const indexed = copy.screenIndex[0]!.observables.find((observable) =>
+          observable.observableRef === observableRef)!;
+        if (name === "selector") indexed.selector = "#different-observable-selector";
+        else indexed.evidenceRef = input.designGraph.observables.find((observable) =>
+          observable.observableRef !== observableRef)!.evidenceRef;
+        assert.deepEqual(StitchScreenIndexV2Schema.parse(copy.screenIndex), copy.screenIndex);
+        rebindScreenIndexSource(copy);
+        assert.deepEqual(JSON.parse(copy.screenIndexSource.text), copy.screenIndex);
+        assert.equal(copy.screenIndexSource.source.hash, sha256(copy.screenIndexSource.text));
+        assert.equal(copy.screenIndexSource.source.byteLength, Buffer.byteLength(copy.screenIndexSource.text, "utf8"));
+        assert.deepEqual(copy.productSpec, originalInput.productSpec);
+        assert.deepEqual(copy.designGraph, originalInput.designGraph);
+        assert.deepEqual(copy.generationTargets, originalInput.generationTargets);
+        const before = structuredClone(copy);
+        writePrivateSourceMapJson(root, `${name}-input.json`, copy);
+        const result = produceImplementationSourceMapV1(copy);
+        writePrivateSourceMapJson(root, `${name}-result.json`, result);
+        assert.equal(result.status, "rejected", JSON.stringify(result));
+        if (result.status !== "rejected") throw new Error("screen identity drift must not produce a source map");
+        assert.deepEqual(result.rejectionCodes, ["IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH"], JSON.stringify(result));
+        assert.deepEqual(result.diagnostics.map(({ code, reference }) => ({ code, reference })), [{
+          code: "IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_IDENTITY_MISMATCH", reference: observableRef,
+        }], JSON.stringify(result));
+        const repeat = produceImplementationSourceMapV1(structuredClone(copy));
+        writePrivateSourceMapJson(root, `${name}-repeat-result.json`, repeat);
+        assert.deepEqual(repeat, result);
+        assert.deepEqual(copy, before);
+      }
+
+      // A stale full original observable hash is already refused by StoryPlan
+      // reproduction. This is stronger earlier refusal, not proof that the
+      // later SourceMap observable conjunct was executed.
+      const stale = structuredClone(input);
+      stale.designGraph.observables.find((observable) =>
+        observable.observableRef === observableRef)!.productObservableHash = "0".repeat(64);
+      assert.deepEqual(DesignInteractionGraphV2Schema.parse(stale.designGraph), stale.designGraph);
+      stale.designSourceClosure.designGraph.payloadHash = hashCanonicalJson(stale.designGraph);
+      assert.deepEqual(DesignSourceClosureV2Schema.parse(stale.designSourceClosure), stale.designSourceClosure);
+      const staleBefore = structuredClone(stale);
+      const refusedStory = produceStoryPlanV2({
+        productSpec: stale.productSpec, designGraph: stale.designGraph, buildTopology: stale.buildTopology,
+      });
+      writePrivateSourceMapJson(root, "original-hash-story-result.json", refusedStory);
+      assert.equal(refusedStory.status, "rejected", JSON.stringify(refusedStory));
+      if (refusedStory.status !== "rejected") throw new Error("stale original observable authority must be refused upstream");
+      assert.deepEqual(refusedStory.rejectionCodes, ["STORY_PARTITION_V2_DESIGN_OBSERVABLE_CONTRACT_MISMATCH"], JSON.stringify(refusedStory));
+      assert.deepEqual(refusedStory.diagnostics.map(({ code, reference }) => ({ code, reference })), [{
+        code: "STORY_PARTITION_V2_DESIGN_OBSERVABLE_CONTRACT_MISMATCH", reference: observableRef,
+      }], JSON.stringify(refusedStory));
+      assert.deepEqual(stale, staleBefore);
+      // Update only the schema-valid StoryPlan graph binding so the subsequent
+      // failure is its reproduction refusal, rather than a stale graph hash.
+      stale.storyPlan.designGraphHash = hashCanonicalJson(stale.designGraph);
+      assert.deepEqual(StoryPlanV2Schema.parse(stale.storyPlan), stale.storyPlan);
+      const staleProducerInput = structuredClone(stale);
+      writePrivateSourceMapJson(root, "original-hash-input.json", stale);
+      const staleResult = produceImplementationSourceMapV1(stale);
+      writePrivateSourceMapJson(root, "original-hash-result.json", staleResult);
+      assert.equal(staleResult.status, "rejected", JSON.stringify(staleResult));
+      if (staleResult.status !== "rejected") throw new Error("stale full original authority must not produce a source map");
+      assert.deepEqual(staleResult.rejectionCodes, ["IMPLEMENTATION_SOURCE_MAP_V1_STORY_PLAN_PROJECTION_MISMATCH"], JSON.stringify(staleResult));
+      const staleRepeat = produceImplementationSourceMapV1(structuredClone(stale));
+      writePrivateSourceMapJson(root, "original-hash-repeat-result.json", staleRepeat);
+      assert.deepEqual(staleRepeat, staleResult);
+      assert.deepEqual(stale, staleProducerInput);
+      assert.deepEqual(staleBefore.productSpec, originalInput.productSpec);
+      assert.deepEqual(input, originalInput);
+    } catch (error) {
+      writePrivateSourceMapJson(root, "failure.json", { message: error instanceof Error ? error.message : String(error) });
+      throw error;
+    } finally {
+      console.log(JSON.stringify({ code: "IMPLEMENTATION_SOURCE_MAP_OBSERVABLE_DRIFT_FIXTURE_RETAINED", path: root }));
+    }
   });
 
   it("materializes exact Stitch screen, source, owner, control, and observable mappings deterministically", async () => {

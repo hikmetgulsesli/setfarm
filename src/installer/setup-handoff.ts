@@ -1,8 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { TextDecoder } from "node:util";
 import { pgQuery, pgRun, now } from "../db-pg.js";
+import { readRegularFileAtMostSync } from "../lib/bounded-file-read.js";
 import { logger } from "../lib/logger.js";
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { NormalizedRelativeLocatorSchema } from "../product-compiler/schemas/common-v1.js";
+import { DesignInteractionGraphV2Schema } from "../product-compiler/schemas/design-interaction-graph-v2.js";
+import { StitchScreenIndexV2Schema } from "../product-compiler/schemas/stitch-screen-index-v2.js";
+import { admitSetupGeneratedScreenSourcesV2 } from "../product-compiler/setup-generated-screen-admission-v2.js";
 import { computePredictedScreenFiles } from "./steps/03-stories/context.js";
 import { resolveStackContract } from "./stack-contract/reconcile.js";
 import { getStackPack } from "./stack-contract/packs.js";
@@ -476,6 +483,76 @@ function generatedDesignFiles(repo: string): string[] {
     .sort();
 }
 
+function readNativeGeneratedScreenText(repo: string, locatorInput: string): string {
+  const locator = NormalizedRelativeLocatorSchema.parse(locatorInput);
+  const root = fs.realpathSync(repo);
+  const candidate = path.resolve(root, locator);
+  const resolved = fs.realpathSync(candidate);
+  const relative = path.relative(root, resolved);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Native generated source resolves outside the repository");
+  }
+  const before = fs.statSync(resolved);
+  if (!before.isFile()) throw new Error("Native generated source must be a regular file");
+  const exact = readRegularFileAtMostSync(candidate, 16 * 1024 * 1024);
+  const resolvedAfter = fs.realpathSync(candidate);
+  const after = fs.statSync(resolvedAfter);
+  if (
+    resolvedAfter !== resolved
+    || exact.stat.dev !== before.dev
+    || exact.stat.ino !== before.ino
+    || exact.stat.dev !== after.dev
+    || exact.stat.ino !== after.ino
+  ) {
+    throw new Error("Native generated source path identity changed during its bounded read");
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(exact.bytes);
+}
+
+function nativeGeneratedScreenFiles(
+  repo: string,
+  context: Record<string, string>,
+  pack: StackPack,
+  resolvedTargets: readonly ResolvedTarget[],
+): readonly string[] {
+  if (
+    context.product_semantics_version !== "v2"
+    || pack.designPolicy === "none"
+    || pack.conversionPolicy !== "wrap_jsx"
+  ) return [];
+  const indexLocator = "src/screens/SCREEN_INDEX.json";
+  try {
+    // lstat distinguishes a genuinely absent preconversion index from an
+    // existing dangling symlink or other invalid native projection.
+    try {
+      fs.lstatSync(path.join(repo, indexLocator));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    const screenIndex = StitchScreenIndexV2Schema.parse(JSON.parse(readNativeGeneratedScreenText(repo, indexLocator)));
+    const generationTargets: unknown = JSON.parse(readNativeGeneratedScreenText(repo, "stitch/GENERATION_TARGETS.json"));
+    const responseBindings: unknown = JSON.parse(readNativeGeneratedScreenText(repo, "stitch/STITCH_RESPONSE_BINDINGS.json"));
+    const graph = DesignInteractionGraphV2Schema.parse(JSON.parse(readNativeGeneratedScreenText(repo, "stitch/DESIGN_INTERACTION_GRAPH_V2.json")));
+    if (
+      graph.generationTargetsHash !== hashCanonicalJson(generationTargets)
+      || graph.responseBindingsHash !== hashCanonicalJson(responseBindings)
+    ) {
+      throw new Error("Native graph must bind the exact generation target and response projection");
+    }
+    return admitSetupGeneratedScreenSourcesV2({
+      screenIndex, generationTargets, responseBindings, resolvedTargets,
+      sources: screenIndex.map((screen) => ({
+        locator: screen.file, text: readNativeGeneratedScreenText(repo, screen.file),
+      })),
+    });
+  } catch {
+    throw Object.assign(new Error(
+      "SETUP_GENERATED_SCREEN_ADMISSION_REJECTED: Existing native index requires exact bounded projection, source and direct story target authority",
+    ), { code: "SETUP_GENERATED_SCREEN_ADMISSION_REJECTED" });
+  }
+}
+
 function generatedScreenSourceFiles(repo: string): string[] {
   const screensDir = path.join(repo, "src", "screens");
   if (!fs.existsSync(screensDir)) return [];
@@ -790,7 +867,10 @@ export async function materializeSetupBuildContracts(
     forbiddenDuringImplement: pack.implementationBoundaries?.forbiddenDuringImplement || [],
     sharedFiles: pack.implementationBoundaries?.sharedFiles || [],
     scaffoldSnapshot: scaffoldSnapshot(repo),
-    generatedDesignFiles: generatedDesignFiles(repo),
+    generatedDesignFiles: [...new Set([
+      ...generatedDesignFiles(repo),
+      ...nativeGeneratedScreenFiles(repo, context, pack, resolvedTargets),
+    ])].sort(),
     designAuthority: {
       required: pack.designPolicy !== "none",
       source: pack.designPolicy === "none" ? "none" : "stitch",
