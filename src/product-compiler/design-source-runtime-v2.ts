@@ -80,6 +80,7 @@ import {
   inspectEnglishTextV1,
 } from "./english-text-contract-v1.js";
 import {
+  DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1,
   buildV3BatchStitchPromptV2,
   type V3DesignContractV2,
 } from "./v3-design-contract-v2.js";
@@ -755,6 +756,7 @@ function authorityFor(input: DesignSourceAuthorityRuntimeInputV2): DesignSourceG
       generationTargetsSchema: generationTargets.schema,
       projectId: input.projectId,
       semanticRetryPolicy: DESIGN_SOURCE_SEMANTIC_RETRY_EVIDENCE_POLICY_V1,
+      selectedHtmlPromptDisclosure: DESIGN_SOURCE_SELECTED_HTML_PROMPT_DISCLOSURE_V1,
       selectedHtmlAdmissionPolicy: DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2,
       providerRejectionPolicy: STITCH_STAGE_PROVIDER_REJECTION_POLICY_V1,
     }),
