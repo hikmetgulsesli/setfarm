@@ -1323,6 +1323,7 @@ async function recoverClaimEnvelopeFromDatabase(input: Readonly<{
   storyId?: string;
   storyDbId?: string;
   claimAgentId?: string;
+  expectedClaimId?: number;
   runtimeAgentId: string;
   workdir?: string;
 }>): Promise<ClaimEnvelopeV1 | undefined> {
@@ -1347,15 +1348,17 @@ async function recoverClaimEnvelopeFromDatabase(input: Readonly<{
         AND cl.story_id IS NOT DISTINCT FROM $4
         AND ($5::text IS NULL OR cl.agent_id = $5)
         AND cl.outcome IS NULL
+        AND ($6::bigint IS NULL OR cl.id = $6)
       ORDER BY cl.id DESC
       LIMIT 2`,
-    [input.runId, input.stepDbId, input.workflowStepId, input.storyId ?? null, input.claimAgentId ?? null],
+    [input.runId, input.stepDbId, input.workflowStepId, input.storyId ?? null, input.claimAgentId ?? null, input.expectedClaimId ?? null],
   );
   if (claims.length === 0) return undefined;
   if (claims.length !== 1) throw new Error("RECOVERY_CLAIM_AUTHORITY_AMBIGUOUS");
   const claim = claims[0]!;
   const claimId = Number(claim.claim_id);
   if (!Number.isSafeInteger(claimId) || claimId <= 0) throw new Error("RECOVERY_CLAIM_ID_INVALID");
+  if (input.expectedClaimId !== undefined && claimId !== input.expectedClaimId) return undefined;
 
   let attempt: ClaimAttemptFenceV1 | undefined;
   if (claim.protocol !== "legacy" && input.storyId) {
@@ -4401,16 +4404,19 @@ async function waitForClaimRuntimeQuiescence(
   storyId: string | undefined,
   claimAgentId: string,
   timeoutMs = 7_000,
+  expectedClaimId?: number,
 ): Promise<void> {
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   const matching = [...drainingProcesses.values()].filter((active) =>
     active.runId === runId
     && (active.storyId ?? null) === (storyId ?? null)
     && active.claimAgentId === claimAgentId
+    && (expectedClaimId === undefined || active.claimId === expectedClaimId)
   );
   const durable = (await runtimeSessions.listRecoverable({ runId, limit: 500 })).filter((session) =>
     (session.storyId ?? undefined) === storyId
     && session.claimAgentId === claimAgentId
+    && (expectedClaimId === undefined || session.claimId === expectedClaimId)
     && session.state !== "released"
   );
   const quarantined = durable.find((session) => session.state === "quarantined");
@@ -4421,8 +4427,9 @@ async function waitForClaimRuntimeQuiescence(
         `SELECT id::text FROM claim_log
           WHERE run_id = $1 AND story_id IS NOT DISTINCT FROM $2
             AND agent_id = $3 AND outcome IS NULL
+            AND ($4::bigint IS NULL OR id = $4)
           LIMIT 1`,
-        [runId, storyId ?? null, claimAgentId],
+        [runId, storyId ?? null, claimAgentId, expectedClaimId ?? null],
       );
       if (openClaim) throw new Error(`RUNTIME_QUIESCENCE_OWNER_MISSING:${openClaim.id}`);
       return;
@@ -4526,14 +4533,18 @@ async function retrySingleStepClaimWithAuthority(input: Readonly<{
   runtimeAgentId: string;
   diagnostic: string;
   envelope?: ClaimEnvelopeV1;
-}>): Promise<void> {
+  expectedClaimId?: number;
+}>): Promise<boolean> {
   const envelope = input.envelope ?? await recoverClaimEnvelopeFromDatabase({
     runId: input.runId,
     stepDbId: input.stepDbId,
     workflowStepId: input.workflowStepId,
     claimAgentId: input.claimAgentId,
+    expectedClaimId: input.expectedClaimId,
     runtimeAgentId: input.runtimeAgentId,
   });
+  // A stale selected candidate must never recover authority for its replacement.
+  if (input.expectedClaimId !== undefined && envelope?.claimId !== input.expectedClaimId) return false;
   if (!envelope) throw new Error("CLAIM_ORPHAN_RECOVERY_ENVELOPE_UNAVAILABLE");
   await failStep(
     input.stepDbId,
@@ -4544,6 +4555,7 @@ async function retrySingleStepClaimWithAuthority(input: Readonly<{
   await pgRun("SELECT pg_notify('step_pending', $1)", [
     JSON.stringify({ agentId: input.claimAgentId, runId: input.runId, stepId: input.workflowStepId }),
   ]);
+  return true;
 }
 
 async function retryActiveSingleStepClaim(active: ActiveProcess, stepIdName: string, diagnostic: string): Promise<void> {
@@ -7022,17 +7034,32 @@ async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
     const ageMs = Number.isFinite(claimedAtMs) ? Date.now() - claimedAtMs : thresholdMs;
     const diagnostic = `UNTRACKED_RUNNING_SINGLE_STEP: ${row.agent_id} has an open ${row.step_id} claim for ${formatDurationMs(ageMs)} but no active spawner process is tracking it; retrying instead of leaving the run idle.`;
     try {
-      await waitForClaimRuntimeQuiescence(row.run_id, undefined, row.agent_id);
+      const claimId = Number(row.claim_id);
+      if (!Number.isSafeInteger(claimId) || claimId <= 0) continue;
+      // The candidate can become stale while prior rows or durable reads await.
+      // Recover C1 only, then keep C1 through every effect; never discover C2.
+      const candidateEnvelope = await recoverClaimEnvelopeFromDatabase({
+        runId: row.run_id,
+        stepDbId: row.step_db_id,
+        workflowStepId: row.step_id,
+        claimAgentId: row.agent_id,
+        runtimeAgentId: "spawner-untracked-recovery",
+        expectedClaimId: claimId,
+      });
+      if (!candidateEnvelope || hasPendingClaimInvocation(row)) continue;
+      await waitForClaimRuntimeQuiescence(row.run_id, undefined, row.agent_id, undefined, claimId);
       if (hasPendingClaimInvocation(row)) continue;
-      await retrySingleStepClaimWithAuthority({
+      const retried = await retrySingleStepClaimWithAuthority({
         runId: row.run_id,
         stepDbId: row.step_db_id,
         workflowStepId: row.step_id,
         claimAgentId: row.agent_id,
         runtimeAgentId: "spawner-untracked-recovery",
         diagnostic,
+        expectedClaimId: claimId,
       });
-      await releaseReservedRuntimeForClaimIfPresent(Number(row.claim_id), diagnostic);
+      if (!retried) continue;
+      await releaseReservedRuntimeForClaimIfPresent(claimId, diagnostic);
     } catch (error) {
       if (isClaimMutationAuthorityError(error)) continue;
       throw error;

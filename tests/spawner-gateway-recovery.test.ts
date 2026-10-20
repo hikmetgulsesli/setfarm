@@ -2139,13 +2139,22 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /s\.updated_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
     assert.match(source, /hasTrackedClaimRuntime\(\(active\) =>/);
     assert.match(source, /UNTRACKED_RUNNING_SINGLE_STEP/);
-    assert.match(source, /waitForClaimRuntimeQuiescence\(row\.run_id, undefined, row\.agent_id\)/);
+    assert.match(source, /waitForClaimRuntimeQuiescence\(row\.run_id, undefined, row\.agent_id, undefined, claimId\)/);
     assert.match(source, /retrySingleStepClaimWithAuthority\(\{/);
     assert.match(source, /runtimeAgentId:\s*"spawner-untracked-recovery"/);
     const singleRecovery = source.slice(
       source.indexOf("async function requeueUntrackedRunningSingleStepClaims"),
       source.indexOf("async function reconcileTerminalClaimRuntimeOwnership"),
     );
+    assert.match(singleRecovery, /const candidateEnvelope = await recoverClaimEnvelopeFromDatabase\(\{[\s\S]*?expectedClaimId: claimId,[\s\S]*?\}\);/);
+    assert.match(singleRecovery, /if \(!candidateEnvelope \|\| hasPendingClaimInvocation\(row\)\) continue;/);
+    assert.ok(
+      singleRecovery.indexOf("const candidateEnvelope = await recoverClaimEnvelopeFromDatabase")
+        < singleRecovery.indexOf("await waitForClaimRuntimeQuiescence"),
+      "exact candidate authority must be recovered before quiescence effects",
+    );
+    assert.match(singleRecovery, /const retried = await retrySingleStepClaimWithAuthority\(\{[\s\S]*?expectedClaimId: claimId,[\s\S]*?\}\);/);
+    assert.match(singleRecovery, /if \(!retried\) continue;/);
     assert.match(singleRecovery, /runtime_completion_requests completion[\s\S]*completion\.state NOT IN \('accepted', 'rejected'\)/);
     assert.match(singleRecovery, /runtime_sessions runtime[\s\S]*runtime\.state = 'quarantined'/);
     assert.match(singleRecovery, /run_termination_requests termination[\s\S]*termination\.state <> 'terminalized'/);
