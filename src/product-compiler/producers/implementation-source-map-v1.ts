@@ -1131,9 +1131,15 @@ function projectStitchScreens(input: StitchInput): {
         },
       };
       });
+    const accepted = interactiveCounts(indexed.controls);
+    // Strict index/source validation proves these admitted displays are disjoint
+    // from controls and rejections. Count native elements, not observable refs.
+    accepted.inputs += new Set(indexed.observables
+      .filter((observable) => observable.readonlyDisplay?.kind === "input")
+      .map((observable) => observable.sourceElementRef)).size;
     const cardinality = {
       raw: indexed.projection.rawInteractiveCounts,
-      accepted: interactiveCounts(indexed.controls),
+      accepted,
       rejected: interactiveCounts(indexed.rejectedControls),
     };
     if (!rootSurface || !topologyPath) continue;
