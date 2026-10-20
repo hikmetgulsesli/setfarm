@@ -13,6 +13,7 @@ import { createOperationalOutboxPublisher } from "../../src/execution/operationa
 import { createOperationalEventDeliveryRepository, type OperationalEventDelivery } from "../../src/execution/operational-event-delivery-repository.js";
 import { createOperationalEventDeliveryConsumer } from "../../src/execution/operational-event-delivery-consumer.js";
 import { CanonicalOperationalEventV1Schema } from "../../src/execution/schemas/operational-event-v1.js";
+import { RuntimeCompletionEffectInputV1Schema } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
 import { createArtifactInventoryStoreV1 } from "../../src/product-compiler/artifact-inventory-store.js";
 import { bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
@@ -687,8 +688,40 @@ for (const [caseId, reasonCode] of [
     if (!effect?.leaseToken) throw new Error("plan refusal effect missing");
     assert.equal(effect.requestId, requested.request.requestId);
     assert.equal(effect.mandatory, true);
-    assert.equal(effect.payload.rejectionHash, record.rejectionHash);
-    assert.equal(effect.payload.sourceTaskHash, ledger.sourceHash);
+    const effectInput = RuntimeCompletionEffectInputV1Schema.parse(effect.payload);
+    const committedRequest = await completions.findById(requested.request.requestId);
+    if (!committedRequest?.completionPlan || !committedRequest.completionPlanHash) {
+      throw new Error("committed plan refusal completion plan missing");
+    }
+    assert.equal(committedRequest.applyPhase, "owner_committed");
+    assert.equal(effect.inputHash, hashCanonicalJson(effectInput));
+    assert.equal(effectInput.planHash, committedRequest.completionPlanHash);
+    assert.equal(effectInput.planHash, hashCanonicalJson(effectInput.plan));
+    assert.deepEqual(effectInput.plan, committedRequest.completionPlan);
+    assert.equal(effectInput.plan.requestId, requested.request.requestId);
+    assert.equal(effectInput.plan.claimId, claimId);
+    assert.equal(effectInput.plan.runId, runId);
+    assert.equal(effectInput.plan.stepDbId, stepDbId);
+    assert.equal(effectInput.plan.workflowStepId, "plan");
+    assert.equal(effectInput.plan.outputHash, requested.request.outputHash);
+    assert.equal(effectInput.plan.outputHash, committedRequest.outputHash);
+    assert.equal(effectInput.plan.kind, "single_failure");
+    assert.deepEqual(effectInput.plan.continuation, { type: "failure_finalize" });
+    assert.equal(effectInput.plan.subject, undefined);
+    const compilerEffect = {
+      schema: "setfarm.v3-plan-clarification-effect.v1",
+      owner: "compiler",
+      rejectionHash: record.rejectionHash,
+      sourceTaskHash: ledger.sourceHash,
+      reasonCodes: [...new Set(canonicalRejection.reasons.map(reason => reason.code))].sort(),
+      requirementRefs: [...new Set(canonicalRejection.reasons.flatMap(reason => reason.requirementRefs))].sort(),
+      modelRedispatchBudget: 0,
+    };
+    assert.deepEqual(effectInput.effect, compilerEffect);
+    assert.equal(effect.effectKey, "continuation/failure_finalize/failure_finalize");
+    assert.equal(effect.ordinal, 0);
+    assert.deepEqual(effectInput.plan.effects, [{ effectKey: effect.effectKey, ordinal: 0,
+      effectType: "v3.plan.clarification.recorded", mandatory: true, payload: compilerEffect }]);
     await effects.settle({
       requestId: requested.request.requestId,
       effectKey: effect.effectKey,

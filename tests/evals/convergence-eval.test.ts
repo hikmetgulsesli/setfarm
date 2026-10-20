@@ -1822,7 +1822,17 @@ describe("strict V3 runner HTTP-port projection wiring", () => {
       assert.equal(h.starts(), 1);
       assert.equal(h.promotions.length, 0);
       assert.equal(syncs, 0);
-      assert.ok(sleeps.every(ms => ms >= 250 && ms <= 5000));
+      if (duringCancellation) {
+        // The initial ordinary run poll uses the suite interval; only later
+        // canonical-projection settlement polls use the bounded interval.
+        assert.equal(sleeps[0], loaded.suite.timeout.pollMs);
+        const projectionSleeps = sleeps.slice(1);
+        const projectionPollMs = Math.min(5000, Math.max(250, loaded.suite.timeout.pollMs));
+        assert.deepEqual(projectionSleeps, Array.from({ length: boundary === "cancel_pending" ? 12 : 0 }, () => projectionPollMs));
+        assert.ok(projectionSleeps.every(ms => ms >= 250 && ms <= 5000));
+      } else {
+        assert.ok(sleeps.every(ms => ms >= 250 && ms <= 5000));
+      }
     });
   }
 });
