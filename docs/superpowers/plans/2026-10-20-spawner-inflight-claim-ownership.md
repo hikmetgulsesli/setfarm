@@ -8,7 +8,7 @@ Execution: subagent-driven-development with fresh non-delivery builder, genuine 
 
 | File | Responsibility |
 | --- | --- |
-| src/spawner.ts | Exact private pending invocation ownership, lifetime cleanup, candidate durable runtime projection and exact skip before orphan mutation |
+| src/spawner.ts | Exact private pending invocation ownership, lifetime cleanup, candidate durable runtime projection and exact skip before orphan mutation; carry original candidate claim identity through existing quiescence/retry-authority/release helpers so stale C1 cannot act on replacement C2 |
 | tests/spawner-inflight-claim-ownership.test.ts (new) | Genuine production function AST extraction and inert deferred ownership/race regressions; no live module entry/DB/process/provider/native/browser |
 | tests/installation/fresh-installation-spawner-retention.test.ts | Existing affected genuine source components; modify only if the new exact invocation resource needs an inert fixture port |
 | tests/spawner-gateway-recovery.test.ts | Existing affected source/contract regression; no weakening assertions or native effects |
@@ -34,7 +34,10 @@ Execution: subagent-driven-development with fresh non-delivery builder, genuine 
 1. Add meaningful deferred genuine-source regression(s) first. Run focused inert command and retain natural RED output before product edits.
 2. Apply smallest spawner ownership/lifetime change. Preserve authority guard equality and original diagnostic behavior for true orphan recovery.
 3. Run same focused command GREEN plus affected existing inert retention/source checks. Retain raw output, child exits, complete diff and Source pins. Do not sum nested TAP tests or claim live acceptance.
-4. Freeze complete diff and report limitations for independent task review; follow scoped fix rounds if needed. Root whole-branch review and required clean stock build remain distinct delivery gates.
+4. Freeze complete diff and report limitations for independent task review; follow scoped fix rounds if needed. Root whole-branch review and focused type compilation precede PR; the stock clean-main build follows actual reviewed merge and precedes all runtime qualification (actual build guard requires main and HEAD==origin/main).
 5. After actual full8 settles and current owners/receipts/source guards are reconciled, Root separately admits reviewed rollout and new clean real evaluation. Existing failed cases remain failures.
 
 Ruling: fix the false-orphan producer first. Generic retry diagnostic masking is separately recorded, not a reason to exempt compiler output, invent retry input or broaden this minimal fix. If a different causal defect appears, Root updates spec/FileMap before Source edits.
+
+Ruling I1: independent review identified replacement-claim recovery as a real load-bearing gap in the same false-orphan objective. Refine mapped spawner helpers and new inert regression before delivery. Tests must hold stale C1, start exact pending C2 for the same run/step/claim-agent, then show no C2 drain/retry/release before first effect and across awaited boundaries. Scope remains the two product/test files; any additional production file requires a new causal FileMap ruling. Cost if wrong: withheld delivery/rework.
+Ruling build sequence: scripts/write-build-info.mjs910–926 mechanically requires canonical origin, main branch and HEAD==origin/main. Premerge type compilation plus reviewed focused tests are valid source gates; the genuine stock build is postmerge/before rollout. No artificial refs, dirty/guard bypass or premerge stock-build PASS claim.
