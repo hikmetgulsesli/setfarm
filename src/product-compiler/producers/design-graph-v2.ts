@@ -1,4 +1,5 @@
 import { hashCanonicalJson } from "../canonical-json.js";
+import { canonicalizeObservableAssertionsV2 } from "../observable-assertion-identity-v2.js";
 import { produceDesignGenerationTargetsV2 } from "./design-targets-v2.js";
 import { bindStitchTargetCandidateSelectionsV3 } from "./stitch-target-candidate-selection-v2.js";
 import {
@@ -263,11 +264,6 @@ function observableSurfaceRef(
   return placement.surfaceRef;
 }
 
-function canonicalAssertions<T extends { phase: string; property: string }>(values: readonly T[]): T[] {
-  return [...values].sort((left, right) =>
-    compareUtf16(`${left.phase}\0${left.property}`, `${right.phase}\0${right.property}`));
-}
-
 function projectGraph(input: ParsedInputs): DesignInteractionGraphV2 {
   const responseByTarget = new Map(input.responseBindings.bindings.map((binding) =>
     [binding.targetRef, binding] as const));
@@ -480,7 +476,7 @@ function projectGraph(input: ParsedInputs): DesignInteractionGraphV2 {
         }
       }
 
-      const assertions = canonicalAssertions(observable.assertions);
+      const assertions = canonicalizeObservableAssertionsV2(observable.assertions);
       return {
         observableRef: observable.id,
         productObservableHash: hashCanonicalJson(observable),
