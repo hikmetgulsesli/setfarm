@@ -35,6 +35,19 @@ import {
 import { OperationalFailureCauseV1Schema } from "../../src/execution/schemas/operational-failure-cause-v1.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
+const expectedSelectedHtmlDisclosure = {
+  schema: "setfarm.design-source-selected-html-prompt-disclosure.v1" as const,
+  rules: [
+    "- Return valid UTF-8 HTML of at most 800000 bytes and 200000 UTF-16 code units after decoding.",
+    "- Setfarm checks the complete decoded HTML source, including markup, attributes, styles, comments and permitted data scripts, not only visible text.",
+    "- Source characters may use printable ASCII U+0020-U+007E and structural whitespace TAB U+0009, LF U+000A and CR U+000D.",
+    "- The only additional English typography is U+2013, U+2014, U+2018, U+2019, U+201C, U+201D and U+2026.",
+    "- U+00A9 COPYRIGHT SIGN is the only extra neutral source character: Setfarm substitutes a space only for English inspection and retains the original HTML bytes.",
+    "- Other non-ASCII source characters, including literal U+2022 BULLET, are rejected. Omit unsupported decorative glyphs; use ordinary supported punctuation where needed.",
+    "- Other control characters, including DEL U+007F, are rejected. English admission also rejects known localized ASCII lexemes; ASCII spelling alone does not establish English.",
+  ] as const,
+} as const;
+
 describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
   it("keeps the selected-HTML admission policy deeply immutable", () => {
     assert.equal(Object.isFrozen(DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2), true);
@@ -307,6 +320,7 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
           maximumCorrectionRecordsPerStage: 400,
           maximumCorrectionBytesPerStage: 64 * 1024,
         },
+        selectedHtmlPromptDisclosure: expectedSelectedHtmlDisclosure,
         selectedHtmlAdmissionPolicy: {
           schema: "setfarm.design-source-selected-html-admission-policy.v2",
           maximumBytes: 800_000,
@@ -323,6 +337,17 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         },
       } as const;
       assert.equal(first.authority.promptContractHash, hashCanonicalJson(expectedPromptContract));
+      const { selectedHtmlPromptDisclosure: _disclosure, ...oldPromptContract } = expectedPromptContract;
+      const changedRulePromptContract = {
+        ...expectedPromptContract,
+        selectedHtmlPromptDisclosure: {
+          ...expectedSelectedHtmlDisclosure,
+          rules: ["- Changed admission rule.", ...expectedSelectedHtmlDisclosure.rules.slice(1)],
+        },
+      };
+      assert.notEqual(first.authority.promptContractHash, hashCanonicalJson(oldPromptContract));
+      assert.notEqual(first.authority.promptContractHash, hashCanonicalJson(changedRulePromptContract));
+
       assert.notEqual(first.authority.promptContractHash, hashCanonicalJson({
         ...expectedPromptContract,
         semanticRetryPolicy: {
@@ -382,6 +407,10 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       assert.equal(currentRequest.authorityHash, first.runner.attempt.authorityHash);
       assert.equal(hashCanonicalJson(currentRequest), first.runner.attempt.requestHash);
       for (const [label, authority] of [
+        ["pre-disclosure prompt authority", { ...first.authority,
+          promptContractHash: hashCanonicalJson(oldPromptContract) }],
+        ["changed disclosure rule", { ...first.authority,
+          promptContractHash: hashCanonicalJson(changedRulePromptContract) }],
         ["old string-only policies", legacyAuthority],
         ["render capability", { ...first.authority, renderPolicyHash: hashCanonicalJson({
           ...expectedRenderPolicy, nativeInputObservation: "native-text-readonly-exact-role-receipt.v2",
@@ -798,6 +827,19 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       assert.equal(ambiguous.runner.attempt.lease, null);
 
       const selectedHtmlCases = [
+        {
+          id: "literal-bullet",
+          activationHash: "2".repeat(64),
+          htmlBytes: validStitchHtml([
+            `<main data-surface-id="${target.surfaceRef}">`,
+            `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+            `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
+            `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+            `<p>${String.fromCharCode(0x2022)}</p>`,
+            "</main>",
+          ].join(""), "design-source-runtime-v2-literal-bullet"),
+          diagnostic: "ENGLISH_TEXT_NON_ASCII at / code unit 0x2022",
+        },
         {
           id: "non-english",
           activationHash: "d".repeat(64),
