@@ -632,6 +632,22 @@ function loadNativeV2ProjectionContract({ targets, bindings, selection, rendered
       });
     }
 
+    const readonlyObservableDisplays = new Map();
+    for (const observable of requiredObservables) {
+      const elementRef = [...observable.elementRefs][0];
+      const element = renderedElementByRef.get(elementRef);
+      const sameElementObservables = requiredObservables.filter((entry) => entry.elementRefs.has(elementRef));
+      if (
+        element?.tagName === "input" && element.nativeControlKind === "input"
+        && element.nativeInputState?.inputType === "text"
+        && element.nativeInputState.readOnly === true
+        && element.nativeInputState.contentEditable === false
+        && element.dataAction === null && element.dataActionInput === null && element.dataControlSlot === null
+        && sameElementObservables.every((entry) => entry.selectorKind === "accessibility" && entry.role === "textbox")
+      ) {
+        readonlyObservableDisplays.set(elementRef, { tagName: "input", inputType: "text", readOnly: true });
+      }
+    }
     const semanticDomText = semanticDomBytes.toString("utf8");
     const exactContractRefs = new Set([
       ...binding.surfaceBindings.map((value) => value.elementRef),
@@ -665,6 +681,7 @@ function loadNativeV2ProjectionContract({ targets, bindings, selection, rendered
       controlElementRefs,
       controlByElementRef,
       requiredObservables,
+      readonlyObservableDisplays,
     });
   }
 
@@ -2495,7 +2512,56 @@ function escapeHtmlAttr(value) {
     .replace(/>/g, "&gt;");
 }
 
-function annotateInteractiveElements(html, projection) {
+// A deliberately narrow HTML attribute reader for the readonly exception.
+// Consume the entire original attribute body: duplicates, expressions, spreads
+// and malformed tails cannot become eligible after later JSX normalization.
+function readonlyDisplayAttributes(attrs) {
+  const source = String(attrs || "").replace(/\/\s*$/, "");
+  const attributes = new Map();
+  const pattern = /\s+([A-Za-z_:][\w:.-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>/{ }]+)))?/y;
+  let cursor = 0;
+  while (cursor < source.length) {
+    if (!source.slice(cursor).trim()) break;
+    pattern.lastIndex = cursor;
+    const match = pattern.exec(source);
+    if (!match) return undefined;
+    const name = match[1].toLowerCase();
+    if (attributes.has(name)) return undefined;
+    attributes.set(name, match[2] ?? match[3] ?? match[4] ?? null);
+    cursor = pattern.lastIndex;
+  }
+  return attributes;
+}
+
+function exactReadonlyObservableDisplay(tagName, attrs, projection, annotated = false) {
+  if (projection?.authorityMode !== "browser_rendered_v2" || tagName.toLowerCase() !== "input") return false;
+  const attributes = readonlyDisplayAttributes(attrs);
+  if (!attributes) return false;
+  const elementRef = attributes.get("data-setfarm-element-ref");
+  const native = projection.readonlyObservableDisplays?.get(elementRef);
+  if (native?.tagName !== "input" || native.inputType !== "text" || native.readOnly !== true) return false;
+  const required = (projection.requiredObservables || []).filter((entry) => entry.elementRefs.size === 1 && entry.elementRefs.has(elementRef));
+  if (required.length === 0 || required.some((entry) => entry.selectorKind !== "accessibility" || entry.role !== "textbox")) return false;
+  if (!attributes.has("readonly") || ![null, "", "true", "readonly"].includes(attributes.get("readonly"))) return false;
+  if (attributes.has("type") && attributes.get("type") !== "text") return false;
+  if ([...attributes.keys()].some((name) => /^on/i.test(name) || [
+    "data-action", "data-action-input", "data-action-id", "data-control-id", "data-control-slot",
+    "data-setfarm-link-action", "data-setfarm-rejected-control", "contenteditable",
+  ].includes(name))) return false;
+  if (projection.controlByElementRef?.has(elementRef) || [...(projection.inputElementRefs?.values() || [])].some((refs) => refs.has(elementRef))) return false;
+  const expectedRefs = required.map((entry) => entry.observableRef).sort();
+  if (new Set(expectedRefs).size !== expectedRefs.length) return false;
+  if (attributes.has("role") && attributes.get("role") !== "textbox") return false;
+  if (attributes.has("aria-label") && required.some((entry) => escapeHtmlAttr(entry.name) !== attributes.get("aria-label"))) return false;
+  if (attributes.has("data-observable-refs") || annotated) {
+    const refs = String(attributes.get("data-observable-refs") || "").trim().split(/\s+/).filter(Boolean).sort();
+    if (JSON.stringify(refs) !== JSON.stringify(expectedRefs)) return false;
+  }
+  if (annotated && (attributes.get("role") !== "textbox" || required.some((entry) => escapeHtmlAttr(entry.name) !== attributes.get("aria-label")))) return false;
+  return true;
+}
+
+function annotateInteractiveElements(html, projection, readonlyDisplayElementRefs = new Set()) {
   const actions = [];
   const valueControls = [];
   const rejectedControls = [];
@@ -2694,6 +2760,8 @@ function annotateInteractiveElements(html, projection) {
     const inputBindings = semanticActionInputs(sourceAttrs);
     const sourceElementRef = semanticElementRef(sourceAttrs);
     const controlSlotRef = semanticControlSlotRef(sourceAttrs);
+    if (readonlyDisplayElementRefs.has(sourceElementRef)
+      && exactReadonlyObservableDisplay(tagName, sourceAttrs, projection, true)) return sourceAttrs;
     const cleanAttrs = sourceAttrs
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
       .replace(/\sdata-control-id=(?:"[^"]*"|'[^']*')/gi, "")
@@ -2830,6 +2898,7 @@ function annotateObservableElements(html, projection) {
 
   const browserAuthority = projection?.authorityMode === "browser_rendered_v1" || projection?.authorityMode === "browser_rendered_v2";
   if (browserAuthority) {
+    const readonlyDisplayElementRefs = new Set();
     const byElementRef = new Map();
     for (const observable of required) {
       const elementRef = [...observable.elementRefs][0];
@@ -2842,6 +2911,7 @@ function annotateObservableElements(html, projection) {
       const elementRef = semanticElementRef(attrs);
       const matches = byElementRef.get(elementRef);
       if (!matches) return original;
+      if (exactReadonlyObservableDisplay(tagName, attrs, projection)) readonlyDisplayElementRefs.add(elementRef);
       for (const observable of matches) {
         if (
           observable.selectorKind === "control"
@@ -2892,6 +2962,7 @@ function annotateObservableElements(html, projection) {
     }
     return {
       html: annotated,
+      readonlyDisplayElementRefs,
       observables: required.map((observable) => ({
         observableRef: observable.observableRef,
         ...(observable.role ? { role: observable.role } : {}),
@@ -2902,6 +2973,9 @@ function annotateObservableElements(html, projection) {
         ...(observable.surfaceRef ? { surfaceRef: observable.surfaceRef } : {}),
         ...(observable.evidenceRef ? { evidenceRef: observable.evidenceRef } : {}),
         sourceElementRef: [...observable.elementRefs][0],
+        ...(readonlyDisplayElementRefs.has([...observable.elementRefs][0]) ? {
+          readonlyDisplay: { kind: "input", inputType: "text", readOnly: true },
+        } : {}),
       })),
     };
   }
@@ -3149,7 +3223,7 @@ for (const screen of manifest) {
     rejectedControls,
     actionInputFields,
     actionInputInitialValues,
-  } = annotateInteractiveElements(observableProjection.html, projection);
+  } = annotateInteractiveElements(observableProjection.html, projection, observableProjection.readonlyDisplayElementRefs);
   const sourceLocator = projection?.authorityMode === "browser_rendered_v1" || projection?.authorityMode === "browser_rendered_v2"
     ? projection.semanticDomLocator
     : path.relative(repoPath, htmlFile).split(path.sep).join("/");
@@ -3169,6 +3243,7 @@ for (const screen of manifest) {
   }));
   const indexedObservables = observableProjection.observables.map((observable) => ({
     observableRef: observable.observableRef,
+    ...(observable.readonlyDisplay ? { readonlyDisplay: observable.readonlyDisplay } : {}),
     ...(observable.role ? { role: observable.role } : {}),
     ...(observable.name ? { name: observable.name } : {}),
     ...(observable.actionRef ? { actionRef: observable.actionRef } : {}),

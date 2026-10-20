@@ -256,7 +256,115 @@ function codes(sourceText: string): readonly StitchScreenSourceDiagnosticCodeV2[
   return codesFor(nativeScreen(), sourceText);
 }
 
+function readonlyDisplayFixture() {
+  const screen = nativeScreen();
+  screen.observables[0]!.role = "textbox";
+  screen.observables[0]!.readonlyDisplay = { kind: "input", inputType: "text", readOnly: true };
+  screen.inputs = 2;
+  screen.projection.rawInteractiveCounts.inputs = 2;
+  const display = '<input type="text" readOnly={true} value="Open" role="textbox" aria-label="Record saved" data-observable-refs="OBS_RECORD_SAVED" data-setfarm-element-ref="E000003" />';
+  const sourceText = exactSource().replace(/<output[\s\S]*?<\/output>/, display);
+  return { screen, display, sourceText };
+}
+
 describe("native Stitch SCREEN_INDEX v2 generated-source validator", () => {
+  it("accepts exact indexed readonly text/default inputs without input transports", () => {
+    const { screen, sourceText } = readonlyDisplayFixture();
+    for (const source of [sourceText, sourceText.replace('type="text" ', ""), sourceText.replace("readOnly={true}", "readOnly"), sourceText.replace("readOnly={true}", 'readOnly="true"'), sourceText.replace('value="Open"', 'value="Open" hidden={true}')]) {
+      assert.deepEqual(validateStitchScreenSourceV2({ screen: StitchScreenIndexEntryV2Schema.parse(screen), sourceText: source }), { status: "valid", diagnostics: [] });
+    }
+  });
+
+  it("refuses mutable, ambiguous, spoofed or behavior-bearing readonly display source", () => {
+    const { screen, sourceText, display } = readonlyDisplayFixture();
+    const variants: [string, string][] = [
+      ["mutable", display.replace("readOnly={true} ", "")],
+      ["false", display.replace("readOnly={true}", "readOnly={false}")],
+      ["dynamic", display.replace("readOnly={true}", "readOnly={isReadonly}")],
+      ["string expression", display.replace("readOnly={true}", 'readOnly={"true"}')],
+      ["duplicate readonly", display.replace("readOnly={true}", "readOnly={true} readOnly={true}")],
+      ["case alias", display.replace("readOnly={true}", "readOnly={true} readonly")],
+      ["numeric input", display.replace('type="text"', 'type="number"')],
+      ["type alias", display.replace('type="text"', 'TYPE="number"')],
+      ["dynamic type", display.replace('type="text"', "type={inputType}")],
+      ["duplicate type", display.replace('type="text"', 'type="text" type="text"')],
+      ["literal expression type", display.replace('type="text"', 'type={"text"}')],
+      ["textarea", display.replace("<input", "<textarea")],
+      ["source spoof", display.replace("E000003", "E000004")],
+      ["duplicate source", display.replace('data-setfarm-element-ref="E000003"', 'data-setfarm-element-ref="E000003" data-setfarm-element-ref="E000003"')],
+      ["missing marker", display.replace('data-observable-refs="OBS_RECORD_SAVED" ', "")],
+      ["unindexed marker", display.replace("OBS_RECORD_SAVED", "OBS_UNKNOWN")],
+      ["partial marker", display.replace("OBS_RECORD_SAVED", "OBS_RECORD_SAVED OBS_UNKNOWN")],
+      ["duplicate ref", display.replace("OBS_RECORD_SAVED", "OBS_RECORD_SAVED OBS_RECORD_SAVED")],
+      ["duplicate marker", display.replace('data-observable-refs="OBS_RECORD_SAVED"', 'data-observable-refs="OBS_RECORD_SAVED" data-observable-refs="OBS_RECORD_SAVED"')],
+      ["handler", display.replace(" />", " onChange={() => {}} />")],
+      ["lowercase handler", display.replace(" />", ' onchange="noop" />')],
+      ["spread", display.replace(" />", " {...extra} />")],
+      ["action", display.replace(" />", ' data-action="ACT_SAVE_RECORD" />')],
+      ["input binding", display.replace(" />", ' data-action-input="ACT_SAVE_RECORD.title" />')],
+      ["control slot", display.replace(" />", ' data-control-slot="CSLOT_SAVE_RECORD_PRIMARY" />')],
+      ["action id", display.replace(" />", ' data-action-id="unknown" />')],
+      ["input id", display.replace(" />", ' data-control-id="unknown" />')],
+      ["rejected marker", display.replace(" />", ' data-setfarm-rejected-control="unknown" />')],
+      ["role tampering", display.replace('role="textbox"', 'role="status"')],
+      ["name tampering", display.replace('aria-label="Record saved"', 'aria-label="Other"')],
+    ];
+    for (const [label, changed] of variants) {
+      assert.equal(validateStitchScreenSourceV2({ screen, sourceText: sourceText.replace(display, changed) }).status, "invalid", label);
+    }
+    const missingMetadata = structuredClone(screen);
+    delete missingMetadata.observables[0]!.readonlyDisplay;
+    assert.ok(codesFor(missingMetadata, sourceText).includes("STITCH_SCREEN_INTERACTIVE_ELEMENT_UNINDEXED"));
+    const acceptedOverlap = structuredClone(screen);
+    acceptedOverlap.controls[1]!.sourceElementRef = "E000003";
+    assert.ok(codesFor(acceptedOverlap, sourceText).includes("STITCH_SCREEN_INTERACTIVE_ELEMENT_UNINDEXED"));
+    const rejectedOverlap = structuredClone(screen);
+    rejectedOverlap.rejectedControls = [{ ...screenWithRejectedControls().rejectedControls[0]!, sourceElementRef: "E000003" }];
+    assert.ok(codesFor(rejectedOverlap, sourceText).includes("STITCH_SCREEN_INTERACTIVE_ELEMENT_UNINDEXED"));
+  });
+
+  it("counts multiple exact observables on one readonly display once and requires the complete marker set", () => {
+    const { screen, sourceText } = readonlyDisplayFixture();
+    screen.observables.push({ ...screen.observables[0]!, observableRef: "OBS_RECORD_STATE", selector: '[data-observable-refs~="OBS_RECORD_STATE"]' });
+    screen.projection.requiredObservableRefs.push("OBS_RECORD_STATE");
+    const source = sourceText.replace('data-observable-refs="OBS_RECORD_SAVED"', 'data-observable-refs="OBS_RECORD_SAVED OBS_RECORD_STATE"');
+    const parsed = StitchScreenIndexEntryV2Schema.parse(screen);
+    assert.equal(parsed.inputs, 2);
+    assert.equal(validateStitchScreenSourceV2({ screen: parsed, sourceText: source }).status, "valid");
+    assert.equal(validateStitchScreenSourceV2({ screen: parsed, sourceText }).status, "invalid");
+    for (const change of [
+      (copy: StitchScreenIndexEntryV2) => { copy.inputs = 3; copy.projection.rawInteractiveCounts.inputs = 3; },
+      (copy: StitchScreenIndexEntryV2) => { delete copy.observables[1]!.readonlyDisplay; },
+      (copy: StitchScreenIndexEntryV2) => { copy.observables[1]!.sourceLocator = "stitch/other.html"; },
+      (copy: StitchScreenIndexEntryV2) => { copy.observables[1]!.generatedSourceLocator = "src/screens/Other.tsx"; },
+    ]) {
+      const copy = structuredClone(screen);
+      change(copy);
+      assert.equal(StitchScreenIndexEntryV2Schema.safeParse(copy).success, false);
+    }
+  });
+
+  it("keeps old schema behavior and refuses uncovered inputs, metadata drift and category overlap", () => {
+    assert.equal(StitchScreenIndexEntryV2Schema.safeParse(nativeScreen()).success, true);
+    const { screen } = readonlyDisplayFixture();
+    for (const change of [
+      (copy: any) => { delete copy.observables[0].readonlyDisplay; },
+      (copy: any) => { copy.observables[0].readonlyDisplay.readOnly = false; },
+      (copy: any) => { copy.observables[0].readonlyDisplay.inputType = "number"; },
+      (copy: any) => { copy.observables[0].readonlyDisplay.kind = "textarea"; },
+      (copy: any) => { copy.observables[0].readonlyDisplay.extra = true; },
+      (copy: any) => { copy.observables[0].role = "status"; },
+      (copy: any) => { copy.observables[0].selectorKind = "surface"; delete copy.observables[0].role; delete copy.observables[0].name; },
+      (copy: any) => { copy.controls[1].sourceElementRef = "E000003"; },
+      (copy: any) => { copy.rejectedControls = [{ ...screenWithRejectedControls().rejectedControls[0], sourceElementRef: "E000003" }]; copy.buttons += 1; copy.projection.rawInteractiveCounts.buttons += 1; },
+      (copy: any) => { copy.inputs = 1; copy.projection.rawInteractiveCounts.inputs = 1; },
+    ]) {
+      const copy = structuredClone(screen);
+      change(copy);
+      assert.equal(StitchScreenIndexEntryV2Schema.safeParse(copy).success, false);
+    }
+  });
+
   it("accepts one exact AST-resolved action, input pair set, and observable", () => {
     assert.deepEqual(validateStitchScreenSourceV2({
       screen: nativeScreen(),
