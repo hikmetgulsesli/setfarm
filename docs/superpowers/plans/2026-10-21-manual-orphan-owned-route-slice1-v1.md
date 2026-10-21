@@ -119,7 +119,7 @@ Wrapper: check explicit process.argv.slice(2) mentions before current requested 
 
 **Produces:** ALL companion-spec signatures: `encodeManualOrphanProbeFrameV1`, `decodeManualOrphanProbeFrameV1`, `observeManualOrphanProcessV1`, `pinManualOrphanProbeSourcesV1`, `observeManualOrphanOriginalChildV1`, `readManualOrphanProbeFd4V1`, zero-argument `runManualOrphanLifecycleProbeV1`. Types and exact field/key orders are fully defined in companion spec; no additional public export or setup schema is needed.
 
-- [ ] Step1 — Write codec semantic tests using a hand-derived fixed ProcessPin and explicit ordered expected bytes. The concrete fixture below is shape data, not a real process:
+- [x] Step1 — Write codec semantic tests using a hand-derived fixed ProcessPin and explicit ordered expected bytes. The concrete fixture below is shape data, not a real process:
 
 ```js
 const p={pid:123,ppid:122,uid:501,pgid:122,
@@ -140,7 +140,7 @@ Also assert duplicate top-level/inner keys, alternate key order/escapes, missing
 
 - [x] Step2 — Write the independent codec assertions first. Capture absent-contract/minimal-stub failures as incremental new-code TDD, without existing-regression credit; then implement the missing ordered fresh reconstruction/fatal UTF-8/byte-equality/deep-freeze behavior and rerun. Never remove working code or introduce a deliberate defect to manufacture RED. Record which actual assertion failed and its exact scope.
 
-- [ ] Step3 — Implement stable fixed Source pins and ps-before/comm/ps-after observations. Use absolute `/bin/ps`, fixed env/args/caps and exact date validation from spec. Pin only code-derived fixed helper and issuer test paths. No root input, package inventory, Git operation or target import. File read/recheck/close has one owner; cleanup uncertainty is sticky. Test malformed process OUTPUT through a test-contained consumer harness of the actual parser; label these parse simulations. Actual process observation is exercised by the live probe in Step6.
+- [x] Step3 — Implement stable fixed Source pins and ps-before/comm/ps-after observations. Use absolute `/bin/ps`, fixed env/args/caps and exact date validation from spec. Pin only code-derived fixed helper and issuer test paths. No root input, package inventory, Git operation or target import. File read/recheck/close has one owner; cleanup uncertainty is sticky. Test malformed process OUTPUT through a test-contained consumer harness of the actual parser; label these parse simulations. Actual process observation is exercised by the live probe in Step6.
 
 - [ ] Step4 — Write the actual lifecycle event-consumer tests before filling its settlement predicates. A fake original object is EventEmitter with PassThrough stdout/stderr/fd4. Drive exact sequences; assertions:
 
@@ -238,3 +238,13 @@ The helper now adds the two pure canonical codec exports while retaining inert i
 Five independent boundary tests then exposed the actual omission: original3502 exited1 with193 passing and3 encoder-overflow failures; exact16383/16384-byte frames and all191 prior controls passed. The smallest encoder fix measures complete serialized bytes including LF and refuses above16384. Original5094 then exited0 with196/196PASS,0failed/skipped/cancelled, empty stderr and no diagnostics; both original streams ended/closed and2415 Source pins were unchanged. These196 comprise122 codec cases,20 pure classifier cases and54 source-contained route cases.
 
 The independent fix review closed I1 and approved this codec subphase C0/I0/M0. Root rechecked the exact two-file Source scope, frozen consumer/constructor hashes and four unchanged production/profile hashes. Task1's minor classifier-input coverage is now present. No src change occurred; prior adjacent src-only noEmit is not relabeled as scripts/MJS typechecking. Full Task2 and Slice1 remain incomplete: process/file checks, original event/FD4 consumers, real minimal probe/receiver positives and negatives, close-uncertainty composition and final proportional verification are next. Both future-route unavailability guards stay unconditional; genuine M/T/PG, fixed-I5, full-adapter drift, stock build, rollout and full8 receive no credit.
+
+## Verified Task2 process/file subphase (2026-10-21)
+
+Only observeManualOrphanProcessV1(pid) and zero-argument pinManualOrphanProbeSourcesV1 plus their private support are added. Their Source test phase preserved196 prior cases and added64 Source-contained process/file cases plus2 actual local observation cases. Initial original17288 exited1 with196 passing and66 absent-observation-export failures; this is honest incremental scaffolding without semantic-regression credit.
+
+After implementation original24729 exited0 with262/262PASS,0failed/skipped/cancelled and no diagnostics. Both original output streams reached EOF/closed,2415 Source pins remained unchanged. The two actual local positives read the current Node26.4.0 Darwin arm64 process and the fixed public helper/issuer Source pair;64 other new cases are explicitly Source-contained ps/file simulations. Independent spec/quality review approved this subphase C0/I0/M0. Root rechecked the complete196-case prefix, all six prior helper exports, frozen routing/constructor hashes and four unchanged production/profile hashes.
+
+Root resolves the observation error-map ambiguity: invalid PID, ps/parse/binding and non-close file/identity/content/check-after-known-close refusals use fresh MANUAL_ORPHAN_OWNER_REFUSED. Any actually owned FD close uncertainty overrides results as sticky fresh MANUAL_ORPHAN_CHILD_UNKNOWN; it is never retried. Existing codec FRAME_REFUSED remains unchanged. This is a closed-code clarification, with no new permission or selector.
+
+The helper has eight exports and remains inert on import. No original-child event witness, FD4 reader, minimal child/direct entry, normal probe issuer, PG setup or route activation exists yet. Local file fingerprints are not finalized Source/build admission. Full Task2/Slice1, real child lifecycle, PG/genuine M/T/fixed-I5/full-adapter drift/full8 and rollout remain pending.

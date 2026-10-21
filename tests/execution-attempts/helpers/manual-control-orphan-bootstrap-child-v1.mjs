@@ -1,3 +1,8 @@
+import * as fs from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {TextDecoder,types} from 'node:util';
 
 export const MANUAL_ORPHAN_BASENAME_V1='manual-control-orphan-bootstrap-v1.integration.test.ts';
@@ -119,5 +124,161 @@ export function decodeManualOrphanProbeFrameV1(bytes){
     return Object.freeze(frame);
   }catch{
     throw probeFrameRefusalV1();
+  }
+}
+
+function probeOwnerRefusalV1(){return Error('MANUAL_ORPHAN_OWNER_REFUSED');}
+function probeCloseUnknownV1(){return Error('MANUAL_ORPHAN_CHILD_UNKNOWN');}
+
+// Capture each returned FD immediately. Closing burns its ownership before the
+// syscall; an uncertain close can never be retried against a reused descriptor.
+function probeDescriptorOwnerV1(){
+  const descriptors=[];let closed=false,unknown=false;
+  const guard=()=>{
+    if(unknown)throw probeCloseUnknownV1();
+    if(closed)throw probeOwnerRefusalV1();
+  };
+  return {
+    guard,
+    open(locator,flags){guard();const fd=fs.openSync(locator,flags);descriptors.push(fd);return fd;},
+    close(){
+      if(!closed){
+        closed=true;
+        for(let index=descriptors.length-1;index>=0;index--){
+          try{fs.closeSync(descriptors[index]);}catch{unknown=true;}
+        }
+      }
+      if(unknown)throw probeCloseUnknownV1();
+    },
+  };
+}
+
+function sameProbeFileV1(first,second){
+  return ['dev','ino','uid','gid','mode','nlink','size','mtimeNs','ctimeNs']
+    .every(key=>first[key]===second[key]);
+}
+function sameProbeDirectoryV1(first,second){
+  return ['dev','ino','uid','mode'].every(key=>first[key]===second[key]);
+}
+function probeDirectoryShapeV1(stat){return stat.isDirectory()&&!stat.isSymbolicLink();}
+
+function pinProbeFileV1(locator,cap,kind,owner){
+  owner.guard();
+  if(!probeExecutableV1(locator)||fs.realpathSync(locator)!==locator)throw probeOwnerRefusalV1();
+  const ancestors=[];
+  for(let current=path.dirname(locator);;current=path.dirname(current)){
+    if(ancestors.length>=128)throw probeOwnerRefusalV1();
+    const first=fs.lstatSync(current,{bigint:true});
+    if(!probeDirectoryShapeV1(first)||fs.realpathSync(current)!==current)throw probeOwnerRefusalV1();
+    const fd=owner.open(current,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);
+    const opened=fs.fstatSync(fd,{bigint:true});
+    if(!probeDirectoryShapeV1(opened)||!sameProbeDirectoryV1(first,opened))throw probeOwnerRefusalV1();
+    ancestors.push({locator:current,first,fd});
+    if(current===path.dirname(current))break;
+  }
+  const first=fs.lstatSync(locator,{bigint:true}),uid=process.getuid();
+  if(!probeIntegerV1(uid,0)||!first.isFile()||first.isSymbolicLink()||first.nlink!==1n
+    ||first.size<0n||first.size>BigInt(cap)||(first.mode&0o022n)!==0n
+    ||(first.uid!==BigInt(uid)&&(kind!=='executable'||first.uid!==0n)))throw probeOwnerRefusalV1();
+  const fd=owner.open(locator,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+  const metadata=()=>{
+    owner.guard();
+    if(fs.realpathSync(locator)!==locator)throw probeOwnerRefusalV1();
+    for(const ancestor of ancestors){
+      const named=fs.lstatSync(ancestor.locator,{bigint:true}),held=fs.fstatSync(ancestor.fd,{bigint:true});
+      if(!probeDirectoryShapeV1(named)||!probeDirectoryShapeV1(held)
+        ||!sameProbeDirectoryV1(ancestor.first,named)||!sameProbeDirectoryV1(ancestor.first,held)
+        ||fs.realpathSync(ancestor.locator)!==ancestor.locator)throw probeOwnerRefusalV1();
+    }
+    const named=fs.lstatSync(locator,{bigint:true}),held=fs.fstatSync(fd,{bigint:true});
+    if(!named.isFile()||named.isSymbolicLink()||!held.isFile()||held.isSymbolicLink()
+      ||!sameProbeFileV1(first,named)||!sameProbeFileV1(first,held))throw probeOwnerRefusalV1();
+  };
+  const readHash=()=>{
+    metadata();const hash=createHash('sha256'),size=Number(first.size);
+    const bytes=Buffer.alloc(Math.min(size,65536));let position=0;
+    while(position<size){
+      const wanted=Math.min(bytes.length,size-position),count=fs.readSync(fd,bytes,0,wanted,position);
+      if(!Number.isSafeInteger(count)||count<1||count>wanted)throw probeOwnerRefusalV1();
+      hash.update(bytes.subarray(0,count));position+=count;
+    }
+    metadata();return hash.digest('hex');
+  };
+  const hash=readHash();
+  return {hash,check(){if(readHash()!==hash)throw probeOwnerRefusalV1();}};
+}
+
+function probeSourceLocatorsV1(){
+  const helper=fileURLToPath(import.meta.url),root=path.resolve(path.dirname(helper),'../../..');
+  if(helper!==path.join(root,'tests','execution-attempts','helpers','manual-control-orphan-bootstrap-child-v1.mjs')){
+    throw probeOwnerRefusalV1();
+  }
+  return {helper,issuer:path.join(root,'scripts','__tests__','manual-orphan-bootstrap-owned-route-v1.test.js')};
+}
+
+export function pinManualOrphanProbeSourcesV1(){
+  const owner=probeDescriptorOwnerV1();
+  try{
+    const locators=probeSourceLocatorsV1();
+    const helper=pinProbeFileV1(locators.helper,16777216,'source',owner);
+    const issuer=pinProbeFileV1(locators.issuer,16777216,'source',owner);
+    const check=()=>{
+      try{owner.guard();helper.check();issuer.check();}
+      catch{owner.close();throw probeOwnerRefusalV1();}
+    };
+    check();
+    return Object.freeze({
+      hashes:Object.freeze({helperSha256:helper.hash,issuerTestSha256:issuer.hash}),
+      check,close(){owner.close();},
+    });
+  }catch{
+    owner.close();throw probeOwnerRefusalV1();
+  }
+}
+
+function readProbePsV1(args){
+  const result=spawnSync('/bin/ps',args,{encoding:'utf8',timeout:2000,maxBuffer:16384,
+    env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',TZ:'UTC'}});
+  if(result.error!=null||result.status!==0||result.signal!==null||result.stderr!==''
+    ||typeof result.stdout!=='string'||Buffer.byteLength(result.stdout,'utf8')>16384)throw probeOwnerRefusalV1();
+  return result.stdout;
+}
+
+function parseProbeProcessV1(pid,before,comm,after){
+  if(before!==after)throw probeOwnerRefusalV1();
+  const row=/^[ \t]*(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+([A-Z][a-z]{2} [A-Z][a-z]{2}[ \t]+\d{1,2} \d\d:\d\d:\d\d \d{4})[ \t]+(\d+)[ \t]+([^\r\n]+)\n$/.exec(before);
+  const command=/^([^\r\n]+)\n$/.exec(comm);
+  if(!row||row[0]!==before||!command||command[0]!==comm||Number(row[1])!==pid
+    ||!probeExecutableV1(command[1]))throw probeOwnerRefusalV1();
+  const ppid=Number(row[2]),uid=Number(row[3]),pgid=Number(row[5]);
+  if(!probeIntegerV1(ppid,1)||!probeIntegerV1(uid,0)||!probeIntegerV1(pgid,1))throw probeOwnerRefusalV1();
+  const date=/^([A-Z][a-z]{2}) ([A-Z][a-z]{2})[ \t]+(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4})$/.exec(row[4]);
+  if(!date)throw probeOwnerRefusalV1();
+  const month=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(date[2]);
+  const day=Number(date[3]),hour=Number(date[4]),minute=Number(date[5]),second=Number(date[6]),year=Number(date[7]);
+  if(month<0||year<1970||day<1||day>31||hour>23||minute>59||second>59)throw probeOwnerRefusalV1();
+  const actual=new Date(Date.UTC(year,month,day,hour,minute,second));
+  if(actual.getUTCFullYear()!==year||actual.getUTCMonth()!==month||actual.getUTCDate()!==day
+    ||['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][actual.getUTCDay()]!==date[1])throw probeOwnerRefusalV1();
+  return {ppid,uid,pgid,startedAtUTC:actual.toISOString(),executable:command[1],rawCommand:row[6]};
+}
+
+export function observeManualOrphanProcessV1(pid){
+  if(!probeIntegerV1(pid,1))throw probeOwnerRefusalV1();
+  const owner=probeDescriptorOwnerV1();
+  try{
+    const args=['-ww','-p',String(pid),'-o','pid=','-o','ppid=','-o','uid=','-o','lstart=','-o','pgid=','-o','args='];
+    const before=readProbePsV1(args),comm=readProbePsV1(['-ww','-p',String(pid),'-o','comm=']),after=readProbePsV1(args);
+    const facts=parseProbeProcessV1(pid,before,comm,after);
+    // This path comes only from the independent ps comm observation, never a frame.
+    const executable=pinProbeFileV1(facts.executable,536870912,'executable',owner);
+    executable.check();
+    const pin=Object.freeze({pid,ppid:facts.ppid,uid:facts.uid,pgid:facts.pgid,
+      startedAtUTC:facts.startedAtUTC,executable:facts.executable,executableSha256:executable.hash,
+      commandSha256:createHash('sha256').update(facts.rawCommand,'utf8').digest('hex')});
+    const result=Object.freeze({pin,rawCommand:facts.rawCommand});
+    owner.close();return result;
+  }catch{
+    owner.close();throw probeOwnerRefusalV1();
   }
 }

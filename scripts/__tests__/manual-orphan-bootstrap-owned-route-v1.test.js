@@ -661,3 +661,370 @@ test('codec encoder refuses escaped valid4096-byte paths at16385 total bytes inc
   const second=frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),'16385-byte frame again');
   assert.notEqual(first,second);
 });
+
+// Task2 process/source observation: Source-contained simulations below exercise
+// the complete actual helper. Synthetic ps/file facts earn no current-OS credit.
+const OBS_EXE_V1='/fixture/manual-orphan-node-physical-v1';
+const OBS_HELPER_PATH_V1=url.fileURLToPath(HELPER);
+const OBS_TEST_PATH_V1=url.fileURLToPath(import.meta.url);
+const OBS_RAW_V1=OBS_EXE_V1+' --flag café';
+const OBS_PS_ENV_V1=Object.freeze({PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',TZ:'UTC'});
+function observationRowV1(changes={}){
+  const row={pid:'123',ppid:'122',uid:'501',date:'Wed Oct 21 00:00:00 2026',pgid:'122',raw:OBS_RAW_V1,...changes};
+  return ' '+row.pid+' '+row.ppid+' '+row.uid+' '+row.date+' '+row.pgid+' '+row.raw+'\n';
+}
+function observationStatV1(kind,ino,size=0){
+  return {dev:1n,ino:BigInt(ino),uid:501n,gid:20n,mode:kind==='directory'?0o40755n:0o100644n,
+    nlink:kind==='directory'?2n:1n,size:BigInt(size),mtimeNs:1000000000n,ctimeNs:1000000000n,
+    kind};
+}
+function observationFixtureV1(){
+  const files=new Map(),directories=new Map();let ino=10;
+  for(const [locator,text] of [
+    [OBS_HELPER_PATH_V1,'independent helper Source fixture v1\n'],
+    [OBS_TEST_PATH_V1,'independent issuer Source fixture v1\n'],
+    [OBS_EXE_V1,'independent executable fixture v1\n'],
+  ]){
+    const bytes=Buffer.from(text,'utf8');files.set(locator,{bytes,stat:observationStatV1('file',ino++,bytes.length),heldStat:null});
+    for(let ancestor=path.dirname(locator);;ancestor=path.dirname(ancestor)){
+      if(!directories.has(ancestor))directories.set(ancestor,observationStatV1('directory',ino++));
+      if(ancestor===path.dirname(ancestor))break;
+    }
+  }
+  const row=observationRowV1();
+  const state={files,directories,operations:[],psCalls:[],opened:[],closeAttempts:[],descriptors:new Map(),
+    unlisted:[],fixtureFaults:[],
+    psResults:[{stdout:row},{stdout:OBS_EXE_V1+'\n'},{stdout:row}],
+    realpathAliases:new Map(),closeFailures:new Set(),failOpenPath:null,afterOpen:null,nextFd:100};
+  const unexpected=label=>{state.unlisted.push(label);throw Error('OBSERVATION_UNLISTED_IO:'+label);};
+  function entry(locator){return files.get(locator)??directories.get(locator)??unexpected('path '+String(locator));}
+  function statValue(stat){
+    const value={...stat};delete value.kind;
+    return {...value,isFile:()=>stat.kind==='file',isDirectory:()=>stat.kind==='directory',
+      isSymbolicLink:()=>stat.kind==='symlink',isFIFO:()=>false,isSocket:()=>false};
+  }
+  function descriptor(fd){
+    const value=state.descriptors.get(fd);assert.ok(value,'only a captured descriptor may be used');
+    assert.equal(value.closeAttempted,false,'no access after a descriptor close attempt');return value;
+  }
+  const realpath=locator=>{
+    state.operations.push(['realpath',locator]);entry(locator);
+    return state.realpathAliases.get(locator)??locator;
+  };
+  realpath.native=realpath;
+  state.fs={constants,realpathSync:realpath,
+    lstatSync(locator,options){
+      state.operations.push(['lstat',locator]);assert.equal(options?.bigint,true);
+      const value=entry(locator);return statValue(files.has(locator)?value.stat:value);
+    },
+    openSync(locator,flags){
+      state.operations.push(['open',locator,flags]);const value=entry(locator);
+      assert.equal(typeof flags,'number');assert.ok((flags&constants.O_NOFOLLOW)!==0,'every captured FD uses nofollow');
+      assert.equal(flags&(constants.O_WRONLY|constants.O_RDWR|constants.O_CREAT|constants.O_TRUNC|constants.O_APPEND),0,
+        'read-only ownership never creates or writes');
+      if(state.failOpenPath===locator)throw Error('synthetic secret open failure');
+      const fd=state.nextFd++,record={fd,path:locator,entry:value,closeAttempted:false};
+      state.descriptors.set(fd,record);state.opened.push(record);
+      if(state.afterOpen)state.afterOpen(record);
+      return fd;
+    },
+    fstatSync(fd,options){
+      state.operations.push(['fstat',fd]);assert.equal(options?.bigint,true);const record=descriptor(fd);
+      return statValue(files.has(record.path)?(record.entry.heldStat??record.entry.stat):record.entry);
+    },
+    readSync(fd,buffer,offset,length,position){
+      state.operations.push(['read',fd,position,length]);const record=descriptor(fd);
+      assert.ok(files.has(record.path),'only a known regular file is read');
+      assert.ok(Buffer.isBuffer(buffer));
+      for(const n of [offset,length,position])assert.ok(Number.isSafeInteger(n)&&n>=0,'bounded positional read');
+      assert.ok(offset+length<=buffer.length);assert.ok(length<=536870912);
+      const count=Math.max(0,Math.min(length,record.entry.bytes.length-position));
+      record.entry.bytes.copy(buffer,offset,position,position+count);return count;
+    },
+    closeSync(fd){
+      state.operations.push(['close',fd]);const record=state.descriptors.get(fd);
+      assert.ok(record,'no phantom descriptor closes');state.closeAttempts.push(fd);
+      assert.equal(record.closeAttempted,false,'never retry a possibly reused descriptor');record.closeAttempted=true;
+      if(state.closeFailures.has(record.path))throw Error('synthetic private close uncertainty');
+    },
+  };
+  state.childProcess={spawnSync(executable,args,options){
+    state.operations.push(['ps',executable]);const index=state.psCalls.length;
+    assert.equal(executable,'/bin/ps');assert.ok(index<3,'one fixed before/comm/after sequence only');
+    const expected=index===1?['-ww','-p','123','-o','comm=']:
+      ['-ww','-p','123','-o','pid=','-o','ppid=','-o','uid=','-o','lstart=','-o','pgid=','-o','args='];
+    assert.deepEqual(Array.from(args),expected);
+    assert.deepEqual(Object.keys(options).sort(),['encoding','env','maxBuffer','timeout']);
+    assert.equal(options.encoding,'utf8');assert.equal(options.timeout,2000);assert.equal(options.maxBuffer,16384);
+    assert.deepEqual({...options.env},OBS_PS_ENV_V1);state.psCalls.push({executable,args:Array.from(args)});
+    return {status:0,signal:null,error:undefined,stderr:'',...state.psResults[index]};
+  }};
+  state.process={getuid(){state.operations.push(['getuid']);return 501;}};
+  // A production catch must never turn a broken fixture assertion into an
+  // apparently valid OWNER_REFUSED outcome. Keep those faults independently.
+  const checked=fn=>(...args)=>{try{return fn(...args);}catch(error){
+    if(error?.code==='ERR_ASSERTION')state.fixtureFaults.push(error.message);throw error;
+  }};
+  for(const [name,fn] of Object.entries(state.fs))if(typeof fn==='function')state.fs[name]=checked(fn);
+  state.fs.realpathSync.native=state.fs.realpathSync;
+  state.childProcess.spawnSync=checked(state.childProcess.spawnSync);
+  state.assertClosed=()=>{
+    assert.deepEqual(state.closeAttempts,state.opened.map(record=>record.fd).reverse(),
+      'all captured descriptors have one close attempt in reverse acquisition order');
+    for(const record of state.opened)assert.equal(record.closeAttempted,true);
+  };
+  return state;
+}
+function observationVmV1(state){
+  let source=readFileSync(HELPER,'utf8');
+  const locatorSites=[...source.matchAll(/\bimport\.meta\.url\b/g)].length;
+  const hasObservation=typeof helper.observeManualOrphanProcessV1==='function'
+    ||typeof helper.pinManualOrphanProbeSourcesV1==='function';
+  assert.equal(locatorSites,hasObservation?1:0,'one actual helper locator after observation exports exist; zero only absent-contract scaffolding');
+  if(locatorSites===1)source=replaceOnce(source,'import.meta.url',JSON.stringify(HELPER.href),'helper fixed module URL');
+  const c=capture(),pureUtil=createRequire(import.meta.url)('node:util');
+  const modules=new Map([
+    ['node:util',closedModule(c,'observation util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
+    ['node:crypto',closedModule(c,'observation crypto',{createHash})],
+    ['node:path',path],['node:url',url],['node:buffer',{Buffer}],
+    ['node:fs',closedModule(c,'observation fs',state.fs)],
+    ['node:child_process',closedModule(c,'observation child_process',state.childProcess)],
+  ]);
+  const compiled=ts.transpileModule(source,{fileName:OBS_HELPER_PATH_V1+'.ts',
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},reportDiagnostics:true});
+  assert.deepEqual((compiled.diagnostics??[]).filter(item=>item.category===ts.DiagnosticCategory.Error),[],
+    'complete helper Source must transpile before a contained result counts');
+  const context={exports:{},Buffer,URL,Error,TextDecoder:pureUtil.TextDecoder,
+    process:closedModule(c,'observation process',state.process),
+    require(specifier){assert.ok(modules.has(specifier),'no unlisted helper module: '+specifier);return modules.get(specifier);},
+    setTimeout:forbidden(c,'observation setTimeout'),clearTimeout:forbidden(c,'observation clearTimeout'),
+    console:closedModule(c,'observation console')};
+  runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
+  assert.equal(state.operations.length,0,'actual whole-module import is inert');
+  assert.equal(c.calls.forbidden,0,'module import cannot touch an unlisted operation');
+  return {actual:context.exports,assertContained(){
+    assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));
+    assert.deepEqual(state.unlisted,[],'no out-of-fixture path may explain a refusal');
+    assert.deepEqual(state.fixtureFaults,[],'no swallowed fixture assertion may explain a refusal');
+  }};
+}
+function ownerRefusedV1(action,label,code='MANUAL_ORPHAN_OWNER_REFUSED'){
+  let caught;try{action();}catch(error){caught=error;}
+  assert.ok(caught instanceof Error,label+' must throw Error');assert.equal(caught.message,code,label+' fixed error');return caught;
+}
+function observedDataV1(actual){return JSON.parse(JSON.stringify(actual));}
+function expectedObservationV1(changes={}){
+  const rawCommand=changes.rawCommand??OBS_RAW_V1;
+  return {pin:{pid:123,ppid:122,uid:501,pgid:122,startedAtUTC:'2026-10-21T00:00:00.000Z',
+    executable:OBS_EXE_V1,executableSha256:createHash('sha256').update('independent executable fixture v1\n').digest('hex'),
+    commandSha256:createHash('sha256').update(rawCommand,'utf8').digest('hex'),...changes.pin},rawCommand};
+}
+function containedProcessRefusalV1(state,label){
+  const vm=observationVmV1(state);
+  ownerRefusedV1(()=>vm.actual.observeManualOrphanProcessV1(123),label);
+  state.assertClosed();vm.assertContained();
+}
+
+test('source-contained process observer accepts the complete fixed ps/file prerequisites and exact UTF8 command hash',()=>{
+  const state=observationFixtureV1(),vm=observationVmV1(state);
+  const observed=vm.actual.observeManualOrphanProcessV1(123);
+  assert.deepEqual(observedDataV1(observed),expectedObservationV1());
+  assert.equal(Object.isFrozen(observed),true);assert.equal(Object.isFrozen(observed.pin),true);
+  assert.equal(state.psCalls.length,3);assert.ok(state.opened.some(record=>record.path===OBS_EXE_V1));
+  state.assertClosed();vm.assertContained();
+});
+test('source-contained process observer accepts a real leap calendar weekday',()=>{
+  const state=observationFixtureV1(),row=observationRowV1({date:'Thu Feb 29 23:59:59 2024'});
+  state.psResults[0].stdout=state.psResults[2].stdout=row;const vm=observationVmV1(state);
+  assert.deepEqual(observedDataV1(vm.actual.observeManualOrphanProcessV1(123)),
+    expectedObservationV1({pin:{startedAtUTC:'2024-02-29T23:59:59.000Z'}}));
+  state.assertClosed();vm.assertContained();
+});
+test('source-contained process observer accepts uid0 with a root-owned physical executable',()=>{
+  const state=observationFixtureV1(),row=observationRowV1({uid:'0'});state.files.get(OBS_EXE_V1).stat.uid=0n;
+  state.psResults[0].stdout=state.psResults[2].stdout=row;const vm=observationVmV1(state);
+  assert.deepEqual(observedDataV1(vm.actual.observeManualOrphanProcessV1(123)),expectedObservationV1({pin:{uid:0}}));
+  state.assertClosed();vm.assertContained();
+});
+for(const [label,pid] of [['zero',0],['negative',-1],['fraction',1.5],['unsafe',Number.MAX_SAFE_INTEGER+1],
+  ['out of range',2147483648],['string','123']]){
+  test('source-contained process observer refuses invalid PID '+label+' before IO',()=>{
+    const state=observationFixtureV1(),vm=observationVmV1(state);
+    const first=ownerRefusedV1(()=>vm.actual.observeManualOrphanProcessV1(pid),label);
+    const second=ownerRefusedV1(()=>vm.actual.observeManualOrphanProcessV1(pid),label);
+    assert.notEqual(first,second);assert.deepEqual(state.operations,[]);state.assertClosed();vm.assertContained();
+  });
+}
+const OBS_ROW_REFUSALS_V1=[
+  ['before after mismatch',state=>{state.psResults[2].stdout=observationRowV1({raw:OBS_RAW_V1+' changed'});}],
+  ['wrong requested pid',state=>{state.psResults[0].stdout=state.psResults[2].stdout=observationRowV1({pid:'124'});}],
+  ['extra row',state=>{state.psResults[0].stdout=state.psResults[2].stdout=observationRowV1()+observationRowV1();}],
+  ['malformed row',state=>{state.psResults[0].stdout=state.psResults[2].stdout='not a ps row\n';}],
+  ['missing row LF',state=>{state.psResults[0].stdout=state.psResults[2].stdout=observationRowV1().slice(0,-1);}],
+  ['wrong weekday',state=>{state.psResults[0].stdout=state.psResults[2].stdout=observationRowV1({date:'Thu Oct 21 00:00:00 2026'});}],
+  ['nonexistent calendar date',state=>{state.psResults[0].stdout=state.psResults[2].stdout=observationRowV1({date:'Mon Feb 30 00:00:00 2026'});}],
+  ['invalid ppid',state=>{state.psResults[0].stdout=state.psResults[2].stdout=observationRowV1({ppid:'0'});}],
+  ['invalid uid',state=>{state.psResults[0].stdout=state.psResults[2].stdout=observationRowV1({uid:'2147483648'});}],
+  ['invalid pgid',state=>{state.psResults[0].stdout=state.psResults[2].stdout=observationRowV1({pgid:'2147483648'});}],
+  ['extra comm line',state=>{state.psResults[1].stdout=OBS_EXE_V1+'\n'+OBS_EXE_V1+'\n';}],
+  ['missing comm LF',state=>{state.psResults[1].stdout=OBS_EXE_V1;}],
+  ['relative comm executable',state=>{state.psResults[1].stdout='relative-node\n';}],
+];
+for(const [label,change] of OBS_ROW_REFUSALS_V1){
+  test('source-contained process/parse refusal '+label+' with otherwise complete file prerequisites',()=>{
+    const state=observationFixtureV1();change(state);containedProcessRefusalV1(state,label);
+  });
+}
+for(const [label,result] of [
+  ['nonzero ps status',{status:1}],['ps signal',{signal:'SIGTERM'}],['ps stderr',{stderr:'private ps detail'}],
+  ['ps error',{error:Error('private ps native error')}],
+]){
+  test('source-contained process observer sanitizes '+label,()=>{
+    const state=observationFixtureV1();Object.assign(state.psResults[1],result);containedProcessRefusalV1(state,label);
+  });
+}
+test('source-contained process observer refuses a shape-valid16385-byte ps row',()=>{
+  const state=observationFixtureV1(),prefix=' 123 122 501 Wed Oct 21 00:00:00 2026 122 ';
+  const row=prefix+'n'.repeat(16385-Buffer.byteLength(prefix)-1)+'\n';assert.equal(Buffer.byteLength(row),16385);
+  state.psResults[0].stdout=state.psResults[2].stdout=row;containedProcessRefusalV1(state,'ps output cap');
+});
+for(const [label,change] of [
+  ['physical alias',state=>{state.realpathAliases.set(OBS_EXE_V1,'/fixture/other-physical-node');}],
+  ['foreign executable owner',state=>{state.files.get(OBS_EXE_V1).stat.uid=502n;}],
+  ['writable executable',state=>{state.files.get(OBS_EXE_V1).stat.mode=0o100666n;}],
+  ['multiply linked executable',state=>{state.files.get(OBS_EXE_V1).stat.nlink=2n;}],
+  ['nonregular executable',state=>{state.files.get(OBS_EXE_V1).stat.kind='directory';}],
+  ['executable cap',state=>{state.files.get(OBS_EXE_V1).stat.size=536870913n;}],
+]){
+  test('source-contained process observer refuses '+label+' after valid ps facts',()=>{
+    const state=observationFixtureV1();change(state);containedProcessRefusalV1(state,label);
+  });
+}
+test('source-contained process observer close uncertainty overrides a valid observation',()=>{
+  const state=observationFixtureV1();state.closeFailures.add(OBS_EXE_V1);const vm=observationVmV1(state);
+  ownerRefusedV1(()=>vm.actual.observeManualOrphanProcessV1(123),'executable close','MANUAL_ORPHAN_CHILD_UNKNOWN');
+  state.assertClosed();vm.assertContained();
+});
+
+test('source-contained source pair retains independent hashes and checks then closes once in reverse order',()=>{
+  const state=observationFixtureV1(),vm=observationVmV1(state),owner=vm.actual.pinManualOrphanProbeSourcesV1();
+  assert.deepEqual(Object.keys(owner).sort(),['check','close','hashes']);
+  assert.deepEqual(observedDataV1(owner.hashes),{
+    helperSha256:createHash('sha256').update('independent helper Source fixture v1\n').digest('hex'),
+    issuerTestSha256:createHash('sha256').update('independent issuer Source fixture v1\n').digest('hex'),
+  });
+  assert.deepEqual(state.closeAttempts,[],'source descriptors stay held until their owner closes');
+  owner.check();owner.check();owner.close();owner.close();state.assertClosed();vm.assertContained();
+  for(const locator of [OBS_HELPER_PATH_V1,OBS_TEST_PATH_V1])assert.ok(state.opened.some(record=>record.path===locator));
+});
+const OBS_SOURCE_REFUSALS_V1=[
+  ['group-writable source',state=>{state.files.get(OBS_HELPER_PATH_V1).stat.mode=0o100664n;}],
+  ['world-writable source',state=>{state.files.get(OBS_HELPER_PATH_V1).stat.mode=0o100646n;}],
+  ['multiply linked source',state=>{state.files.get(OBS_HELPER_PATH_V1).stat.nlink=2n;}],
+  ['foreign source owner',state=>{state.files.get(OBS_HELPER_PATH_V1).stat.uid=0n;}],
+  ['nonregular source',state=>{state.files.get(OBS_HELPER_PATH_V1).stat.kind='directory';}],
+  ['symlink source',state=>{state.files.get(OBS_HELPER_PATH_V1).stat.kind='symlink';}],
+  ['physical source alias',state=>{state.realpathAliases.set(OBS_HELPER_PATH_V1,OBS_HELPER_PATH_V1+'.alias');}],
+  ['source cap',state=>{state.files.get(OBS_HELPER_PATH_V1).stat.size=16777217n;}],
+  ['symlink ancestor',state=>{state.directories.get(path.dirname(OBS_HELPER_PATH_V1)).kind='symlink';}],
+  ['nondirectory ancestor',state=>{state.directories.get(path.dirname(OBS_HELPER_PATH_V1)).kind='file';}],
+];
+for(const [label,change] of OBS_SOURCE_REFUSALS_V1){
+  test('source-contained source owner refuses '+label+' and closes captured descriptors',()=>{
+    const state=observationFixtureV1();change(state);const vm=observationVmV1(state);
+    ownerRefusedV1(()=>vm.actual.pinManualOrphanProbeSourcesV1(),label);state.assertClosed();vm.assertContained();
+  });
+}
+test('source-contained source owner rejects opened versus named identity drift',()=>{
+  const state=observationFixtureV1();state.afterOpen=record=>{
+    if(record.path===OBS_HELPER_PATH_V1){record.entry.heldStat={...record.entry.stat};record.entry.stat.ino++;}
+  };
+  const vm=observationVmV1(state);ownerRefusedV1(()=>vm.actual.pinManualOrphanProbeSourcesV1(),'opened named drift');
+  state.assertClosed();vm.assertContained();
+});
+for(const [field,value] of [['dev',2n],['ino',999999n],['uid',502n],['mode',0o40750n]]){
+  test('source-contained source owner detects ancestor '+field+' identity drift on check',()=>{
+    const state=observationFixtureV1(),vm=observationVmV1(state),owner=vm.actual.pinManualOrphanProbeSourcesV1();
+    state.directories.get(path.dirname(OBS_HELPER_PATH_V1))[field]=value;
+    ownerRefusedV1(()=>owner.check(),'ancestor '+field);owner.close();state.assertClosed();vm.assertContained();
+  });
+}
+for(const [field,value] of [
+  ['dev',2n],['ino',999999n],['uid',502n],['gid',21n],['mode',0o100640n],
+  ['nlink',2n],['size',999n],['mtimeNs',1000000001n],['ctimeNs',1000000001n],
+]){
+  test('source-contained source owner detects retained file '+field+' drift on check',()=>{
+    const state=observationFixtureV1(),vm=observationVmV1(state),owner=vm.actual.pinManualOrphanProbeSourcesV1();
+    state.files.get(OBS_HELPER_PATH_V1).stat[field]=value;
+    ownerRefusedV1(()=>owner.check(),'file '+field);owner.close();state.assertClosed();vm.assertContained();
+  });
+}
+test('source-contained source owner detects changed same-size bytes with unchanged metadata',()=>{
+  const state=observationFixtureV1(),vm=observationVmV1(state),owner=vm.actual.pinManualOrphanProbeSourcesV1();
+  const file=state.files.get(OBS_HELPER_PATH_V1);file.bytes[0]^=1;
+  ownerRefusedV1(()=>owner.check(),'same-size Source content');owner.close();state.assertClosed();vm.assertContained();
+});
+test('source-contained source owner refuses check after known successful close without touching reused FDs',()=>{
+  const state=observationFixtureV1(),vm=observationVmV1(state),owner=vm.actual.pinManualOrphanProbeSourcesV1();
+  owner.close();const operations=state.operations.length;
+  ownerRefusedV1(()=>owner.check(),'check after close');owner.close();
+  assert.deepEqual(state.operations.slice(operations).filter(row=>['open','fstat','read','close'].includes(row[0])),[],
+    'check after close must not use or reacquire an owned descriptor');
+  state.assertClosed();vm.assertContained();
+});
+test('source-contained source owner closes its first captured pin after second-source open failure',()=>{
+  const state=observationFixtureV1();state.failOpenPath=OBS_TEST_PATH_V1;const vm=observationVmV1(state);
+  ownerRefusedV1(()=>vm.actual.pinManualOrphanProbeSourcesV1(),'second source open');
+  assert.ok(state.opened.some(record=>record.path===OBS_HELPER_PATH_V1));
+  assert.equal(state.opened.some(record=>record.path===OBS_TEST_PATH_V1),false,'failed open returns no owned FD');
+  state.assertClosed();vm.assertContained();
+});
+test('source-contained source owner retains sticky close UNKNOWN and attempts every known close once',()=>{
+  const state=observationFixtureV1(),vm=observationVmV1(state),owner=vm.actual.pinManualOrphanProbeSourcesV1();
+  state.closeFailures.add(OBS_TEST_PATH_V1);
+  const first=ownerRefusedV1(()=>owner.close(),'source close','MANUAL_ORPHAN_CHILD_UNKNOWN');
+  const attempts=state.closeAttempts.length;
+  const second=ownerRefusedV1(()=>owner.close(),'source close again','MANUAL_ORPHAN_CHILD_UNKNOWN');
+  const third=ownerRefusedV1(()=>owner.check(),'check after uncertain close','MANUAL_ORPHAN_CHILD_UNKNOWN');
+  assert.notEqual(first,second);assert.notEqual(second,third);assert.equal(state.closeAttempts.length,attempts);
+  state.assertClosed();vm.assertContained();
+});
+test('source-contained partial source refusal is overridden by captured FD close uncertainty',()=>{
+  const state=observationFixtureV1();state.failOpenPath=OBS_TEST_PATH_V1;state.closeFailures.add(OBS_HELPER_PATH_V1);
+  const vm=observationVmV1(state);
+  ownerRefusedV1(()=>vm.actual.pinManualOrphanProbeSourcesV1(),'partial source close','MANUAL_ORPHAN_CHILD_UNKNOWN');
+  assert.ok(state.opened.some(record=>record.path===OBS_HELPER_PATH_V1));state.assertClosed();vm.assertContained();
+});
+
+// Actual local observations: only Root's admitted Node26 run executes these.
+// Neither case spawns a helper child or grants original-launch/PG/setup credit.
+test('actual local process observation binds current process and independently read physical Node bytes',()=>{
+  const observed=helper.observeManualOrphanProcessV1(process.pid);
+  const actualFs=createRequire(import.meta.url)('node:fs'),actualChild=createRequire(import.meta.url)('node:child_process');
+  const physical=actualFs.realpathSync(process.execPath);
+  assert.deepEqual(Object.keys(observed).sort(),['pin','rawCommand']);
+  assert.deepEqual(Object.keys(observed.pin),['pid','ppid','uid','pgid','startedAtUTC','executable','executableSha256','commandSha256']);
+  assert.equal(observed.pin.pid,process.pid);assert.equal(observed.pin.ppid,process.ppid);assert.equal(observed.pin.uid,process.getuid());
+  assert.equal(observed.pin.executable,physical);
+  assert.equal(observed.pin.executableSha256,createHash('sha256').update(readFileSync(physical)).digest('hex'));
+  const independent=actualChild.spawnSync('/bin/ps',['-ww','-p',String(process.pid),'-o','args='],
+    {encoding:'utf8',env:{...OBS_PS_ENV_V1},timeout:2000,maxBuffer:16384});
+  assert.equal(independent.status,0);assert.equal(independent.signal,null);assert.equal(independent.error,undefined);assert.equal(independent.stderr,'');
+  assert.match(independent.stdout,/^[^\r\n]+\n$/);
+  const measured=independent.stdout.slice(0,-1).replace(/^\s+/,'');
+  assert.equal(observed.rawCommand,measured);
+  assert.equal(observed.pin.commandSha256,createHash('sha256').update(measured,'utf8').digest('hex'));
+  assert.equal(Object.isFrozen(observed),true);assert.equal(Object.isFrozen(observed.pin),true);
+});
+test('actual local source pair check and close binds independently read fixed public Source hashes',()=>{
+  let owner;
+  try{
+    owner=helper.pinManualOrphanProbeSourcesV1();
+    assert.deepEqual(owner.hashes,{
+      helperSha256:createHash('sha256').update(readFileSync(HELPER)).digest('hex'),
+      issuerTestSha256:createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex'),
+    });
+    owner.check();owner.close();owner.close();
+    ownerRefusedV1(()=>owner.check(),'actual check after known close');
+  }finally{if(owner)owner.close();}
+});
