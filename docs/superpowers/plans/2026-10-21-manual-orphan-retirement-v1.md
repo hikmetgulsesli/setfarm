@@ -67,6 +67,8 @@ Paths below are relative to the Setfarm writer unless explicitly qualified.
 | Create in Task2A | `src/installation/manual-orphan-target-dependencies-v1.json` | Compact reviewed fixed target identity, exact package-member inventory and finite resolution rows; exact byte hash, no self hash. |
 | Modify | `src/execution/manual-test-admission-v1.ts:23-51,324-336,573-610,659-678` | Import unchanged record schemas; recognize exact administrative retirement in new Source namespaces and prevent old job reuse without changing live custody checks. |
 | Modify | `scripts/run-execution-attempt-tests.ts` | Add both the isolated PG and genuine bootstrap integration tests to the existing owner-backed routing set; neither belongs on the raw lane. |
+| Modify in Task2A preflight | `scripts/__tests__/private-postgres-test-cluster.test.js` | Repair stale total/index assumptions, require the complete literal24-file post-terminal continuation including the already maintained predecessor-completion test, and retain the unchanged five-package tail; future genuine-route tests use this same existing constructor test file. |
+| Modify in Task2A preflight | `package.json` (`scripts.test:after-terminal` only) | Add the existing owner-backed predecessor-completion test at its exact sorted position in the continuation; preserve all other commands and the five-package tail. |
 | Create | `tests/execution-attempts/manual-control-orphan-proof-v1.test.ts` | Pure parser/join/refusal and replay tests; never imports production DB or selected runtime. |
 | Create | `tests/execution-attempts/manual-control-orphan-store-v1.test.ts` | Temporary private filesystem, stable identity, CAS and crash-boundary tests. |
 | Create | `tests/execution-attempts/manual-control-orphan-maintenance-v1.test.ts` | Import/entry restrictions, private capability negative tests, safe response and CLI parser. |
@@ -233,6 +235,18 @@ Use exact original record byte serialization (`JSON.stringify` plus newline with
 - [ ] Establish one exact owned genuine-bootstrap integration route. Preserve private-cluster/setup ownership and actual child exit/close/streams/client closure. No projection/preload/clone-PG leakage into genuine child, raw-command route, HOME/account/guard bypass, I5 record copy or production role/schema/credential effect.
 - [ ] Through actual stock M/T modules demonstrate old entry+old DB positive, crossed/new ordinary activation refusal, distinct M/T authority, wrong role/catalog/client refusal and closed-client nonreopening. Generated fixture I cannot pass fixed-I5 production profile; synthetic main/origin refs confer no upstream-review credit. Missing fixture conditions remain unrun.
 - [ ] Root reviews, checkpoints and ordinarily delivers the read-only Source through actual GitHub review and clean-main stock build. Only after fresh original-launch/dependency/Source admission run the separately admitted fixed-I5 observation. No bootstrap positive is inferred from public inventory or component tests.
+
+### Task2A preflight: preserve the maintained post-terminal continuation
+
+Before adding the genuine route, Root ran the existing constructor tests on Node26:227 cases,226 passed and one failed at the stale total-owner count (`43 !== 39`). Removing that unrelated count exposed the next actual failure: the maintained owner inventory includes `v3-predecessor-completion-claim.integration.test.ts`, but the literal23-file continuation and `test:after-terminal` omitted it. Three new owners precede the boundary; this fourth owner belongs in its following suffix. Preserve both failed captures. This is a test-continuation omission, not a genuine-bootstrap result or a live-service defect.
+
+- [x] Extend the independently listed post-terminal files to exactly24 by adding `v3-predecessor-completion-claim.integration.test.ts` between the pre-dispatch and preparation tests, and add that exact operand to `scripts.test:after-terminal`. Preserve uniqueness, the migration33 owner check, exact emitted package command and unchanged five-package tail.
+- [x] Replace the unrelated fixed total39 and positional15/16 assumptions with a unique maintained inventory, a required unique `run-terminal-transition.test.ts` boundary and exact comparison of its following suffix to the literal24-file list. Missing/duplicate boundary or changed suffix must still fail.
+- [x] Root verifies the covering constructor tests, obtains independent specification/quality review and records actual original-process results before delivery. Production routing, all other package commands, cluster behavior and every runtime guard remain unchanged.
+
+Root's corrected Node26 run completed227/227 with zero failed/skipped/cancelled cases; original48945 exited0 with both captured streams naturally ended and closed,2411 Source pins unchanged. Independent scoped specification/quality review accepted the correction with no new findings. This qualifies the finite continuation fix only, not the newly included isolated integration test's actual database execution, genuine bootstrap, stock build or full8.
+
+The private constructor enforces Node26 or newer. The additional Root Node22 attempt refused at the unchanged host guard and cascaded into fixture failures; retain it as an unsupported-context result, not constructor GREEN or a reason to weaken that guard. Root's actual constructor qualification uses the admitted Node26; other Setfarm component suites retain their own Node22/26 results.
 
 ## Task 2B: Bind actual capability consumers after the proven bootstrap
 

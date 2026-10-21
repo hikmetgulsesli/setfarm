@@ -698,6 +698,7 @@ const POST_TERMINAL_OWNER_FILES=Object.freeze([
   "v3-platform-preclaim-terminal.integration.test.ts",
   "v3-platform-preclaim-termination-race.integration.test.ts",
   "v3-pre-dispatch-failure.integration.test.ts",
+  "v3-predecessor-completion-claim.integration.test.ts",
   "v3-preparation-claim-authority.test.ts",
   "v3-setup-build-failure-cause.integration.test.ts",
   "v3-setup-build-untyped-build-failure.integration.test.ts",
@@ -711,16 +712,18 @@ test('after-terminal permits only fixed npm continuation argv in a frozen privat
   assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
   assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
 });
-test('after-terminal package command contains exactly23 fixed later owners and the unchanged five-package tail',()=>{
+test('after-terminal package command contains exactly24 fixed later owners and the unchanged five-package tail',()=>{
   const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
   const execution=readFileSync(new URL('../run-execution-attempt-tests.ts',import.meta.url),'utf8');
   const blocks=[...execution.matchAll(/const OWNER_BACKED_TESTS = new Set\(\[([\s\S]*?)\]\);/g)];
   assert.equal(blocks.length,1,'one maintained owner inventory');
   const owners=[...blocks[0][1].matchAll(/"([A-Za-z0-9.-]+\.test\.ts)"/g)].map(m=>m[1]).sort();
-  assert.equal(owners.length,39);assert.equal(owners.indexOf('run-terminal-transition.test.ts'),15);
+  assert.equal(new Set(owners).size,owners.length,'maintained owners are unique');
+  assert.equal(owners.filter(file=>file==='run-terminal-transition.test.ts').length,1,'one terminal transition boundary');
+  const terminalIndex=owners.indexOf('run-terminal-transition.test.ts');
   assert.equal(owners.filter(file=>file==='migration33-current-entry-observers.test.ts').length,1);
-  assert.deepEqual(owners.slice(16),POST_TERMINAL_OWNER_FILES);
-  assert.equal(POST_TERMINAL_OWNER_FILES.length,23);assert.equal(new Set(POST_TERMINAL_OWNER_FILES).size,23);
+  assert.deepEqual(owners.slice(terminalIndex+1),POST_TERMINAL_OWNER_FILES);
+  assert.equal(POST_TERMINAL_OWNER_FILES.length,24);assert.equal(new Set(POST_TERMINAL_OWNER_FILES).size,24);
   assert.equal(POST_TERMINAL_OWNER_FILES.includes('run-terminal-transition.test.ts'),false);
   const tail=['findings','evidence','recovery','evals','internal-production'].map(n=>'npm run test:'+n).join(' && ');
   const expected='node --import tsx scripts/run-execution-attempt-tests.ts '
