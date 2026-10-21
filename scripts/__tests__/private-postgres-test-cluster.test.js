@@ -1063,7 +1063,7 @@ test('manual-orphan-bootstrap pure plan selects the one fixed inactive owned rou
   const value=plan({root,port:55439,mode:'manual-orphan-bootstrap'});
   assert.deepEqual(value.test,[
     '--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
-    'node','--import','tsx','--test','--test-concurrency=1',
+    'node','--import','tsx','--test','--test-isolation=none',
     'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts',
   ]);
   assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);

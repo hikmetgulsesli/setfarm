@@ -8,7 +8,7 @@ import {TextDecoder,types} from 'node:util';
 
 export const MANUAL_ORPHAN_BASENAME_V1='manual-control-orphan-bootstrap-v1.integration.test.ts';
 export const MANUAL_ORPHAN_VECTOR_V1=Object.freeze([
-  'node','--import','tsx','--test','--test-concurrency=1',
+  'node','--import','tsx','--test','--test-isolation=none',
   'tests/execution-attempts/'+MANUAL_ORPHAN_BASENAME_V1,
 ]);
 
@@ -126,6 +126,294 @@ export function decodeManualOrphanProbeFrameV1(bytes){
   }catch{
     throw probeFrameRefusalV1();
   }
+}
+
+// Owned-setup codecs validate data only. Their carried process/Source/catalog
+// observations grant no permission and are never resolved, opened or adopted.
+// Reuse only the probe's inert descriptor/string grammar, leaving its public
+// numeric/arity/codec behavior unchanged.
+const ownedTargetShaV1='161297ffca6adf2851918a93d492e1c9a77ce59d';
+const ownedSourceFileKeysV1=Object.freeze([
+  'constructor','constructorTests','wrapper','isolatedRunner','builtinChild','routeTests',
+  'fixture','integration','journal','pgPreflight','profile',
+]);
+const ownedCreatedRecordKeysV1=Object.freeze([
+  'planned.json','owner-created.json','runtime-created.json','database-created.json',
+  'runtime-credentials.json','schema-prepared.json','schema-committed.json',
+]);
+const ownedActivatedRecordKeysV1=Object.freeze([
+  ...ownedCreatedRecordKeysV1,'activation-prepared.json','activated.json',
+]);
+
+function ownedRequireV1(condition){if(!condition)throw probeFrameRefusalV1();}
+function ownedIntegerV1(value,minimum=0,maximum=2147483647){
+  return Number.isSafeInteger(value)&&!Object.is(value,-0)&&value>=minimum&&value<=maximum;
+}
+function ownedDecimalV1(value,maximum,nonzero=false){
+  return typeof value==='string'&&value.length<=maximum.length&&/^(0|[1-9][0-9]*)$/.exec(value)?.[0]===value
+    &&(!nonzero||value!=='0')&&(value.length<maximum.length||value<=maximum);
+}
+function ownedGitShaV1(value){return typeof value==='string'&&value.length===40&&/^[0-9a-f]{40}$/.test(value);}
+function ownedUuidV1(value){
+  return typeof value==='string'&&value.length===36&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+}
+function ownedMicrosecondTimestampV1(value){
+  if(typeof value!=='string'||value.length!==27||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value))return false;
+  const date=new Date(value);
+  return Number.isFinite(date.getTime())&&date.toISOString()===value.slice(0,23)+'Z';
+}
+function ownedProcessV1(value){
+  const data=probeOwnDataV1(value,[
+    'pid','ppid','uid','pgid','startedAtUTC','executable','executableSha256','commandSha256',
+  ]);
+  ownedRequireV1(ownedIntegerV1(data.pid,1)&&ownedIntegerV1(data.ppid,1)
+    &&ownedIntegerV1(data.uid)&&ownedIntegerV1(data.pgid,1)
+    &&probeTimestampV1(data.startedAtUTC)&&probeExecutableV1(data.executable)
+    &&probeHexV1(data.executableSha256)&&probeHexV1(data.commandSha256));
+  return data;
+}
+function ownedDirectoryV1(value){
+  const data=probeOwnDataV1(value,['dev','ino','uid','gid','mode']);
+  ownedRequireV1(ownedDecimalV1(data.dev,'18446744073709551615')
+    &&ownedDecimalV1(data.ino,'18446744073709551615')
+    &&ownedIntegerV1(data.uid)&&data.uid===501&&ownedIntegerV1(data.gid)&&data.gid===20
+    &&ownedIntegerV1(data.mode,0,4095)&&data.mode===448);
+  return data;
+}
+function ownedFileV1(value){
+  const data=probeOwnDataV1(value,[
+    'dev','ino','uid','gid','mode','nlink','bytes','mtimeNs','ctimeNs','sha256',
+  ]);
+  ownedRequireV1(ownedDecimalV1(data.dev,'18446744073709551615')
+    &&ownedDecimalV1(data.ino,'18446744073709551615')
+    &&ownedIntegerV1(data.uid)&&data.uid===501&&ownedIntegerV1(data.gid)
+    &&ownedIntegerV1(data.mode,0,4095)&&(data.mode&0o022)===0
+    &&ownedIntegerV1(data.nlink,1,1)&&ownedIntegerV1(data.bytes,0,16777216)
+    &&ownedDecimalV1(data.mtimeNs,'9223372036854775807')
+    &&ownedDecimalV1(data.ctimeNs,'9223372036854775807')&&probeHexV1(data.sha256));
+  return data;
+}
+function ownedReleaseV1(value){
+  const data=probeOwnDataV1(value,['sha','treeHash','buildHash']);
+  ownedRequireV1(ownedGitShaV1(data.sha)&&ownedGitShaV1(data.treeHash)&&probeHexV1(data.buildHash));
+  return data;
+}
+function ownedReleasePairV1(maintenanceValue,targetValue){
+  const maintenance=ownedReleaseV1(maintenanceValue),target=ownedReleaseV1(targetValue);
+  ownedRequireV1(target.sha===ownedTargetShaV1&&maintenance.sha!==target.sha);
+  return {maintenance,target};
+}
+function ownedSourcesV1(value){
+  const data=probeOwnDataV1(value,['maintenance','target','profileSha256','files']);
+  const {maintenance,target}=ownedReleasePairV1(data.maintenance,data.target);
+  ownedRequireV1(probeHexV1(data.profileSha256));
+  const files=probeOwnDataV1(data.files,ownedSourceFileKeysV1);
+  for(const key of ownedSourceFileKeysV1)files[key]=ownedFileV1(files[key]);
+  return {maintenance,target,profileSha256:data.profileSha256,files};
+}
+function ownedClusterV1(value){
+  const data=probeOwnDataV1(value,[
+    'root','data','port','postmasterStartedAtUTC','systemIdentifier','serverVersionNum',
+    'databaseBaselineSha256','roleBaselineSha256','membershipBaselineSha256',
+  ]);
+  data.root=ownedDirectoryV1(data.root);data.data=ownedDirectoryV1(data.data);
+  ownedRequireV1(ownedIntegerV1(data.port,1024,65535)&&data.port!==5432
+    &&ownedMicrosecondTimestampV1(data.postmasterStartedAtUTC)
+    &&ownedDecimalV1(data.systemIdentifier,'18446744073709551615',true)
+    &&ownedIntegerV1(data.serverVersionNum,170000,179999)
+    &&probeHexV1(data.databaseBaselineSha256)&&probeHexV1(data.roleBaselineSha256)
+    &&probeHexV1(data.membershipBaselineSha256));
+  return data;
+}
+function ownedRecordV1(value,maximum){
+  const data=probeOwnDataV1(value,['bytes','sha256']);
+  ownedRequireV1(ownedIntegerV1(data.bytes,1,maximum)&&probeHexV1(data.sha256));
+  return data;
+}
+function ownedInstallationV1(value,activated){
+  const keys=['installationId','operationId','directory','databaseName','databaseOid',
+    'ownerRole','ownerOid','runtimeRole','runtimeOid','sourceSha','schemaCatalogHash'];
+  if(activated)keys.push('activationCatalogHash');
+  keys.push('records');
+  const data=probeOwnDataV1(value,keys);
+  ownedRequireV1(ownedUuidV1(data.installationId)&&ownedUuidV1(data.operationId));
+  const suffix=data.installationId.replaceAll('-','');
+  ownedRequireV1(data.databaseName==='setfarm_install_'+suffix&&data.ownerRole==='sf_owner_'+suffix
+    &&data.runtimeRole==='sf_runtime_'+suffix&&ownedIntegerV1(data.databaseOid,1,4294967295)
+    &&ownedIntegerV1(data.ownerOid,1,4294967295)&&ownedIntegerV1(data.runtimeOid,1,4294967295)
+    &&data.ownerOid!==data.runtimeOid&&data.sourceSha===ownedTargetShaV1
+    &&probeHexV1(data.schemaCatalogHash)&&(!activated||probeHexV1(data.activationCatalogHash)));
+  // Database OIDs and role OIDs belong to different catalogs; no cross-catalog
+  // inequality is imposed. Stage catalog hashes remain separate carried data.
+  data.directory=ownedDirectoryV1(data.directory);
+  const recordKeys=activated?ownedActivatedRecordKeysV1:ownedCreatedRecordKeysV1;
+  data.records=probeOwnDataV1(data.records,recordKeys);
+  for(const key of recordKeys)data.records[key]=ownedRecordV1(data.records[key],
+    key==='runtime-credentials.json'?4096:32768);
+  return data;
+}
+function ownedGraphV1(data){
+  data.constructor=ownedProcessV1(data.constructor);data.runner=ownedProcessV1(data.runner);
+  data.server=ownedProcessV1(data.server);
+  ownedRequireV1(data.runner.ppid===data.constructor.pid&&data.server.ppid===data.constructor.pid);
+  data.source=ownedSourcesV1(data.source);data.cluster=ownedClusterV1(data.cluster);
+  ownedRequireV1(probeHexV1(data.run));
+}
+function orderedOwnedRunnerSetupV1(value){
+  const data=probeOwnDataV1(value,[
+    'schema','run','constructor','runner','server','source','cluster','adminPassword',
+  ]);
+  ownedRequireV1(data.schema==='setfarm.manual-orphan-runner-setup.v1'&&probeHexV1(data.adminPassword));
+  ownedGraphV1(data);return data;
+}
+function orderedOwnedPhaseV1(value){
+  const data=probeOwnDataV1(value,[
+    'schema','run','constructor','runner','parent','child','server','source','cluster',
+    'installations','purpose','input',
+  ]);
+  ownedRequireV1(data.schema==='setfarm.manual-orphan-owned-phase.v1');ownedGraphV1(data);
+  data.parent=ownedProcessV1(data.parent);data.child=ownedProcessV1(data.child);
+  data.installations=ownedDirectoryV1(data.installations);
+  const mechanical=data.purpose==='old_entry_positive'||data.purpose==='new_entry_refusal';
+  ownedRequireV1(data.purpose==='provision'||data.purpose==='activate'||data.purpose==='integration'||mechanical);
+  ownedRequireV1(data.child.ppid===data.parent.pid&&(mechanical?data.parent.ppid===data.runner.pid:
+    JSON.stringify(data.parent)===JSON.stringify(data.runner)));
+  if(data.purpose==='provision'){
+    data.input=probeOwnDataV1(data.input,['adminPassword']);
+    ownedRequireV1(probeHexV1(data.input.adminPassword));
+  }else if(data.purpose==='activate'){
+    data.input=probeOwnDataV1(data.input,['adminPassword','installation']);
+    ownedRequireV1(probeHexV1(data.input.adminPassword));
+    data.input.installation=ownedInstallationV1(data.input.installation,false);
+  }else{
+    data.input=probeOwnDataV1(data.input,['installation']);
+    data.input.installation=ownedInstallationV1(data.input.installation,true);
+  }
+  return data;
+}
+function ownedOldEntryResultV1(value){
+  const data=probeOwnDataV1(value,[
+    'state','maintenance','target','installationId','sameClient','entryAssert','databaseAssert','close','closedGetter',
+  ]);
+  ownedRequireV1(data.state==='old-entry-verified'&&ownedUuidV1(data.installationId)
+    &&data.sameClient===true&&data.entryAssert===true&&data.databaseAssert===true
+    &&data.close==='fulfilled'&&data.closedGetter==='refused');
+  const pair=ownedReleasePairV1(data.maintenance,data.target);
+  data.maintenance=pair.maintenance;data.target=pair.target;return data;
+}
+function ownedNewEntryResultV1(value){
+  const data=probeOwnDataV1(value,[
+    'state','maintenance','target','installationId','mismatch','close','closedGetter',
+  ]);
+  ownedRequireV1(data.state==='source-mismatch-refused'&&ownedUuidV1(data.installationId)
+    &&data.mismatch==='maintenance-sha-vs-target-origin'&&data.close==='fulfilled'&&data.closedGetter==='refused');
+  const pair=ownedReleasePairV1(data.maintenance,data.target);
+  data.maintenance=pair.maintenance;data.target=pair.target;return data;
+}
+function orderedOwnedPhaseResultV1(value){
+  const data=probeOwnDataV1(value,[
+    'schema','run','purpose','frameSha256','pid','parentPid','fd4Closed','sourcePinsClosed','result',
+  ]);
+  ownedRequireV1(data.schema==='setfarm.manual-orphan-owned-phase-result.v1'
+    &&probeHexV1(data.run)&&probeHexV1(data.frameSha256)&&ownedIntegerV1(data.pid,1)
+    &&ownedIntegerV1(data.parentPid,1)&&data.fd4Closed===true&&data.sourcePinsClosed===true);
+  if(data.purpose==='provision'){
+    const result=probeOwnDataV1(data.result,['state','installation','factoryOwnerClose']);
+    ownedRequireV1(result.state==='schema-verified'&&result.factoryOwnerClose==='fulfilled');
+    result.installation=ownedInstallationV1(result.installation,false);data.result=result;
+  }else if(data.purpose==='activate'){
+    const result=probeOwnDataV1(data.result,[
+      'state','installation','selectionBefore','selectionAfter','databaseModuleClose',
+    ]);
+    ownedRequireV1(result.state==='activation-verified'&&result.selectionBefore==='schema-committed-unactivated'
+      &&result.selectionAfter==='stale-refused'&&result.databaseModuleClose==='fulfilled');
+    result.installation=ownedInstallationV1(result.installation,true);data.result=result;
+  }else if(data.purpose==='old_entry_positive')data.result=ownedOldEntryResultV1(data.result);
+  else if(data.purpose==='new_entry_refusal')data.result=ownedNewEntryResultV1(data.result);
+  else throw probeFrameRefusalV1();
+  return data;
+}
+function ownedMechanicalPairV1(data){
+  data.oldEntry=ownedOldEntryResultV1(data.oldEntry);data.newEntry=ownedNewEntryResultV1(data.newEntry);
+  ownedRequireV1(data.oldEntry.installationId===data.newEntry.installationId
+    &&JSON.stringify(data.oldEntry.maintenance)===JSON.stringify(data.newEntry.maintenance)
+    &&JSON.stringify(data.oldEntry.target)===JSON.stringify(data.newEntry.target));
+}
+function ownedResultEnvelopeV1(data,schema){
+  ownedRequireV1(data.schema===schema&&probeHexV1(data.run)&&probeHexV1(data.frameSha256)
+    &&ownedIntegerV1(data.pid,1)&&ownedIntegerV1(data.parentPid,1)&&data.sourcePinsClosed===true);
+  ownedMechanicalPairV1(data);
+}
+function orderedOwnedIntegrationResultV1(value){
+  const data=probeOwnDataV1(value,[
+    'schema','run','frameSha256','pid','parentPid','oldEntry','newEntry','sourcePinsClosed',
+  ]);
+  ownedResultEnvelopeV1(data,'setfarm.manual-orphan-integration-result.v1');return data;
+}
+function orderedOwnedRunnerResultV1(value){
+  const data=probeOwnDataV1(value,[
+    'schema','run','frameSha256','pid','parentPid','installationId','oldEntry','newEntry','cleanup','sourcePinsClosed',
+  ]);
+  ownedResultEnvelopeV1(data,'setfarm.manual-orphan-runner-result.v1');
+  ownedRequireV1(ownedUuidV1(data.installationId)&&data.installationId===data.oldEntry.installationId);
+  data.cleanup=probeOwnDataV1(data.cleanup,[
+    'databaseAbsent','ownerRoleAbsent','runtimeRoleAbsent','baselineRestored','adminClose',
+  ]);
+  ownedRequireV1(data.cleanup.databaseAbsent===true&&data.cleanup.ownerRoleAbsent===true
+    &&data.cleanup.runtimeRoleAbsent===true&&data.cleanup.baselineRestored===true&&data.cleanup.adminClose==='fulfilled');
+  return data;
+}
+function encodeOwnedDataV1(value,normalize,arity){
+  try{
+    ownedRequireV1(arity===1);
+    const bytes=Buffer.from(JSON.stringify(normalize(value))+'\n','utf8');
+    ownedRequireV1(bytes.length<=16384);return bytes;
+  }catch{throw probeFrameRefusalV1();}
+}
+function freezeOwnedDataV1(value){
+  for(const item of Object.values(value))if(item!==null&&typeof item==='object')freezeOwnedDataV1(item);
+  return Object.freeze(value);
+}
+function decodeOwnedDataV1(bytes,normalize,arity){
+  try{
+    ownedRequireV1(arity===1&&!types.isProxy(bytes)&&Buffer.isBuffer(bytes));
+    const size=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),'byteLength').get.call(bytes);
+    ownedRequireV1(size>=1&&size<=16384&&bytes[size-1]===0x0a);
+    const text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
+    const data=normalize(JSON.parse(text.slice(0,-1)));
+    ownedRequireV1(Buffer.compare(bytes,encodeOwnedDataV1(data,normalize,1))===0);
+    return freezeOwnedDataV1(data);
+  }catch{throw probeFrameRefusalV1();}
+}
+export function encodeManualOrphanRunnerSetupFrameV1(value){
+  return encodeOwnedDataV1(value,orderedOwnedRunnerSetupV1,arguments.length);
+}
+export function decodeManualOrphanRunnerSetupFrameV1(bytes){
+  return decodeOwnedDataV1(bytes,orderedOwnedRunnerSetupV1,arguments.length);
+}
+export function encodeManualOrphanOwnedPhaseFrameV1(value){
+  return encodeOwnedDataV1(value,orderedOwnedPhaseV1,arguments.length);
+}
+export function decodeManualOrphanOwnedPhaseFrameV1(bytes){
+  return decodeOwnedDataV1(bytes,orderedOwnedPhaseV1,arguments.length);
+}
+export function encodeManualOrphanOwnedPhaseResultV1(value){
+  return encodeOwnedDataV1(value,orderedOwnedPhaseResultV1,arguments.length);
+}
+export function decodeManualOrphanOwnedPhaseResultV1(bytes){
+  return decodeOwnedDataV1(bytes,orderedOwnedPhaseResultV1,arguments.length);
+}
+export function encodeManualOrphanIntegrationResultV1(value){
+  return encodeOwnedDataV1(value,orderedOwnedIntegrationResultV1,arguments.length);
+}
+export function decodeManualOrphanIntegrationResultV1(bytes){
+  return decodeOwnedDataV1(bytes,orderedOwnedIntegrationResultV1,arguments.length);
+}
+export function encodeManualOrphanRunnerResultV1(value){
+  return encodeOwnedDataV1(value,orderedOwnedRunnerResultV1,arguments.length);
+}
+export function decodeManualOrphanRunnerResultV1(bytes){
+  return decodeOwnedDataV1(bytes,orderedOwnedRunnerResultV1,arguments.length);
 }
 
 function probeOwnerRefusalV1(){return Error('MANUAL_ORPHAN_OWNER_REFUSED');}

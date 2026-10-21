@@ -693,8 +693,8 @@ async function main(): Promise<void> {
   const separator = process.argv.indexOf("--");
   const manualOrphanRoute = classifyManualOrphanVectorV1(separator >= 0 ? process.argv.slice(separator + 1) : []);
   if (manualOrphanRoute === "near") throw new Error("MANUAL_ORPHAN_ROUTE_REFUSED");
-  const command = commandArguments();
   if (manualOrphanRoute === "exact") throw new Error("MANUAL_ORPHAN_SLICE2_UNAVAILABLE");
+  const command = commandArguments();
   task4InvocationV1 = isTask4CommandV1(command);
   const task4Setup = task4InvocationV1 ? await readTask4Fd4V1("setup") : undefined;
   const adminUrl = normalizedAdminUrlV1();

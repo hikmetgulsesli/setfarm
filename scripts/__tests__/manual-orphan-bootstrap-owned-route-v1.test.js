@@ -12,7 +12,7 @@ import test from 'node:test';
 // below executes the complete current consumer Source in a contained VM.
 const BASENAME='manual-control-orphan-bootstrap-v1.integration.test.ts';
 const FILE='tests/execution-attempts/'+BASENAME;
-const VECTOR=Object.freeze(['node','--import','tsx','--test','--test-concurrency=1',FILE]);
+const VECTOR=Object.freeze(['node','--import','tsx','--test','--test-isolation=none',FILE]);
 const CONSTRUCTOR=new URL('../run-private-postgres-tests.mjs',import.meta.url);
 const ISOLATED=new URL('../run-isolated-postgres-tests.ts',import.meta.url);
 const WRAPPER=new URL('../run-execution-attempt-tests.ts',import.meta.url);
@@ -209,6 +209,7 @@ test('source-contained wrapper refuses no-args reserved discovery before unrelat
 });
 
 const NEAR=[
+  ['former concurrency vector',['node','--import','tsx','--test','--test-concurrency=1',FILE]],
   ['uppercase basename',[...VECTOR.slice(0,5),'tests/execution-attempts/'+BASENAME.toUpperCase()]],
   ['./ prefix',[...VECTOR.slice(0,5),'./'+FILE]],
   ['absolute prefix',[...VECTOR.slice(0,5),'/inert/'+FILE]],
@@ -260,7 +261,8 @@ for(const vector of [[],['node'],['node','--import','tsx','--test','--test-concu
   });
 }
 test('source-contained unrelated valid isolated command reaches Task4 then admin sentinel',async()=>{
-  const c=await runIsolatedSourceV1([...VECTOR.slice(0,5),'tests/execution-attempts/unrelated.test.ts']);
+  const c=await runIsolatedSourceV1(['node','--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/unrelated.test.ts']);
   assert.equal(c.thrown,'OBSERVED_ADMIN');assert.equal(c.calls.task4,1);assert.equal(c.calls.admin,1);
   assert.equal(c.calls.projection,0);assert.equal(c.calls.forbidden,0);
 });
@@ -293,16 +295,15 @@ test('source-contained guard-removal exposes constructor preconditions after exa
   assert.deepEqual(mutant.calls.spawn,[]);assert.deepEqual(mutant.forbiddenSites,[]);
   assert.match(mutant.stdout,/"operation":"preconditions","reason":"PRIVATE_TEST_CLUSTER_REFUSED"/);
 });
-test('source-contained guard-removal exposes Task4 then admin after exact isolated refusal',async()=>{
+test('source-contained guard-removal exposes ordinary grammar after exact isolated refusal',async()=>{
   const normal=await runIsolatedSourceV1([...VECTOR]);
   assert.equal(normal.thrown,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');noEffects(normal);
 
   const mutant=await runIsolatedSourceV1([...VECTOR],{removeUnavailable:true});
-  assert.equal(mutant.thrown,'OBSERVED_ADMIN');
-  assert.equal(mutant.calls.task4,1);assert.equal(mutant.calls.admin,1);
-  assert.equal(mutant.calls.preconditions,0);assert.equal(mutant.calls.projection,0);
-  assert.equal(mutant.calls.forbidden,0);assert.deepEqual(mutant.forbiddenSites,[]);
-  assert.deepEqual(mutant.calls.spawn,[]);
+  assert.equal(mutant.thrown,'ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE');noEffects(mutant);
+  assert.deepEqual(mutant.forbiddenSites,[]);
+  assert.equal(mutant.stdout,'');assert.equal(mutant.stderr,'');assert.equal(mutant.exitCode,undefined);
+  assert.deepEqual(mutant.environment,ENV);
 });
 
 // Phase A: incremental codec contracts. Missing codec exports are absent-contract
@@ -598,6 +599,7 @@ for(const name of ['classifyManualOrphanVectorV1','mentionsManualOrphanFileV1'])
 }
 for(const [label,cells,classification,mentions] of [
   ['exact vector',[...VECTOR],'exact',true],
+  ['former concurrency vector',['node','--import','tsx','--test','--test-concurrency=1',FILE],'near',true],
   ['near uppercase filename',[...VECTOR.slice(0,5),FILE.toUpperCase()],'near',true],
   ['unrelated ordinary cells',['node','unrelated.test.ts'],'unrelated',false],
   ['empty ordinary array',[],'unrelated',false],
@@ -1895,5 +1897,566 @@ for(const [label,value,configure] of [
     assert.deepEqual(f.control.reader.ledger.rawCloses,[4]);assert.equal(f.control.reader.ledger.adopted,false);
     assert.deepEqual(f.control.reader.ledger.constructs,[]);assert.deepEqual(f.control.reader.ledger.fstats,[]);
     assert.equal(f.state.opened.length,0);vm.assertContained();
+  });
+}
+
+
+// Task1 owned-setup PhaseA data contracts follow the preserved
+// Slice1 tests. They confer no process, filesystem, Source or SQL authority.
+
+// Independent synthetic fixtures and wire oracles. No encoder or decoder builds
+// an expected value. Common literal fragments keep the eleven-file wire map
+// reviewable without coupling its insertion order to the input constructors.
+const OWN_H='a'.repeat(64),OWN_B='b'.repeat(64),OWN_C='c'.repeat(64);
+const OWN_M='8'.repeat(40),OWN_T='161297ffca6adf2851918a93d492e1c9a77ce59d';
+const OWN_ID='12345678-1234-4234-8234-123456789abc';
+const OWN_OP='87654321-4321-4321-9321-cba987654321';
+const OWN_SUFFIX='12345678123442348234123456789abc';
+function ownedProcessData(pid,ppid){
+  return {pid,ppid,uid:501,pgid:101,startedAtUTC:'2026-10-21T00:00:00.000Z',
+    executable:'/fixture/node',executableSha256:OWN_H,commandSha256:OWN_B};
+}
+function ownedDirData(){return {dev:'1',ino:'2',uid:501,gid:20,mode:448};}
+function ownedFileData(){return {dev:'1',ino:'2',uid:501,gid:20,mode:420,nlink:1,
+  bytes:1,mtimeNs:'3',ctimeNs:'4',sha256:OWN_H};}
+function ownedReleaseData(sha){return {sha,treeHash:'9'.repeat(40),buildHash:OWN_B};}
+function ownedSourceData(){return {
+  maintenance:ownedReleaseData(OWN_M),target:ownedReleaseData(OWN_T),profileSha256:OWN_C,
+  files:{constructor:ownedFileData(),constructorTests:ownedFileData(),wrapper:ownedFileData(),
+    isolatedRunner:ownedFileData(),builtinChild:ownedFileData(),routeTests:ownedFileData(),
+    fixture:ownedFileData(),integration:ownedFileData(),journal:ownedFileData(),
+    pgPreflight:ownedFileData(),profile:ownedFileData()},
+};}
+function ownedClusterData(){return {root:ownedDirData(),data:ownedDirData(),port:55439,
+  postmasterStartedAtUTC:'2026-10-21T00:00:00.123456Z',systemIdentifier:'123',serverVersionNum:170001,
+  databaseBaselineSha256:OWN_H,roleBaselineSha256:OWN_B,membershipBaselineSha256:OWN_C};}
+function ownedInstallationData(activated=false){
+  const value={installationId:OWN_ID,operationId:OWN_OP,directory:ownedDirData(),
+    databaseName:'setfarm_install_'+OWN_SUFFIX,databaseOid:7,ownerRole:'sf_owner_'+OWN_SUFFIX,
+    ownerOid:7,runtimeRole:'sf_runtime_'+OWN_SUFFIX,runtimeOid:8,sourceSha:OWN_T,schemaCatalogHash:OWN_H};
+  if(activated)value.activationCatalogHash=OWN_B;
+  value.records={'planned.json':{bytes:1,sha256:OWN_H},'owner-created.json':{bytes:2,sha256:OWN_H},
+    'runtime-created.json':{bytes:3,sha256:OWN_H},'database-created.json':{bytes:4,sha256:OWN_H},
+    'runtime-credentials.json':{bytes:4096,sha256:OWN_H},'schema-prepared.json':{bytes:6,sha256:OWN_H},
+    'schema-committed.json':{bytes:32768,sha256:OWN_H}};
+  if(activated){value.records['activation-prepared.json']={bytes:8,sha256:OWN_H};
+    value.records['activated.json']={bytes:9,sha256:OWN_H};}
+  return value;
+}
+function ownedOldData(){return {state:'old-entry-verified',maintenance:ownedReleaseData(OWN_M),
+  target:ownedReleaseData(OWN_T),installationId:OWN_ID,sameClient:true,entryAssert:true,
+  databaseAssert:true,close:'fulfilled',closedGetter:'refused'};}
+function ownedNewData(){return {state:'source-mismatch-refused',maintenance:ownedReleaseData(OWN_M),
+  target:ownedReleaseData(OWN_T),installationId:OWN_ID,mismatch:'maintenance-sha-vs-target-origin',
+  close:'fulfilled',closedGetter:'refused'};}
+function ownedSetupData(){return {schema:'setfarm.manual-orphan-runner-setup.v1',run:OWN_C,
+  constructor:ownedProcessData(101,100),runner:ownedProcessData(102,101),server:ownedProcessData(103,101),
+  source:ownedSourceData(),cluster:ownedClusterData(),adminPassword:OWN_H};}
+function ownedPhaseData(purpose){
+  const mechanical=purpose==='old_entry_positive'||purpose==='new_entry_refusal';
+  const input=purpose==='provision'?{adminPassword:OWN_H}:purpose==='activate'?
+    {adminPassword:OWN_H,installation:ownedInstallationData()}:{installation:ownedInstallationData(true)};
+  return {schema:'setfarm.manual-orphan-owned-phase.v1',run:OWN_C,
+    constructor:ownedProcessData(101,100),runner:ownedProcessData(102,101),
+    parent:ownedProcessData(mechanical?104:102,mechanical?102:101),
+    child:ownedProcessData(mechanical?105:104,mechanical?104:102),server:ownedProcessData(103,101),
+    source:ownedSourceData(),cluster:ownedClusterData(),installations:ownedDirData(),purpose,input};
+}
+function ownedPhaseResultData(purpose){
+  const result=purpose==='provision'?{state:'schema-verified',installation:ownedInstallationData(),factoryOwnerClose:'fulfilled'}:
+    purpose==='activate'?{state:'activation-verified',installation:ownedInstallationData(true),
+      selectionBefore:'schema-committed-unactivated',selectionAfter:'stale-refused',databaseModuleClose:'fulfilled'}:
+      purpose==='old_entry_positive'?ownedOldData():ownedNewData();
+  return {schema:'setfarm.manual-orphan-owned-phase-result.v1',run:OWN_C,purpose,frameSha256:OWN_B,
+    pid:105,parentPid:104,fd4Closed:true,sourcePinsClosed:true,result};
+}
+function ownedIntegrationData(){return {schema:'setfarm.manual-orphan-integration-result.v1',run:OWN_C,
+  frameSha256:OWN_B,pid:104,parentPid:102,oldEntry:ownedOldData(),newEntry:ownedNewData(),sourcePinsClosed:true};}
+function ownedRunnerData(){return {schema:'setfarm.manual-orphan-runner-result.v1',run:OWN_C,
+  frameSha256:OWN_B,pid:102,parentPid:101,installationId:OWN_ID,oldEntry:ownedOldData(),newEntry:ownedNewData(),
+  cleanup:{databaseAbsent:true,ownerRoleAbsent:true,runtimeRoleAbsent:true,baselineRestored:true,adminClose:'fulfilled'},
+  sourcePinsClosed:true};}
+
+const OWN_DIR_WIRE='{"dev":"1","ino":"2","uid":501,"gid":20,"mode":448}';
+const OWN_FILE_WIRE='{"dev":"1","ino":"2","uid":501,"gid":20,"mode":420,"nlink":1,"bytes":1,"mtimeNs":"3","ctimeNs":"4","sha256":"'+OWN_H+'"}';
+const OWN_M_WIRE='{"sha":"'+OWN_M+'","treeHash":"'+'9'.repeat(40)+'","buildHash":"'+OWN_B+'"}';
+const OWN_T_WIRE='{"sha":"'+OWN_T+'","treeHash":"'+'9'.repeat(40)+'","buildHash":"'+OWN_B+'"}';
+const OWN_CON_WIRE='{"pid":101,"ppid":100,"uid":501,"pgid":101,"startedAtUTC":"2026-10-21T00:00:00.000Z","executable":"/fixture/node","executableSha256":"'+OWN_H+'","commandSha256":"'+OWN_B+'"}';
+const OWN_RUN_WIRE='{"pid":102,"ppid":101,"uid":501,"pgid":101,"startedAtUTC":"2026-10-21T00:00:00.000Z","executable":"/fixture/node","executableSha256":"'+OWN_H+'","commandSha256":"'+OWN_B+'"}';
+const OWN_SERVER_WIRE='{"pid":103,"ppid":101,"uid":501,"pgid":101,"startedAtUTC":"2026-10-21T00:00:00.000Z","executable":"/fixture/node","executableSha256":"'+OWN_H+'","commandSha256":"'+OWN_B+'"}';
+const OWN_INT_WIRE='{"pid":104,"ppid":102,"uid":501,"pgid":101,"startedAtUTC":"2026-10-21T00:00:00.000Z","executable":"/fixture/node","executableSha256":"'+OWN_H+'","commandSha256":"'+OWN_B+'"}';
+const OWN_MECH_WIRE='{"pid":105,"ppid":104,"uid":501,"pgid":101,"startedAtUTC":"2026-10-21T00:00:00.000Z","executable":"/fixture/node","executableSha256":"'+OWN_H+'","commandSha256":"'+OWN_B+'"}';
+const OWN_SOURCE_WIRE='{"maintenance":'+OWN_M_WIRE+',"target":'+OWN_T_WIRE+',"profileSha256":"'+OWN_C+'","files":{'
+  +'"constructor":'+OWN_FILE_WIRE+',"constructorTests":'+OWN_FILE_WIRE+',"wrapper":'+OWN_FILE_WIRE
+  +',"isolatedRunner":'+OWN_FILE_WIRE+',"builtinChild":'+OWN_FILE_WIRE+',"routeTests":'+OWN_FILE_WIRE
+  +',"fixture":'+OWN_FILE_WIRE+',"integration":'+OWN_FILE_WIRE+',"journal":'+OWN_FILE_WIRE
+  +',"pgPreflight":'+OWN_FILE_WIRE+',"profile":'+OWN_FILE_WIRE+'}}';
+const OWN_CLUSTER_WIRE='{"root":'+OWN_DIR_WIRE+',"data":'+OWN_DIR_WIRE+',"port":55439,"postmasterStartedAtUTC":"2026-10-21T00:00:00.123456Z","systemIdentifier":"123","serverVersionNum":170001,"databaseBaselineSha256":"'+OWN_H+'","roleBaselineSha256":"'+OWN_B+'","membershipBaselineSha256":"'+OWN_C+'"}';
+const OWN_CREATED_HEAD='{"installationId":"12345678-1234-4234-8234-123456789abc","operationId":"87654321-4321-4321-9321-cba987654321","directory":'+OWN_DIR_WIRE
+  +',"databaseName":"setfarm_install_12345678123442348234123456789abc","databaseOid":7,"ownerRole":"sf_owner_12345678123442348234123456789abc","ownerOid":7,"runtimeRole":"sf_runtime_12345678123442348234123456789abc","runtimeOid":8,"sourceSha":"'+OWN_T+'","schemaCatalogHash":"'+OWN_H+'"';
+const OWN_RECORDS_HEAD='{"planned.json":{"bytes":1,"sha256":"'+OWN_H+'"},"owner-created.json":{"bytes":2,"sha256":"'+OWN_H+'"},"runtime-created.json":{"bytes":3,"sha256":"'+OWN_H+'"},"database-created.json":{"bytes":4,"sha256":"'+OWN_H+'"},"runtime-credentials.json":{"bytes":4096,"sha256":"'+OWN_H+'"},"schema-prepared.json":{"bytes":6,"sha256":"'+OWN_H+'"},"schema-committed.json":{"bytes":32768,"sha256":"'+OWN_H+'"}';
+const OWN_CREATED_WIRE=OWN_CREATED_HEAD+',"records":'+OWN_RECORDS_HEAD+'}}';
+const OWN_ACTIVATED_WIRE=OWN_CREATED_HEAD+',"activationCatalogHash":"'+OWN_B+'","records":'+OWN_RECORDS_HEAD
+  +',"activation-prepared.json":{"bytes":8,"sha256":"'+OWN_H+'"},"activated.json":{"bytes":9,"sha256":"'+OWN_H+'"}}}';
+const OWN_OLD_WIRE='{"state":"old-entry-verified","maintenance":'+OWN_M_WIRE+',"target":'+OWN_T_WIRE
+  +',"installationId":"'+OWN_ID+'","sameClient":true,"entryAssert":true,"databaseAssert":true,"close":"fulfilled","closedGetter":"refused"}';
+const OWN_NEW_WIRE='{"state":"source-mismatch-refused","maintenance":'+OWN_M_WIRE+',"target":'+OWN_T_WIRE
+  +',"installationId":"'+OWN_ID+'","mismatch":"maintenance-sha-vs-target-origin","close":"fulfilled","closedGetter":"refused"}';
+const OWN_SETUP_WIRE='{"schema":"setfarm.manual-orphan-runner-setup.v1","run":"'+OWN_C+'","constructor":'+OWN_CON_WIRE
+  +',"runner":'+OWN_RUN_WIRE+',"server":'+OWN_SERVER_WIRE+',"source":'+OWN_SOURCE_WIRE+',"cluster":'+OWN_CLUSTER_WIRE+',"adminPassword":"'+OWN_H+'"}\n';
+const OWN_PHASE_HEAD='{"schema":"setfarm.manual-orphan-owned-phase.v1","run":"'+OWN_C+'","constructor":'+OWN_CON_WIRE+',"runner":'+OWN_RUN_WIRE;
+const OWN_PHASE_TAIL=',"server":'+OWN_SERVER_WIRE+',"source":'+OWN_SOURCE_WIRE+',"cluster":'+OWN_CLUSTER_WIRE+',"installations":'+OWN_DIR_WIRE;
+const OWN_RESULT_HEAD='{"schema":"setfarm.manual-orphan-owned-phase-result.v1","run":"'+OWN_C+'","purpose":';
+const OWN_RESULT_TAIL=',"frameSha256":"'+OWN_B+'","pid":105,"parentPid":104,"fd4Closed":true,"sourcePinsClosed":true,"result":';
+const OWN_INTEGRATION_WIRE='{"schema":"setfarm.manual-orphan-integration-result.v1","run":"'+OWN_C+'","frameSha256":"'+OWN_B+'","pid":104,"parentPid":102,"oldEntry":'+OWN_OLD_WIRE+',"newEntry":'+OWN_NEW_WIRE+',"sourcePinsClosed":true}\n';
+const OWN_RUNNER_WIRE='{"schema":"setfarm.manual-orphan-runner-result.v1","run":"'+OWN_C+'","frameSha256":"'+OWN_B+'","pid":102,"parentPid":101,"installationId":"'+OWN_ID+'","oldEntry":'+OWN_OLD_WIRE+',"newEntry":'+OWN_NEW_WIRE+',"cleanup":{"databaseAbsent":true,"ownerRoleAbsent":true,"runtimeRoleAbsent":true,"baselineRestored":true,"adminClose":"fulfilled"},"sourcePinsClosed":true}\n';
+// Twelve positive alternatives: 1 setup + 5 phase purposes + 4 phase results
+// + 1 integration result + 1 runner result. No arbitrary union cross-product.
+const OWN_CASES=[
+  ['runner setup','RunnerSetupFrame',ownedSetupData,OWN_SETUP_WIRE],
+  ['provision phase','OwnedPhaseFrame',()=>ownedPhaseData('provision'),OWN_PHASE_HEAD+',"parent":'+OWN_RUN_WIRE+',"child":'+OWN_INT_WIRE+OWN_PHASE_TAIL+',"purpose":"provision","input":{"adminPassword":"'+OWN_H+'"}}\n'],
+  ['activate phase','OwnedPhaseFrame',()=>ownedPhaseData('activate'),OWN_PHASE_HEAD+',"parent":'+OWN_RUN_WIRE+',"child":'+OWN_INT_WIRE+OWN_PHASE_TAIL+',"purpose":"activate","input":{"adminPassword":"'+OWN_H+'","installation":'+OWN_CREATED_WIRE+'}}\n'],
+  ['integration phase','OwnedPhaseFrame',()=>ownedPhaseData('integration'),OWN_PHASE_HEAD+',"parent":'+OWN_RUN_WIRE+',"child":'+OWN_INT_WIRE+OWN_PHASE_TAIL+',"purpose":"integration","input":{"installation":'+OWN_ACTIVATED_WIRE+'}}\n'],
+  ['old positive phase','OwnedPhaseFrame',()=>ownedPhaseData('old_entry_positive'),OWN_PHASE_HEAD+',"parent":'+OWN_INT_WIRE+',"child":'+OWN_MECH_WIRE+OWN_PHASE_TAIL+',"purpose":"old_entry_positive","input":{"installation":'+OWN_ACTIVATED_WIRE+'}}\n'],
+  ['new refusal phase','OwnedPhaseFrame',()=>ownedPhaseData('new_entry_refusal'),OWN_PHASE_HEAD+',"parent":'+OWN_INT_WIRE+',"child":'+OWN_MECH_WIRE+OWN_PHASE_TAIL+',"purpose":"new_entry_refusal","input":{"installation":'+OWN_ACTIVATED_WIRE+'}}\n'],
+  ['provision result','OwnedPhaseResult',()=>ownedPhaseResultData('provision'),OWN_RESULT_HEAD+'"provision"'+OWN_RESULT_TAIL+'{"state":"schema-verified","installation":'+OWN_CREATED_WIRE+',"factoryOwnerClose":"fulfilled"}}\n'],
+  ['activate result','OwnedPhaseResult',()=>ownedPhaseResultData('activate'),OWN_RESULT_HEAD+'"activate"'+OWN_RESULT_TAIL+'{"state":"activation-verified","installation":'+OWN_ACTIVATED_WIRE+',"selectionBefore":"schema-committed-unactivated","selectionAfter":"stale-refused","databaseModuleClose":"fulfilled"}}\n'],
+  ['old positive result','OwnedPhaseResult',()=>ownedPhaseResultData('old_entry_positive'),OWN_RESULT_HEAD+'"old_entry_positive"'+OWN_RESULT_TAIL+OWN_OLD_WIRE+'}\n'],
+  ['new refusal result','OwnedPhaseResult',()=>ownedPhaseResultData('new_entry_refusal'),OWN_RESULT_HEAD+'"new_entry_refusal"'+OWN_RESULT_TAIL+OWN_NEW_WIRE+'}\n'],
+  ['integration result','IntegrationResult',ownedIntegrationData,OWN_INTEGRATION_WIRE],
+  ['runner result','RunnerResult',ownedRunnerData,OWN_RUNNER_WIRE],
+];
+const OWN_SCHEMAS=[OWN_CASES[0],OWN_CASES[1],OWN_CASES[6],OWN_CASES[10],OWN_CASES[11]];
+function ownedCodec(direction,stem){
+  const name=direction+'ManualOrphan'+stem+'V1';
+  assert.ok(helper,'real helper namespace is required');
+  assert.equal(typeof helper[name],'function','missing inert data contract: '+name);
+  return helper[name];
+}
+function ownedFreezeAssertions(value,other){
+  assert.equal(Object.getPrototypeOf(value),Object.prototype);assert.equal(Object.isFrozen(value),true);
+  assert.notEqual(value,other,'every decoded object is detached');
+  for(const key of Object.keys(value))if(value[key]!==null&&typeof value[key]==='object')
+    ownedFreezeAssertions(value[key],other[key]);
+}
+function ownedReverseData(value){
+  return value!==null&&typeof value==='object'?
+    Object.fromEntries(Object.entries(value).reverse().map(([key,item])=>[key,ownedReverseData(item)])):value;
+}
+function ownedAt(value,keys){return keys.reduce((item,key)=>item[key],value);}
+function ownedSet(value,keys,replacement){ownedAt(value,keys.slice(0,-1))[keys.at(-1)]=replacement;}
+// Each malformed data case exercises both real boundaries, with independently
+// serialized input. Wire-order refusals below separately test canonical syntax.
+function ownedRejectData(stem,make,mutate,label){
+  const encode=ownedCodec('encode',stem),decode=ownedCodec('decode',stem),value=make();
+  mutate(value);frameRefusedV1(()=>encode(value),label+' encode');
+  frameRefusedV1(()=>decode(Buffer.from(JSON.stringify(value)+'\n')),label+' decode');
+}
+for(const [label,stem,make,text] of OWN_CASES){
+  test('owned data '+label+' encoder emits independent exact ordered bytes and fresh buffers',()=>{
+    const encode=ownedCodec('encode',stem),input=make(),before=structuredClone(input),want=Buffer.from(text);
+    const first=encode(input),second=encode(input);
+    assert.ok(Buffer.isBuffer(first));assert.deepEqual(first,want);assert.deepEqual(second,want);
+    assert.notEqual(first,second);assert.deepEqual(input,before,'encoder leaves input unchanged');
+    first.fill(0);assert.deepEqual(second,want);
+    assert.equal(want.at(-1),10);assert.ok(want.length<=16384);
+  });
+  test('owned data '+label+' encoder normalizes recursively reordered valid properties',()=>{
+    const encode=ownedCodec('encode',stem),input=ownedReverseData(make()),before=structuredClone(input);
+    assert.deepEqual(encode(input),Buffer.from(text));assert.deepEqual(input,before);
+  });
+  test('owned data '+label+' decoder returns deeply frozen detached records without changing wire',()=>{
+    const decode=ownedCodec('decode',stem),input=Buffer.from(text),before=Buffer.from(input);
+    const first=decode(input),second=decode(input);assert.deepEqual(input,before);
+    assert.deepEqual(first,make());assert.deepEqual(second,make());ownedFreezeAssertions(first,second);
+    input.fill(0);assert.deepEqual(first,make());
+    assert.throws(()=>{first.run=OWN_H;},TypeError);
+  });
+}
+for(const [,stem,make,text] of OWN_SCHEMAS)for(const direction of ['encode','decode']){
+  test('owned data '+direction+stem+' requires exactly one data argument',()=>{
+    const codec=ownedCodec(direction,stem),value=direction==='encode'?make():Buffer.from(text);
+    assert.equal(codec.length,1);frameRefusedV1(()=>codec(),stem+' no arguments');
+    frameRefusedV1(()=>codec(value,undefined),stem+' surplus undefined');
+    frameRefusedV1(()=>codec(value,()=>{throw Error('must never call');}),stem+' surplus callback');
+  });
+}
+for(const [label,stem] of OWN_SCHEMAS){
+  for(const [otherLabel,otherStem,make,text] of OWN_SCHEMAS)if(stem!==otherStem){
+    test('owned data '+label+' refuses schema crossing from '+otherLabel,()=>{
+      const encode=ownedCodec('encode',stem),decode=ownedCodec('decode',stem);
+      frameRefusedV1(()=>encode(make()),'crossed encoder');frameRefusedV1(()=>decode(Buffer.from(text)),'crossed decoder');
+    });
+  }
+  test('owned data '+label+' and preserved probe refuse schema crossing in both directions',()=>{
+    const encode=ownedCodec('encode',stem),decode=ownedCodec('decode',stem),row=OWN_SCHEMAS.find(item=>item[1]===stem);
+    frameRefusedV1(()=>encode(codecFrameV1()),'probe object');frameRefusedV1(()=>decode(CODEC_EXPECTED_V1),'probe wire');
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(row[2]()),'owned object into probe');
+    frameRefusedV1(()=>helper.decodeManualOrphanProbeFrameV1(Buffer.from(row[3])),'owned wire into probe');
+  });
+}
+
+// Shared descriptor invariants use one representative of each nested record
+// shape, rather than multiplying all twelve union alternatives by every check.
+const OWN_SHAPE_LOCATIONS=[
+  ['setup', 'RunnerSetupFrame',ownedSetupData,[]],
+  ['process','RunnerSetupFrame',ownedSetupData,['constructor']],
+  ['sources','RunnerSetupFrame',ownedSetupData,['source']],
+  ['release','RunnerSetupFrame',ownedSetupData,['source','maintenance']],
+  ['file map','RunnerSetupFrame',ownedSetupData,['source','files']],
+  ['file pin','RunnerSetupFrame',ownedSetupData,['source','files','constructor']],
+  ['cluster','RunnerSetupFrame',ownedSetupData,['cluster']],
+  ['directory','RunnerSetupFrame',ownedSetupData,['cluster','root']],
+  ['phase input','OwnedPhaseFrame',()=>ownedPhaseData('activate'),['input']],
+  ['created installation','OwnedPhaseFrame',()=>ownedPhaseData('activate'),['input','installation']],
+  ['record map','OwnedPhaseFrame',()=>ownedPhaseData('activate'),['input','installation','records']],
+  ['record pin','OwnedPhaseFrame',()=>ownedPhaseData('activate'),['input','installation','records','planned.json']],
+  ['cleanup','RunnerResult',ownedRunnerData,['cleanup']],
+];
+const OWN_SHAPE_KINDS=['array','null','null prototype','foreign prototype','symbol','nonenumerable',
+  'getter','setter','proxy','missing key','extra key'];
+for(const [location,stem,make,keys] of OWN_SHAPE_LOCATIONS)for(const kind of OWN_SHAPE_KINDS){
+  test('owned data rejects '+kind+' on representative '+location+' without invoking accessors or proxy traps',()=>{
+    const encode=ownedCodec('encode',stem),frame=make(),original=ownedAt(frame,keys),key=Object.keys(original)[0];
+    let value=original,calls=0;
+    if(kind==='array')value=Object.assign([],original);
+    if(kind==='null')value=null;
+    if(kind==='null prototype')value=Object.assign(Object.create(null),original);
+    if(kind==='foreign prototype')value=Object.assign(Object.create({extra:true}),original);
+    if(kind==='symbol')value[Symbol('private')]='hidden';
+    if(kind==='nonenumerable')Object.defineProperty(value,'hidden',{value:1,enumerable:false});
+    if(kind==='getter')Object.defineProperty(value,key,{enumerable:true,get(){calls++;return original[key];}});
+    if(kind==='setter')Object.defineProperty(value,key,{enumerable:true,set(){calls++;}});
+    if(kind==='proxy')value=new Proxy(value,{
+      get(){calls++;throw Error('trap');},getPrototypeOf(){calls++;throw Error('trap');},
+      ownKeys(){calls++;throw Error('trap');},getOwnPropertyDescriptor(){calls++;throw Error('trap');},
+    });
+    if(kind==='missing key')delete value[key];
+    if(kind==='extra key')value.permission=true;
+    if(keys.length)ownedSet(frame,keys,value);
+    frameRefusedV1(()=>encode(keys.length?frame:value),location+' '+kind);assert.equal(calls,0);
+  });
+}
+for(const [label,stem,make] of OWN_CASES)for(const kind of ['missing','extra']){
+  test('owned data '+label+' rejects '+kind+' top-level fields',()=>{
+    ownedRejectData(stem,make,value=>{if(kind==='missing')delete value.run;else value.permission=true;},label+' '+kind);
+  });
+}
+
+const OWN_WIRE_REFUSALS=[
+  ['string',text=>text],['Uint8Array',text=>new Uint8Array(Buffer.from(text))],
+  ['empty Buffer',()=>Buffer.alloc(0)],['oversized Buffer',()=>Buffer.alloc(16385,32)],
+  ['BOM',text=>Buffer.concat([Buffer.from([239,187,191]),Buffer.from(text)])],
+  ['CRLF',text=>Buffer.from(text.slice(0,-1)+'\r\n')],
+  ['no LF',text=>Buffer.from(text.slice(0,-1))],
+  ['leading whitespace',text=>Buffer.from(' '+text)],
+  ['space before LF',text=>Buffer.from(text.slice(0,-1)+' \n')],
+  ['extra LF',text=>Buffer.from(text+'\n')],
+  ['trailing record',text=>Buffer.from(text+'{}\n')],
+  ['duplicate key',text=>Buffer.from(text.replace('{"schema":','{"run":"'+OWN_C+'","schema":'))],
+  ['alternate order',text=>{const {schema,...rest}=JSON.parse(text);return Buffer.from(JSON.stringify({...rest,schema})+'\n');}],
+  ['alternate escape',text=>Buffer.from(text.replace('setfarm','\\u0073etfarm'))],
+  ['invalid UTF8',text=>Buffer.concat([Buffer.from(text.slice(0,12)),Buffer.from([255]),Buffer.from(text.slice(12))])],
+  ['invalid JSON',()=>Buffer.from('{"schema":}\n')],
+  ['Buffer proxy',text=>new Proxy(Buffer.from(text),{get(){throw Error('must not reflect proxy');}})],
+];
+for(const [label,stem,,text] of OWN_SCHEMAS)for(const [fault,make] of OWN_WIRE_REFUSALS){
+  test('owned data '+label+' decoder refuses '+fault+' canonically',()=>{
+    const decode=ownedCodec('decode',stem);frameRefusedV1(()=>decode(make(text)),fault);
+  });
+}
+for(const [label,stem,make] of OWN_CASES){
+  test('owned data '+label+' decoder rejects recursively reversed nested key order',()=>{
+    const decode=ownedCodec('decode',stem),value=make(),key=stem==='RunnerSetupFrame'?'source':
+      stem==='OwnedPhaseFrame'?(value.purpose==='provision'?'parent':'input'):
+        stem==='OwnedPhaseResult'?'result':'oldEntry';
+    value[key]=ownedReverseData(value[key]);
+    frameRefusedV1(()=>decode(Buffer.from(JSON.stringify(value)+'\n')),'nested noncanonical order');
+  });
+}
+
+// Finite domain inventory: one named test per row, with its explicit values.
+// JSON cannot represent NaN/Infinity/-0 faithfully; encoder checks supplement
+// the same finite wire value checks, including explicit textual -0 below.
+const OWN_DOMAIN_REFUSALS=[
+  ['schema',ownedSetupData,['schema'],[null,123,'setfarm.manual-orphan-runner-setup.v2']],
+  ['process pid',ownedSetupData,['constructor','pid'],[0,-1,2147483648,1.5,'101',null,NaN,Infinity,-0]],
+  ['process ppid',ownedSetupData,['constructor','ppid'],[0,-1,2147483648,-0]],
+  ['process uid',ownedSetupData,['constructor','uid'],[-1,2147483648,-0]],
+  ['process pgid',ownedSetupData,['constructor','pgid'],[0,2147483648,-0]],
+  ['process timestamp',ownedSetupData,['constructor','startedAtUTC'],['2026-02-30T00:00:00.000Z','2026-10-21T00:00:00.001Z','2026-10-21T00:00:00Z',123]],
+  ['process path',ownedSetupData,['constructor','executable'],['relative','/','/a//b','/a/../b','/a/./b','/a/','/a\n','/a\u007f','/a\ud800','/'+'x'.repeat(4096)]],
+  ['run hash',ownedSetupData,['run'],[OWN_C.toUpperCase(),'a'.repeat(63),'g'.repeat(64),123]],
+  ['executable hash',ownedSetupData,['constructor','executableSha256'],['A'.repeat(64),null]],
+  ['command hash',ownedSetupData,['constructor','commandSha256'],['b'.repeat(65),false]],
+  ['admin password',ownedSetupData,['adminPassword'],['a'.repeat(63),null]],
+  ['directory dev',ownedSetupData,['cluster','root','dev'],[-1,1,'01','-0','+1','1.0','1e1','18446744073709551616']],
+  ['directory ino',ownedSetupData,['cluster','root','ino'],['',null,'-1']],
+  ['directory uid',ownedSetupData,['cluster','root','uid'],[0,500,502,'501',-0]],
+  ['directory gid',ownedSetupData,['cluster','root','gid'],[0,19,21,'20',-0]],
+  ['directory mode',ownedSetupData,['cluster','root','mode'],[0,449,511,'448',-0]],
+  ['file dev',ownedSetupData,['source','files','constructor','dev'],[1,'00','18446744073709551616']],
+  ['file ino',ownedSetupData,['source','files','constructor','ino'],['-1','1e2']],
+  ['file uid',ownedSetupData,['source','files','constructor','uid'],[0,502,'501',-0]],
+  ['file gid',ownedSetupData,['source','files','constructor','gid'],[-1,2147483648,'20',-0]],
+  ['file mode',ownedSetupData,['source','files','constructor','mode'],[-1,4096,422,436,'420',-0]],
+  ['file nlink',ownedSetupData,['source','files','constructor','nlink'],[0,2,'1',-0]],
+  ['file bytes',ownedSetupData,['source','files','constructor','bytes'],[-1,16777217,1.5,'1',-0]],
+  ['file mtime',ownedSetupData,['source','files','constructor','mtimeNs'],[3,'03','9223372036854775808','-1']],
+  ['file ctime',ownedSetupData,['source','files','constructor','ctimeNs'],['1.0','+4','4e0']],
+  ['file hash',ownedSetupData,['source','files','constructor','sha256'],['A'.repeat(64),0]],
+  ['maintenance sha',ownedSetupData,['source','maintenance','sha'],['8'.repeat(39),'G'.repeat(40),0]],
+  ['target sha',ownedSetupData,['source','target','sha'],[OWN_M,OWN_T.toUpperCase()]],
+  ['tree hash',ownedSetupData,['source','maintenance','treeHash'],['9'.repeat(41),null]],
+  ['build hash',ownedSetupData,['source','maintenance','buildHash'],['b'.repeat(63),null]],
+  ['profile hash',ownedSetupData,['source','profileSha256'],['C'.repeat(64),null]],
+  ['port',ownedSetupData,['cluster','port'],[1023,65536,5432,'55439',-0]],
+  ['server timestamp',ownedSetupData,['cluster','postmasterStartedAtUTC'],['2026-02-30T00:00:00.123456Z','2026-10-21T00:00:00.123Z','2026-10-21T00:00:00.123456+00:00']],
+  ['system id',ownedSetupData,['cluster','systemIdentifier'],[0,'0','01','18446744073709551616','-1']],
+  ['server version',ownedSetupData,['cluster','serverVersionNum'],[169999,180000,'170001',170001.5,-0]],
+  ['database baseline hash',ownedSetupData,['cluster','databaseBaselineSha256'],['A'.repeat(64)]],
+  ['role baseline hash',ownedSetupData,['cluster','roleBaselineSha256'],[null]],
+  ['membership baseline hash',ownedSetupData,['cluster','membershipBaselineSha256'],['c'.repeat(63)]],
+];
+for(const [label,make,keys,values] of OWN_DOMAIN_REFUSALS){
+  test('owned data rejects finite '+label+' domain violations at encode and decode',()=>{
+    const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame');
+    for(const value of values){
+      const input=make();ownedSet(input,keys,value);frameRefusedV1(()=>encode(input),label+' '+String(value));
+      if(!Object.is(value,-0))frameRefusedV1(()=>decode(Buffer.from(JSON.stringify(input)+'\n')),label+' wire '+String(value));
+    }
+  });
+}
+test('owned data decoder refuses textual negative zero instead of normalizing it',()=>{
+  const decode=ownedCodec('decode','RunnerSetupFrame');
+  for(const [from,to] of [['"pid":101','"pid":-0'],['"uid":501','"uid":-0'],['"bytes":1','"bytes":-0']])
+    frameRefusedV1(()=>decode(Buffer.from(OWN_SETUP_WIRE.replace(from,to))),'wire -0');
+});
+
+const OWN_INSTALLATION_REFUSALS=[
+  ['installation UUID',['installationId'],['12345678-1234-1234-8234-123456789abc',OWN_ID.toUpperCase(),'12345678-1234-4234-7234-123456789abc']],
+  ['operation UUID',['operationId'],['87654321-4321-1321-9321-cba987654321',null]],
+  ['derived database name',['databaseName'],['setfarm_install_wrong','setfarm_install_'+OWN_ID]],
+  ['derived owner name',['ownerRole'],['sf_owner_wrong','sf_runtime_'+OWN_SUFFIX]],
+  ['derived runtime name',['runtimeRole'],['sf_runtime_wrong','sf_owner_'+OWN_SUFFIX]],
+  ['database OID',['databaseOid'],[0,4294967296,'7',1.5,-0]],
+  ['owner OID',['ownerOid'],[0,4294967296,'7',-0]],
+  ['runtime OID',['runtimeOid'],[0,4294967296,7,'8',-0]],
+  ['fixed source',['sourceSha'],[OWN_M,OWN_T.toUpperCase(),null]],
+  ['schema catalog',['schemaCatalogHash'],['A'.repeat(64),null]],
+  ['record bytes',['records','planned.json','bytes'],[0,32769,'1',1.5,-0]],
+  ['credential record bytes',['records','runtime-credentials.json','bytes'],[0,4097,32768,-0]],
+  ['record hash',['records','planned.json','sha256'],['A'.repeat(64),null]],
+];
+for(const [label,keys,values] of OWN_INSTALLATION_REFUSALS){
+  test('owned data rejects finite '+label+' installation violations',()=>{
+    const encode=ownedCodec('encode','OwnedPhaseFrame'),decode=ownedCodec('decode','OwnedPhaseFrame');
+    for(const value of values){
+      const frame=ownedPhaseData('activate');ownedSet(frame.input.installation,keys,value);
+      frameRefusedV1(()=>encode(frame),label+' encode');
+      if(!Object.is(value,-0))frameRefusedV1(()=>decode(Buffer.from(JSON.stringify(frame)+'\n')),label+' decode');
+    }
+  });
+}
+const OWN_PHASE_REFUSALS=[
+  ['unknown purpose','provision',value=>{value.purpose='activation';}],
+  ['provision with installation','provision',value=>{value.input.installation=ownedInstallationData();}],
+  ['provision without password','provision',value=>{delete value.input.adminPassword;}],
+  ['activate without password','activate',value=>{delete value.input.adminPassword;}],
+  ['activate activated stage','activate',value=>{value.input.installation=ownedInstallationData(true);}],
+  ['activate injected activation catalog','activate',value=>{value.input.installation.activationCatalogHash=OWN_B;}],
+  ['activate injected activation record','activate',value=>{value.input.installation.records['activated.json']={bytes:1,sha256:OWN_H};}],
+  ['integration committed stage','integration',value=>{value.input.installation=ownedInstallationData();}],
+  ['old committed stage','old_entry_positive',value=>{value.input.installation=ownedInstallationData();}],
+  ['new committed stage','new_entry_refusal',value=>{value.input.installation=ownedInstallationData();}],
+  ['integration secret','integration',value=>{value.input.adminPassword=OWN_H;}],
+  ['old secret','old_entry_positive',value=>{value.input.adminPassword=OWN_H;}],
+  ['new secret','new_entry_refusal',value=>{value.input.adminPassword=OWN_H;}],
+  ['phase top secret','integration',value=>{value.adminPassword=OWN_H;}],
+  ['activated missing catalog','integration',value=>{delete value.input.installation.activationCatalogHash;}],
+  ['activated bad catalog','integration',value=>{value.input.installation.activationCatalogHash=null;}],
+  ['activated missing record','integration',value=>{delete value.input.installation.records['activated.json'];}],
+  ['activated extra record','integration',value=>{value.input.installation.records['private.json']={bytes:1,sha256:OWN_H};}],
+  ['record credential payload','activate',value=>{value.input.installation.records['runtime-credentials.json'].password=OWN_H;}],
+  ['caller directory','activate',value=>{value.input.installation.directory='/private/tmp/caller';}],
+  ['caller migration array','activate',value=>{value.input.installation.migrations=[];}],
+  ['runner ancestry','provision',value=>{value.runner.ppid=999;}],
+  ['server ancestry','provision',value=>{value.server.ppid=999;}],
+  ['runner issuer copy','activate',value=>{value.parent.commandSha256=OWN_C;}],
+  ['mechanical parent ancestry','old_entry_positive',value=>{value.parent.ppid=999;}],
+  ['child parent relation','new_entry_refusal',value=>{value.child.ppid=999;}],
+];
+for(const [label,purpose,mutate] of OWN_PHASE_REFUSALS){
+  test('owned data phase refuses '+label,()=>ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData(purpose),mutate,label));
+}
+for(const [label,stem,make] of OWN_CASES.slice(1,10))for(const kind of ['missing','extra']){
+  test('owned data '+label+' rejects '+kind+' union fields',()=>{
+    ownedRejectData(stem,make,value=>{
+      const union=value.input??value.result;
+      if(kind==='missing')delete union[Object.keys(union)[0]];else union.permission=true;
+    },label+' union '+kind);
+  });
+}
+for(const [label,mutate] of [
+  ['runner ancestry',value=>{value.runner.ppid=999;}],
+  ['server ancestry',value=>{value.server.ppid=999;}],
+  ['fixed target release',value=>{value.source.target.sha=OWN_M;}],
+  ['maintenance equals fixed target',value=>{value.source.maintenance.sha=OWN_T;}],
+  ['missing eleven-file pin',value=>{delete value.source.files.integration;}],
+  ['extra file selector',value=>{value.source.files.caller=ownedFileData();}],
+]){
+  test('owned data setup refuses '+label,()=>ownedRejectData('RunnerSetupFrame',ownedSetupData,mutate,label));
+}
+
+const OWN_RESULT_REFUSALS=[
+  ['provision wrong state','provision',value=>{value.result.state='activation-verified';}],
+  ['provision unclosed owner','provision',value=>{value.result.factoryOwnerClose='rejected';}],
+  ['provision activated stage','provision',value=>{value.result.installation=ownedInstallationData(true);}],
+  ['activation committed stage','activate',value=>{value.result.installation=ownedInstallationData();}],
+  ['activation before selection','activate',value=>{value.result.selectionBefore='ordinary';}],
+  ['activation after selection','activate',value=>{value.result.selectionAfter='unchanged';}],
+  ['activation close','activate',value=>{value.result.databaseModuleClose='rejected';}],
+  ['old state','old_entry_positive',value=>{value.result.state='source-mismatch-refused';}],
+  ['old client identity','old_entry_positive',value=>{value.result.sameClient=false;}],
+  ['old entry assertion','old_entry_positive',value=>{value.result.entryAssert=false;}],
+  ['old database assertion','old_entry_positive',value=>{value.result.databaseAssert=false;}],
+  ['old close','old_entry_positive',value=>{value.result.close='pending';}],
+  ['old getter','old_entry_positive',value=>{value.result.closedGetter='open';}],
+  ['new state','new_entry_refusal',value=>{value.result.state='old-entry-verified';}],
+  ['new mismatch','new_entry_refusal',value=>{value.result.mismatch='error-text';}],
+  ['new falsely instrumented stage','new_entry_refusal',value=>{value.result.stage='source';}],
+  ['new close','new_entry_refusal',value=>{value.result.close='rejected';}],
+  ['new getter','new_entry_refusal',value=>{value.result.closedGetter='open';}],
+  ['mechanical target','old_entry_positive',value=>{value.result.target.sha=OWN_M;}],
+  ['mechanical maintenance equals target','new_entry_refusal',value=>{value.result.maintenance.sha=OWN_T;}],
+  ['integration purpose','provision',value=>{value.purpose='integration';}],
+  ['wrong result purpose','old_entry_positive',value=>{value.purpose='new_entry_refusal';}],
+  ['FD4 closure','provision',value=>{value.fd4Closed=false;}],
+  ['source closure','provision',value=>{value.sourcePinsClosed=false;}],
+  ['result secret','provision',value=>{value.result.adminPassword=OWN_H;}],
+  ['result pid','provision',value=>{value.pid=0;}],
+  ['result parent','provision',value=>{value.parentPid=-0;}],
+  ['frame digest','provision',value=>{value.frameSha256='B'.repeat(64);}],
+];
+for(const [label,purpose,mutate] of OWN_RESULT_REFUSALS){
+  test('owned data phase result refuses '+label,()=>{
+    if(label==='result parent'){
+      const encode=ownedCodec('encode','OwnedPhaseResult'),value=ownedPhaseResultData(purpose);mutate(value);
+      frameRefusedV1(()=>encode(value),label);
+      const decode=ownedCodec('decode','OwnedPhaseResult');
+      frameRefusedV1(()=>decode(Buffer.from(OWN_CASES[6][3].replace('"parentPid":104','"parentPid":-0'))),label+' wire');
+    }else ownedRejectData('OwnedPhaseResult',()=>ownedPhaseResultData(purpose),mutate,label);
+  });
+}
+for(const [label,stem,make] of [['integration','IntegrationResult',ownedIntegrationData],['runner','RunnerResult',ownedRunnerData]]){
+  for(const [fault,mutate] of [
+    ['old and new crossed',value=>{[value.oldEntry,value.newEntry]=[value.newEntry,value.oldEntry];}],
+    ['different installation ids',value=>{value.newEntry.installationId=OWN_OP;}],
+    ['different maintenance release',value=>{value.newEntry.maintenance.treeHash='7'.repeat(40);}],
+    ['different target release',value=>{value.newEntry.target.buildHash=OWN_C;}],
+    ['unclosed sources',value=>{value.sourcePinsClosed=false;}],
+    ['receipt secret',value=>{value.adminPassword=OWN_H;}],
+    ['invalid pid',value=>{value.pid=2147483648;}],
+    ['invalid parent pid',value=>{value.parentPid=0;}],
+  ])test('owned data '+label+' result refuses '+fault,()=>ownedRejectData(stem,make,mutate,fault));
+}
+for(const key of ['databaseAbsent','ownerRoleAbsent','runtimeRoleAbsent','baselineRestored','adminClose']){
+  test('owned data runner receipt refuses unconfirmed cleanup '+key,()=>{
+    ownedRejectData('RunnerResult',ownedRunnerData,value=>{value.cleanup[key]=key==='adminClose'?'rejected':false;},key);
+  });
+}
+test('owned data runner receipt binds its installation id to both mechanical results',()=>{
+  ownedRejectData('RunnerResult',ownedRunnerData,value=>{value.installationId=OWN_OP;},'runner installation mismatch');
+});
+
+for(const [label,mutate,replace] of [
+  ['minimum syntax domains',value=>{
+    Object.assign(value.constructor,{pid:1,ppid:1,uid:0,pgid:1});value.runner.ppid=1;value.server.ppid=1;
+    value.cluster.root.dev='0';value.cluster.root.ino='0';value.cluster.port=1024;value.cluster.systemIdentifier='1';
+    value.cluster.serverVersionNum=170000;
+    Object.assign(value.source.files.constructor,{dev:'0',ino:'0',gid:0,mode:0,bytes:0,mtimeNs:'0',ctimeNs:'0'});
+  },text=>text.replace('"pid":101','"pid":1').replace('"ppid":100','"ppid":1')
+    .replaceAll('"ppid":101','"ppid":1').replace('"uid":501,"pgid":101','"uid":0,"pgid":1')
+    .replace('"root":'+OWN_DIR_WIRE,'"root":{"dev":"0","ino":"0","uid":501,"gid":20,"mode":448}')
+    .replace('"port":55439','"port":1024').replace('"systemIdentifier":"123"','"systemIdentifier":"1"')
+    .replace('"serverVersionNum":170001','"serverVersionNum":170000')
+    .replace('"constructor":'+OWN_FILE_WIRE,'"constructor":{"dev":"0","ino":"0","uid":501,"gid":0,"mode":0,"nlink":1,"bytes":0,"mtimeNs":"0","ctimeNs":"0","sha256":"'+OWN_H+'"}')],
+  ['maximum syntax domains',value=>{
+    Object.assign(value.constructor,{pid:2147483647,ppid:2147483647,uid:2147483647,pgid:2147483647});
+    value.runner.ppid=2147483647;value.server.ppid=2147483647;
+    value.cluster.root.dev='18446744073709551615';value.cluster.root.ino='18446744073709551615';
+    value.cluster.port=65535;value.cluster.systemIdentifier='18446744073709551615';value.cluster.serverVersionNum=179999;
+    Object.assign(value.source.files.constructor,{dev:'18446744073709551615',ino:'18446744073709551615',gid:2147483647,
+      mode:4077,bytes:16777216,mtimeNs:'9223372036854775807',ctimeNs:'9223372036854775807'});
+  },text=>text.replace('"pid":101','"pid":2147483647').replace('"ppid":100','"ppid":2147483647')
+    .replaceAll('"ppid":101','"ppid":2147483647').replace('"uid":501,"pgid":101','"uid":2147483647,"pgid":2147483647')
+    .replace('"root":'+OWN_DIR_WIRE,'"root":{"dev":"18446744073709551615","ino":"18446744073709551615","uid":501,"gid":20,"mode":448}')
+    .replace('"port":55439','"port":65535').replace('"systemIdentifier":"123"','"systemIdentifier":"18446744073709551615"')
+    .replace('"serverVersionNum":170001','"serverVersionNum":179999')
+    .replace('"constructor":'+OWN_FILE_WIRE,'"constructor":{"dev":"18446744073709551615","ino":"18446744073709551615","uid":501,"gid":2147483647,"mode":4077,"nlink":1,"bytes":16777216,"mtimeNs":"9223372036854775807","ctimeNs":"9223372036854775807","sha256":"'+OWN_H+'"}')],
+]){
+  test('owned data accepts '+label+' without claiming actual admitted process or Source ownership',()=>{
+    const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame'),value=ownedSetupData();
+    mutate(value);const want=Buffer.from(replace(OWN_SETUP_WIRE));assert.deepEqual(encode(value),want);
+    assert.deepEqual(decode(want),value);
+  });
+}
+for(const [label,databaseOid,ownerOid,runtimeOid] of [
+  ['minimum database and maximum role OIDs',1,1,4294967295],
+  ['maximum database OID may equal runtime OID',4294967295,1,4294967295],
+]){
+  test('owned data accepts '+label+' while distinct role OIDs remain required',()=>{
+    const encode=ownedCodec('encode','OwnedPhaseFrame'),decode=ownedCodec('decode','OwnedPhaseFrame');
+    const frame=ownedPhaseData('activate');Object.assign(frame.input.installation,{databaseOid,ownerOid,runtimeOid});
+    const want=Buffer.from(OWN_CASES[2][3].replace('"databaseOid":7','"databaseOid":'+databaseOid)
+      .replace('"ownerOid":7','"ownerOid":'+ownerOid).replace('"runtimeOid":8','"runtimeOid":'+runtimeOid));
+    assert.deepEqual(encode(frame),want);assert.deepEqual(decode(want),frame);
+  });
+}
+test('owned data accepts changed run correlation as data and produces changed exact bytes',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame'),frame=ownedSetupData();
+  frame.run=OWN_H;const want=Buffer.from(OWN_SETUP_WIRE.replace('"run":"'+OWN_C+'"','"run":"'+OWN_H+'"'));
+  assert.deepEqual(encode(frame),want);assert.deepEqual(decode(want),frame);
+  assert.notEqual(createHash('sha256').update(want).digest('hex'),createHash('sha256').update(OWN_SETUP_WIRE).digest('hex'));
+});
+test('owned data encoding retains no input aliases even when valid equal pins share an object',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame'),frame=ownedSetupData();
+  frame.cluster.data=frame.cluster.root;const bytes=encode(frame);assert.deepEqual(bytes,Buffer.from(OWN_SETUP_WIRE));
+  const decoded=decode(bytes);frame.cluster.root.ino='999';assert.equal(decoded.cluster.root.ino,'2');
+  assert.equal(decoded.cluster.data.ino,'2');assert.deepEqual(bytes,Buffer.from(OWN_SETUP_WIRE));
+});
+test('owned data decoder uses actual Buffer view length and never a forged own size',()=>{
+  const decode=ownedCodec('decode','RunnerSetupFrame');
+  const valid=Buffer.from(OWN_SETUP_WIRE);
+  Object.defineProperty(valid,'length',{value:16385});Object.defineProperty(valid,'byteLength',{value:16385});
+  assert.deepEqual(decode(valid),ownedSetupData());
+  const oversized=Buffer.alloc(16385,32);Buffer.from(OWN_SETUP_WIRE).copy(oversized);
+  Object.defineProperty(oversized,'length',{value:Buffer.byteLength(OWN_SETUP_WIRE)});
+  Object.defineProperty(oversized,'byteLength',{value:Buffer.byteLength(OWN_SETUP_WIRE)});
+  frameRefusedV1(()=>decode(oversized),'forged undersize');
+});
+for(const size of [16384,16385]){
+  test('owned data '+(size===16384?'accepts':'refuses')+' syntactically valid total '+size+' bytes including LF within4096-byte ProcessPin paths',()=>{
+    const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame'),frame=ownedSetupData();
+    // Two paths use their4096-byte maximum. The third fills the remaining plain
+    // budget, and constructor quotes supply any remaining escape-byte budget.
+    // Every slash-free segment remains valid ProcessPin syntax, not FS proof.
+    const remaining=16384-Buffer.byteLength(OWN_SETUP_WIRE)-2*(4096-13);
+    const escapes=Math.max(0,remaining-(4096-13));
+    const serverBytes=13+remaining-escapes,quotes=escapes+(size-16384);
+    assert.ok(serverBytes>1&&serverBytes<=4096);
+    assert.ok(quotes>=0&&quotes<=4095);
+    const constructorPath='/'+'"'.repeat(quotes)+'x'.repeat(4095-quotes),runnerPath='/'+'y'.repeat(4095);
+    const serverPath='/'+'z'.repeat(serverBytes-1);
+    frame.constructor.executable=constructorPath;frame.runner.executable=runnerPath;frame.server.executable=serverPath;
+    for(const pin of [frame.constructor,frame.runner,frame.server]){
+      assert.ok(Buffer.byteLength(pin.executable)<=4096);assert.ok(/^\/[xyz"]+$/.test(pin.executable));
+    }
+    const want=Buffer.from(OWN_SETUP_WIRE.replace('"executable":"/fixture/node"','"executable":'+JSON.stringify(constructorPath))
+      .replace('"executable":"/fixture/node"','"executable":"'+runnerPath+'"')
+      .replace('"executable":"/fixture/node"','"executable":'+JSON.stringify(serverPath)));
+    assert.equal(want.length,size);assert.equal(want.at(-1),10);
+    if(size===16384){assert.deepEqual(encode(frame),want);assert.deepEqual(decode(want),frame);}
+    else{frameRefusedV1(()=>encode(frame),'total cap encoder');frameRefusedV1(()=>decode(want),'total cap decoder');}
   });
 }
