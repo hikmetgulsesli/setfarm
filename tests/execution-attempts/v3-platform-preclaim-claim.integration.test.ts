@@ -6,8 +6,10 @@ import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 
 import type { PgTransactionSql } from "../../src/db-pg.js";
+import type { TestDatabase } from "./test-database.js";
 
 const storiesRegistryUrl = new URL("../../src/installer/steps/registry.js", import.meta.url).href;
 const storiesRegistrySource = `
@@ -36,14 +38,20 @@ async function createTestDatabase() {
   return createIsolatedTestDatabase();
 }
 
-test("claimStep publishes one normal v3 platform-preclaim terminal transition", async () => {
+test("claimStep publishes one normal v3 platform-preclaim terminal transition", async (t) => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
+  const previousDbPath = process.env.SETFARM_DB_PATH;
   const database = await createTestDatabase();
   const repo = await mkdtemp(path.join(tmpdir(), "setfarm-v3-preclaim-normal-"));
   let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
   try {
     runtimeDb = await import("../../src/db-pg.js");
     runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
+    // Select an owned log after ordinary runtime module initialization, keeping
+    // the original case's initialization order and retaining no global log read.
+    process.env.SETFARM_DB_PATH = path.join(repo, "fixture-log-selector.db");
+    const logFile = path.join(repo, "logs", "workflow.log");
+    const logOffset = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0;
     const runId = "run-v3-platform-preclaim-normal";
     const stepDbId = "step-v3-platform-preclaim-normal";
     const claimAgentId = "feature-dev_builder";
@@ -516,6 +524,8 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
       termination_state: string;
       requested_by: string;
       evidence: Record<string, unknown>;
+      termination_diagnostic: string;
+      step_output: string | null;
       runtime_state: string;
       claim_owner_count: number;
       claim_owner_implementation: string;
@@ -532,6 +542,8 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
              termination.state AS termination_state,
              termination.requested_by,
              termination.evidence,
+             termination.diagnostic AS termination_diagnostic,
+             step.output AS step_output,
              runtime.state AS runtime_state,
              (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1 owner WHERE owner.category='claim' AND owner.owner_key=claim.id::text) AS claim_owner_count,
              (SELECT MIN(owner.producer_implementation_id) FROM internal_production_owner_reservations_v1 owner WHERE owner.category='claim' AND owner.owner_key=claim.id::text) AS claim_owner_implementation,
@@ -547,6 +559,20 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
        WHERE run_row.id = ${runId}
     `;
     assert.equal(rows.length, 1);
+    const evidenceJson = JSON.stringify(rows[0]!.evidence);
+    const scopedWarnings = (fs.existsSync(logFile)
+      ? fs.readFileSync(logFile).subarray(logOffset).toString("utf8") : "")
+      .split("\n").filter((line) => line.includes("[WARN]")
+        && line.includes(`[${runId.slice(0, 8)}]`)).join("\n");
+    t.diagnostic(JSON.stringify({
+      schema: "setfarm.test.normal-v3-platform-preclaim-observation.v1",
+      runId, stepDbId, claimId: admission.claimId,
+      terminationEvidenceJson: evidenceJson.slice(0, 8_192),
+      terminationEvidenceTruncated: evidenceJson.length > 8_192,
+      terminationDiagnostic: rows[0]!.termination_diagnostic.slice(0, 4_096),
+      stepOutput: rows[0]!.step_output?.slice(0, 4_096) ?? null,
+      warnings: scopedWarnings.slice(0, 8_192), warningsTruncated: scopedWarnings.length > 8_192,
+    }));
     assert.deepEqual({
       run_status: rows[0]!.run_status,
       step_status: rows[0]!.step_status,
@@ -583,11 +609,16 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
       { found: false },
     );
   } finally {
-    await rm(repo, { recursive: true, force: true });
-    await runtimeDb?.pgClose().catch(() => {});
-    await database.cleanup();
-    if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
-    else process.env.SETFARM_PG_URL = previousPgUrl;
+    try {
+      await rm(repo, { recursive: true, force: true });
+      await runtimeDb?.pgClose().catch(() => {});
+      await database.cleanup();
+    } finally {
+      if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
+      else process.env.SETFARM_PG_URL = previousPgUrl;
+      if (previousDbPath === undefined) delete process.env.SETFARM_DB_PATH;
+      else process.env.SETFARM_DB_PATH = previousDbPath;
+    }
   }
 });
 
@@ -814,5 +845,153 @@ test("stories outer shared handler leaves starting and running runtime authority
     await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
     else process.env.SETFARM_PG_URL = previousPgUrl;
+  }
+});
+
+test("claimStep claims a sealed native PacketV3 implementation story", async (t) => {
+  const previousEnvironment = new Map([
+    "PATH",
+    "SETFARM_PG_URL", "SETFARM_DB_PATH", "SETFARM_PRODUCT_ARTIFACT_DIR", "SETFARM_ENV_DIR",
+    "SETFARM_ARTIFACT_MAX_PAYLOAD_BYTES", "SETFARM_ARTIFACT_ROOT_QUOTA_BYTES", "SETFARM_ARTIFACT_MIN_FREE_BYTES",
+  ].map((key) => [key, process.env[key]]));
+  const root = await mkdtemp(path.join(tmpdir(), "setfarm-native-v3-public-claim-"));
+  const repo = path.join(root, "repo");
+  let database: TestDatabase | undefined;
+  let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
+  try {
+    fs.mkdirSync(repo);
+    fs.mkdirSync(path.join(root, "env"));
+    process.env.SETFARM_ENV_DIR = path.join(root, "env");
+    process.env.SETFARM_DB_PATH = path.join(root, "fixture.db");
+    process.env.SETFARM_PRODUCT_ARTIFACT_DIR = path.join(root, "artifacts", "sha256");
+    process.env.SETFARM_ARTIFACT_MAX_PAYLOAD_BYTES = String(4 * 1024 * 1024);
+    process.env.SETFARM_ARTIFACT_ROOT_QUOTA_BYTES = String(8 * 1024 * 1024);
+    process.env.SETFARM_ARTIFACT_MIN_FREE_BYTES = "0";
+    database = await createTestDatabase();
+    runtimeDb = await import("../../src/db-pg.js");
+    runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
+    const { seedNativePacketV3ImplementationClaimFixture } = await import("./helpers/compiler-story-admission-fixture.js");
+    const fixture = await seedNativePacketV3ImplementationClaimFixture(database, {
+      runId: "run-native-v3-public-claim", repo, releaseSha: "7".repeat(40),
+    });
+    const runs = await database.sql<Array<{ id: string; status: string; protocol: string }>>`
+      SELECT id,status,protocol FROM runs ORDER BY id
+    `;
+    assert.deepEqual(runs.map((row) => ({ ...row })), [{
+      id: fixture.runId, status: "running", protocol: "v3",
+    }]);
+    const { hashCanonicalJson } = await import("../../src/product-compiler/canonical-json.js");
+    const { createRuntimeArtifactReader } = await import("../../src/product-compiler/runtime-artifact-reader.js");
+    const { resolveProductArtifactCapacity, resolveProductArtifactDir } = await import("../../src/runtime-config.js");
+    const nativePacket = await createRuntimeArtifactReader({
+      sql: database.sql,
+      artifactRoot: resolveProductArtifactDir(),
+      artifactLimits: resolveProductArtifactCapacity(),
+    }).readExactSealedPacket(fixture.runId);
+    assert.equal(nativePacket.packet.schema, "setfarm.product-build-packet.v3");
+    assert.equal(nativePacket.packetHash, fixture.packetHash);
+    assert.equal(nativePacket.refs.compilationReport, fixture.compilationReportHash);
+    type Fixture = typeof fixture;
+    async function readScopedClaimAuthoritySnapshot(db: TestDatabase, scope: Fixture): Promise<unknown> {
+      const rows = await db.sql.unsafe<Array<{ snapshot: unknown }>>(
+        `SELECT jsonb_build_object(
+           'run',(SELECT to_jsonb(row) FROM (SELECT * FROM runs WHERE id=$1) row),
+           'stories',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.story_index,row.id)
+             FROM (SELECT * FROM stories WHERE run_id=$1) row),'[]'::jsonb),
+           'steps',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.step_index,row.id)
+             FROM (SELECT * FROM steps WHERE run_id=$1) row),'[]'::jsonb),
+           'claimSequence',(SELECT to_jsonb(row) FROM (SELECT last_value,is_called FROM claim_log_id_seq) row),
+           'claims',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM (SELECT * FROM claim_log WHERE run_id=$1) row),'[]'::jsonb),
+           'attempts',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.attempt_id)
+             FROM (SELECT * FROM execution_attempts WHERE run_id=$1) row),'[]'::jsonb),
+           'preparationState',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.step_id,row.story_id)
+             FROM (SELECT * FROM v3_preparation_story_state WHERE run_id=$1) row),'[]'::jsonb),
+           'preparationBlocks',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.block_id)
+             FROM (SELECT * FROM v3_preparation_blocks WHERE run_id=$1) row),'[]'::jsonb),
+           'productPackets',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.packet_hash)
+             FROM (SELECT * FROM product_packets WHERE run_id=$1) row),'[]'::jsonb),
+           'runArtifactRefs',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.ref_key)
+             FROM (SELECT * FROM run_artifact_refs WHERE run_id=$1) row),'[]'::jsonb),
+           'indexedArtifacts',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.artifact_hash)
+             FROM (SELECT artifact.* FROM semantic_artifacts artifact
+               WHERE EXISTS (SELECT 1 FROM run_artifact_refs ref
+                 WHERE ref.run_id=$1 AND ref.artifact_hash=artifact.artifact_hash)) row),'[]'::jsonb),
+           'runtimeSessions',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.session_id)
+             FROM (SELECT * FROM runtime_sessions WHERE run_id=$1) row),'[]'::jsonb),
+           'completionRequests',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.request_id)
+             FROM (SELECT * FROM runtime_completion_requests WHERE run_id=$1) row),'[]'::jsonb),
+           'completionEffects',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.request_id,row.effect_key)
+             FROM (SELECT effect.* FROM runtime_completion_effects effect
+               JOIN runtime_completion_requests request ON request.request_id=effect.request_id
+              WHERE request.run_id=$1) row),'[]'::jsonb),
+           'owners',COALESCE((SELECT jsonb_agg(to_jsonb(row) ORDER BY row.reservation_ref)
+             FROM (SELECT * FROM internal_production_owner_reservations_v1) row),'[]'::jsonb),
+           'ownerHead',(SELECT to_jsonb(row) FROM
+             (SELECT * FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE) row)
+         ) AS snapshot`,
+        [scope.runId],
+      );
+      assert.equal(rows.length, 1);
+      return rows[0]!.snapshot;
+    }
+    const logFile = path.join(root, "logs", "workflow.log");
+    const logOffset = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0;
+    function readScopedFixtureWarnings(runId: string): string {
+      assert.equal(runId, fixture.runId);
+      // This file belongs only to this disposable fixture; ignore its setup prefix.
+      const newLines = fs.readFileSync(logFile).subarray(logOffset).toString("utf8").split("\n");
+      return newLines.filter((line) => line.includes("[WARN]")
+        && line.includes(`[${runId.slice(0, 8)}] [implement]`)).join("\n");
+    }
+    const { claimStep } = await import("../../src/installer/step-ops.js");
+    // The database contains only this run and its release/bootstrap authorities;
+    // snapshot every owner so an unexpected owner key cannot escape the oracle.
+    const before = await readScopedClaimAuthoritySnapshot(database, fixture);
+    const result = await claimStep(fixture.agentId, "native-v3-public-claim-test", fixture.runtimeIntent);
+    const after = await readScopedClaimAuthoritySnapshot(database, fixture);
+    if (!result.found) {
+      const warnings = readScopedFixtureWarnings(fixture.runId);
+      const authorityUnchanged = isDeepStrictEqual(after, before);
+      // Retain original observation in the TAP capture before finally removes
+      // fixture files. Hash snapshots separately; never print owner/fence bodies.
+      t.diagnostic(JSON.stringify({
+        schema: "setfarm.test.native-v3-public-claim-observation.v1",
+        runId: fixture.runId, stepDbId: fixture.stepDbId,
+        storyDbId: fixture.storyDbId, storyId: fixture.storyId,
+        packetSchema: nativePacket.packet.schema,
+        reportSchema: nativePacket.compilationReport.schema,
+        packetHash: nativePacket.packetHash,
+        compilationReportHash: nativePacket.refs.compilationReport,
+        storyPlanHash: nativePacket.refs.storyPlan,
+        source: nativePacket.buildTopology.repo,
+        sourceFiles: nativePacket.buildTopology.pathBindings.map((binding) => ({
+          pathRef: binding.id, path: binding.path, contentHash: binding.knownContentHash,
+        })),
+        found: result.found,
+        beforeHash: hashCanonicalJson(before), afterHash: hashCanonicalJson(after),
+        authorityUnchanged,
+        warnings: warnings.slice(0, 8_192), warningsTruncated: warnings.length > 8_192,
+      }));
+      assert.match(warnings, /\[v3-preclaim\] V3_NORMAL_PRECLAIM_PACKET_UNAVAILABLE:/);
+      assert.match(warnings, /setfarm\.product-build-packet\.v3/);
+      assert.equal(authorityUnchanged, true, "Packet refusal must not publish or mutate claim authority");
+    }
+    assert.equal(result.found, true,
+      "An indexed sealed native PacketV3 with an admitted pending story must publish a real implementation claim");
+  } finally {
+    try {
+      await runtimeDb?.pgClose();
+    } finally {
+      try {
+        await database?.cleanup();
+      } finally {
+        for (const [key, value] of previousEnvironment) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+        await rm(root, { recursive: true, force: true });
+      }
+    }
   }
 });
