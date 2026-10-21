@@ -1028,3 +1028,376 @@ test('actual local source pair check and close binds independently read fixed pu
     ownerRefusedV1(()=>owner.check(),'actual check after known close');
   }finally{if(owner)owner.close();}
 });
+
+// Task2 original-event components: manual events on unconnected PassThroughs.
+// These diagnostics are neither a live original child nor ownership authority.
+function eventFixtureV1(){
+  const {PassThrough}=createRequire(import.meta.url)('node:stream');
+  const child=new EventEmitter(),channels={},faults=[],forbiddenOps=[],inspections=[],resumed=[];
+  const checked=fn=>(...args)=>{try{return fn(...args);}catch(error){faults.push(error.message);throw error;}};
+  for(const name of ['stdout','stderr','fd4']){
+    const stream=new PassThrough({autoDestroy:false});channels[name]=stream;
+    for(const operation of ['write','end','destroy'])stream[operation]=checked(()=>{
+      forbiddenOps.push(name+'.'+operation);throw Error('EVENT_OBSERVER_FOREIGN_OPERATION');
+    });
+    stream.resume=checked(()=>{
+      for(const event of name==='fd4'?['data','error','finish','end','close']:['data','error','end','close']){
+        assert.ok(stream.listenerCount(event)>0,name+' '+event+' listener exists before resume');
+      }
+      resumed.push(name);return stream;
+    });
+  }
+  const bindings={stdout:channels.stdout,stderr:channels.stderr,stdio:[null,channels.stdout,channels.stderr,null,channels.fd4]};
+  const beforeInspection=checked(name=>{
+    for(const event of ['spawn','error','exit','close'])assert.ok(child.listenerCount(event)>0,'original '+event+' bound before channel inspection');
+    inspections.push(name);
+  });
+  Object.defineProperty(child,'stdout',{get(){beforeInspection('stdout');return bindings.stdout;}});
+  Object.defineProperty(child,'stderr',{get(){beforeInspection('stderr');return bindings.stderr;}});
+  Object.defineProperty(child,'stdio',{get(){beforeInspection('fd4');return bindings.stdio;}});
+  child.pid=123;
+  for(const operation of ['kill','send','disconnect'])child[operation]=checked(()=>{
+    forbiddenOps.push('child.'+operation);throw Error('EVENT_OBSERVER_FOREIGN_OPERATION');
+  });
+  return {child,channels,bindings,resumed,inspections,assertGuarded(){
+    assert.deepEqual(faults,[],'no caught fixture assertion or forbidden operation explains the witness state');
+    assert.deepEqual(forbiddenOps,[],'observer only observes/drains the given original');
+    if(inspections.length)assert.deepEqual([...new Set(inspections)],['stdout','stderr','fd4'],'fixed channel inspection order');
+  }};
+}
+function completeEventFixtureV1(fixture,code=0){
+  for(const name of ['stdout','stderr']){fixture.channels[name].emit('end');fixture.channels[name].emit('close');}
+  fixture.channels.fd4.emit('finish');fixture.channels.fd4.emit('end');fixture.channels.fd4.emit('close');
+  fixture.child.emit('exit',code,null);fixture.child.emit('close',code,null);
+}
+async function withEventComponentV1(body,prepare){
+  const fixture=eventFixtureV1();if(prepare)prepare(fixture);let witness;
+  try{
+    witness=helper.observeManualOrphanOriginalChildV1(fixture.child);
+    return await body(fixture,witness);
+  }finally{
+    // Only cleanup of simulated facts: no .end/.destroy/signal on real handles.
+    if(witness&&witness.snapshot().state==='pending')completeEventFixtureV1(fixture);
+    if(witness&&witness.snapshot().state==='pending'&&fixture.child.listenerCount('error')){
+      fixture.child.emit('error',Error('component cleanup uncertainty'));
+    }
+    fixture.assertGuarded();
+  }
+}
+function emptyEventSnapshotV1(){
+  const empty=createHash('sha256').update(Buffer.alloc(0)).digest('hex');
+  return {state:'pending',exit:null,close:null,
+    stdout:{bytes:0,sha256:empty,end:false,close:false},stderr:{bytes:0,sha256:empty,end:false,close:false},
+    fd4:{finish:false,end:false,close:false},reason:null};
+}
+function assertEventFrozenV1(snapshot){
+  assert.deepEqual(Object.keys(snapshot),['state','exit','close','stdout','stderr','fd4','reason']);
+  for(const value of [snapshot,snapshot.exit,snapshot.close,snapshot.stdout,snapshot.stderr,snapshot.fd4]){
+    if(value!==null)assert.equal(Object.isFrozen(value),true);
+  }
+}
+async function assertEventUnknownV1(witness,reason){
+  const current=witness.snapshot();assert.equal(current.state,'unknown');assert.equal(current.reason,reason);
+  assertEventFrozenV1(current);
+  const history=await witness.settled;
+  assert.equal(history.state,'unknown');assert.equal(history.reason,reason);assertEventFrozenV1(history);
+  return history;
+}
+
+test('event component requires every exit stream and fd4 fact and returns exact frozen diagnostics',async()=>{
+  await withEventComponentV1(async(f,w)=>{
+    assert.deepEqual(Object.keys(w).sort(),['output','settled','snapshot']);
+    const initial=w.snapshot();assert.deepEqual(initial,emptyEventSnapshotV1());assertEventFrozenV1(initial);
+    const again=w.snapshot();assert.notEqual(again,initial);assert.notEqual(again.stdout,initial.stdout);
+    assert.ok(f.resumed.includes('stdout'));assert.ok(f.resumed.includes('stderr'));assert.ok(f.resumed.includes('fd4'));
+    // No spawn event is needed for success: its flag is diagnostic only.
+    f.child.emit('exit',0,null);assert.equal(w.snapshot().state,'pending');
+    for(const name of ['stdout','stderr']){f.channels[name].emit('end');f.channels[name].emit('close');}
+    assert.equal(w.snapshot().state,'pending');
+    f.child.emit('close',0,null);assert.equal(w.snapshot().state,'pending','matching child events cannot substitute for fd4');
+    f.channels.fd4.emit('finish');assert.equal(w.snapshot().state,'pending');
+    f.channels.fd4.emit('end');assert.equal(w.snapshot().state,'pending');
+    f.channels.fd4.emit('close');
+    const history=await w.settled,current=w.snapshot();
+    assert.deepEqual(current,{...emptyEventSnapshotV1(),state:'observed',exit:{code:0,signal:null},close:{code:0,signal:null},
+      stdout:{...emptyEventSnapshotV1().stdout,end:true,close:true},stderr:{...emptyEventSnapshotV1().stderr,end:true,close:true},
+      fd4:{finish:true,end:true,close:true}});
+    assert.deepEqual(history,current);assertEventFrozenV1(history);assertEventFrozenV1(current);
+    assert.deepEqual(initial,emptyEventSnapshotV1(),'earlier snapshots do not mutate with later events');
+  });
+});
+test('event component keeps missing exit pending even with all three channel closures',async()=>{
+  await withEventComponentV1(async(f,w)=>{
+    for(const name of ['stdout','stderr']){f.channels[name].emit('end');f.channels[name].emit('close');}
+    f.channels.fd4.emit('finish');f.channels.fd4.emit('end');f.channels.fd4.emit('close');
+    assert.equal(w.snapshot().state,'pending');assert.equal(w.snapshot().exit,null);assert.equal(w.snapshot().close,null);
+    f.child.emit('exit',0,null);assert.equal(w.snapshot().state,'pending');
+    f.child.emit('close',0,null);assert.equal((await w.settled).state,'observed');
+  });
+});
+for(const name of ['stdout','stderr']){
+  test('event component matching child events never replace missing '+name+' close',async()=>{
+    await withEventComponentV1(async(f,w)=>{
+      const other=name==='stdout'?'stderr':'stdout';
+      f.channels[name].emit('end');f.channels[other].emit('end');f.channels[other].emit('close');
+      f.channels.fd4.emit('finish');f.channels.fd4.emit('end');f.channels.fd4.emit('close');
+      f.child.emit('exit',0,null);f.child.emit('close',0,null);
+      assert.equal(w.snapshot().state,'pending');assert.equal(w.snapshot()[name].close,false);
+      f.channels[name].emit('close');assert.equal((await w.settled).state,'observed');
+    });
+  });
+  test('event component matching child events and '+name+' close never invent EOF',async()=>{
+    await withEventComponentV1(async(f,w)=>{
+      const other=name==='stdout'?'stderr':'stdout';
+      f.channels[name].emit('close');f.channels[other].emit('end');f.channels[other].emit('close');
+      f.channels.fd4.emit('finish');f.channels.fd4.emit('end');f.channels.fd4.emit('close');
+      f.child.emit('exit',0,null);f.child.emit('close',0,null);
+      assert.equal(w.snapshot()[name].end,false);assert.notEqual(w.snapshot().state,'observed','close cannot manufacture EOF');
+      f.channels[name].emit('error',Error('component missing EOF cleanup'));await assertEventUnknownV1(w,name);
+    });
+  });
+}
+test('event component fully observed exit1 is a completed negative process diagnostic',async()=>{
+  await withEventComponentV1(async(f,w)=>{
+    f.child.emit('spawn');f.channels.stderr.emit('data',Buffer.from('MANUAL_ORPHAN_OWNER_REFUSED\n'));
+    completeEventFixtureV1(f,1);const history=await w.settled;
+    assert.equal(history.state,'observed');assert.deepEqual(history.exit,{code:1,signal:null});assert.equal(history.reason,null);
+    assert.equal(w.output().stderr.toString('utf8'),'MANUAL_ORPHAN_OWNER_REFUSED\n');
+  });
+});
+test('event component hashes independent actual bytes and returns isolated retained output copies',async()=>{
+  await withEventComponentV1(async(f,w)=>{
+    const stdout=Buffer.from('stdout café\n'),stderr=Buffer.from('stderr literal\n');
+    f.channels.stdout.emit('data',stdout);f.channels.stderr.emit('data',stderr);
+    stdout.fill(0);stderr.fill(0);
+    const first=w.output();assert.deepEqual(Object.keys(first).sort(),['stderr','stdout']);
+    assert.deepEqual(first.stdout,Buffer.from('stdout café\n'));assert.deepEqual(first.stderr,Buffer.from('stderr literal\n'));
+    first.stdout.fill(0);first.stderr.fill(0);
+    assert.deepEqual(w.output().stdout,Buffer.from('stdout café\n'));assert.deepEqual(w.output().stderr,Buffer.from('stderr literal\n'));
+    const current=w.snapshot();
+    for(const [name,text] of [['stdout','stdout café\n'],['stderr','stderr literal\n']]){
+      assert.equal(current[name].bytes,Buffer.byteLength(text,'utf8'));
+      assert.equal(current[name].sha256,createHash('sha256').update(text,'utf8').digest('hex'));
+    }
+    completeEventFixtureV1(f);assert.equal((await w.settled).state,'observed');
+  });
+});
+test('event component receipt-like JSON and exit0 alone cannot settle observed',async()=>{
+  await withEventComponentV1(async(f,w)=>{
+    f.channels.stdout.emit('data',Buffer.from('{"fd4Closed":true,"sourcePinsClosed":true}\n'));
+    f.child.emit('exit',0,null);const current=w.snapshot();
+    assert.equal(current.state,'pending');assert.equal(current.stdout.end,false);assert.equal(current.fd4.close,false);
+    f.channels.stdout.emit('end');f.channels.stdout.emit('close');f.channels.stderr.emit('end');f.channels.stderr.emit('close');
+    f.channels.fd4.emit('finish');f.channels.fd4.emit('end');f.channels.fd4.emit('close');f.child.emit('close',0,null);
+    assert.equal((await w.settled).state,'observed');
+  });
+});
+test('event component late fault burns current UNKNOWN while settled observed history remains frozen',async()=>{
+  await withEventComponentV1(async(f,w)=>{
+    completeEventFixtureV1(f);const history=await w.settled;assert.equal(history.state,'observed');
+    f.child.emit('close',0,null);let current=w.snapshot();assert.equal(current.state,'unknown');assert.equal(current.reason,'exit-close');
+    f.channels.stderr.emit('error',Error('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK'));
+    current=w.snapshot();assert.equal(current.reason,'exit-close');assert.equal(history.state,'observed');
+    assert.equal(history.reason,null);assert.equal(await w.settled,history);
+    assert.equal(JSON.stringify(current).includes('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK'),false);
+    assertEventFrozenV1(current);assertEventFrozenV1(history);
+  });
+});
+const EVENT_CHILD_FAILURES_V1=[
+  ['duplicate exit',f=>{f.child.emit('exit',0,null);f.child.emit('exit',0,null);},'exit-close'],
+  ['duplicate close',f=>{f.child.emit('exit',0,null);f.child.emit('close',0,null);f.child.emit('close',0,null);},'exit-close'],
+  ['close before exit',f=>{f.child.emit('close',0,null);},'exit-close'],
+  ['different close code',f=>{f.child.emit('exit',0,null);f.child.emit('close',1,null);},'exit-close'],
+  ['different close signal',f=>{f.child.emit('exit',0,null);f.child.emit('close',0,'SIGTERM');},'exit-close'],
+  ['signalled exit',f=>{f.child.emit('exit',null,'SIGTERM');},'exit-close'],
+  ['noninteger exit code',f=>{f.child.emit('exit',1.5,null);},'exit-close'],
+  ['error before spawn event',f=>{f.child.emit('error',Error('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK'));},'spawn-error'],
+  ['error after spawn event',f=>{f.child.emit('spawn');f.child.emit('error',Error('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK'));},'child-error'],
+];
+for(const [label,emit,reason] of EVENT_CHILD_FAILURES_V1){
+  test('event component refuses '+label+' and never upgrades later facts',async()=>{
+    await withEventComponentV1(async(f,w)=>{
+      emit(f);const history=await assertEventUnknownV1(w,reason);
+      completeEventFixtureV1(f);const current=w.snapshot();assert.equal(current.state,'unknown');assert.equal(current.reason,reason);
+      assert.equal(await w.settled,history);assert.equal(JSON.stringify(current).includes('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK'),false);
+    });
+  });
+}
+for(const name of ['stdout','stderr','fd4']){
+  test('event component missing '+name+' records its channel reason and keeps present listeners',async()=>{
+    await withEventComponentV1(async(f,w)=>{
+      await assertEventUnknownV1(w,name);
+      for(const present of ['stdout','stderr','fd4'].filter(channel=>channel!==name)){
+        assert.ok(f.channels[present].listenerCount('error')>0);
+        assert.ok(f.channels[present].listenerCount('data')>0);
+      }
+      if(name!=='stdout'){
+        f.channels.stdout.emit('data',Buffer.from('still drained'));
+        assert.equal(w.snapshot().stdout.bytes,13);assert.deepEqual(w.output().stdout,Buffer.from('still drained'));
+      }
+    },f=>{if(name==='fd4')f.bindings.stdio[4]=null;else{f.bindings[name]=null;f.bindings.stdio[name==='stdout'?1:2]=null;}});
+  });
+}
+test('event component first missing stdout wins over missing stderr and later fd4 error',async()=>{
+  await withEventComponentV1(async(f,w)=>{
+    await assertEventUnknownV1(w,'stdout');f.channels.fd4.emit('error',Error('private late detail'));
+    assert.equal(w.snapshot().reason,'stdout');assert.ok(f.channels.fd4.listenerCount('end')>0);
+  },f=>{f.bindings.stdout=null;f.bindings.stderr=null;f.bindings.stdio[1]=f.bindings.stdio[2]=null;});
+});
+for(const [label,original] of [['null',null],['missing listener methods',{}]]){
+  test('event component invalid original '+label+' resolves binding UNKNOWN',async()=>{
+    const w=helper.observeManualOrphanOriginalChildV1(original);await assertEventUnknownV1(w,'binding');
+    assert.equal(w.snapshot().exit,null);assert.equal(w.snapshot().close,null);
+  });
+}
+test('event component invalid stdio container resolves binding UNKNOWN',async()=>{
+  await withEventComponentV1(async(f,w)=>{await assertEventUnknownV1(w,'binding');},f=>{f.bindings.stdio={};});
+});
+test('event component listener attachment exception resolves sanitized binding UNKNOWN',async()=>{
+  const child=new EventEmitter();child.on=()=>{throw Error('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK');};
+  const w=helper.observeManualOrphanOriginalChildV1(child);await assertEventUnknownV1(w,'binding');
+  assert.equal(JSON.stringify(w.snapshot()).includes('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK'),false);
+});
+for(const name of ['stdout','stderr','fd4']){
+  test('event component '+name+' error resolves its fixed reason without raw detail',async()=>{
+    await withEventComponentV1(async(f,w)=>{
+      f.channels[name].emit('error',Error('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK'));await assertEventUnknownV1(w,name);
+      assert.equal(JSON.stringify(w.snapshot()).includes('RAW_EVENT_PAYLOAD_MUST_NOT_LEAK'),false);
+    });
+  });
+}
+for(const name of ['stdout','stderr']){
+  for(const [label,emit] of [
+    ['data after EOF',stream=>{stream.emit('end');stream.emit('data',Buffer.from('late'));}],
+    ['data after close',stream=>{stream.emit('close');stream.emit('data',Buffer.from('late'));}],
+    ['duplicate end',stream=>{stream.emit('end');stream.emit('end');}],
+    ['duplicate close',stream=>{stream.emit('end');stream.emit('close');stream.emit('close');}],
+  ]){
+    test('event component '+name+' refuses '+label+' and retains the actual diagnostic bytes',async()=>{
+      await withEventComponentV1(async(f,w)=>{
+        emit(f.channels[name]);await assertEventUnknownV1(w,name);
+        if(label.startsWith('data')){
+          assert.equal(w.snapshot()[name].bytes,4);assert.equal(w.snapshot()[name].sha256,createHash('sha256').update('late').digest('hex'));
+        }
+      });
+    });
+  }
+}
+for(const [label,emit] of [
+  ['inbound data',stream=>{stream.emit('data',Buffer.from('unexpected inbound bytes'));}],
+  ['duplicate finish',stream=>{stream.emit('finish');stream.emit('finish');}],
+  ['duplicate end',stream=>{stream.emit('end');stream.emit('end');}],
+  ['duplicate close',stream=>{stream.emit('close');stream.emit('close');}],
+]){
+  test('event component fd4 refuses '+label,async()=>{
+    await withEventComponentV1(async(f,w)=>{emit(f.channels.fd4);await assertEventUnknownV1(w,'fd4');});
+  });
+}
+test('event component accepts65536 bytes on each output independently without a combined cap',async()=>{
+  await withEventComponentV1(async(f,w)=>{
+    const stdout=Buffer.alloc(65536,0x61),stderr=Buffer.alloc(65536,0x62);
+    f.channels.stdout.emit('data',stdout);f.channels.stderr.emit('data',stderr);completeEventFixtureV1(f);
+    const history=await w.settled;assert.equal(history.state,'observed');
+    for(const [name,bytes] of [['stdout',stdout],['stderr',stderr]]){
+      assert.equal(history[name].bytes,65536);assert.equal(history[name].sha256,createHash('sha256').update(bytes).digest('hex'));
+      assert.deepEqual(w.output()[name],bytes);
+    }
+  });
+});
+for(const name of ['stdout','stderr']){
+  test('event component '+name+'65537 overflow drains and hashes all bytes with bounded prefix and sticky limit',async()=>{
+    await withEventComponentV1(async(f,w)=>{
+      const bytes=Buffer.alloc(65537,0x63);f.channels[name].emit('data',bytes);
+      const history=await assertEventUnknownV1(w,'limit');assert.equal(history[name].bytes,65537);
+      f.channels[name].emit('end');f.channels[name].emit('close');f.channels[name].emit('data',Buffer.from('tail'));
+      const current=w.snapshot(),all=Buffer.concat([bytes,Buffer.from('tail')]);
+      assert.equal(current.state,'unknown');assert.equal(current.reason,'limit');assert.equal(current[name].bytes,65541);
+      assert.equal(current[name].sha256,createHash('sha256').update(all).digest('hex'));
+      assert.equal(history[name].bytes,65537);assert.equal(history[name].sha256,createHash('sha256').update(bytes).digest('hex'));
+      const output=w.output()[name];assert.equal(output.length,65536);assert.deepEqual(output,Buffer.alloc(65536,0x63));
+      output.fill(0);assert.deepEqual(w.output()[name],Buffer.alloc(65536,0x63));
+    });
+  });
+}
+
+function eventClockVmV1(hashBinding=createHash){
+  let source=readFileSync(HELPER,'utf8');
+  assert.equal([...source.matchAll(/\bimport\.meta\.url\b/g)].length,1,'retain the single reviewed process locator');
+  source=replaceOnce(source,'import.meta.url',JSON.stringify(HELPER.href),'event clock fixed helper URL');
+  const c=capture(),pureUtil=createRequire(import.meta.url)('node:util'),scheduled=[],cleared=[];
+  const clock={setTimeout(callback,delay){assert.equal(typeof callback,'function');assert.equal(delay,10000);
+    const handle={unref(){return this;},ref(){return this;}};scheduled.push({callback,delay,handle});return handle;},
+    clearTimeout(handle){assert.ok(scheduled.some(timer=>timer.handle===handle),'clear only the owned timer');cleared.push(handle);}};
+  const modules=new Map([
+    ['node:fs',closedModule(c,'event clock fs',{constants})],['node:child_process',closedModule(c,'event clock child_process')],
+    ['node:crypto',closedModule(c,'event clock crypto',{createHash:hashBinding})],['node:path',path],['node:url',url],['node:buffer',{Buffer}],
+    ['node:util',closedModule(c,'event clock util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
+    ['node:timers',closedModule(c,'event clock timers',clock)],
+  ]);
+  const compiled=ts.transpileModule(source,{fileName:OBS_HELPER_PATH_V1+'.ts',
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},reportDiagnostics:true});
+  assert.deepEqual((compiled.diagnostics??[]).filter(item=>item.category===ts.DiagnosticCategory.Error),[]);
+  const context={exports:{},Buffer,URL,Error,TextDecoder:pureUtil.TextDecoder,
+    process:closedModule(c,'event clock process'),console:closedModule(c,'event clock console'),...clock,
+    require(specifier){assert.ok(modules.has(specifier),'unlisted event helper import '+specifier);return modules.get(specifier);}};
+  runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
+  assert.equal(scheduled.length,0,'module import never starts an observation timer');assert.equal(c.calls.forbidden,0);
+  return {actual:context.exports,scheduled,cleared,assertContained(){assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));}};
+}
+test('source-contained event clock fires the actual10000ms deadline and preserves UNKNOWN after late child close',async()=>{
+  const vm=eventClockVmV1(),f=eventFixtureV1(),w=vm.actual.observeManualOrphanOriginalChildV1(f.child);
+  assert.equal(vm.scheduled.length,1);assert.equal(vm.scheduled[0].delay,10000);
+  f.child.emit('exit',0,null);
+  for(const name of ['stdout','stderr']){f.channels[name].emit('end');f.channels[name].emit('close');}
+  f.channels.fd4.emit('finish');f.channels.fd4.emit('end');f.channels.fd4.emit('close');
+  assert.equal(w.snapshot().state,'pending');assert.equal(w.snapshot().close,null);assert.deepEqual(vm.cleared,[]);
+  vm.scheduled[0].callback();const history=await w.settled;
+  assert.equal(history.state,'unknown');assert.equal(history.reason,'deadline');assert.equal(history.close,null);assertEventFrozenV1(history);
+  assert.deepEqual(vm.cleared,[vm.scheduled[0].handle]);
+  f.child.emit('close',0,null);const current=w.snapshot();
+  assert.equal(current.state,'unknown');assert.equal(current.reason,'deadline');assert.deepEqual(observedDataV1(current.close),{code:0,signal:null});
+  assert.equal(history.close,null);assert.equal(await w.settled,history);assert.deepEqual(vm.cleared,[vm.scheduled[0].handle]);
+  f.assertGuarded();vm.assertContained();
+});
+
+// Event review I1: assert ordering at the actual crypto import boundary, never
+// by matching Source strings or replacing observer predicates/function bodies.
+test('source-contained event consumer binds every original and channel handler before hash construction',async()=>{
+  const f=eventFixtureV1(),hashFaults=[],hashChecks=[];
+  const hashBinding=(...args)=>{
+    const missing=[];
+    for(const event of ['spawn','error','exit','close']){
+      if(f.child.listenerCount(event)===0)missing.push('original.'+event);
+    }
+    for(const name of ['stdout','stderr','fd4']){
+      for(const event of name==='fd4'?['error','data','finish','end','close']:['error','data','end','close']){
+        if(f.channels[name].listenerCount(event)===0)missing.push(name+'.'+event);
+      }
+    }
+    hashChecks.push([...missing]);
+    try{assert.deepEqual(missing,[],'all original and present channel handlers precede fallible createHash');}
+    catch(error){hashFaults.push({missing:[...missing],message:error.message});throw error;}
+    return createHash(...args);
+  };
+  const vm=eventClockVmV1(hashBinding),w=vm.actual.observeManualOrphanOriginalChildV1(f.child);
+  try{
+    // This ledger is independent of the consumer catch: UNKNOWN after catching
+    // a crypto assertion cannot disguise the ordering defect as a valid refusal.
+    assert.deepEqual(hashFaults,[],'no caught hash-construction ordering assertion may count as valid UNKNOWN');
+    f.channels.stdout.emit('data',Buffer.from('stdout handler-ready\n'));
+    f.channels.stderr.emit('data',Buffer.from('stderr handler-ready\n'));
+    completeEventFixtureV1(f);
+    const history=await w.settled;assert.equal(history.state,'observed');assert.equal(history.reason,null);
+    for(const [name,text] of [['stdout','stdout handler-ready\n'],['stderr','stderr handler-ready\n']]){
+      assert.equal(history[name].bytes,Buffer.byteLength(text));
+      assert.equal(history[name].sha256,createHash('sha256').update(text).digest('hex'));
+      assert.deepEqual(w.output()[name],Buffer.from(text));
+    }
+    assert.ok(hashChecks.length>0,'the real consumer reaches the guarded crypto boundary');
+    assert.deepEqual(hashFaults,[]);assert.equal(vm.scheduled.length,1);
+    assert.deepEqual(vm.cleared,[vm.scheduled[0].handle]);
+  }finally{
+    if(w.snapshot().state==='pending')completeEventFixtureV1(f);
+    f.assertGuarded();vm.assertContained();
+  }
+});

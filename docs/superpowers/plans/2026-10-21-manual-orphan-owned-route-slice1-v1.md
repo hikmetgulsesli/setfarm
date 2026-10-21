@@ -142,7 +142,7 @@ Also assert duplicate top-level/inner keys, alternate key order/escapes, missing
 
 - [x] Step3 — Implement stable fixed Source pins and ps-before/comm/ps-after observations. Use absolute `/bin/ps`, fixed env/args/caps and exact date validation from spec. Pin only code-derived fixed helper and issuer test paths. No root input, package inventory, Git operation or target import. File read/recheck/close has one owner; cleanup uncertainty is sticky. Test malformed process OUTPUT through a test-contained consumer harness of the actual parser; label these parse simulations. Actual process observation is exercised by the live probe in Step6.
 
-- [ ] Step4 — Write the actual lifecycle event-consumer tests before filling its settlement predicates. A fake original object is EventEmitter with PassThrough stdout/stderr/fd4. Drive exact sequences; assertions:
+- [x] Step4 — Write the actual lifecycle event-consumer tests before filling its settlement predicates. A fake original object is EventEmitter with PassThrough stdout/stderr/fd4. Drive exact sequences; assertions:
 
 ```js
 const witness=observeManualOrphanOriginalChildV1(fake);
@@ -248,3 +248,10 @@ After implementation original24729 exited0 with262/262PASS,0failed/skipped/cance
 Root resolves the observation error-map ambiguity: invalid PID, ps/parse/binding and non-close file/identity/content/check-after-known-close refusals use fresh MANUAL_ORPHAN_OWNER_REFUSED. Any actually owned FD close uncertainty overrides results as sticky fresh MANUAL_ORPHAN_CHILD_UNKNOWN; it is never retried. Existing codec FRAME_REFUSED remains unchanged. This is a closed-code clarification, with no new permission or selector.
 
 The helper has eight exports and remains inert on import. No original-child event witness, FD4 reader, minimal child/direct entry, normal probe issuer, PG setup or route activation exists yet. Local file fingerprints are not finalized Source/build admission. Full Task2/Slice1, real child lifecycle, PG/genuine M/T/fixed-I5/full-adapter drift/full8 and rollout remain pending.
+
+
+## Verified original-event subphase checkpoint
+
+Task2 Step4 is complete; Steps5–8 and Task3 remain pending. Root original42248 completed308 cases with262 previous PASS and46 absent-observer failures (incremental new-contract scaffolding only). The initial implemented candidate original49168 passed308/308, but independent review921f63c5 found one Important setup-ordering defect: crypto construction preceded stdio listener binding. This was not a demonstrated runtime race. Root original54390 then passed308 and failed the new independent ordering assertion; only the existing hash-construction statement was moved after all present channel handlers. Root original55927 passed309/309 with0 failures/cancellations/skips/todos, empty stderr, natural dual EOF/closed pipes and2415 unchanged capture pins. Scoped re-reviewc0192b90 marked I1 addressed and approved spec/quality with C0/I0/M0. Qualification: owned-route-slice1-task2-events-fix1-green-qualification-v1.json.
+
+The helper now exports the event diagnostic observer in addition to its prior eight exports. The45 direct fake-original event components plus two whole-Source clock/ordering cases test the actual observer; they do not prove real child/FD4 lifecycle. The prior262 controls, including two local process/source-read positives, remain narrower evidence. Reader, fixed child, zero-argument normal issuer, actual receipt/binding negatives and parent pin-close composition are still unimplemented. No PG/genuine bootstrap/full8/stock-build completion follows.

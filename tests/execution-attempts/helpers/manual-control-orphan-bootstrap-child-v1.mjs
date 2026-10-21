@@ -282,3 +282,141 @@ export function observeManualOrphanProcessV1(pid){
     owner.close();throw probeOwnerRefusalV1();
   }
 }
+
+const PROBE_EMPTY_OUTPUT_SHA256_V1='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+export function observeManualOrphanOriginalChildV1(child){
+  let state='pending',reason=null,exit=null,close=null,exitCount=0,closeCount=0,spawned=false;
+  let timer=null,timerCleared=false,historyResolved=false,resolveHistory;
+  const settled=new Promise(resolve=>{resolveHistory=resolve;});
+  const makeOutput=()=>({bytes:0,hash:null,end:false,close:false,chunks:[],retained:0});
+  const stdout=makeOutput(),stderr=makeOutput(),fd4={finish:false,end:false,close:false};
+  const outputFact=channel=>Object.freeze({bytes:channel.bytes,
+    sha256:channel.hash?channel.hash.copy().digest('hex'):PROBE_EMPTY_OUTPUT_SHA256_V1,
+    end:channel.end,close:channel.close});
+  const snapshot=()=>Object.freeze({state,
+    exit:exit===null?null:Object.freeze({...exit}),close:close===null?null:Object.freeze({...close}),
+    stdout:outputFact(stdout),stderr:outputFact(stderr),fd4:Object.freeze({...fd4}),reason});
+  const clearOwnedTimer=()=>{
+    if(timer!==null&&!timerCleared){
+      timerCleared=true;
+      try{clearTimeout(timer);}catch{state='unknown';if(reason===null)reason='binding';}
+    }
+  };
+  const settle=()=>{
+    if(state==='pending'&&exitCount===1&&closeCount===1&&exit!==null&&close!==null
+      &&stdout.end&&stdout.close&&stderr.end&&stderr.close&&fd4.finish&&fd4.end&&fd4.close){
+      state='observed';
+    }
+    if(state!=='pending'&&!historyResolved){
+      historyResolved=true;clearOwnedTimer();resolveHistory(snapshot());
+    }
+  };
+  const fail=code=>{
+    if(state!=='unknown'){state='unknown';reason=code;}
+    settle();
+  };
+  const eventValue=(code,signal)=>({
+    code:typeof code==='number'&&Number.isFinite(code)?code:null,
+    signal:typeof signal==='string'?signal:null,
+  });
+  const normalExit=(code,signal)=>Number.isSafeInteger(code)&&code>=0&&signal===null;
+  const witness=Object.freeze({settled,snapshot,output(){
+    return {stdout:Buffer.concat(stdout.chunks,stdout.retained),stderr:Buffer.concat(stderr.chunks,stderr.retained)};
+  }});
+
+  // Bind the given original before reading streams or creating hashes/timers.
+  try{
+    if(child===null||typeof child!=='object'||typeof child.on!=='function'){
+      fail('binding');return witness;
+    }
+    child.on('spawn',()=>{spawned=true;});
+    child.on('error',()=>{fail(spawned?'child-error':'spawn-error');});
+    child.on('exit',(code,signal)=>{
+      exitCount++;
+      if(exit===null)exit=eventValue(code,signal);
+      if(exitCount!==1||closeCount!==0||!normalExit(code,signal))fail('exit-close');
+      settle();
+    });
+    child.on('close',(code,signal)=>{
+      closeCount++;
+      if(close===null)close=eventValue(code,signal);
+      if(closeCount!==1||exitCount!==1||!normalExit(code,signal)
+        ||exit===null||exit.code!==code||exit.signal!==signal)fail('exit-close');
+      settle();
+    });
+  }catch{fail('binding');return witness;}
+
+  const streams={stdout:null,stderr:null,fd4:null};
+  // Each inspection is independent: a missing channel must not prevent binding
+  // and bounded draining of the other channels after UNKNOWN has been recorded.
+  try{streams.stdout=child.stdout;}catch{fail('binding');}
+  if(streams.stdout==null)fail('stdout');
+  try{streams.stderr=child.stderr;}catch{fail('binding');}
+  if(streams.stderr==null)fail('stderr');
+  try{
+    const stdio=child.stdio;
+    if(!Array.isArray(stdio))fail('binding');
+    else streams.fd4=stdio[4];
+  }catch{fail('binding');}
+  if(streams.fd4==null)fail('fd4');
+
+  const present=[];
+  const attachOutput=(name,channel,stream)=>{
+    stream.on('error',()=>{fail(name);});
+    stream.on('end',()=>{
+      const invalid=channel.end||channel.close;channel.end=true;
+      if(invalid)fail(name);settle();
+    });
+    stream.on('close',()=>{
+      const invalid=channel.close||!channel.end;channel.close=true;
+      if(invalid)fail(name);settle();
+    });
+  };
+  for(const name of ['stdout','stderr','fd4']){
+    const stream=streams[name];if(stream==null)continue;
+    try{
+      if(typeof stream.on!=='function'||typeof stream.pause!=='function'||typeof stream.resume!=='function'){
+        fail('binding');continue;
+      }
+      if(name!=='fd4')attachOutput(name,name==='stdout'?stdout:stderr,stream);
+      else{
+        stream.on('error',()=>{fail('fd4');});
+        stream.on('finish',()=>{const invalid=fd4.finish||fd4.close;fd4.finish=true;if(invalid)fail('fd4');settle();});
+        stream.on('end',()=>{const invalid=fd4.end||fd4.close;fd4.end=true;if(invalid)fail('fd4');settle();});
+        stream.on('close',()=>{
+          const invalid=fd4.close||!fd4.finish||!fd4.end;fd4.close=true;if(invalid)fail('fd4');settle();
+        });
+      }
+      present.push({name,stream});
+    }catch{fail('binding');}
+  }
+  // Pause before adding data listeners (Readable.on('data') otherwise resumes).
+  // All channel handlers are installed before any deliberate readable resume.
+  for(const {name,stream} of present){try{stream.pause();}catch{fail(name);}}
+  for(const {name,stream} of present){
+    try{
+      if(name==='fd4')stream.on('data',()=>{fail('fd4');});
+      else{
+        const channel=name==='stdout'?stdout:stderr;
+        stream.on('data',chunk=>{
+          if(!Buffer.isBuffer(chunk)){fail(name);return;}
+          let invalid=channel.end||channel.close;
+          channel.bytes+=chunk.length;
+          try{if(channel.hash)channel.hash.update(chunk);}catch{channel.hash=null;invalid=true;}
+          const count=Math.min(65536-channel.retained,chunk.length);
+          if(count>0){channel.chunks.push(Buffer.from(chunk.subarray(0,count)));channel.retained+=count;}
+          if(invalid)fail(name);
+          if(channel.bytes>65536)fail('limit');
+        });
+      }
+    }catch{fail('binding');}
+  }
+  try{stdout.hash=createHash('sha256');stderr.hash=createHash('sha256');}catch{fail('binding');}
+  if(state==='pending'){
+    try{timer=setTimeout(()=>{fail('deadline');},10000);}catch{fail('binding');}
+    if(state!=='pending')clearOwnedTimer();
+  }
+  for(const {name,stream} of present){try{stream.resume();}catch{fail(name);}}
+  settle();return witness;
+}
