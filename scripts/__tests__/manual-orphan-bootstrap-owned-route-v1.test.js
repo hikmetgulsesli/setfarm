@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {EventEmitter} from 'node:events';
-import {constants,existsSync,readFileSync} from 'node:fs';
+import {closeSync as closeFixtureFdV1,constants,existsSync,openSync as openFixtureFdV1,
+  readFileSync,readSync as readFixtureFdV1} from 'node:fs';
 import {createRequire} from 'node:module';
 import path from 'node:path';
 import * as url from 'node:url';
@@ -791,6 +792,7 @@ function observationVmV1(state){
     ['node:crypto',closedModule(c,'observation crypto',{createHash})],
     ['node:path',path],['node:url',url],['node:buffer',{Buffer}],
     ['node:net',closedModule(c,'observation net')],
+    ['node:os',closedModule(c,'observation os')],
     ['node:fs',closedModule(c,'observation fs',state.fs)],
     ['node:child_process',closedModule(c,'observation child_process',state.childProcess)],
   ]);
@@ -1336,6 +1338,7 @@ function eventClockVmV1(hashBinding=createHash){
   const modules=new Map([
     ['node:fs',closedModule(c,'event clock fs',{constants})],['node:child_process',closedModule(c,'event clock child_process')],
     ['node:net',closedModule(c,'event clock net')],
+    ['node:os',closedModule(c,'event clock os')],
     ['node:crypto',closedModule(c,'event clock crypto',{createHash:hashBinding})],['node:path',path],['node:url',url],['node:buffer',{Buffer}],
     ['node:util',closedModule(c,'event clock util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
     ['node:timers',closedModule(c,'event clock timers',clock)],
@@ -1431,6 +1434,7 @@ function fixedProbeVmV1(bindings={},expose=false){
   const modules=new Map([
     ['node:fs',closedModule(c,'fixed probe fs',{constants,...bindings.fs})],
     ['node:net',closedModule(c,'fixed probe net',bindings.net??{})],
+    ['node:os',closedModule(c,'fixed probe os')],
     ['node:child_process',closedModule(c,'fixed probe child_process',bindings.childProcess??{})],
     ['node:crypto',closedModule(c,'fixed probe crypto',crypto)],['node:path',path],['node:url',url],['node:buffer',{Buffer}],
     ['node:util',closedModule(c,'fixed probe util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
@@ -2435,6 +2439,364 @@ test('owned data decoder uses actual Buffer view length and never a forged own s
   Object.defineProperty(oversized,'byteLength',{value:Buffer.byteLength(OWN_SETUP_WIRE)});
   frameRefusedV1(()=>decode(oversized),'forged undersize');
 });
+
+// Task2 Phase A: bounded whole-helper PREFIX simulations, never a successful
+// stock holder/observer or a release emulator. The first authenticated import
+// is a terminal boundary. Complete inventories, resolution and returned-owner
+// check/close still require Task7's actual reviewed finalized M.
+const SOURCE_NODE_V1='/opt/homebrew/Cellar/node/26.4.0/bin/node';
+const SOURCE_NODE_HASH_V1='59cd4fb59cf5bc239f43d5db8c0cd8c23c22db79419612b92da3b7cf34de8553';
+const SOURCE_HOME_V1='/Users/setrox';
+const SOURCE_WORKSPACE_V1='/Users/setrox/ai/setrox';
+const SOURCE_M_SHA_V1='8888888888888888888888888888888888888888';
+const SOURCE_M_V1=SOURCE_WORKSPACE_V1+'/releases/setfarm-88888888';
+const SOURCE_T_V1=SOURCE_WORKSPACE_V1+'/releases/setfarm-161297ff';
+const SOURCE_SUFFIX_V1='/tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs';
+const SOURCE_SCRIPT_V1='scripts/build-generation-retention.mjs';
+const SOURCE_PROFILE_V1='src/installation/manual-orphan-target-dependencies-v1.json';
+const SOURCE_FILES_V1=Object.freeze([
+  'scripts/run-private-postgres-tests.mjs',
+  'scripts/__tests__/private-postgres-test-cluster.test.js',
+  'scripts/run-execution-attempt-tests.ts',
+  'scripts/run-isolated-postgres-tests.ts',
+  'tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs',
+  'scripts/__tests__/manual-orphan-bootstrap-owned-route-v1.test.js',
+  'tests/execution-attempts/helpers/manual-control-orphan-bootstrap-fixture-v1.ts',
+  'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts',
+  'scripts/private-postgres-test-journal-v1.mjs',
+  'scripts/finding-test-preflight.mjs',
+  SOURCE_PROFILE_V1,
+]);
+function requireOwnedSourceContractV1(){
+  // Resolve through the ACTUAL imported namespace in each test callback. An
+  // absent future API is the explicit RED, before fixture reads or VM setup.
+  assert.equal(typeof helper?.holdManualOrphanOwnedSourcesV1,'function',
+    'missing contract: holdManualOrphanOwnedSourcesV1');
+  assert.equal(helper.holdManualOrphanOwnedSourcesV1.length,0,'fixed Source holder has exact arity zero');
+}
+function readAdmittedSourceNodeDataV1(){
+  const bytes=Buffer.alloc(131072),fd=openFixtureFdV1(SOURCE_NODE_V1,constants.O_RDONLY|constants.O_NOFOLLOW);
+  let count=0;
+  try{
+    while(count<bytes.length){
+      const n=readFixtureFdV1(fd,bytes,count,bytes.length-count,count);
+      if(n===0)break;count+=n;
+    }
+  }finally{closeFixtureFdV1(fd);}
+  assert.equal(count,68032,'current admitted Node26 fixture byte count, bounded to131072 bytes read');
+  return Buffer.from(bytes.subarray(0,count));
+}
+function sourcePrefixFixtureV1({root=SOURCE_M_V1,head=SOURCE_M_SHA_V1,suffix=SOURCE_SUFFIX_V1}={}){
+  // Root's a6bacdf7 ruling permits this ONE current-host public executable as
+  // DATA, lazily after the missing-contract assertion. Never execute/archive it.
+  const node=readAdmittedSourceNodeDataV1();
+  assert.ok(node.length>0&&node.length<=131072,'admitted Node fixture has a bounded size');
+  assert.equal(node.length,68032,'current admitted Node26 fixture byte count');
+  assert.equal(createHash('sha256').update(node).digest('hex'),SOURCE_NODE_HASH_V1,
+    'real crypto verifies the sole admitted executable fixture');
+  const files=new Map(),dirs=new Map(),gitBlobs=new Map();let ino=100;
+  const state={root,head,moduleURL:url.pathToFileURL(root+suffix).href,files,dirs,gitBlobs,
+    events:[],opened:[],closeAttempts:[],fds:new Map(),faults:[],unlisted:[],imports:[],locators:[],
+    aliases:new Map(),closeFaultPath:null,openFaultPath:null,readFaultPath:null,
+    heldDriftPath:null,nextFd:400};
+  const unexpected=label=>{state.unlisted.push(label);throw Error('SOURCE_PREFIX_UNLISTED:'+label);};
+  const checked=fn=>(...args)=>{try{return fn(...args);}catch(error){
+    if(error?.code==='ERR_ASSERTION')state.faults.push(error.message);throw error;
+  }};
+  state.checked=checked;state.unexpected=unexpected;
+  function addFile(locator,bytes,system=false){
+    bytes=Buffer.from(bytes);const stat={...observationStatV1('file',ino++,bytes.length),birthtimeNs:1n};
+    if(system){stat.uid=0n;stat.gid=0n;stat.mode=0o100755n;}
+    files.set(locator,{bytes,stat});
+    for(let at=path.dirname(locator);;at=path.dirname(at)){
+      if(!dirs.has(at)){
+        const value={...observationStatV1('directory',ino++),birthtimeNs:1n};
+        if(at!==SOURCE_HOME_V1&&!at.startsWith(SOURCE_HOME_V1+'/')){value.uid=0n;value.gid=0n;}
+        dirs.set(at,value);
+      }
+      if(at===path.dirname(at))break;
+    }
+  }
+  addFile(SOURCE_NODE_V1,node,true);
+  addFile('/usr/bin/git','bounded public system git DATA fixture\n',true);
+  // Eleven comparison files are DATA, including the future integration. This
+  // creates no integration file and cannot stand in for full retained Source.
+  for(const locator of SOURCE_FILES_V1){
+    const bytes=locator===SOURCE_PROFILE_V1
+      ?readFileSync(new URL('../../'+SOURCE_PROFILE_V1,import.meta.url))
+      :Buffer.from('bounded comparison DATA '+locator+'\n');
+    addFile(root+'/'+locator,bytes);gitBlobs.set(locator,Buffer.from(bytes));
+  }
+  const retention=readFileSync(new URL('../build-generation-retention.mjs',import.meta.url));
+  addFile(root+'/'+SOURCE_SCRIPT_V1,retention);gitBlobs.set(SOURCE_SCRIPT_V1,Buffer.from(retention));
+  function entry(locator){
+    assert.equal(typeof locator,'string','filesystem paths must be fixed strings');
+    const value=files.get(locator)??dirs.get(locator);
+    return value??unexpected('path '+locator);
+  }
+  function statValue(stat){
+    const value={...stat};delete value.kind;
+    return {...value,isFile:()=>stat.kind==='file',isDirectory:()=>stat.kind==='directory',
+      isSymbolicLink:()=>false,isFIFO:()=>false,isSocket:()=>false};
+  }
+  function descriptor(fd){
+    const record=state.fds.get(fd);assert.ok(record,'only captured local descriptors');
+    assert.equal(record.closed,false,'no use after any close attempt');return record;
+  }
+  const realpath=checked(locator=>{
+    state.events.push(['realpath',locator]);entry(locator);return state.aliases.get(locator)??locator;
+  });realpath.native=realpath;
+  state.fs={constants,realpathSync:realpath,
+    lstatSync:checked((locator,options)=>{
+      state.events.push(['lstat',locator]);assert.equal(options?.bigint,true);
+      const value=entry(locator);return statValue(files.has(locator)?value.stat:value);
+    }),
+    openSync:checked((locator,flags)=>{
+      state.events.push(['open',locator]);const value=entry(locator);
+      assert.equal(typeof flags,'number');assert.ok((flags&constants.O_NOFOLLOW)!==0);
+      assert.equal(flags&(constants.O_WRONLY|constants.O_RDWR|constants.O_CREAT|constants.O_TRUNC|constants.O_APPEND),0,
+        'Source ownership is read only');
+      if(locator===state.openFaultPath)throw Error('bounded local open failure');
+      const record={fd:state.nextFd++,path:locator,entry:value,closed:false};
+      state.opened.push(record);state.fds.set(record.fd,record);return record.fd;
+    }),
+    fstatSync:checked((fd,options)=>{
+      state.events.push(['fstat',fd]);assert.equal(options?.bigint,true);const record=descriptor(fd);
+      const stat=files.has(record.path)?record.entry.stat:record.entry;
+      return statValue(record.path===state.heldDriftPath?{...stat,ino:stat.ino+1n}:stat);
+    }),
+    readSync:checked((fd,buffer,offset,length,position)=>{
+      const record=descriptor(fd);state.events.push(['read',record.path]);
+      assert.ok(files.has(record.path),'only fixed regular-file DATA may be read');
+      assert.ok(Buffer.isBuffer(buffer));
+      for(const n of [offset,length,position])assert.ok(Number.isSafeInteger(n)&&n>=0);
+      assert.ok(offset+length<=buffer.length);assert.ok(length<=16777217);
+      if(record.path===state.readFaultPath)throw Error('bounded local read failure');
+      const n=Math.max(0,Math.min(length,record.entry.bytes.length-position));
+      record.entry.bytes.copy(buffer,offset,position,position+n);return n;
+    }),
+    closeSync:checked(fd=>{
+      const record=state.fds.get(fd);assert.ok(record,'no phantom descriptor cleanup');
+      state.events.push(['close',fd]);state.closeAttempts.push(fd);
+      assert.equal(record.closed,false,'no retry of possibly reused descriptors');record.closed=true;
+      if(record.path===state.closeFaultPath)throw Error('bounded local close uncertainty');
+    }),
+    accessSync:checked((locator,mode)=>{
+      state.events.push(['access',locator]);assert.equal(mode,constants.X_OK);entry(locator);
+    }),
+  };
+  const gitReplies=new Map([
+    ['rev-parse --verify HEAD',head+'\n'],['branch --show-current','main\n'],
+    ['rev-parse --verify refs/remotes/origin/main',head+'\n'],
+    ['rev-parse --git-common-dir',root+'/.git\n'],
+    ['status --porcelain=v1 --untracked-files=all',''],
+  ]);
+  state.gitReplies=gitReplies;
+  state.childProcess={spawnSync:checked((executable,args,options)=>{
+    assert.equal(executable,'/usr/bin/git','only fixed sanitized Git prefix queries');
+    const cells=Array.from(args);
+    assert.deepEqual(cells.slice(0,4),['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false']);
+    const query=cells.slice(4),key=query.join(' ');state.events.push(['git',key]);
+    assert.deepEqual(Object.keys(options).sort(),['cwd','env','maxBuffer','shell','timeout']);
+    assert.equal(options.cwd,root);assert.equal(options.shell,false);assert.equal(options.timeout,10000);
+    assert.equal(options.maxBuffer,16777216);
+    assert.deepEqual({...options.env},{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',GIT_CONFIG_NOSYSTEM:'1',
+      GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0'});
+    let stdout;
+    if(query.length===2&&query[0]==='show'&&query[1].startsWith(head+':')){
+      const locator=query[1].slice(head.length+1);
+      stdout=gitBlobs.get(locator)??unexpected('git blob '+locator);
+    }else stdout=gitReplies.get(key)??unexpected('git query '+key);
+    return {status:0,signal:null,error:undefined,stdout:Buffer.from(stdout),stderr:Buffer.alloc(0)};
+  })};
+  const env={PATH:path.dirname(SOURCE_NODE_V1)+':/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
+  state.process={execPath:SOURCE_NODE_V1,argv0:SOURCE_NODE_V1,execArgv:[],
+    argv:[SOURCE_NODE_V1,root+suffix],platform:'darwin',arch:'arm64',version:'v26.4.0',
+    versions:Object.freeze({node:'26.4.0'}),
+    env:new Proxy(env,{set(){return unexpected('environment write');},deleteProperty(){return unexpected('environment delete');},
+      defineProperty(){return unexpected('environment define');},setPrototypeOf(){return unexpected('environment prototype');}}),
+    cwd:checked(()=>{state.events.push(['cwd']);return root;}),
+  };
+  for(const [name,value] of [['getuid',501],['geteuid',501],['getgid',20],['getegid',20]]){
+    state.process[name]=checked(()=>{state.events.push([name]);return value;});
+  }
+  state.os={userInfo:checked((...args)=>{
+    assert.equal(args.length,0);state.events.push(['userInfo']);
+    return {uid:501,gid:20,username:'setrox',homedir:SOURCE_HOME_V1,shell:'/bin/zsh'};
+  })};
+  state.assertClosed=()=>{
+    assert.deepEqual(state.closeAttempts,state.opened.map(record=>record.fd).reverse(),
+      'every known local descriptor gets exactly one reverse-order close attempt');
+    for(const record of state.opened)assert.equal(record.closed,true);
+  };
+  state.assertReached=(kind,value)=>assert.ok(state.events.some(event=>event[0]===kind&&event[1]===value),
+    'intended predicate prerequisite reached: '+kind+' '+value);
+  return state;
+}
+function sourcePrefixVmV1(state){
+  let source=lowerFixedProbeEntryV1(readFileSync(HELPER,'utf8'));
+  assert.equal([...source.matchAll(/\bimport\.meta\.url\b/g)].length,1,'reuse the single actual helper locator');
+  source=replaceOnce(source,'import.meta.url',JSON.stringify(state.moduleURL),'fixed Source prefix module URL');
+  const c=capture(),pureUtil=createRequire(import.meta.url)('node:util');
+  const modules=new Map([
+    ['node:fs',closedModule(c,'Source prefix fs',state.fs)],
+    ['node:child_process',closedModule(c,'Source prefix child_process',state.childProcess)],
+    ['node:net',closedModule(c,'Source prefix net')],['node:os',closedModule(c,'Source prefix os',state.os)],
+    ['node:crypto',closedModule(c,'Source prefix crypto',{createHash})],
+    ['node:util',closedModule(c,'Source prefix util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
+    ['node:path',path],['node:url',closedModule(c,'Source prefix url',{
+      fileURLToPath:state.checked(value=>{
+        assert.equal(value,state.moduleURL,'derive the fixed root from the actual own helper locator');
+        state.locators.push(value);return url.fileURLToPath(value);
+      }),pathToFileURL:url.pathToFileURL,
+    })],['node:buffer',{Buffer}],
+  ]);
+  const compiled=ts.transpileModule(source,{fileName:OBS_HELPER_PATH_V1+'.ts',
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},reportDiagnostics:true});
+  assert.deepEqual((compiled.diagnostics??[]).filter(item=>item.category===ts.DiagnosticCategory.Error),[],
+    'actual complete helper must transpile before a prefix result counts');
+  const frontier=Error('TEST_ONLY_FIRST_AUTHENTICATED_RETENTION_IMPORT_FRONTIER');
+  const context={exports:{},Buffer,URL,Error,TextDecoder:pureUtil.TextDecoder,
+    process:new Proxy(closedModule(c,'Source prefix process',state.process),{
+      set(){return state.unexpected('process write');},deleteProperty(){return state.unexpected('process delete');},
+      defineProperty(){return state.unexpected('process define');},setPrototypeOf(){return state.unexpected('process prototype');},
+    }),
+    console:closedModule(c,'Source prefix console'),setTimeout:forbidden(c,'Source prefix timer'),
+    clearTimeout:forbidden(c,'Source prefix clearTimer'),
+    require(specifier){
+      if(modules.has(specifier))return modules.get(specifier);
+      state.imports.push(specifier);
+      if(specifier===url.pathToFileURL(state.root+'/'+SOURCE_SCRIPT_V1).href)throw frontier;
+      state.unlisted.push('import '+specifier);throw Error('SOURCE_PREFIX_UNLISTED_IMPORT');
+    }};
+  runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
+  assert.deepEqual(state.events,[],'whole-helper module initialization performs no prefix IO');
+  assert.deepEqual(state.imports,[],'whole-helper initialization imports builtins only');
+  assert.deepEqual(state.locators,[],'whole-helper initialization does not derive an owner context');
+  return {actual:context.exports,compiledDataAdmission:context.ownedSourceAuditedCompiledV1,assertContained(){
+    assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));
+    assert.deepEqual(state.unlisted,[],'swallowed unlisted calls cannot earn refusal coverage');
+    assert.deepEqual(state.faults,[],'swallowed fixture assertion cannot earn refusal coverage');
+  }};
+}
+async function sourcePrefixRefusedV1(state,{code='MANUAL_ORPHAN_OWNER_REFUSED',frontier=false}={}){
+  const vm=sourcePrefixVmV1(state);
+  assert.equal(typeof vm.actual.holdManualOrphanOwnedSourcesV1,'function','contained actual holder export');
+  await assert.rejects(()=>vm.actual.holdManualOrphanOwnedSourcesV1(),error=>{
+    assert.ok(error instanceof Error);assert.equal(error.message,code);return true;
+  });
+  state.assertClosed();vm.assertContained();
+  assert.deepEqual(state.imports,frontier?[url.pathToFileURL(state.root+'/'+SOURCE_SCRIPT_V1).href]:[],
+    'no observer, selection, runtime-config, db, package or later import is admitted');
+  return vm;
+}
+
+test('Source PREFIX simulation exposes exact zeroarg API and rejects a passed argument before any acquisition IO',async()=>{
+  requireOwnedSourceContractV1();
+  const state=sourcePrefixFixtureV1(),vm=sourcePrefixVmV1(state);
+  assert.equal(vm.actual.holdManualOrphanOwnedSourcesV1.length,0);
+  await assert.rejects(()=>vm.actual.holdManualOrphanOwnedSourcesV1('caller-selected-root'),
+    error=>error instanceof Error&&error.message==='MANUAL_ORPHAN_OWNER_REFUSED');
+  assert.deepEqual(state.events,[]);assert.deepEqual(state.imports,[]);state.assertClosed();vm.assertContained();
+});
+test('Source PREFIX simulation reaches only the exact first authenticated retention import frontier',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1();
+  await sourcePrefixRefusedV1(state,{frontier:true});
+  for(const query of ['rev-parse --verify HEAD','branch --show-current','rev-parse --verify refs/remotes/origin/main',
+    'show '+SOURCE_M_SHA_V1+':'+SOURCE_SCRIPT_V1])state.assertReached('git',query);
+  state.assertReached('read',SOURCE_NODE_V1);state.assertReached('read',SOURCE_M_V1+'/'+SOURCE_SCRIPT_V1);
+  assert.ok(state.opened.length>1,'actual helper acquired local resources before the terminal frontier');
+});
+test('Source PREFIX simulation refuses wrong own helper suffix before filesystem or Git work',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1({suffix:SOURCE_SUFFIX_V1+'.wrong'});
+  await sourcePrefixRefusedV1(state);assert.equal(state.opened.length,0);
+  assert.ok(state.locators.includes(state.moduleURL),'actual consumer read the wrong-suffix own locator');
+  assert.ok(!state.events.some(event=>['open','lstat','realpath','git'].includes(event[0])));
+});
+test('Source PREFIX simulation refuses a changed effective GID before acquisition or import IO',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1();
+  // Real gid/userInfo.gid and every other prefix fact stay at their valid
+  // values. Only the independently modeled effective credential differs.
+  state.process.getegid=state.checked(()=>{state.events.push(['getegid']);return 21;});
+  const vm=sourcePrefixVmV1(state);
+  await assert.rejects(()=>vm.actual.holdManualOrphanOwnedSourcesV1(),
+    error=>error instanceof Error&&error.message==='MANUAL_ORPHAN_OWNER_REFUSED');
+  state.assertReached('getegid',undefined);
+  assert.equal(state.opened.length,0,'effective-GID refusal precedes descriptor acquisition');
+  assert.ok(!state.events.some(event=>['open','lstat','realpath','fstat','read','close','access','git'].includes(event[0])),
+    'effective-GID refusal precedes filesystem and Git IO');
+  assert.deepEqual(state.imports,[],'effective-GID refusal precedes the first retention import');
+  state.assertClosed();vm.assertContained();
+});
+test('Source PREFIX simulation refuses a physical maintenance alias at its actual realpath predicate',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1();
+  state.aliases.set(SOURCE_M_V1,SOURCE_M_V1+'.alias');
+  await sourcePrefixRefusedV1(state);state.assertReached('realpath',SOURCE_M_V1);
+  assert.ok(!state.events.some(event=>event[0]==='git'));
+});
+test('Source PREFIX simulation refuses maintenance basename versus head8 mismatch after the HEAD query',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1({head:'9999999999999999999999999999999999999999'});
+  await sourcePrefixRefusedV1(state);state.assertReached('git','rev-parse --verify HEAD');
+  assert.ok(!state.events.some(event=>event[0]==='git'&&event[1].startsWith('show ')));
+});
+test('Source PREFIX simulation refuses main versus origin-main mismatch after reading origin-main',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1();
+  state.gitReplies.set('rev-parse --verify refs/remotes/origin/main','9999999999999999999999999999999999999999\n');
+  await sourcePrefixRefusedV1(state);state.assertReached('git','rev-parse --verify refs/remotes/origin/main');
+  assert.ok(!state.events.some(event=>event[0]==='git'&&event[1].startsWith('show ')));
+});
+test('Source PREFIX simulation refuses maintenance equal to the fixed target with an otherwise matching basename and HEAD',async()=>{
+  requireOwnedSourceContractV1();
+  const state=sourcePrefixFixtureV1({root:SOURCE_T_V1,head:'161297ffca6adf2851918a93d492e1c9a77ce59d'});
+  await sourcePrefixRefusedV1(state);
+  assert.ok(state.locators.includes(url.pathToFileURL(SOURCE_T_V1+SOURCE_SUFFIX_V1).href),
+    'actual own-locator derivation reached the equal fixed M/T root');
+  assert.ok(!state.events.some(event=>event[0]==='git'),'equal fixed roots refuse before unrelated Git admission');
+});
+// Profile/Git and all-eleven-file acquisition may legitimately follow the
+// first retention import. Their complete qualification remains Source review
+// and Task7 work, rather than forcing an earlier algorithm for this prefix.
+test('Source PREFIX simulation refuses retention versus Git bytes at its own authenticated comparison',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1();
+  state.gitBlobs.set(SOURCE_SCRIPT_V1,Buffer.from('different independent tracked blob\n'));
+  await sourcePrefixRefusedV1(state);state.assertReached('read',SOURCE_M_V1+'/'+SOURCE_SCRIPT_V1);
+  state.assertReached('git','show '+SOURCE_M_SHA_V1+':'+SOURCE_SCRIPT_V1);
+});
+test('Source local-FD simulation refuses changed executable content with retained metadata and closes acquired descriptors',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1(),file=state.files.get(SOURCE_NODE_V1);
+  file.bytes=Buffer.from(file.bytes);file.bytes[0]^=1;
+  await sourcePrefixRefusedV1(state);state.assertReached('read',SOURCE_NODE_V1);assert.ok(state.opened.length>1);
+});
+test('Source local-FD simulation refuses held versus named executable identity and closes all acquired descriptors',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1();state.heldDriftPath=SOURCE_NODE_V1;
+  await sourcePrefixRefusedV1(state);state.assertReached('open',SOURCE_NODE_V1);
+  assert.ok(state.events.some(event=>event[0]==='fstat'&&state.fds.get(event[1])?.path===SOURCE_NODE_V1));
+});
+for(const [label,field,locator] of [
+  ['later open','openFaultPath',SOURCE_SCRIPT_V1],['later read','readFaultPath',SOURCE_SCRIPT_V1],
+]){
+  test('Source local-FD simulation closes earlier acquisitions in reverse once after '+label+' failure',async()=>{
+    requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1();state[field]=SOURCE_M_V1+'/'+locator;
+    await sourcePrefixRefusedV1(state);state.assertReached(label==='later open'?'open':'read',state[field]);
+    assert.ok(state.opened.some(record=>record.path===SOURCE_NODE_V1),'failure follows an earlier acquired file');
+  });
+}
+test('Source local-FD simulation keeps close UNKNOWN sticky and dominant while attempting every remaining close once',async()=>{
+  requireOwnedSourceContractV1();const state=sourcePrefixFixtureV1();
+  state.gitBlobs.set(SOURCE_SCRIPT_V1,Buffer.from('independent mismatched retention bytes\n'));
+  state.closeFaultPath=SOURCE_NODE_V1;
+  const vm=await sourcePrefixRefusedV1(state,{code:'MANUAL_ORPHAN_CLEANUP_UNKNOWN'});
+  state.assertReached('git','show '+SOURCE_M_SHA_V1+':'+SOURCE_SCRIPT_V1);
+  const fault=state.opened.find(record=>record.path===SOURCE_NODE_V1);assert.ok(fault);
+  assert.equal(state.closeAttempts.filter(fd=>fd===fault.fd).length,1,'uncertain FD is never retried');
+  assert.ok(state.closeAttempts.indexOf(fault.fd)<state.closeAttempts.length-1,
+    'a close fault does not prevent attempts for remaining known earlier acquisitions');
+  const before=state.events.length;
+  await assert.rejects(()=>vm.actual.holdManualOrphanOwnedSourcesV1(),
+    error=>error instanceof Error&&error.message==='MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+  assert.equal(state.events.length,before,'sticky uncertainty does not reacquire or retry any descriptor');
+  state.assertClosed();vm.assertContained();
+});
 for(const size of [16384,16385]){
   test('owned data '+(size===16384?'accepts':'refuses')+' syntactically valid total '+size+' bytes including LF within4096-byte ProcessPin paths',()=>{
     const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame'),frame=ownedSetupData();
@@ -2460,3 +2822,229 @@ for(const size of [16384,16385]){
     else{frameRefusedV1(()=>encode(frame),'total cap encoder');frameRefusedV1(()=>decode(want),'total cap decoder');}
   });
 }
+
+// Source compiled DATA only: independent Root AST manifests, no application
+// Source bytes, release reads, owner/observer doubles or custody authority.
+// Own M62 artifact1767db82... and fixed T artifact40bba031... were read separately.
+const COMPILED_DATA_M_V1=Object.freeze([
+  ["dist/cli/runtime-guard.js","ee41f24c7666ede347507fb914ab4955ec3f14b9bd2a75b934389b86c8666e1e"],
+  ["dist/contracts/operational-active-run-status-v1.js","f080d9873a6ecd138ba814eb06ac2ae8865d43276eec03242094da85f264317b"],
+  ["dist/db-pg.js","9eef3c2eb47da21f527f06934029e926923af27a83f1141a925f93bc8a280afd"],
+  ["dist/db/artifact-publication-batch-plan-migration.js","7bcd86a68b9481c10efd5fc031a7330bc8244c71777851d7fa04505b9818cc42"],
+  ["dist/db/base-schema-readonly-verifier-v1.js","05c2e3e1e654ca4ba37a5d09596c957be5ea9abb2ca9a634190e74cf8cb1a253"],
+  ["dist/db/bootstrap-main-claim-handoff-v1-migration.js","28bb3f513fc6f97c632a29241c7664fbcceb7f0c14a38d8aabdd8e7558c91d2e"],
+  ["dist/db/contract-spine-migration-checksum.js","30eb6ef0ebd0784cd5382552d6a4d784e4f07bceb4041d2456fd910b766222dd"],
+  ["dist/db/contract-spine-migration-digests.generated.js","6fa8a2e63afda64b228fdee46f13afe706b7dbbd94d413259d9c70247c9e0230"],
+  ["dist/db/contract-spine-migration-source-integrity.js","c58beb0a0d63762f321591d3dfe59de46dc2d4714616ed3631e6c044b2f14082"],
+  ["dist/db/contract-spine-migrations.js","34c13f415bbb01cfd90f259def8a4c704739637f2e9e047e09fe4234ef86eb99"],
+  ["dist/db/contract-spine-readonly-verifier-v1.js","fb602847e89b3c5e57eb9ad3ff577ddc1f6e0400fb4cb0064ade8f774605d0eb"],
+  ["dist/db/contract-spine-runtime-access-readonly-verifier-v1.js","0beceeed623e0e5415f421dc569408072f9b07234a966020ca35ad2c6b8534e3"],
+  ["dist/db/dashboard-core-readonly-profile-v2.js","e21b6c7119885bac34a545e04c31a3aa6ae09236cf915e01bd0413774894a18c"],
+  ["dist/db/dashboard-core-response-v2.js","b76bf17285c958593db2852205fabbb94d30dc35a6c35e09f544203fa0041d38"],
+  ["dist/db/database-wall-clock.js","284d021bdbca651ae42773b33b92d17905c5f79be44543b52acc2106e05a4339"],
+  ["dist/db/operational-failure-cause-authority-v2-migration.js","d2b53ee8c2b0a5966378dd4d63522eaedd5207a7f02a8468fdbc6aab49d62cf8"],
+  ["dist/db/operational-failure-cause-authority-v3-catalog.js","756d2e5f7b5557e6d2418720a59ea0c4dc1ad1d441b5eecbcaea2b7db13a76bb"],
+  ["dist/db/operational-failure-cause-authority-v3-migration.js","d0db39dad287cc2aa4bbcccdaf3ecfe9d604eda299bb626378b04e883b90e481"],
+  ["dist/db/ordinary-base-schema-v1.js","3751600648e5bd13c5aea273f92cbcefa6c42c8ab4313461ebf0974eae014be7"],
+  ["dist/db/platform-release-store-record-ledger-v3-migration.js","63e1e170382b670349e3cd5a5507c09fa8b1b97fc202ba1340801c311c00734b"],
+  ["dist/db/preparation-authority-v2-migration.js","50e14c69f9f914c5c2c3788caa88b3dc75c31d7a5811a2be8e58312605a1474a"],
+  ["dist/db/public-object-owner-readonly-verifier-v1.js","7776711349d5452c4e3c4425399a4d4918fb49f7be0d94dbd19eca465f9be0cf"],
+  ["dist/db/runtime-completion-manifest-authority-migration.js","837ce4b4f769005fabe0d518ea24ce0a2fbfe37f86ece13f82894b6f33fb0e83"],
+  ["dist/db/v3-story-claim-runtime-binding-v1-migration.js","0c2fae3417e1f1fe9f6186817ccfff71a77e63fbaf0e72b8060210221bc40d3a"],
+  ["dist/evidence/runtime-evidence-contract-v1.js","f99f74f6a8bbd7c939018dcee532802c94ba86c6d58c03e968a21cd8f84a9d97"],
+  ["dist/evidence/schemas/evidence-adapter-definition-catalog-v2.js","39bf4b4e6dda85754b84749dfafd5017e136cb7c1fa64425717348014f028f26"],
+  ["dist/evidence/schemas/evidence-receipt-v2.js","82aa1ac6f7b4542900b959099f3a683a885b8c646033c95a0b3351f14d3d99c0"],
+  ["dist/execution/operational-failure-cause-authority-v1.js","4780a8f028aa324037c5a5e3c1e63ee7dfb5373e77fc968f931f6f18af4d5d52"],
+  ["dist/execution/operational-failure-cause-authority-v2.js","1f4eab1347bcbd069625944594525a333c972c47f7a8cf9bad393f558e90fb2b"],
+  ["dist/execution/operational-failure-cause-authority-v3.js","a44fabe13a2e961a4d11c1a3a9d094a82a5cdedaa6ea17e138f05342d7d9f72b"],
+  ["dist/execution/process-identity.js","2086adfc29854ba701723a9aa8e4e025ea4832f0b8fd6aeaea7c9f97936f70f1"],
+  ["dist/execution/recovery-source-bootstrap-repository-v1.js","74a4e1d6c41a1479a1300736fb16affc873e7606f7ea010fe125aebee5c4e25c"],
+  ["dist/execution/recovery-source-bootstrap-run-authority-v1.js","518b5bd9e51d6c8e7ee16084bac80bed324059eeba1bbbb9f8cd72c1a26755b5"],
+  ["dist/execution/schemas/candidate-build-receipt-v2.js","1330eea9bd9a31fffd13ba49b94571b447446968fe388139262ba837957c7a17"],
+  ["dist/execution/schemas/canonical-runtime-tree-v2.js","2476035648bd3cda08b99817a4f186d035344312fc86c81b7fd24465b8ef8280"],
+  ["dist/execution/schemas/execution-attempt-v1.js","fb8bfe87aa7257f4228668f2b7fed82aa1f5493cc9c2a6284e4bc53eb6d2024b"],
+  ["dist/execution/schemas/operational-event-v1.js","40aac0a92450154674b99f05f921171c216d5f3a9a11471d5618ce85bc961a42"],
+  ["dist/execution/schemas/operational-failure-cause-v1.js","add3e1307724e62ad153da0662528c2b8477028c7f5d35feef1064a4a4fcd40b"],
+  ["dist/execution/schemas/platform-release-common-v2.js","512312ea83d788ba7d89b87bbb291b5ee4a4cfbf000cd1817a67726a4bb69652"],
+  ["dist/execution/schemas/platform-release-content-store-census-v3.js","47793f16a40e260df21e00c5e7fb7f6a4d042975e4b0a401b46556cd5ac22558"],
+  ["dist/execution/schemas/platform-release-content-store-durable-record-test-v3.js","82e737e2b1a9e280d3a7e78a881c30093f989393f9ffcfc7ddbdf46f34ee6256"],
+  ["dist/execution/schemas/platform-release-content-store-test-v3.js","705284102d8bd05404bc46edb7f09ccf4d47e5baf52638ea5003b4476416b58e"],
+  ["dist/execution/schemas/process-identity-v1.js","40b74c6c524c18b0b4f904c27ebcfe38a0bae18a5e98389b1e6b53fc61b62d5c"],
+  ["dist/execution/schemas/runtime-completion-plan-v1.js","2a166fd2aa38ebd463fe955288d993460758a134a872427029f56b01e80c91e9"],
+  ["dist/execution/v3-git-revision.js","125f89bc2506a5622cfd13966a24febfe996a442fdf97d5552fbe7aa889c6d65"],
+  ["dist/execution/v3-preparation-claim-authority-v2.js","28d4e72b405e86b33ffa2378fa25b6baf4f754cf931468701205d4db3f5dd3de"],
+  ["dist/execution/v3-seal-capacity.js","a1d480c893f83d61823ee63095b8025083859167a17c0cf731b78f3ba6180dbc"],
+  ["dist/findings/finding-publication-v1.js","e3c7c23f9857a0c8d57d2187333e6ec589ad9d626e8c487b992f4a38cd5b2ab3"],
+  ["dist/findings/finding-set.js","f93d702dddca40fa860784121acb13dc4378c0a078f35623dc67743c9e9d64f9"],
+  ["dist/findings/legacy-finding-publication-inventory-v1.js","334499e3edf6674250895117cc9ab5e6b4a5d585c4174139b3f1d6df9a00a0d4"],
+  ["dist/installation/fresh-installation-activation-verifier-v1.js","805fc0254360d3136f0e2c8aace8175ed50ab031b0d95bdf2926952d3af4daca"],
+  ["dist/installation/fresh-installation-artifact-policy-v1.js","b6a66167f15879a262889650d68a7fd28525fe32e087c012d57912019776bc64"],
+  ["dist/installation/fresh-installation-catalog-v1.js","8c00e3b5bff662711321910c6abe954652d2eb7dccbae47971df954a8e544a37"],
+  ["dist/installation/fresh-installation-entry-v1.js","1ffc6fd43eac8d489055d0297814eee2f35e540c9af9403dba7b93e081483511"],
+  ["dist/installation/fresh-installation-origin-v1.js","0603e5a37aaa7650911d65cde0fd8c7ffc1d3ddb05b61778307462b3dc7173e8"],
+  ["dist/installation/fresh-installation-owner-source-v1.js","d9652e3cfc364bc11b8273e18da2e4d46bfde112bfe8ec674528556e43b11756"],
+  ["dist/installation/fresh-installation-private-assets-v1.js","97b3e5893356c2e0aab83c2528982245e837c929d4707bee6f347df6d02ae772"],
+  ["dist/installation/fresh-installation-records-v1.js","df39e1174ebfcd4af1d575e11495699185e078411d75b73399da99f83037d2e3"],
+  ["dist/installation/fresh-installation-runtime-v1.js","82ed84c3a1db68fffed4dc1bcab81f670eec6a22b7e3bfb910be6ef91f1aec29"],
+  ["dist/installation/fresh-installation-selection-v1.js","f1298d4f9120f29c0f2109dcad40b16a6a33fcd2593764d886a9077628781a34"],
+  ["dist/installation/fresh-installation-source-v1.js","d6ff0adb7796b9bf35c5d1598fa824a454d8e67d46c811a649ed428eaf0e134f"],
+  ["dist/installation/fresh-installation-v1.js","5df0babbe6a4a5005ac7b63e150e1fc9544e826ec755468e5cc5ac325e7a8110"],
+  ["dist/internal-production/baseline-deployment-cutover-records-v1.js","d00d01ecdb87e1dbbf3a7053acad277cb43757c9956e803193661d4b567b5714"],
+  ["dist/internal-production/baseline-deployment-cutover-v1.js","b6c5a46db14ece55f903058ce0b3c4da8b91cf04b951de82a1eedd06e7119444"],
+  ["dist/internal-production/baseline-positive-worktree-active-binding-snapshot-v1.js","ce72a050211c0de9cf451fa9b7bc5b2448155cfa52aeff158832cf902b2adc18"],
+  ["dist/internal-production/baseline-positive-worktree-active-row-snapshot-v2.js","227d1af7a204c2020b33e15eb866bbbff81f39db1b17f62ba340bee47e388ccf"],
+  ["dist/internal-production/baseline-positive-worktree-binding-rows-v1.js","7bd5b43b89631952f31a324f245f6e2533bfa76236bd21cb3118032841970453"],
+  ["dist/internal-production/baseline-post-handoff-receipt-v1.js","f9c7755d2cfc69ccc250fc1da08c21b02fce8835b527fe4eb2647534392151ea"],
+  ["dist/internal-production/baseline-restart-authority-retirement-v1.js","a282c7693f7a7b46fce215e562e72a77a77074581341fe20ed9b9f277a0c2549"],
+  ["dist/internal-production/baseline-spawner-launch-environment-v1.js","93332c4695aef240a3f8329ee0815c82215f040df42e2c0ba2e3c7557848c7fa"],
+  ["dist/internal-production/baseline-workspace-authority-path-v1.js","34c2fb8322771699ef79fe5faac7b6bd9937640dbdbf09bef58a48d8af533455"],
+  ["dist/internal-production/owner-admission-head-v1.js","2ac270a1e47834785dc59c5e25c050192badb6022f4e1e1f6b17891f2f6634dd"],
+  ["dist/internal-production/owner-admission-v1.js","196a6df03c7ffde9bcba99d1fd61958711973b67483d8f0180250f3a2919f708"],
+  ["dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js","97c541b496d0e61e03dc1ca9714d303506069ab6249c7b5f590916d4002f784d"],
+  ["dist/product-compiler/artifact-capacity.js","b6af9d10b945ad0776fc5e13b2383057287e9da8cdcb15663a10e2cf60ec28a5"],
+  ["dist/product-compiler/artifact-closure.js","871444369e86b6235bac8956b924a08941b7c94dfb31188e2096aed5e4c720ef"],
+  ["dist/product-compiler/artifact-envelope.js","5b12a2f748357b18671006a03d5f1c5daa19fae4e9908c9451769ca511042575"],
+  ["dist/product-compiler/artifact-publication-batch-identity.js","295aa3e43f2bf7b228c2860a3dcecad5b59e367747123f0942d56e55ec9eb7e4"],
+  ["dist/product-compiler/artifact-publication-batch-plan-binding.js","01d133814abe7bdd0c4a486f048620289c0d0e307aa71e00359ed6ecfee36099"],
+  ["dist/product-compiler/artifact-store-batch-plan.js","f35ffa8e5819854eba470893625c0cbeb7070977f0f9c887fa5300da829c6c8a"],
+  ["dist/product-compiler/bounded-canonical-json.js","13bcceb0e9579cc7b4bce5189520beda031a9e149969d67e0656360e46cb5a07"],
+  ["dist/product-compiler/canonical-json.js","77db0704803dc51f28e1dc4ebd56788177e1c78ce1e3a4777ddac016da6fed2a"],
+  ["dist/product-compiler/english-text-contract-v1.js","51a8878a2845f13f5bea44c2fc3f0a0493495b34392a8b358ad580d37145775e"],
+  ["dist/product-compiler/product-delivery-profile-catalog-v2.js","3b13816a5ff53420b275ea680b8950c7bef88ee8625f1d6a180ad0e8d2aa0832"],
+  ["dist/product-compiler/product-evidence-capability-policy-v2.js","58cca3060392a27d13d18762a1b4a96aed3a7bb99f52b8e750b23cb5e7de3406"],
+  ["dist/product-compiler/requirements/task-requirements-v1.js","51887feea83b22b1c3366d10691d5d8fa6ed86e6de729eb450f741b778854035"],
+  ["dist/product-compiler/schemas/action-input-transport-v2.js","633b18e74c1ad7a59cc11100468060cc2549c88984d7d45f97cb1763419b854e"],
+  ["dist/product-compiler/schemas/action-invocation-interface-intent-v1.js","aec37eaddaceb632b2a056e9c4ebccce3c1e62865076530ce8a45454c79211b3"],
+  ["dist/product-compiler/schemas/build-topology-v1.js","98fd62bb589fb1250099a227923dc858b71d5e3961ea2f893c566aa81af27512"],
+  ["dist/product-compiler/schemas/build-topology-v3.js","c33f335b0f8fb824dd1721052eac088606c57858ae5d5d1626407e889a1da80e"],
+  ["dist/product-compiler/schemas/byte-bundle-v1.js","a8a474fed4b6ba752dc2e0689df3231b58170adb16e8b48541f4c51de61e2fe1"],
+  ["dist/product-compiler/schemas/common-v1.js","b18670317cfc9230b6d1de2723566185a32307a9f8803ea3cd62b4c38da41a9e"],
+  ["dist/product-compiler/schemas/common-v2.js","5cd7ec1565141aa44deb69093fbe2e8f53d796a5bdb242a4198ffaeacf81aad7"],
+  ["dist/product-compiler/schemas/deep-byte-bundle-verification-receipt-v2.js","50a9619d9fbe11bfd998a304269b2ebfd5a84b822bd0350b5dcff7604cf12c77"],
+  ["dist/product-compiler/schemas/design-generation-targets-v1.js","f290cf55741639e44226f16a5850becabb9e866d486d3cfadaf3e1e03a43ee73"],
+  ["dist/product-compiler/schemas/design-interaction-graph-v2.js","50d6b3c24ee50fdad053474a8efbef6348ca29a08ee25a62dbbb7ad6f8667c86"],
+  ["dist/product-compiler/schemas/design-source-closure-v2.js","f09c7a03240976fa8e0f6965611ac46882d72119b23510504ea95ac1b1258f4f"],
+  ["dist/product-compiler/schemas/file-tree-manifest-v3.js","98c1208df7bd8a434640f855ac2a4dff330961019ca2c1c5432535614ee134a3"],
+  ["dist/product-compiler/schemas/generated-source-contract-v2.js","4ecac14f4fbfc076b05eb9d58a97538095ad85bffdcd7209b7cdc3c42e5bea6c"],
+  ["dist/product-compiler/schemas/host-node-toolchain-receipt-v2.js","d0de20bc6329e82a036ead623254b6363008e609545735081d10a6f49d8029c9"],
+  ["dist/product-compiler/schemas/implementation-slice-v2-legacy.js","21c07b61190c0188c4e873da8894571cb7a1fdaaac7a392562dc3cd72bb31bbe"],
+  ["dist/product-compiler/schemas/implementation-slice-v2.js","cdee5776d2a413d2f07ffafd7b5d0c7467d7718f4ecac206abba46381a1373ca"],
+  ["dist/product-compiler/schemas/implementation-source-map-v1.js","71ba32372504d37aa5284494097b6a47e3a8293a7d3ad0352fb1fe71aa39538a"],
+  ["dist/product-compiler/schemas/implementation-source-map-v2.js","87521ee552485512ceae6cc9d5930bfed92d5093f426267f0a45b3f082d0dc62"],
+  ["dist/product-compiler/schemas/invocation-input-transport-set-v2.js","4b20943250dba676c4f6be48909daeba10f9505aaf8f44bc4c32261efe7259db"],
+  ["dist/product-compiler/schemas/invocation-input-transport-v2.js","0dde39a3be69a74b44d16504b4db662b28ad80b60534e86d9fb78f05cf5ca153"],
+  ["dist/product-compiler/schemas/node-execution-layout-catalog-v2.js","e6c31257559032b4d1f315420b6255bea34a60527a4a2c601406881bfd9d7d1b"],
+  ["dist/product-compiler/schemas/node-product-runtime-source-v2.js","f1d45cd9c7e605dd7d4d4a34335b32f5d368ab8ad1aa68e790b622507e9526de"],
+  ["dist/product-compiler/schemas/node-product-test-source-v2.js","229932c25171b5537d8dcdc337eb5ef5882041c371b528563831305f504c23c0"],
+  ["dist/product-compiler/schemas/node-scaffold-execution-environment-v2.js","562939eee1b3828d2cefed1c05b15091358ebe62d10253f4e8d857f786d87eb8"],
+  ["dist/product-compiler/schemas/node-scaffold-private-materialization-v2.js","1865efaa194d95ff6f24bf4024b2e384e06f10fa3fc6b73d0b72c16b7945e83d"],
+  ["dist/product-compiler/schemas/node-scaffold-toolchain-catalog-v2.js","e5df8a5397ec180519f762c2f6245ee4dd43adc5f08216aca6d4c33ef366cfb8"],
+  ["dist/product-compiler/schemas/node-toolchain-archive-inventory-v2.js","b26c3fa59865c81db769aeabb0a09b77374cbcb1d7cafd0c91fd8c58c031554f"],
+  ["dist/product-compiler/schemas/node-toolchain-distribution-v2.js","aac6e8e8093fb1c54e708373c8148c091d6a4efda562ad3a056e2c5c33c7441d"],
+  ["dist/product-compiler/schemas/node-toolchain-private-tree-v2.js","dfb00e19d885bda03f659858e878137c39abd6dc11d87b3f1b7821486d594115"],
+  ["dist/product-compiler/schemas/node-toolchain-provisioning-v2.js","2541635cc0453720165073b87c55aed093c35d997d8ff231c24ae0cdffe94431"],
+  ["dist/product-compiler/schemas/npm-lock-v3-grammar-v2.js","93fd98a995109d81444e569dc9fc7c2496fed39f067547bd4760aa560883bbcd"],
+  ["dist/product-compiler/schemas/path-token-v2.js","20be34c71d8f22b40c26f03a8d188a6ce65f8b0f49b3a1d8954468bf5c3342a0"],
+  ["dist/product-compiler/schemas/plan-semantic-proposal-v1.js","56932d70fd233b51e723e234521c2ee2fc769cc9554f79735139baa3c7345761"],
+  ["dist/product-compiler/schemas/product-build-packet-v3.js","51a655cc06a9009367b240a4f35c3abfbe98a9ba2b447ab4c0998b5e1ad8f894"],
+  ["dist/product-compiler/schemas/product-build-packet-v4.js","dab2d4f87fdc507da77a6ebd5c06449bb315ee4ea2d3a5cbd9e925844c8e8579"],
+  ["dist/product-compiler/schemas/product-compilation-attempt-v1.js","40f7e544ae3f0cfb38692709982437a6638f8c8109b02eb561f3c7d89e21aa14"],
+  ["dist/product-compiler/schemas/product-runtime-behavior-contract-v1.js","60a16067dae6a398236694607424b402b2fe99ceb94a40fddc2a581735e05340"],
+  ["dist/product-compiler/schemas/product-spec-v1.js","0663d49b73f92efdcd1884d3b6bff8fd78562e173fe89c02ba32f94988228fed"],
+  ["dist/product-compiler/schemas/product-spec-v2.js","998afcfa443342a5a6c5e67544b858c294ea17a75a8890540771259ad3d966cf"],
+  ["dist/product-compiler/schemas/runtime-data-contract-v1.js","300bfa3fd7d8830f420d073952ed0b1c6662f54fb92814e2b90d5bcbc50470a7"],
+  ["dist/product-compiler/schemas/semantic-realization-plan-v2.js","cfdcd6eaf56adb6d960fe614076b24bba3a8b942b7b4a80ec33126f54c856ee0"],
+  ["dist/product-compiler/schemas/semantic-source-intent-set-v1.js","74866cae206a665806d4f1370efe6ac811f502410e4e7d1ee047cd0869a91348"],
+  ["dist/product-compiler/schemas/semantic-source-path-token-set-v2.js","80ba48a97d838e84d3dfb7e42de14568859fc0861c0171ae9d1d22ceb07b1f6f"],
+  ["dist/product-compiler/schemas/stack-semantic-source-rules-v1.js","fe278f28c2e1d975ff6284665868b0ac044d4c0314d4b996e34db656d7c3ac55"],
+  ["dist/product-compiler/schemas/stitch-rendered-semantics-v1.js","521607daf7d538eb580d66a2c4fea366e1e5bc463bdad352678a95fd2800388a"],
+  ["dist/product-compiler/schemas/stitch-rendered-semantics-v2.js","7119950bd8b8b37551f036a75628fec5f2baec0e922f630801a012ee4451f663"],
+  ["dist/product-compiler/schemas/stitch-screen-index-v2.js","dc5cd689e9d58d7a5e725405dc616f30a2c2fbe4d58cc45a40c6456f262251dc"],
+  ["dist/product-compiler/schemas/story-plan-v2.js","8e77b97ab60d5d2530fb94220f6360adf40df28c622c07aafc32c4500ac388dd"],
+  ["dist/product-compiler/schemas/story-plan-v3.js","628c35cd15320972e83b4a437d9626b1fd07ebf6d16efb8273b30d3b3148ea82"],
+  ["dist/product-compiler/stack-semantic-source-rules-catalog-v1.js","a98cb2181dd60dec0576202003524d7760f93656c4dcf6659ff6c55e2f82cc59"],
+  ["dist/product-compiler/stack-topology-catalog.js","184e78198d14b21d09a9df8dbc7493cda15b0cfb4b7c594a37b87e78f145d85a"],
+  ["dist/recovery/recovery-case.js","2d1541a7514be60398b0868c6600956647451223e3df78c8090c15b953d5783b"],
+  ["dist/recovery/recovery-delivery.js","570b3899e5b9ee776efb1b33c1938384479e3f46aff8ce81906127e4f149f88c"],
+  ["dist/recovery/v3-downstream-terminal-cause-v1.js","3df78de50615b03ba182fbe9dc16e83560aca5f5e9f4ec5b6aa2253179b1d8cf"],
+  ["dist/recovery/v3-recovery-claim-authority.js","5ce0f53899ccb0313e974732ac27f3e584ae234356025c03d4545bea3f11b3c3"],
+  ["dist/runtime-config.js","c7cd91c4969e07cb3caf90f16cc37f33d0dda42c68ae0c2691e62663f1a34dbe"],
+  ["dist/server/dashboard-core-projection-v2.js","1c07536b7ac1e14c3fc5aaa03b551a16b55dec8424d9950413a4b186095a5289"],
+].map(([locator,sha256])=>Object.freeze({locator,sha256})));
+const COMPILED_DATA_T_ONLY_V1=Object.freeze([
+  ["dist/installation/fresh-installation-activation-v1.js","406d7d5619510596f7109ea3e7b2f1ede09ae3c95816e48cfda85700fc4d43fb"],
+  ["dist/installation/fresh-installation-artifact-bootstrap-v1.js","d91ef03109e74a0dd0651dbb4dd80a5acdf0e6cb22b3ef0964fca643a00ff243"],
+  ["dist/installation/fresh-installation-mission-control-schema-v1.js","a8c451e58487b6cf348864d575bd3dace4cca94af0537b9bf96e10d3b6900fde"],
+  ["dist/installation/fresh-installation-provenance-v1.js","ee5f0a01378618fc0fe4c039613404674b4f78c587c87a0e2ab60a14397b7a35"],
+  ["dist/installation/fresh-installation-runtime-grants-v1.js","b59bbe34e0cd0282237ad837eebd70d27321b458bc952bac9231424c6f40f4c1"],
+  ["dist/product-compiler/artifact-index.js","bdaaac0ca4174433cc311c18f3d5cfafb3bfeae4fc8ec9638030a8635c2f69c1"],
+  ["dist/product-compiler/artifact-inventory-store.js","cd1fb6dd7a523d8fcf15c3bc1c2075bde918256a1ac7cb17b40da4f4e4dd749d"],
+  ["dist/product-compiler/artifact-store-authority.js","016c57266c4619c8a6383ee5eda8d407cd7375b387a5c9dbf00c93dd0e44aec5"],
+  ["dist/product-compiler/artifact-store.js","204e2af9b6d41462a2faf724cee849236bcd8981e7530c0f561d3c401f350457"],
+  ["dist/product-compiler/indexed-artifact-publisher.js","6aa25a5930e10f92ba5e7671998e20ddb5320fa585bd16ab3c39645179cee9e5"],
+].map(([locator,sha256])=>Object.freeze({locator,sha256})));
+const COMPILED_DATA_T_V1=Object.freeze([...COMPILED_DATA_M_V1,...COMPILED_DATA_T_ONLY_V1]
+  .sort((a,b)=>Buffer.compare(Buffer.from(a.locator),Buffer.from(b.locator))));
+function compiledDataVmV1(){
+  // The pure predicate needs no Node binary fixture or filesystem facts. Every
+  // effect remains the same closed/counted whole-helper boundary.
+  const state={root:SOURCE_M_V1,moduleURL:url.pathToFileURL(SOURCE_M_V1+SOURCE_SUFFIX_V1).href,
+    fs:{constants},childProcess:{},process:{},os:{},events:[],imports:[],locators:[],unlisted:[],faults:[]};
+  state.checked=fn=>(...args)=>{try{return fn(...args);}catch(error){
+    if(error?.code==='ERR_ASSERTION')state.faults.push(error.message);throw error;
+  }};
+  state.unexpected=label=>{state.unlisted.push(label);throw Error('COMPILED_DATA_UNLISTED:'+label);};
+  const vm=sourcePrefixVmV1(state);
+  assert.equal(typeof vm.compiledDataAdmission,'function','missing private contract: ownedSourceAuditedCompiledV1');
+  return {vm,state};
+}
+function compiledManifestCopyV1(kind){
+  return (kind==='maintenance'?COMPILED_DATA_M_V1:COMPILED_DATA_T_V1).map(row=>({...row}));
+}
+function assertCompiledDataOutcomeV1(manifest,kind,approved){
+  const {vm,state}=compiledDataVmV1();
+  if(approved)assert.equal(vm.compiledDataAdmission(manifest,kind),undefined);
+  else ownerRefusedV1(()=>vm.compiledDataAdmission(manifest,kind),'finite compiled data admission');
+  assert.deepEqual(state.events,[],'data predicate performs no IO or phase work');
+  assert.deepEqual(state.imports,[],'data predicate imports no target');
+  assert.deepEqual(state.locators,[],'data predicate derives no owner context');vm.assertContained();
+}
+test('Source compiled DATA-admission simulation accepts the independent approved M143 manifest',()=>{
+  const manifest=compiledManifestCopyV1('maintenance');
+  assert.equal(manifest.length,143);
+  assert.equal(createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    'ec4d076a604601dff3618b4f7c54e8924d1d33b2b9177ac216aecce7e598a8de');
+  assertCompiledDataOutcomeV1(manifest,'maintenance',true);
+});
+test('Source compiled DATA-admission simulation accepts the independent approved T153 manifest',()=>{
+  const manifest=compiledManifestCopyV1('target');
+  assert.equal(manifest.length,153);
+  assert.equal(createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    'ef3696ca8b4cfcd387eb3cc77000a13781fde1cb17da9550abe2b88ed7656d2b');
+  assertCompiledDataOutcomeV1(manifest,'target',true);
+});
+test('Source compiled DATA-admission simulation refuses one changed M byte hash',()=>{
+  const manifest=compiledManifestCopyV1('maintenance');manifest[0].sha256='0'.repeat(64);
+  assertCompiledDataOutcomeV1(manifest,'maintenance',false);
+});
+test('Source compiled DATA-admission simulation refuses one changed T-only byte hash',()=>{
+  const manifest=compiledManifestCopyV1('target');
+  manifest.find(row=>row.locator==='dist/installation/fresh-installation-activation-v1.js').sha256='0'.repeat(64);
+  assertCompiledDataOutcomeV1(manifest,'target',false);
+});
+test('Source compiled DATA-admission simulation refuses one omitted M record',()=>{
+  const manifest=compiledManifestCopyV1('maintenance');manifest.shift();
+  assertCompiledDataOutcomeV1(manifest,'maintenance',false);
+});
+test('Source compiled DATA-admission simulation refuses one duplicate T record',()=>{
+  const manifest=compiledManifestCopyV1('target');manifest.push({...manifest[0]});
+  assertCompiledDataOutcomeV1(manifest,'target',false);
+});
+test('Source compiled DATA-admission simulation refuses one extra M record',()=>{
+  const manifest=compiledManifestCopyV1('maintenance');
+  manifest.push({locator:'dist/unadmitted-compiled-data-fixture-v1.js',sha256:'a'.repeat(64)});
+  assertCompiledDataOutcomeV1(manifest,'maintenance',false);
+});
+test('Source compiled DATA-admission simulation refuses the T manifest crossed into M admission',()=>{
+  assertCompiledDataOutcomeV1(compiledManifestCopyV1('target'),'maintenance',false);
+});

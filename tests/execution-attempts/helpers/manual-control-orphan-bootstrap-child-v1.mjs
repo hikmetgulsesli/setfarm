@@ -3,8 +3,9 @@ import {spawn,spawnSync} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
 import * as net from 'node:net';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {TextDecoder,types} from 'node:util';
+import {userInfo} from 'node:os';
 
 export const MANUAL_ORPHAN_BASENAME_V1='manual-control-orphan-bootstrap-v1.integration.test.ts';
 export const MANUAL_ORPHAN_VECTOR_V1=Object.freeze([
@@ -414,6 +415,702 @@ export function encodeManualOrphanRunnerResultV1(value){
 }
 export function decodeManualOrphanRunnerResultV1(bytes){
   return decodeOwnedDataV1(bytes,orderedOwnedRunnerResultV1,arguments.length);
+}
+
+// Fixed Source custody only. No frame, environment selection, private record,
+// database or production-bootstrap adapter participates in this owner.
+const ownedNodeV1='/opt/homebrew/Cellar/node/26.4.0/bin/node';
+const ownedNodeHashV1='59cd4fb59cf5bc239f43d5db8c0cd8c23c22db79419612b92da3b7cf34de8553';
+const ownedRetentionV1='scripts/build-generation-retention.mjs';
+// Independently reviewed builtin-only initialization closure, including its
+// guarded CLI entry. A new retention program requires a new Source review.
+const ownedRetentionHashV1='b2e03e4b08142af562330a651b45ee1b9f79a19025c2a39c356cf73e5a08c097';
+const ownedProfileV1='src/installation/manual-orphan-target-dependencies-v1.json';
+const ownedProfileHashV1='77005216e1fbc83baa7e23c24517c3850e99463754dad42c5559c5ae08f2c64f';
+const ownedComparisonLocatorsV1=Object.freeze([
+  'scripts/run-private-postgres-tests.mjs','scripts/__tests__/private-postgres-test-cluster.test.js',
+  'scripts/run-execution-attempt-tests.ts','scripts/run-isolated-postgres-tests.ts',
+  'tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs',
+  'scripts/__tests__/manual-orphan-bootstrap-owned-route-v1.test.js',
+  'tests/execution-attempts/helpers/manual-control-orphan-bootstrap-fixture-v1.ts',
+  'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts',
+  'scripts/private-postgres-test-journal-v1.mjs','scripts/finding-test-preflight.mjs',ownedProfileV1,
+]);
+const ownedMetadataV1=Object.freeze(['BUILD_INFO.json','PLATFORM_BUILD_OUTPUT_TREE.json','PLATFORM_RELEASE_MANIFEST.json']);
+const ownedObserverV1='dist/internal-production/baseline-post-handoff-receipt-v1.js';
+const ownedWorkspaceApiV1='dist/internal-production/baseline-workspace-authority-path-v1.js';
+const ownedNormalizerV1='dist/internal-production/baseline-spawner-launch-environment-v1.js';
+const ownedOrdinaryRootsV1=Object.freeze([
+  'dist/installation/fresh-installation-entry-v1.js','dist/db-pg.js','dist/db/contract-spine-migrations.js',
+  ownedObserverV1,'dist/cli/runtime-guard.js','dist/installation/fresh-installation-v1.js',
+  'dist/installation/fresh-installation-activation-verifier-v1.js',
+]);
+const ownedSetupRootsV1=Object.freeze([
+  ...ownedOrdinaryRootsV1,'dist/installation/fresh-installation-activation-v1.js',
+  'dist/installation/fresh-installation-provenance-v1.js',
+  'dist/installation/fresh-installation-mission-control-schema-v1.js',
+  'dist/installation/fresh-installation-runtime-grants-v1.js',
+  'dist/installation/fresh-installation-artifact-bootstrap-v1.js',
+]);
+const ownedOrdinaryDeltaV1=Object.freeze([
+  'dist/cli/runtime-guard.js','dist/contracts/operational-active-run-status-v1.js','dist/db-pg.js',
+  'dist/db/dashboard-core-readonly-profile-v2.js','dist/db/dashboard-core-response-v2.js',
+  'dist/execution/process-identity.js','dist/execution/v3-seal-capacity.js','dist/findings/finding-publication-v1.js',
+  'dist/installation/fresh-installation-activation-verifier-v1.js','dist/installation/fresh-installation-artifact-policy-v1.js',
+  'dist/installation/fresh-installation-entry-v1.js','dist/installation/fresh-installation-owner-source-v1.js',
+  'dist/installation/fresh-installation-selection-v1.js',
+  'dist/internal-production/baseline-deployment-cutover-records-v1.js',
+  'dist/internal-production/baseline-deployment-cutover-v1.js',
+  'dist/internal-production/baseline-positive-worktree-active-binding-snapshot-v1.js',
+  'dist/internal-production/baseline-positive-worktree-active-row-snapshot-v2.js',
+  'dist/internal-production/baseline-positive-worktree-binding-rows-v1.js',
+  'dist/internal-production/baseline-restart-authority-retirement-v1.js',
+  'dist/internal-production/baseline-spawner-launch-environment-v1.js','dist/runtime-config.js',
+  'dist/server/dashboard-core-projection-v2.js',
+]);
+const ownedSetupDeltaV1=Object.freeze([
+  'dist/installation/fresh-installation-activation-v1.js','dist/installation/fresh-installation-artifact-bootstrap-v1.js',
+  'dist/installation/fresh-installation-mission-control-schema-v1.js','dist/installation/fresh-installation-provenance-v1.js',
+  'dist/installation/fresh-installation-runtime-grants-v1.js','dist/product-compiler/artifact-index.js',
+  'dist/product-compiler/artifact-inventory-store.js','dist/product-compiler/artifact-store-authority.js',
+  'dist/product-compiler/artifact-store.js','dist/product-compiler/indexed-artifact-publisher.js',
+]);
+const ownedGraphBuiltinsV1=new Set([
+  'node:child_process','node:crypto','node:fs','node:fs/promises','node:http','node:os','node:path',
+  'node:timers/promises','node:url','node:util','node:util/types',
+]);
+let ownedSourceCleanupUncertainV1=false;
+function ownedSourceRefusalV1(){return Error(ownedSourceCleanupUncertainV1
+  ?'MANUAL_ORPHAN_CLEANUP_UNKNOWN':'MANUAL_ORPHAN_OWNER_REFUSED');}
+function ownedSourceRequireV1(value){if(!value)throw ownedSourceRefusalV1();}
+function ownedSourceHashV1(value){return createHash('sha256').update(value).digest('hex');}
+function ownedSourceLocatorV1(value){
+  return typeof value==='string'&&Buffer.byteLength(value)<=1024&&!path.isAbsolute(value)
+    &&path.posix.normalize(value)===value&&value.split('/').every(cell=>/^[A-Za-z0-9._-]+$/.test(cell)&&cell!=='.'&&cell!=='..');
+}
+function ownedSourceSameV1(a,b,file=false,tree=false){
+  return ['dev','ino','uid','gid','mode','birthtimeNs',...(file?['nlink','size','mtimeNs','ctimeNs']:tree?['mtimeNs','ctimeNs']:[])]
+    .every(key=>a[key]===b[key]);
+}
+function ownedSourceJsonV1(bytes){return JSON.parse(new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes));}
+function ownedSourceKeysV1(value,keys){
+  ownedSourceRequireV1(value!==null&&typeof value==='object'&&!Array.isArray(value)
+    &&JSON.stringify(Object.keys(value).sort())===JSON.stringify([...keys].sort()));
+}
+function ownedSourceAuditedCompiledV1(manifest,kind){
+  try{
+    ownedSourceRequireV1(!ownedSourceCleanupUncertainV1);
+    // Independently reviewed M62 and fixed-T compiled bytes. Never refresh
+    // these expectations from a current release or its metadata.
+    const expected=kind==='maintenance'
+      ?[143,'ec4d076a604601dff3618b4f7c54e8924d1d33b2b9177ac216aecce7e598a8de']
+      :kind==='target'?[153,'ef3696ca8b4cfcd387eb3cc77000a13781fde1cb17da9550abe2b88ed7656d2b']:null;
+    ownedSourceRequireV1(expected&&Array.isArray(manifest)&&manifest.length===expected[0]);
+    const records=[];let previous;
+    for(const entry of manifest){
+      ownedSourceKeysV1(entry,['locator','sha256']);
+      ownedSourceRequireV1(ownedSourceLocatorV1(entry.locator)&&entry.locator.startsWith('dist/')
+        &&entry.locator.endsWith('.js')&&probeHexV1(entry.sha256));
+      const locator=Buffer.from(entry.locator);
+      ownedSourceRequireV1(previous===undefined||Buffer.compare(previous,locator)<0);previous=locator;
+      records.push({locator:entry.locator,sha256:entry.sha256});
+    }
+    ownedSourceRequireV1(ownedSourceHashV1(JSON.stringify(records))===expected[1]);
+  }catch{throw ownedSourceRefusalV1();}
+}
+
+function ownedSourceResourcesV1(){
+  const resources=[];let closed=false;
+  return {
+    guard(){ownedSourceRequireV1(!closed&&!ownedSourceCleanupUncertainV1);},
+    add(close){ownedSourceRequireV1(!closed);resources.push(close);},
+    close(){
+      if(!closed){
+        closed=true;
+        while(resources.length){const close=resources.pop();try{close();}catch{ownedSourceCleanupUncertainV1=true;}}
+      }
+      if(ownedSourceCleanupUncertainV1)throw ownedSourceRefusalV1();
+    },
+  };
+}
+function ownedSourcePinsV1(resources,home){
+  const directories=new Map(),files=new Map(),absences=new Set();
+  const physical=locator=>ownedSourceRequireV1(fs.realpathSync(locator)===locator);
+  const checkDirectory=pin=>{
+    physical(pin.path);
+    const named=fs.lstatSync(pin.path,{bigint:true}),held=fs.fstatSync(pin.fd,{bigint:true});
+    ownedSourceRequireV1(named.isDirectory()&&!named.isSymbolicLink()&&held.isDirectory()&&!held.isSymbolicLink()
+      &&ownedSourceSameV1(pin.stat,named,false,!!pin.members)&&ownedSourceSameV1(pin.stat,held,false,!!pin.members));
+    if(pin.members)ownedSourceRequireV1(JSON.stringify(fs.readdirSync(pin.path).sort())===JSON.stringify(pin.members));
+  };
+  const directory=(locator,tree=false)=>{
+    resources.guard();ownedSourceRequireV1(path.isAbsolute(locator)&&path.normalize(locator)===locator);
+    const cells=locator.split(path.sep).filter(Boolean);ownedSourceRequireV1(cells.length<=128);
+    for(let index=0;index<=cells.length;index++){
+      const current=path.join(path.parse(locator).root,...cells.slice(0,index));let pin=directories.get(current);
+      if(!pin){
+        physical(current);const stat=fs.lstatSync(current,{bigint:true});
+        ownedSourceRequireV1(stat.isDirectory()&&!stat.isSymbolicLink()
+          &&(!(current===home||current.startsWith(home+'/'))||(stat.uid===501n&&stat.gid===20n&&(stat.mode&0o022n)===0n)));
+        const fd=fs.openSync(current,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);
+        resources.add(()=>fs.closeSync(fd));pin={path:current,fd,stat,members:null};directories.set(current,pin);
+      }
+      checkDirectory(pin);
+      if(current===locator&&tree&&!pin.members){
+        const names=fs.readdirSync(current).sort();ownedSourceRequireV1(names.length<=10000);
+        pin.members=names;checkDirectory(pin);
+      }
+    }
+    return directories.get(locator).stat;
+  };
+  const bytes=pin=>{
+    resources.guard();physical(pin.path);
+    const metadata=()=>{
+      const named=fs.lstatSync(pin.path,{bigint:true}),held=fs.fstatSync(pin.fd,{bigint:true});
+      ownedSourceRequireV1(named.isFile()&&!named.isSymbolicLink()&&held.isFile()&&!held.isSymbolicLink()
+        &&ownedSourceSameV1(pin.stat,named,true)&&ownedSourceSameV1(pin.stat,held,true));
+    };
+    metadata();const result=Buffer.alloc(Number(pin.stat.size));let offset=0;
+    while(offset<result.length){
+      const wanted=Math.min(65536,result.length-offset),n=fs.readSync(pin.fd,result,offset,wanted,offset);
+      ownedSourceRequireV1(Number.isSafeInteger(n)&&n>0&&n<=wanted);offset+=n;
+    }
+    ownedSourceRequireV1(fs.readSync(pin.fd,Buffer.alloc(1),0,1,offset)===0);metadata();
+    const digest=ownedSourceHashV1(result);
+    if(pin.sha256!==undefined)ownedSourceRequireV1(digest===pin.sha256);
+    else pin.sha256=digest;
+    return result;
+  };
+  const file=(locator,cap=16777216,device,system=false)=>{
+    resources.guard();directory(path.dirname(locator));physical(locator);
+    let pin=files.get(locator);
+    if(!pin){
+      const stat=fs.lstatSync(locator,{bigint:true}),systemGit=system&&locator==='/usr/bin/git';
+      ownedSourceRequireV1(stat.isFile()&&!stat.isSymbolicLink()&&(systemGit?stat.nlink>=1n:stat.nlink===1n)
+        &&(stat.mode&0o022n)===0n&&(stat.uid===501n||(system&&stat.uid===0n))
+        &&(device===undefined||stat.dev===device)&&stat.size>=0n&&stat.size<=BigInt(cap));
+      if(systemGit){
+        ownedSourceRequireV1(stat.uid===0n&&(stat.mode&0o7777n)===0o755n&&stat.size>0n);
+        for(const ancestor of ['/','/usr','/usr/bin']){
+          const identity=directory(ancestor);ownedSourceRequireV1(identity.uid===0n&&(identity.mode&0o022n)===0n);
+        }
+      }
+      const fd=fs.openSync(locator,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+      resources.add(()=>fs.closeSync(fd));pin={path:locator,fd,stat,sha256:undefined};files.set(locator,pin);
+    }
+    ownedSourceRequireV1(pin.stat.size<=BigInt(cap)&&(device===undefined||pin.stat.dev===device));
+    return {bytes:bytes(pin),stat:pin.stat,sha256:pin.sha256};
+  };
+  const absent=locator=>{
+    resources.guard();ownedSourceRequireV1(path.isAbsolute(locator)&&path.normalize(locator)===locator);
+    const cells=locator.split(path.sep).filter(Boolean);ownedSourceRequireV1(cells.length<=128);let parent=path.parse(locator).root;
+    directory(parent);
+    for(let index=0;index<cells.length;index++){
+      const current=path.join(parent,cells[index]);let stat;
+      try{stat=fs.lstatSync(current,{bigint:true});}
+      catch(error){
+        if(error?.code!=='ENOENT')throw error;
+        directory(parent,true);absences.add(current);return;
+      }
+      ownedSourceRequireV1(index<cells.length-1&&stat.isDirectory()&&!stat.isSymbolicLink());
+      directory(current);parent=current;
+    }
+    throw ownedSourceRefusalV1();
+  };
+  return {directory,file,absent,check(){
+    resources.guard();for(const pin of directories.values())checkDirectory(pin);
+    for(const pin of files.values())bytes(pin);
+    for(const locator of absences){
+      try{fs.lstatSync(locator,{bigint:true});}catch(error){if(error?.code==='ENOENT')continue;throw error;}
+      throw ownedSourceRefusalV1();
+    }
+  }};
+}
+
+// Read static edges as DATA. Mask strings/comments/regex first, so embedded
+// dormant Node programs cannot be mistaken for this module's own declarations.
+// Dynamic edges are separately represented by the fixed audited roots above;
+// this is neither a JavaScript evaluator nor a recursive dynamic-import loader.
+function ownedSourceImportsV1(bytes){
+  const source=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes),mask=Array(source.length).fill(' '),imports=[];
+  let index=0,last='';
+  const regexAfter=token=>!token||(token.length===1&&'([{:;,=!?&|+*%~<>^-'.includes(token))
+    ||['return','throw','case','yield','await','void','typeof','delete','in','of','instanceof'].includes(token);
+  const skipRegex=()=>{
+    index++;let bracket=false,ended=false;
+    while(index<source.length){
+      const next=source[index++];if(next==='\\'){index++;continue;}
+      if(next==='[')bracket=true;else if(next===']')bracket=false;
+      else if(next==='/'&&!bracket){ended=true;break;}
+      else if(next==='\n'||next==='\r')break;
+    }
+    ownedSourceRequireV1(ended);while(index<source.length&&/[a-z]/i.test(source[index]))index++;
+  };
+  const skipLiteral=()=>{
+    const quote=source[index++];let ended=false;
+    while(index<source.length){
+      const next=source[index++];if(next==='\\'){index++;continue;}
+      if(next===quote){ended=true;break;}
+      if(quote==='`'&&next==='$'&&source[index]==='{'){index++;skipInterpolation();}
+    }
+    ownedSourceRequireV1(ended);
+  };
+  const skipInterpolation=()=>{
+    let depth=1,previous='';
+    while(index<source.length&&depth){
+      const cell=source[index];if(/\s/.test(cell)){index++;continue;}
+      if(source.startsWith('//',index)){const end=source.indexOf('\n',index+2);index=end<0?source.length:end;continue;}
+      if(source.startsWith('/*',index)){const end=source.indexOf('*/',index+2);ownedSourceRequireV1(end>=0);index=end+2;continue;}
+      if(cell==='"'||cell==="'"||cell==='`'){skipLiteral();previous='literal';continue;}
+      if(cell==='/'&&regexAfter(previous)){skipRegex();previous='literal';continue;}
+      if(/[A-Za-z0-9_$]/.test(cell)){
+        const start=index;while(index<source.length&&/[A-Za-z0-9_$]/.test(source[index]))index++;
+        previous=source.slice(start,index);continue;
+      }
+      if(cell==='{')depth++;else if(cell==='}')depth--;
+      previous=cell;index++;
+    }
+    ownedSourceRequireV1(depth===0);
+  };
+  while(index<source.length){
+    const start=index,cell=source[index];
+    if(/\s/.test(cell)){mask[index]=cell;index++;continue;}
+    if(source.startsWith('//',index)){const end=source.indexOf('\n',index+2);index=end<0?source.length:end;continue;}
+    if(source.startsWith('/*',index)){const end=source.indexOf('*/',index+2);ownedSourceRequireV1(end>=0);index=end+2;continue;}
+    if(cell==='"'||cell==="'"||cell==='`'){
+      skipLiteral();last='literal';continue;
+    }
+    if(cell==='/'&&regexAfter(last)){skipRegex();last='literal';continue;}
+    if(/[A-Za-z0-9_$]/.test(cell)){
+      while(index<source.length&&/[A-Za-z0-9_$]/.test(source[index])){mask[index]=source[index];index++;}
+      last=source.slice(start,index);continue;
+    }
+    mask[index]=cell;last=cell;index++;
+  }
+  const plain=mask.join('');
+  for(const match of plain.matchAll(/\b(import|export)\b/g)){
+    const at=match.index,kind=match[1],before=plain.slice(0,at).trimEnd().at(-1);
+    if(before==='.'||before==='?')continue;
+    const tail=plain.slice(at+kind.length),next=tail.trimStart()[0];
+    if(kind==='import'&&(next==='('||next==='.'||next===':'))continue;
+    if(kind==='export'&&next!=='{'&&next!=='*')continue;
+    const end=plain.indexOf(';',at);ownedSourceRequireV1(end>=0);
+    const statement=source.slice(at,end+1);
+    if(kind==='export'&&!/\bfrom\s*["']/.test(statement))continue;
+    const specifier=/^(?:import\s+(?:[\s\S]*?\s+from\s+)?|export\s+[\s\S]*?\s+from\s+)(["'])([^"'\\\r\n]+)\1\s*;$/.exec(statement);
+    ownedSourceRequireV1(specifier);imports.push(specifier[2]);
+  }
+  return imports;
+}
+
+const ownedResolutionProgramV1=`import fs from 'node:fs';import {createRequire} from 'node:module';import {pathToFileURL,fileURLToPath} from 'node:url';
+const input=JSON.parse(fs.readFileSync(0,'utf8'));
+process.stdout.write(JSON.stringify(input.edges.map(([mode,parent,specifier])=>{
+const url=pathToFileURL(parent),require=createRequire(url);
+return input.phase==='paths'?require.resolve.paths(specifier):fileURLToPath(import.meta.resolve(specifier,url.href));
+})));`;
+
+function ownedSourceBuildDataV1(value){
+  ownedSourceRequireV1(value!==null&&typeof value==='object'
+    &&ownedGitShaV1(value.sha)&&ownedGitShaV1(value.treeHash)&&probeHexV1(value.buildHash));
+  return Object.freeze({sha:value.sha,treeHash:value.treeHash,buildHash:value.buildHash});
+}
+function ownedSourceEqualBuildV1(actual,expected){
+  const value=ownedSourceBuildDataV1(actual);
+  return value.sha===expected.sha&&value.treeHash===expected.treeHash&&value.buildHash===expected.buildHash;
+}
+function ownedSourceSetEqualV1(actual,expected){
+  return JSON.stringify([...actual].sort())===JSON.stringify([...expected].sort());
+}
+function ownedSourceValidateProfileV1(profile){
+  ownedSourceKeysV1(profile,['schema','platform','arch','target','provenance','packages','targetResolution','targetAbsences','maintenanceObserver']);
+  ownedSourceRequireV1(profile.schema==='setfarm.manual-orphan-target-dependencies.v1'&&profile.platform==='darwin'&&profile.arch==='arm64'
+    &&profile.target.sourceSha===ownedTargetShaV1&&ownedGitShaV1(profile.target.sourceTreeHash)
+    &&probeHexV1(profile.target.outputTreeHash)&&probeHexV1(profile.target.lockSha256));
+  ownedSourceKeysV1(profile.target.metadata,ownedMetadataV1);
+  for(const value of Object.values(profile.target.metadata))ownedSourceRequireV1(probeHexV1(value));
+  ownedSourceRequireV1(profile.provenance.inventoryReceiptSha256==='8fc7961c767c849bafe1a38d067e5667e3e335264dd64f5249bd78e552b733ed'
+    &&profile.provenance.archiveEqualityReceiptSha256==='b69b87d869068416b2ec7d31c15a474e69c10eb92a4831801c2dd510446f4065'
+    &&Array.isArray(profile.packages)&&profile.packages.length===3&&profile.packages.length<=16);
+  for(const [index,name,version,count,total] of [[0,'postgres','3.4.8',37,299870],[1,'zod','4.4.3',718,4558122],[2,'yaml','2.9.0',233,685953]]){
+    const entry=profile.packages[index];
+    ownedSourceKeysV1(entry,['locator','name','version','lockIntegrity','inventoryHash','fileCount','byteLength']);
+    ownedSourceRequireV1(entry.name===name&&entry.version===version&&entry.locator==='node_modules/'+name
+      &&entry.fileCount===count&&entry.byteLength===total&&probeHexV1(entry.inventoryHash)
+      &&typeof entry.lockIntegrity==='string'&&entry.lockIntegrity.startsWith('sha512-'));
+  }
+  ownedSourceRequireV1(Array.isArray(profile.targetResolution)&&profile.targetResolution.length===14
+    &&profile.targetResolution.reduce((sum,group)=>sum+group.members.length,0)===82
+    &&Array.isArray(profile.targetAbsences)&&profile.targetAbsences.length===29&&new Set(profile.targetAbsences).size===29
+    &&Array.isArray(profile.maintenanceObserver.resolution)&&profile.maintenanceObserver.resolution.length===12
+    &&profile.maintenanceObserver.resolution.reduce((sum,group)=>sum+group.members.length,0)===79
+    &&Array.isArray(profile.maintenanceObserver.absences)&&profile.maintenanceObserver.absences.length===27
+    &&Array.isArray(profile.maintenanceObserver.sourceClosure)&&profile.maintenanceObserver.sourceClosure.length===121);
+  const sourceLocators=new Set();
+  for(const entry of profile.maintenanceObserver.sourceClosure){
+    ownedSourceRequireV1(ownedSourceLocatorV1(entry.locator)&&entry.locator.startsWith('src/')&&entry.locator.endsWith('.ts')
+      &&probeHexV1(entry.sha256)&&!sourceLocators.has(entry.locator));sourceLocators.add(entry.locator);
+  }
+  for(const locator of profile.targetAbsences)ownedSourceRequireV1(ownedSourceLocatorV1(locator));
+}
+function ownedSourceOutputV1(pins,root,expected,full,profile){
+  const device=pins.directory(root).dev,metadata=new Map();
+  for(const name of ownedMetadataV1){
+    const pin=pins.file(path.join(root,'dist',name),4194304,device);
+    ownedSourceRequireV1((pin.stat.mode&0o7777n)===0o444n);
+    if(full)ownedSourceRequireV1(pin.sha256===profile.target.metadata[name]);
+    metadata.set(name,pin.bytes);
+  }
+  const info=ownedSourceJsonV1(metadata.get('BUILD_INFO.json')),output=ownedSourceJsonV1(metadata.get('PLATFORM_BUILD_OUTPUT_TREE.json'));
+  const manifest=ownedSourceJsonV1(metadata.get('PLATFORM_RELEASE_MANIFEST.json'));
+  ownedSourceRequireV1(info.sha===expected.sha&&info.shortSha===expected.sha.slice(0,8)&&info.branch==='main'&&info.dirty===false
+    &&manifest.releaseSha===expected.sha&&manifest.branch==='main'&&manifest.dirty===false
+    &&output.schema==='setfarm.platform-build-output-tree.v1'&&output.sourceSha===expected.sha&&output.sourceTreeHash===expected.treeHash
+    &&probeHexV1(output.outputTreeHash)&&Array.isArray(output.entries)&&output.entries.length>=3&&output.entries.length<=10000);
+  if(full)ownedSourceRequireV1(output.outputTreeHash===profile.target.outputTreeHash);
+  const entries=new Map(),folded=new Set();let total=0;
+  for(const entry of output.entries){
+    ownedSourceKeysV1(entry,['locator','mode','byteLength','sha256']);
+    ownedSourceRequireV1(ownedSourceLocatorV1(entry.locator)&&entry.locator.startsWith('dist/')
+      &&!entries.has(entry.locator)&&!folded.has(entry.locator.normalize('NFC').toLocaleLowerCase('en-US'))
+      &&entry.mode===(entry.locator==='dist/cli/cli.js'?0o755:0o644)
+      &&Number.isSafeInteger(entry.byteLength)&&entry.byteLength>=0&&entry.byteLength<=33554432&&probeHexV1(entry.sha256));
+    total+=entry.byteLength;ownedSourceRequireV1(total<=536870912);
+    folded.add(entry.locator.normalize('NFC').toLocaleLowerCase('en-US'));entries.set(entry.locator,entry);
+    if(full){
+      const pin=pins.file(path.join(root,entry.locator),33554432,device);
+      ownedSourceRequireV1(pin.bytes.length===entry.byteLength&&pin.sha256===entry.sha256&&Number(pin.stat.mode&0o7777n)===entry.mode);
+    }
+  }
+  ownedSourceRequireV1(JSON.stringify([...entries.keys()])===JSON.stringify([...entries.keys()].sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)))));
+  if(full){
+    const expectedFiles=new Set([...entries.keys(),...ownedMetadataV1.map(name=>'dist/'+name)]),actual=new Set();
+    const expectedDirectories=new Set(['dist']),actualDirectories=new Set();let visited=0;
+    for(const locator of expectedFiles){
+      for(let parent=path.posix.dirname(locator);parent!=='.';parent=path.posix.dirname(parent))expectedDirectories.add(parent);
+    }
+    const walk=(locator,depth)=>{
+      ownedSourceRequireV1(depth<=64);const directory=path.join(root,locator),stat=pins.directory(directory,true);
+      ownedSourceRequireV1(stat.dev===device&&(stat.mode&0o7777n)===0o755n);
+      ownedSourceRequireV1(expectedDirectories.has(locator));actualDirectories.add(locator);
+      for(const name of fs.readdirSync(directory)){
+        ownedSourceRequireV1(++visited<=10000&&/^[A-Za-z0-9._-]+$/.test(name)&&name!=='.'&&name!=='..');
+        const relative=locator+'/'+name,target=path.join(root,relative),child=fs.lstatSync(target,{bigint:true});
+        ownedSourceRequireV1(!child.isSymbolicLink());
+        if(child.isDirectory())walk(relative,depth+1);
+        else{ownedSourceRequireV1(child.isFile()&&expectedFiles.has(relative));actual.add(relative);}
+      }
+    };
+    walk('dist',0);ownedSourceRequireV1(ownedSourceSetEqualV1(actual,expectedFiles)
+      &&ownedSourceSetEqualV1(actualDirectories,expectedDirectories));
+  }
+  return entries;
+}
+function ownedSourceGraphV1(root,output,roots,groups,read){
+  const files=new Set(),members=new Set(),todo=[...roots],expected=new Set();
+  for(const group of groups)for(const locator of group.members){
+    const key=locator+':'+group.row[2];ownedSourceRequireV1(!expected.has(key));expected.add(key);
+  }
+  while(todo.length){
+    const locator=todo.pop();if(files.has(locator))continue;
+    ownedSourceRequireV1(ownedSourceLocatorV1(locator)&&locator.startsWith('dist/')&&locator.endsWith('.js')&&output.has(locator));
+    files.add(locator);ownedSourceRequireV1(files.size<=10000);
+    for(const specifier of ownedSourceImportsV1(read(locator))){
+      if(specifier.startsWith('node:')){ownedSourceRequireV1(ownedGraphBuiltinsV1.has(specifier));continue;}
+      if(specifier.startsWith('./')||specifier.startsWith('../')){
+        const child=path.posix.normalize(path.posix.join(path.posix.dirname(locator),specifier));
+        ownedSourceRequireV1(ownedSourceLocatorV1(child)&&child.startsWith('dist/')&&child.endsWith('.js'));todo.push(child);
+      }else{
+        const key=locator+':'+specifier;ownedSourceRequireV1(expected.has(key)&&!members.has(key));members.add(key);
+      }
+    }
+  }
+  ownedSourceRequireV1(ownedSourceSetEqualV1(members,expected));return {files,members};
+}
+function ownedSourcePackagesV1(pins,root,profile,groups,absences,home,recheck){
+  const device=pins.directory(root).dev,lock=ownedSourceJsonV1(pins.file(path.join(root,'package-lock.json'),16777216,device).bytes);
+  pins.file(path.join(root,'package.json'),1048576,device);
+  ownedSourceRequireV1(profile.packages.length>0&&profile.packages.length<=16&&groups.length>0&&groups.length<=64);
+  let total=0,visited=0;const seen=new Set(),authenticated=new Set();
+  for(const entry of profile.packages){
+    ownedSourceRequireV1(/^node_modules\/[a-z][a-z0-9-]*$/.test(entry.locator)&&!seen.has(entry.locator)
+      &&entry.locator==='node_modules/'+entry.name&&Number.isSafeInteger(entry.fileCount)&&entry.fileCount>0&&entry.fileCount<=2048
+      &&lock.packages?.[entry.locator]?.version===entry.version&&lock.packages?.[entry.locator]?.integrity===entry.lockIntegrity);
+    seen.add(entry.locator);const inventory=[],actualDirectories=new Set();
+    const walk=(directory,relative,depth)=>{
+      ownedSourceRequireV1(depth<=32&&pins.directory(directory,true).dev===device);
+      actualDirectories.add(relative);
+      const names=fs.readdirSync(directory).sort();ownedSourceRequireV1(names.length<=2048);
+      for(const name of names){
+        ownedSourceRequireV1(++visited<=8192&&/^[A-Za-z0-9._-]+$/.test(name)&&name!=='.'&&name!=='..'&&name!=='node_modules');
+        const filename=path.join(directory,name),member=relative?relative+'/'+name:name,stat=fs.lstatSync(filename,{bigint:true});
+        ownedSourceRequireV1(!stat.isSymbolicLink());
+        if(stat.isDirectory())walk(filename,member,depth+1);
+        else{
+          const pin=pins.file(filename,16777216,device);total+=pin.bytes.length;ownedSourceRequireV1(total<=67108864);
+          inventory.push({locator:member,byteLength:pin.bytes.length,sha256:pin.sha256});
+          authenticated.add(entry.locator+'/'+member);ownedSourceRequireV1(inventory.length<=2048);
+        }
+      }
+    };
+    walk(path.join(root,entry.locator),'',0);inventory.sort((a,b)=>Buffer.compare(Buffer.from(a.locator),Buffer.from(b.locator)));
+    const expectedDirectories=new Set(['']);
+    for(const member of inventory){
+      for(let parent=path.posix.dirname(member.locator);parent!=='.';parent=path.posix.dirname(parent))expectedDirectories.add(parent);
+    }
+    ownedSourceRequireV1(ownedSourceHashV1(JSON.stringify(inventory))===entry.inventoryHash&&inventory.length===entry.fileCount
+      &&inventory.reduce((sum,item)=>sum+item.byteLength,0)===entry.byteLength&&ownedSourceSetEqualV1(actualDirectories,expectedDirectories));
+    const metadata=ownedSourceJsonV1(pins.file(path.join(root,entry.locator,'package.json'),1048576,device).bytes);
+    ownedSourceRequireV1(metadata.name===entry.name&&metadata.version===entry.version);
+  }
+  const memberships=new Set(),contexts=new Set();
+  for(const {row,members} of groups){
+    ownedSourceRequireV1(Array.isArray(row)&&row.length===4&&row[0]==='esm'&&ownedSourceLocatorV1(row[1])&&ownedSourceLocatorV1(row[3])
+      &&seen.has('node_modules/'+row[2])&&authenticated.has(row[3])&&Array.isArray(members)&&members.length>0&&members.includes(row[1]));
+    const context=JSON.stringify([row[0],path.dirname(row[1]),row[2],row[3]]);ownedSourceRequireV1(!contexts.has(context));contexts.add(context);
+    const directory=pins.directory(path.join(root,path.dirname(row[1])),true);
+    for(const member of members){
+      const key=member+':'+row[2];ownedSourceRequireV1(ownedSourceLocatorV1(member)&&member.startsWith('dist/')&&member.endsWith('.js')
+        &&path.dirname(member)===path.dirname(row[1])&&!memberships.has(key));memberships.add(key);
+      const actual=pins.directory(path.dirname(path.join(root,member)));
+      ownedSourceRequireV1(ownedSourceSameV1(directory,actual));pins.file(path.join(root,member),16777216,device);
+    }
+  }
+  for(const locator of absences){ownedSourceRequireV1(ownedSourceLocatorV1(locator));pins.absent(path.join(root,locator));}
+  const run=(phase,accountHome)=>{
+    recheck();pins.check();const input=JSON.stringify({phase,edges:groups.map(({row})=>[row[0],path.join(root,row[1]),row[2]])});
+    ownedSourceRequireV1(Buffer.byteLength(input)<=1048576);
+    const child=spawnSync(ownedNodeV1,['--experimental-import-meta-resolve','--input-type=module','-e',ownedResolutionProgramV1],{
+      input,encoding:'utf8',cwd:root,shell:false,timeout:5000,maxBuffer:1048576,
+      env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',...(accountHome?{HOME:home}:{})},
+    });
+    recheck();pins.check();ownedSourceRequireV1(!child.error&&!child.signal&&child.status===0&&child.stderr===''
+      &&typeof child.stdout==='string'&&Buffer.byteLength(child.stdout)<=1048576);
+    const result=JSON.parse(child.stdout);ownedSourceRequireV1(Array.isArray(result)&&result.length===groups.length);return result;
+  };
+  for(const accountHome of [false,true]){
+    for(const [index,search] of run('paths',accountHome).entries()){
+      ownedSourceRequireV1(Array.isArray(search)&&search.length>0&&search.length<=128);let found=false;
+      for(const directory of search){
+        ownedSourceRequireV1(typeof directory==='string'&&path.isAbsolute(directory)&&path.normalize(directory)===directory);
+        if(directory===path.join(root,'node_modules')){found=true;break;}
+        for(const suffix of ['','.js','.json','.node'])pins.absent(path.join(directory,groups[index].row[2]+suffix));
+      }
+      ownedSourceRequireV1(found);
+    }
+    for(const [index,result] of run('resolve',accountHome).entries())ownedSourceRequireV1(result===path.join(root,groups[index].row[3]));
+  }
+  recheck();pins.check();
+}
+
+export async function holdManualOrphanOwnedSourcesV1(){
+  if(arguments.length||ownedSourceCleanupUncertainV1)throw ownedSourceRefusalV1();
+  const resources=ownedSourceResourcesV1();let invalid=false,closed=false,ready=false;
+  const owners=[],observers=[];let identityCheck=()=>{},contextCheck=()=>{};
+  let pins;
+  const cleanup=()=>{closed=true;resources.close();};
+  const check=()=>{
+    try{
+      ownedSourceRequireV1(!closed&&!invalid);resources.guard();contextCheck();pins?.check();
+      for(const owner of owners)owner.check();identityCheck();
+      for(const observer of observers){const actual=observer.read();ownedSourceRequireV1(ownedSourceEqualBuildV1(actual,observer.expected));}
+      pins?.check();contextCheck();
+    }catch{invalid=true;throw ownedSourceRefusalV1();}
+  };
+  const close=()=>{
+    if(closed){resources.close();return;}
+    let refused=invalid;
+    if(!invalid)try{check();}catch{refused=true;}
+    cleanup();if(refused)throw ownedSourceRefusalV1();
+  };
+  const registerOwner=(acquire,validate)=>{
+    let raw;
+    try{raw=acquire();}catch{ownedSourceCleanupUncertainV1=true;throw ownedSourceRefusalV1();}
+    // Retain the returned value BEFORE any property/shape/observation access.
+    resources.add(()=>raw.close());
+    try{return validate(raw);}catch{
+      if(raw===null||typeof raw!=='object'||typeof raw.close!=='function')ownedSourceCleanupUncertainV1=true;
+      throw ownedSourceRefusalV1();
+    }
+  };
+  try{
+    const locators=probeSourceLocatorsV1(),suffix='/tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs';
+    ownedSourceRequireV1(locators.helper.endsWith(suffix));
+    const maintenanceRoot=locators.helper.slice(0,-suffix.length),account=userInfo();
+    const home=account.homedir,workspace=path.join(home,'ai','setrox'),targetRoot=path.join(workspace,'releases/setfarm-161297ff');
+    ownedSourceRequireV1(home==='/Users/setrox'&&account.uid===501&&account.gid===20
+      &&process.getuid?.()===501&&process.geteuid?.()===501&&process.getgid?.()===20&&process.getegid?.()===20
+      &&process.platform==='darwin'&&process.arch==='arm64'&&process.version==='v26.4.0'
+      &&process.execPath===ownedNodeV1&&process.argv0===ownedNodeV1&&process.argv[0]===ownedNodeV1
+      &&process.cwd()===maintenanceRoot&&path.dirname(maintenanceRoot)===path.join(workspace,'releases')
+      &&/^setfarm-[a-f0-9]{8}$/.test(path.basename(maintenanceRoot))&&maintenanceRoot!==targetRoot
+      &&process.argv[1]!==path.join(maintenanceRoot,ownedRetentionV1)&&process.argv[1]!==path.join(targetRoot,ownedRetentionV1));
+    contextCheck=()=>ownedSourceRequireV1(process.getuid?.()===501&&process.geteuid?.()===501&&process.getgid?.()===20&&process.getegid?.()===20
+      &&process.execPath===ownedNodeV1&&process.argv0===ownedNodeV1&&process.argv[0]===ownedNodeV1
+      &&process.platform==='darwin'&&process.arch==='arm64'&&process.version==='v26.4.0'&&process.cwd()===maintenanceRoot);
+    pins=ownedSourcePinsV1(resources,home);const device=pins.directory(maintenanceRoot).dev;
+    ownedSourceRequireV1(fs.realpathSync(maintenanceRoot)===maintenanceRoot&&fs.realpathSync(locators.helper)===locators.helper
+      &&fs.realpathSync(ownedNodeV1)===ownedNodeV1
+      &&pins.file(ownedNodeV1,16777216,undefined,true).sha256===ownedNodeHashV1);
+    pins.file('/usr/bin/git',16777216,undefined,true);
+    const git=args=>{
+      pins.check();
+      const result=spawnSync('/usr/bin/git',['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',...args],{
+        cwd:maintenanceRoot,shell:false,timeout:10000,maxBuffer:16777216,
+        env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',
+          GIT_NO_REPLACE_OBJECTS:'1',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0'},
+      });
+      pins.check();ownedSourceRequireV1(!result.error&&!result.signal&&result.status===0&&result.stderr.length===0&&Buffer.isBuffer(result.stdout));
+      return result.stdout;
+    };
+    const head=git(['rev-parse','--verify','HEAD']).toString('utf8').trim();
+    ownedSourceRequireV1(ownedGitShaV1(head)&&head!==ownedTargetShaV1&&path.basename(maintenanceRoot)==='setfarm-'+head.slice(0,8)
+      &&git(['branch','--show-current']).toString('utf8')==='main\n'
+      &&git(['rev-parse','--verify','refs/remotes/origin/main']).toString('utf8')===head+'\n'
+      &&git(['status','--porcelain=v1','--untracked-files=all']).length===0);
+    const authenticateRetention=(root,sha)=>{
+      const bytes=pins.file(path.join(root,ownedRetentionV1),16777216).bytes;
+      ownedSourceRequireV1(ownedSourceHashV1(bytes)===ownedRetentionHashV1
+        &&bytes.equals(git([...(root===maintenanceRoot?[]:['-C',root]),'show',sha+':'+ownedRetentionV1])));
+    };
+    authenticateRetention(maintenanceRoot,head);check();
+    const maintenanceApi=await import(pathToFileURL(path.join(maintenanceRoot,ownedRetentionV1)).href);check();
+    const acquireBuild=(api)=>{
+      ownedSourceRequireV1(typeof api.holdCurrentFinalizedSetfarmSourceBuildV1==='function'
+        &&api.holdCurrentFinalizedSetfarmSourceBuildV1.length===0);
+      return registerOwner(()=>api.holdCurrentFinalizedSetfarmSourceBuildV1(),raw=>{
+        ownedSourceRequireV1(Object.isFrozen(raw)&&typeof raw.recheck==='function'&&typeof raw.close==='function');
+        ownedSourceKeysV1(raw.observation.buildSource,['sha','treeHash','buildHash']);
+        const expected=ownedSourceBuildDataV1(raw.observation?.buildSource);
+        const sameCheckout=()=>{
+          const checkout=raw.observation?.checkoutSource;
+          ownedSourceRequireV1(checkout?.branch==='main'&&checkout.clean===true&&checkout.sha===expected.sha
+            &&checkout.treeHash===expected.treeHash&&checkout.originMainSha===expected.sha);
+        };
+        sameCheckout();const retained={expected,check:()=>{
+          // A started stock recheck can open temporary FDs that its retained
+          // owner cannot certify closed after an opaque thrown close fault.
+          try{raw.recheck();}catch{ownedSourceCleanupUncertainV1=true;throw ownedSourceRefusalV1();}
+          sameCheckout();ownedSourceRequireV1(ownedSourceEqualBuildV1(raw.observation?.buildSource,expected));
+        }};
+        owners.push(retained);return retained;
+      });
+    };
+    const maintenance=acquireBuild(maintenanceApi);ownedSourceRequireV1(maintenance.expected.sha===head);check();
+    const profileBytes=pins.file(path.join(maintenanceRoot,ownedProfileV1),65536,device).bytes;
+    ownedSourceRequireV1(profileBytes.equals(git(['show',head+':'+ownedProfileV1]))&&ownedSourceHashV1(profileBytes)===ownedProfileHashV1);
+    const profile=ownedSourceJsonV1(profileBytes);ownedSourceValidateProfileV1(profile);
+    const comparisonFiles={};
+    for(let index=0;index<ownedComparisonLocatorsV1.length;index++){
+      const pin=pins.file(path.join(maintenanceRoot,ownedComparisonLocatorsV1[index]),16777216,device);
+      comparisonFiles[ownedSourceFileKeysV1[index]]=Object.freeze({dev:String(pin.stat.dev),ino:String(pin.stat.ino),
+        uid:Number(pin.stat.uid),gid:Number(pin.stat.gid),mode:Number(pin.stat.mode&0o7777n),nlink:Number(pin.stat.nlink),
+        bytes:Number(pin.stat.size),mtimeNs:String(pin.stat.mtimeNs),ctimeNs:String(pin.stat.ctimeNs),sha256:pin.sha256});
+    }
+    const maintenanceOutput=ownedSourceOutputV1(pins,maintenanceRoot,maintenance.expected,false);
+    const compiled=(root,output,locator)=>{
+      const entry=output.get(locator);ownedSourceRequireV1(entry);
+      const pin=pins.file(path.join(root,locator),33554432);
+      ownedSourceRequireV1(pin.bytes.length===entry.byteLength&&pin.sha256===entry.sha256
+        &&Number(pin.stat.mode&0o7777n)===entry.mode);return pin.bytes;
+    };
+    const observerFiles=profile.maintenanceObserver.sourceClosure.map(entry=>entry.locator.replace(/^src\//,'dist/').replace(/\.ts$/,'.js'));
+    const ordinaryFiles=[...observerFiles,...ownedOrdinaryDeltaV1],setupFiles=[...ordinaryFiles,...ownedSetupDeltaV1];
+    ownedSourceRequireV1(new Set(observerFiles).size===121&&new Set(ordinaryFiles).size===143&&new Set(setupFiles).size===153);
+    // Bind every admitted M body before the FIRST compiled import, using
+    // actual own-M bytes authenticated against its retained build metadata.
+    ownedSourceAuditedCompiledV1([...ordinaryFiles]
+      .sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)))
+      .map(locator=>({locator,sha256:ownedSourceHashV1(compiled(maintenanceRoot,maintenanceOutput,locator))})),'maintenance');
+    for(const locator of [ownedWorkspaceApiV1,ownedNormalizerV1]){
+      ownedSourceRequireV1(ownedSourceImportsV1(compiled(maintenanceRoot,maintenanceOutput,locator)).every(name=>ownedGraphBuiltinsV1.has(name)));
+    }
+    check();const workspaceApi=await import(pathToFileURL(path.join(maintenanceRoot,ownedWorkspaceApiV1)).href);check();
+    ownedSourceRequireV1(typeof workspaceApi.resolveInternalProductionBaselineWorkspaceRootV1==='function'
+      &&workspaceApi.resolveInternalProductionBaselineWorkspaceRootV1()===workspace
+      &&typeof workspaceApi.authenticateInternalProductionBaselineWorkspaceAnchorV1==='function');
+    const anchor=registerOwner(()=>workspaceApi.authenticateInternalProductionBaselineWorkspaceAnchorV1(),raw=>{
+      ownedSourceRequireV1(Object.isFrozen(raw)&&typeof raw.assertStable==='function'&&typeof raw.close==='function');
+      owners.push({check:()=>raw.assertStable()});return raw;
+    });anchor.assertStable();check();
+    const normalizer=await import(pathToFileURL(path.join(maintenanceRoot,ownedNormalizerV1)).href);check();
+    const fixedPath=[path.dirname(ownedNodeV1),path.join(home,'.local','bin'),'/opt/homebrew/bin','/usr/local/bin','/usr/bin','/bin','/usr/sbin','/sbin'].join(path.delimiter);
+    ownedSourceRequireV1(typeof normalizer.normalizeRuntimePathV1==='function'
+      &&normalizer.normalizeRuntimePathV1(fixedPath,home,ownedNodeV1)===fixedPath);
+    ownedSourceRequireV1(pins.directory(targetRoot).dev===device&&fs.realpathSync(targetRoot)===targetRoot);
+    const common=root=>{
+      const line=git([...(root===maintenanceRoot?[]:['-C',root]),'rev-parse','--git-common-dir']).toString('utf8');
+      ownedSourceRequireV1(line.endsWith('\n')&&line.indexOf('\n')===line.length-1);
+      const resolved=path.resolve(root,line.slice(0,-1));ownedSourceRequireV1(fs.realpathSync(resolved)===resolved);return resolved;
+    };
+    const maintenanceCommon=common(maintenanceRoot),targetCommon=common(targetRoot);
+    pins.directory(maintenanceCommon);pins.directory(targetCommon);
+    ownedSourceRequireV1(maintenanceCommon!==targetCommon
+      &&git(['-C',targetRoot,'rev-parse','--verify','HEAD']).toString('utf8')===ownedTargetShaV1+'\n'
+      &&git(['-C',targetRoot,'rev-parse','--verify',ownedTargetShaV1+'^{tree}']).toString('utf8')===profile.target.sourceTreeHash+'\n');
+    const targetOutput=ownedSourceOutputV1(pins,targetRoot,{sha:ownedTargetShaV1,treeHash:profile.target.sourceTreeHash},true,profile);
+    ownedSourceRequireV1(pins.file(path.join(targetRoot,'package-lock.json'),16777216,device).sha256===profile.target.lockSha256);
+    for(const name of ['package.json','package-lock.json'])ownedSourceRequireV1(
+      pins.file(path.join(targetRoot,name),16777216,device).bytes.equals(git(['-C',targetRoot,'show',ownedTargetShaV1+':'+name])));
+    authenticateRetention(targetRoot,ownedTargetShaV1);check();
+    const targetApi=await import(pathToFileURL(path.join(targetRoot,ownedRetentionV1)).href);check();
+    const target=acquireBuild(targetApi);
+    ownedSourceRequireV1(target.expected.sha===ownedTargetShaV1&&target.expected.treeHash===profile.target.sourceTreeHash);check();
+    // T is separately pinned and authenticated; M's digest or profile Source
+    // hashes never substitute for these fixed-T compiled byte records.
+    ownedSourceAuditedCompiledV1([...setupFiles]
+      .sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)))
+      .map(locator=>({locator,sha256:ownedSourceHashV1(compiled(targetRoot,targetOutput,locator))})),'target');
+    identityCheck=()=>{
+      ownedSourceRequireV1(common(maintenanceRoot)===maintenanceCommon&&common(targetRoot)===targetCommon);
+    };
+    const maintenanceGroups=profile.targetResolution.map(group=>({row:[...group.row],members:[...group.members]}));
+    const targetGroups=profile.targetResolution.map(group=>({row:[...group.row],members:[...group.members]}));
+    targetGroups[7].members.push('dist/installation/fresh-installation-activation-v1.js');
+    targetGroups[10].members.push('dist/product-compiler/artifact-index.js','dist/product-compiler/artifact-store-authority.js');
+    for(const [root,output,groups,roots,count,sites] of [
+      [maintenanceRoot,maintenanceOutput,maintenanceGroups,ownedOrdinaryRootsV1,143,82],
+      [targetRoot,targetOutput,targetGroups,ownedSetupRootsV1,153,85],
+    ]){
+      const graph=ownedSourceGraphV1(root,output,roots,groups,(locator)=>compiled(root,output,locator));
+      ownedSourceRequireV1(graph.files.size===count&&graph.members.size===sites
+        &&ownedSourceSetEqualV1(graph.files,root===maintenanceRoot?ordinaryFiles:setupFiles));
+      const observer=ownedSourceGraphV1(root,output,[ownedObserverV1],profile.maintenanceObserver.resolution,
+        locator=>compiled(root,output,locator));
+      ownedSourceRequireV1(observer.files.size===121&&observer.members.size===79
+        &&ownedSourceSetEqualV1(observer.files,observerFiles)
+        &&![...observer.files].some(locator=>locator==='dist/db-pg.js'||locator==='dist/runtime-config.js'
+          ||locator.includes('fresh-installation-selection')));
+      ownedSourcePackagesV1(pins,root,profile,groups,profile.targetAbsences,home,check);
+    }
+    check();
+    // Every release's complete package inventory and finite resolution has now
+    // qualified. These are the FIRST full-observer imports in this process.
+    for(const [root,expected] of [[maintenanceRoot,maintenance.expected],[targetRoot,target.expected]]){
+      const api=await import(pathToFileURL(path.join(root,ownedObserverV1)).href);check();
+      ownedSourceRequireV1(typeof api.observeCurrentInternalProductionCleanSetfarmSourceBuildV1==='function'
+        &&api.observeCurrentInternalProductionCleanSetfarmSourceBuildV1.length===0);
+      const read=()=>{
+        let value;
+        try{value=api.observeCurrentInternalProductionCleanSetfarmSourceBuildV1();}
+        catch{
+          // This point observer exposes no separate internal cleanup receipt.
+          // A thrown invocation cannot certify its internally opened FDs closed.
+          ownedSourceCleanupUncertainV1=true;throw ownedSourceRefusalV1();
+        }
+        ownedSourceRequireV1(value?.branch==='main'&&value.clean===true&&value.originMainSha===expected.sha);return value;
+      };
+      ownedSourceRequireV1(ownedSourceEqualBuildV1(read(),expected));observers.push({read,expected});check();
+    }
+    const source=Object.freeze({maintenance:maintenance.expected,target:target.expected,
+      profileSha256:ownedSourceHashV1(profileBytes),files:Object.freeze(comparisonFiles)});
+    // Validate the exact public data shape without granting codec data authority.
+    ownedSourcesV1(source);check();ready=true;
+    return Object.freeze({source,check(){ownedSourceRequireV1(ready);check();},close});
+  }catch{
+    invalid=true;try{cleanup();}catch{ownedSourceCleanupUncertainV1=true;}
+    throw ownedSourceRefusalV1();
+  }
 }
 
 function probeOwnerRefusalV1(){return Error('MANUAL_ORPHAN_OWNER_REFUSED');}
