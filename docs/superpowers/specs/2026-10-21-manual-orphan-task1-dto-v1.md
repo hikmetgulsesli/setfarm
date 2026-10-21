@@ -231,7 +231,7 @@ type RunRow = {
   protocol: "v3"; protocol_version: 1; compiler_release_sha: Source;
   release_admission_hash: Hash; task: Task;
 };
-type CanonicalRunIdentity = { category: "run"; ownerKey: RunId; ownerRef: Ref; ownerHash: Hash };
+type CanonicalRunIdentity = { schema: "setfarm.internal-production-canonical-owner-identity.v1"; category: "run"; ownerKey: RunId; ownerRef: Ref; ownerHash: Hash };
 type ClosedOwnerRow = {
   state: "closed"; close_ref: Ref; close_hash: Hash;
   canonical_owner_identity: CanonicalRunIdentity;
@@ -407,3 +407,11 @@ The new Task1 proof/parser tests execute no native commands, open no DB, load no
 Schema extraction has two necessary adjacent test edits. `tests/execution-attempts/manual-test-admission-v1.test.ts:313` extracts Hash/AcquireSchema/OwnerSchema/ClosureSchema into `new Function`; `tests/execution-attempts/manual-control-owner-observation-v1.test.ts:33` extracts Hash/OwnerSchema for processOwnerV1. Imported production aliases would be unbound in those components. Add the latter file to Task1's File Map, import the actual extracted pure schema exports in both tests and explicitly inject those schemas into the component constructors, retaining only the required remaining Source function bodies. Preserve all assertions and real owned-child checks; do not replace schema behavior, mock source/runtime readiness or skip either test. The main plan has been updated with this exact causal adjustment.
 
 Task1 acceptance is a stable strict schema and pure inference contract, not retirement eligibility of the real job. Source-only drafting has not inspected its payloads and has not retired it.
+
+## Root Task1 Source reconciliation
+
+The actual run identity creator exists in heavy `db-pg.ts:1477`, not as a pure exported creator. Do not import db-pg for fixtures or proof, and do not edit db-pg. The fixture constructs the exact five-field native identity literally, validates it with the existing pure canonical-owner validator, and independently computes its hash. The proof uses a private pure run-specific recomputation with the same established wire formula: ownerRef=`setfarm://runs/${encodeURIComponent(runId)}`; ownerHash=hashCanonicalJson({schema:"setfarm.internal-production-workflow-run-owner.v1",runId}). Retain schema/category/ownerKey too. Existing RunId syntax applies; URI encoding must round-trip. Independently test wrong schema/ref/hash, not a dropped-field structural cast.
+
+The already maintained result/release-gate schema closure imports suite-schema's inert fs/promises loader declarations. Reusing those pure parsing/constructor/evaluation functions is allowed; never call loadConvergenceSuite or any IO function. New proof/schema/fixture code performs no IO; no import-time IO, operational selection, production DB or native execution is allowed. This requirement concerns effects, not the mere presence of an unused loader declaration in an existing schema module. Root will audit and execute import/fixture validation separately.
+
+Finite refusal codes are exactly the existing plan contract: MALFORMED, SOURCE, TARGET, HISTORY, AUTHENTICATION, SETTLEMENT, JOURNAL, ACTIVITY, FINDINGS, SLOTS, NATIVE, OTHER_OWNER, CAS, PUBLICATION, UNCERTAIN. Initial proof uses the applicable first thirteen; publication/replay codes remain reserved for Task4. Strict shape/canonical-byte/schema failures may return MALFORMED. Semantic stages distinguish maintenance Source(SOURCE), target(TARGET), global history(HISTORY), original intent/channel/mapping(AUTHENTICATION), journal(JOURNAL), settlement(SETTLEMENT), nonzero activity(ACTIVITY), publication joins(FINDINGS), bound slot/terminal ancestry(SLOTS), capture/owner residue(NATIVE), namespace/unrelated intent(OTHER_OWNER), expected request hashes/revision(CAS). Derive invalid active6 input throws fixed MANUAL_ORPHAN_CAS; no exception detail is a public code.
