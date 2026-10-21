@@ -777,6 +777,7 @@ function observationFixtureV1(){
 }
 function observationVmV1(state){
   let source=readFileSync(HELPER,'utf8');
+  source=lowerFixedProbeEntryV1(source);
   const locatorSites=[...source.matchAll(/\bimport\.meta\.url\b/g)].length;
   const hasObservation=typeof helper.observeManualOrphanProcessV1==='function'
     ||typeof helper.pinManualOrphanProbeSourcesV1==='function';
@@ -787,6 +788,7 @@ function observationVmV1(state){
     ['node:util',closedModule(c,'observation util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
     ['node:crypto',closedModule(c,'observation crypto',{createHash})],
     ['node:path',path],['node:url',url],['node:buffer',{Buffer}],
+    ['node:net',closedModule(c,'observation net')],
     ['node:fs',closedModule(c,'observation fs',state.fs)],
     ['node:child_process',closedModule(c,'observation child_process',state.childProcess)],
   ]);
@@ -1322,6 +1324,7 @@ for(const name of ['stdout','stderr']){
 
 function eventClockVmV1(hashBinding=createHash){
   let source=readFileSync(HELPER,'utf8');
+  source=lowerFixedProbeEntryV1(source);
   assert.equal([...source.matchAll(/\bimport\.meta\.url\b/g)].length,1,'retain the single reviewed process locator');
   source=replaceOnce(source,'import.meta.url',JSON.stringify(HELPER.href),'event clock fixed helper URL');
   const c=capture(),pureUtil=createRequire(import.meta.url)('node:util'),scheduled=[],cleared=[];
@@ -1330,6 +1333,7 @@ function eventClockVmV1(hashBinding=createHash){
     clearTimeout(handle){assert.ok(scheduled.some(timer=>timer.handle===handle),'clear only the owned timer');cleared.push(handle);}};
   const modules=new Map([
     ['node:fs',closedModule(c,'event clock fs',{constants})],['node:child_process',closedModule(c,'event clock child_process')],
+    ['node:net',closedModule(c,'event clock net')],
     ['node:crypto',closedModule(c,'event clock crypto',{createHash:hashBinding})],['node:path',path],['node:url',url],['node:buffer',{Buffer}],
     ['node:util',closedModule(c,'event clock util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
     ['node:timers',closedModule(c,'event clock timers',clock)],
@@ -1401,3 +1405,495 @@ test('source-contained event consumer binds every original and channel handler b
     f.assertGuarded();vm.assertContained();
   }
 });
+
+// Fixed-child Phase A: only this exact entry line is test plumbing. The private
+// main, exact context guard, reader, issuer and cleanup bodies stay unchanged.
+const FIXED_PROBE_ENTRY_V1="if(import.meta.main)void runManualOrphanProbeChildV1().catch(()=>{process.stderr.write('MANUAL_ORPHAN_CHILD_UNKNOWN\\n');process.exitCode=1;});";
+function lowerFixedProbeEntryV1(source,expose=false){
+  const sites=source.split(FIXED_PROBE_ENTRY_V1).length-1;
+  const ready=typeof helper.readManualOrphanProbeFd4V1==='function'||typeof helper.runManualOrphanLifecycleProbeV1==='function';
+  assert.equal(sites,ready?1:0,'exactly one bounded direct entry after implementation; zero only while new contracts absent');
+  return sites?replaceOnce(source,FIXED_PROBE_ENTRY_V1,expose?'globalThis.__fixedProbeChildMain=runManualOrphanProbeChildV1;':'','fixed helper direct-entry plumbing'):source;
+}
+function fixedProbeVmV1(bindings={},expose=false){
+  let source=lowerFixedProbeEntryV1(readFileSync(HELPER,'utf8'),expose);
+  assert.equal([...source.matchAll(/\bimport\.meta\.url\b/g)].length,1);
+  source=replaceOnce(source,'import.meta.url',JSON.stringify(HELPER.href),'fixed probe locator');
+  const c=capture(),pureUtil=createRequire(import.meta.url)('node:util'),timers=[],cleared=[],faults=[];
+  const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
+  const clock={setTimeout:guard((callback,delay)=>{
+    assert.ok(delay===5000||delay===10000);const handle={unref(){return this;},ref(){return this;}};
+    timers.push({callback,delay,handle});return handle;
+  }),clearTimeout:guard(handle=>{assert.ok(timers.some(timer=>timer.handle===handle));cleared.push(handle);})};
+  const crypto={createHash,randomBytes:guard(size=>{assert.equal(size,32);return Buffer.alloc(32,0xcc);}),...bindings.crypto};
+  const modules=new Map([
+    ['node:fs',closedModule(c,'fixed probe fs',{constants,...bindings.fs})],
+    ['node:net',closedModule(c,'fixed probe net',bindings.net??{})],
+    ['node:child_process',closedModule(c,'fixed probe child_process',bindings.childProcess??{})],
+    ['node:crypto',closedModule(c,'fixed probe crypto',crypto)],['node:path',path],['node:url',url],['node:buffer',{Buffer}],
+    ['node:util',closedModule(c,'fixed probe util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
+    ['node:timers',closedModule(c,'fixed probe timers',clock)],
+  ]);
+  const compiled=ts.transpileModule(source,{fileName:OBS_HELPER_PATH_V1+'.ts',
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},reportDiagnostics:true});
+  assert.deepEqual((compiled.diagnostics??[]).filter(item=>item.category===ts.DiagnosticCategory.Error),[]);
+  const context={exports:{},Buffer,URL,Error,TextDecoder:pureUtil.TextDecoder,queueMicrotask,
+    process:closedModule(c,'fixed probe process',bindings.process??{}),console:closedModule(c,'fixed probe console'),...clock,
+    require(specifier){assert.ok(modules.has(specifier),'unlisted fixed probe import '+specifier);return modules.get(specifier);}};
+  runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
+  assert.equal(timers.length,0,'import creates no timer');assert.equal(c.calls.forbidden,0,'import performs no IO');
+  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,assertContained(){
+    assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));assert.deepEqual(faults,[],'no swallowed binding assertion');
+    if(bindings.assertClean)bindings.assertClean();
+  }};
+}
+function probeReaderFixtureV1(options={}){
+  const ledger={fstats:[],rawCloses:[],constructs:[],destroys:0,closed:false,socket:null,faults:[],adopted:false};
+  const guarded=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')ledger.faults.push(error.message);throw error;}};
+  const fs={fstatSync:guarded(fd=>{
+    ledger.fstats.push(fd);assert.equal(fd,4,'reader only inspects inherited4, never3');
+    if(options.fstatError)throw Error('PRIVATE_FSTAT_DETAIL');
+    return {isFIFO:()=>options.kind!=='socket'&&options.kind!=='file',isSocket:()=>options.kind==='socket'};
+  }),closeSync:guarded(fd=>{
+    assert.equal(fd,4);assert.equal(ledger.adopted,false,'never raw-close an FD after returned Socket adoption');
+    ledger.rawCloses.push(fd);assert.equal(ledger.rawCloses.length,1,'one raw close attempt');
+    if(options.rawCloseError)throw Error('PRIVATE_CLOSE_DETAIL');
+  })};
+  class Socket extends EventEmitter{
+    constructor(input){
+      super();ledger.constructs.push({...input});
+      try{assert.deepEqual({...input},{fd:4,readable:true,writable:false});}
+      catch(error){ledger.faults.push(error.message);throw error;}
+      if(options.constructorError)throw Error('PRIVATE_CONSTRUCTOR_DETAIL');
+      ledger.adopted=true;ledger.socket=this;
+    }
+    pause(){return this;}
+    resume(){
+      for(const name of ['data','error','end','close'])assert.ok(this.listenerCount(name)>0,'reader '+name+' bound before resume');
+      if(options.autoBytes)queueMicrotask(()=>{
+        this.emit('data',Buffer.from(options.autoBytes));this.emit('end');ledger.closed=true;this.emit('close',false);
+      });return this;
+    }
+    destroy(){
+      ledger.destroys++;assert.equal(ledger.destroys,1,'reader requests owned close once');
+      if(options.destroyError)throw Error('PRIVATE_DESTROY_DETAIL');return this;
+    }
+  }
+  for(const name of ['pause','resume','destroy']){
+    const original=Socket.prototype[name];
+    Socket.prototype[name]=function(...args){try{return original.apply(this,args);}catch(error){
+      if(error?.code==='ERR_ASSERTION')ledger.faults.push(error.message);throw error;
+    }};
+  }
+  return {fs,net:{Socket},ledger,assertClean(){assert.deepEqual(ledger.faults,[]);}};
+}
+function trackProbePromiseV1(promise){
+  const tracked={outcome:null};tracked.done=Promise.resolve(promise).then(value=>(tracked.outcome={value}),error=>(tracked.outcome={error}));return tracked;
+}
+async function assertProbeRejectedV1(tracked,code){
+  const result=await tracked.done;assert.ok(result.error instanceof Error);assert.equal(result.error.message,code);
+  assert.equal(Object.hasOwn(result,'value'),false);return result.error;
+}
+for(const kind of ['fifo','socket']){
+  test('source-contained fd4 reader accepts actual decoded frame after EOF then known '+kind+' close',async()=>{
+    const f=probeReaderFixtureV1({kind}),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+    assert.deepEqual(f.ledger.fstats,[4]);assert.equal(vm.timers.length,1);assert.equal(vm.timers[0].delay,5000);
+    f.ledger.socket.emit('data',Buffer.from(CODEC_EXPECTED_V1));f.ledger.socket.emit('end');
+    await Promise.resolve();assert.equal(t.outcome,null,'EOF/destroy request is not actual close');assert.equal(f.ledger.destroys,1);
+    f.ledger.closed=true;f.ledger.socket.emit('close',false);const result=await t.done;
+    assert.deepEqual(observedDataV1(result.value),codecFrameV1());assert.equal(Object.isFrozen(result.value),true);
+    for(const key of ['parent','child','source'])assert.equal(Object.isFrozen(result.value[key]),true);
+    assert.deepEqual(f.ledger.rawCloses,[]);assert.deepEqual(vm.cleared,[vm.timers[0].handle]);vm.assertContained();
+  });
+}
+test('source-contained fd4 reader accepts exact16384 bytes including LF without reading parent fd4',async()=>{
+  const frame=codecFrameV1();frame.parent.executable='/'+ '"'.repeat(4095);frame.child.executable='/'+ '"'.repeat(3230)+'n'.repeat(865);
+  const bytes=Buffer.from(JSON.stringify(frame)+'\n');assert.equal(bytes.length,16384);
+  const f=probeReaderFixtureV1(),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+  f.ledger.socket.emit('data',bytes.subarray(0,8000));f.ledger.socket.emit('data',bytes.subarray(8000));
+  f.ledger.socket.emit('end');f.ledger.closed=true;f.ledger.socket.emit('close',false);
+  assert.deepEqual(observedDataV1((await t.done).value),frame);assert.equal(f.ledger.destroys,1);vm.assertContained();
+});
+for(const [label,emit,code] of [
+  ['empty EOF',s=>{s.emit('end');},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['invalid UTF8',s=>{s.emit('data',Buffer.from([0xff,0x0a]));s.emit('end');},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['nonBuffer data',s=>{s.emit('data','not a Buffer');s.emit('end');},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['16385 byte aggregate',s=>{s.emit('data',Buffer.alloc(16385,0x20));s.emit('end');},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['missing final LF',s=>{s.emit('data',CODEC_EXPECTED_V1.subarray(0,-1));s.emit('end');},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['read error',s=>{s.emit('error',Error('PRIVATE_READER_DETAIL'));},'MANUAL_ORPHAN_CHILD_UNKNOWN'],
+  ['duplicate EOF',s=>{s.emit('data',Buffer.from(CODEC_EXPECTED_V1));s.emit('end');s.emit('end');},'MANUAL_ORPHAN_CHILD_UNKNOWN'],
+  ['data after EOF',s=>{s.emit('data',Buffer.from(CODEC_EXPECTED_V1));s.emit('end');s.emit('data',Buffer.from('late'));},'MANUAL_ORPHAN_CHILD_UNKNOWN'],
+]){
+  test('source-contained fd4 reader '+label+' refuses only after known owned close',async()=>{
+    const f=probeReaderFixtureV1(),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+    emit(f.ledger.socket);await Promise.resolve();assert.equal(t.outcome,null,'no refusal fabricates a close');
+    f.ledger.closed=true;f.ledger.socket.emit('close',false);await assertProbeRejectedV1(t,code);
+    assert.ok(f.ledger.destroys<=1);assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+  });
+}
+for(const hadError of [false,true]){
+  test('source-contained fd4 reader close '+hadError+' without EOF is UNKNOWN',async()=>{
+    const f=probeReaderFixtureV1(),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+    f.ledger.socket.emit('data',Buffer.from(CODEC_EXPECTED_V1));f.ledger.closed=true;f.ledger.socket.emit('close',hadError);
+    await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CHILD_UNKNOWN');assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+  });
+}
+test('source-contained fd4 reader hadError close overrides otherwise valid bytes and EOF',async()=>{
+  const f=probeReaderFixtureV1(),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+  f.ledger.socket.emit('data',Buffer.from(CODEC_EXPECTED_V1));f.ledger.socket.emit('end');f.ledger.closed=true;f.ledger.socket.emit('close',true);
+  await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CHILD_UNKNOWN');vm.assertContained();
+});
+for(const [label,options,code] of [
+  ['nonstream fd',{kind:'file'},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['fstat error',{fstatError:true},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['raw close uncertainty',{kind:'file',rawCloseError:true},'MANUAL_ORPHAN_CHILD_UNKNOWN'],
+  ['Socket constructor failure',{constructorError:true},'MANUAL_ORPHAN_CHILD_UNKNOWN'],
+]){
+  test('source-contained fd4 reader '+label+' attempts raw4 cleanup once',async()=>{
+    const f=probeReaderFixtureV1(options),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+    await assertProbeRejectedV1(t,code);assert.deepEqual(f.ledger.rawCloses,[4]);assert.equal(f.ledger.adopted,false);
+    assert.equal(f.ledger.closed,false,'no invented Socket close');vm.assertContained();
+  });
+}
+test('source-contained fd4 reader exact5000 deadline waits for actualclose and never invents EOF',async()=>{
+  const f=probeReaderFixtureV1(),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+  f.ledger.socket.emit('data',Buffer.from(CODEC_EXPECTED_V1));assert.equal(vm.timers[0].delay,5000);vm.timers[0].callback();
+  await Promise.resolve();assert.equal(t.outcome,null);assert.equal(f.ledger.destroys,1);
+  f.ledger.closed=true;f.ledger.socket.emit('close',false);await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CHILD_UNKNOWN');
+  assert.deepEqual(vm.cleared,[vm.timers[0].handle]);vm.assertContained();
+});
+test('source-contained fd4 reader destroy uncertainty overrides valid bytes after eventual actualclose',async()=>{
+  const f=probeReaderFixtureV1({destroyError:true}),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+  f.ledger.socket.emit('data',Buffer.from(CODEC_EXPECTED_V1));f.ledger.socket.emit('end');await Promise.resolve();assert.equal(t.outcome,null);
+  f.ledger.closed=true;f.ledger.socket.emit('close',false);await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CHILD_UNKNOWN');
+  assert.equal(f.ledger.destroys,1);assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+});
+function probeCompositionFixtureV1(role='issuer',configure){
+  const state=observationFixtureV1(),f=eventFixtureV1(),root=path.resolve(path.dirname(OBS_TEST_PATH_V1),'../..');
+  const facts={parent:{pid:122,ppid:121,raw:OBS_EXE_V1+' '+OBS_TEST_PATH_V1},child:{pid:123,ppid:122,raw:OBS_EXE_V1+' '+OBS_HELPER_PATH_V1}};
+  const control={role,spawnCalls:[],endCalls:[],stdout:'',stderr:'',endReady:null,reader:null,late:null,lateSent:false,childClosed:false};
+  control.endReady=new Promise(resolve=>{control.markEnd=resolve;});
+  const processBinding={platform:'darwin',pid:role==='child'?123:122,ppid:role==='child'?122:121,execPath:OBS_EXE_V1,argv0:OBS_EXE_V1,
+    argv:[OBS_EXE_V1,role==='child'?OBS_HELPER_PATH_V1:OBS_TEST_PATH_V1],execArgv:[],
+    env:{PATH:path.dirname(OBS_EXE_V1)+':/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+    getuid:state.process.getuid,cwd(){state.operations.push(['cwd']);return control.cwd??root;},exitCode:undefined,
+    stdout:{write(bytes){
+      assert.ok(state.opened.every(record=>record.closeAttempted),'receipt waits for every owned file pin close');
+      if(role==='child')assert.equal(control.reader.ledger.closed,true,'receipt waits for actual owned reader close');
+      control.stdout+=Buffer.isBuffer(bytes)?bytes.toString('utf8'):String(bytes);return true;
+    }},stderr:{write(bytes){control.stderr+=Buffer.isBuffer(bytes)?bytes.toString('utf8'):String(bytes);return true;}}};
+  const fixtureFaults=[],check=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')fixtureFaults.push(error.message);throw error;}};
+  processBinding.stdout.write=check(processBinding.stdout.write);processBinding.stderr.write=check(processBinding.stderr.write);
+  const cycles=new Map();
+  const childProcess={spawnSync:check((executable,args,options)=>{
+    assert.equal(executable,'/bin/ps');const pid=Number(args[2]);assert.ok(pid===122||pid===123);
+    const n=cycles.get(pid)??0,index=n%3;cycles.set(pid,n+1);
+    const expected=index===1?['-ww','-p',String(pid),'-o','comm=']:
+      ['-ww','-p',String(pid),'-o','pid=','-o','ppid=','-o','uid=','-o','lstart=','-o','pgid=','-o','args='];
+    assert.deepEqual(Array.from(args),expected);assert.equal(options.encoding,'utf8');assert.equal(options.timeout,2000);assert.equal(options.maxBuffer,16384);
+    assert.deepEqual({...options.env},OBS_PS_ENV_V1);
+    const row=pid===122?facts.parent:facts.child;
+    return {status:0,signal:null,error:undefined,stderr:'',stdout:index===1?OBS_EXE_V1+'\n':
+      observationRowV1({pid:String(row.pid),ppid:String(row.ppid),raw:row.raw})};
+  }),spawn:check((executable,args,options)=>{
+    assert.equal(executable,OBS_EXE_V1);assert.deepEqual(Array.from(args),[OBS_HELPER_PATH_V1]);
+    assert.deepEqual({...options,env:{...options.env},stdio:Array.from(options.stdio)},
+      {cwd:root,argv0:OBS_EXE_V1,shell:false,detached:false,env:{PATH:path.dirname(OBS_EXE_V1)+':/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+        stdio:['ignore','pipe','pipe','ignore','pipe']});
+    control.spawnCalls.push({executable,args:Array.from(args)});assert.equal(control.spawnCalls.length,1);return f.child;
+  })};
+  const pin=row=>({pid:row.pid,ppid:row.ppid,uid:501,pgid:122,startedAtUTC:'2026-10-21T00:00:00.000Z',executable:OBS_EXE_V1,
+    executableSha256:createHash('sha256').update('independent executable fixture v1\n').digest('hex'),
+    commandSha256:createHash('sha256').update(row.raw).digest('hex')});
+  const frame=()=>({schema:'setfarm.manual-orphan-lifecycle-probe.v1',nonce:'c'.repeat(64),parent:pin(facts.parent),child:pin(facts.child),
+    source:{helperSha256:createHash('sha256').update('independent helper Source fixture v1\n').digest('hex'),
+      issuerTestSha256:createHash('sha256').update('independent issuer Source fixture v1\n').digest('hex')}});
+  f.channels.fd4.end=check(bytes=>{
+    control.endCalls.push(bytes===undefined?Buffer.alloc(0):Buffer.from(bytes));assert.equal(control.endCalls.length,1,'one owned end attempt');
+    f.child.emit('spawn');f.channels.fd4.emit('finish');control.markEnd();return f.channels.fd4;
+  });
+  const oldClose=state.fs.closeSync;
+  state.fs.closeSync=check(fd=>{
+    const record=state.descriptors.get(fd),result=oldClose(fd);
+    const atSourceFile=record&&(record.path===OBS_HELPER_PATH_V1||record.path===OBS_TEST_PATH_V1);
+    const finalClose=state.opened.every(opened=>opened.closeAttempted);
+    if(control.childClosed&&!control.lateSent&&((control.late==='pin-close'&&atSourceFile)||(control.late==='final-close'&&finalClose))){
+      control.lateSent=true;f.child.emit('error',Error('late current-state fault'));
+    }
+    return result;
+  });
+  const fixture={state,f,control,facts,process:processBinding,childProcess,frame,fs:state.fs,
+    finish(mode='valid'){
+      const issued=control.endCalls[0];let receipt=null;
+      if(mode==='owner-refusal')f.channels.stderr.emit('data',Buffer.from('MANUAL_ORPHAN_OWNER_REFUSED\n'));
+      else{
+        assert.deepEqual(issued,Buffer.from(JSON.stringify(frame())+'\n'),'actual issuer frame equals independent ordered observations');
+        receipt={schema:'setfarm.manual-orphan-lifecycle-probe-result.v1',frameSha256:createHash('sha256').update(issued).digest('hex'),
+          pid:123,parentPid:122,fd4Closed:true,sourcePinsClosed:true};
+        if(mode==='digest-mismatch')receipt.frameSha256='f'.repeat(64);
+        f.channels.stdout.emit('data',Buffer.from(JSON.stringify(receipt)+'\n'));
+      }
+      for(const name of ['stdout','stderr']){f.channels[name].emit('end');f.channels[name].emit('close');}
+      f.channels.fd4.emit('end');f.channels.fd4.emit('close');f.child.emit('exit',mode==='owner-refusal'?1:0,null);
+      control.childClosed=true;f.child.emit('close',mode==='owner-refusal'?1:0,null);
+      if(mode==='late-await')f.child.emit('error',Error('late fault after historical observed resolution'));
+      return receipt;
+    },assertClean(){
+      assert.deepEqual(fixtureFaults,[],'no swallowed composition fixture assertion');assert.deepEqual(state.unlisted,[]);
+      assert.deepEqual(state.fixtureFaults,[]);f.assertGuarded();
+      if(control.reader)control.reader.assertClean();
+      for(const record of state.opened)assert.equal(state.closeAttempts.filter(fd=>fd===record.fd).length,1,'every known pin close attempted once');
+    }};
+  if(configure)configure(fixture);
+  if(role==='child'){
+    const reader=probeReaderFixtureV1({autoBytes:Buffer.from(JSON.stringify(frame())+'\n')});control.reader=reader;
+    const oldStat=state.fs.fstatSync,oldRawClose=state.fs.closeSync;
+    fixture.fs={...state.fs,fstatSync(fd,options){return fd===4?reader.fs.fstatSync(fd,options):oldStat(fd,options);},
+      closeSync(fd){return fd===4?reader.fs.closeSync(fd):oldRawClose(fd);}};
+    fixture.net=reader.net;
+  }
+  return fixture;
+}
+async function issueCompositionV1(fixture,vm,mode='valid'){
+  const tracked=trackProbePromiseV1(vm.actual.runManualOrphanLifecycleProbeV1());
+  const early=await Promise.race([fixture.control.endReady.then(()=>null),tracked.done]);
+  if(early!==null){assert.equal(early.error,undefined,'issuer must reach its own writer with complete prerequisites');assert.fail('issuer returned before frame delivery');}
+  fixture.finish(mode);return tracked;
+}
+test('source-contained normal issuer returns exact independently generated receipt after original events and owned pin closes',async()=>{
+  const f=probeCompositionFixtureV1(),vm=fixedProbeVmV1(f),t=await issueCompositionV1(f,vm);
+  const result=await t.done;assert.equal(result.error,undefined);
+  assert.deepEqual(observedDataV1(result.value),{schema:'setfarm.manual-orphan-lifecycle-probe-result.v1',
+    frameSha256:createHash('sha256').update(Buffer.from(JSON.stringify(f.frame())+'\n')).digest('hex'),pid:123,parentPid:122,fd4Closed:true,sourcePinsClosed:true});
+  assert.equal(f.control.spawnCalls.length,1);assert.equal(f.control.endCalls.length,1);vm.assertContained();
+});
+for(const [label,configure,mode,code] of [
+  ['own source close uncertainty',f=>{f.state.closeFailures.add(OBS_TEST_PATH_V1);},'valid','MANUAL_ORPHAN_CHILD_UNKNOWN'],
+  ['late fault after historical promise resolution',()=>{},'late-await','MANUAL_ORPHAN_CHILD_UNKNOWN'],
+  ['late fault during source pin close',f=>{f.control.late='pin-close';},'valid','MANUAL_ORPHAN_CHILD_UNKNOWN'],
+  ['late fault after final owned descriptor close',f=>{f.control.late='final-close';},'valid','MANUAL_ORPHAN_CHILD_UNKNOWN'],
+  ['receipt digest differs from locally issued bytes',()=>{},'digest-mismatch','MANUAL_ORPHAN_OWNER_REFUSED'],
+]){
+  test('source-contained normal issuer rejects '+label+' despite otherwise valid receipt/events',async()=>{
+    const f=probeCompositionFixtureV1('issuer',configure),vm=fixedProbeVmV1(f),t=await issueCompositionV1(f,vm,mode);
+    await assertProbeRejectedV1(t,code);assert.equal(f.control.endCalls.length,1);vm.assertContained();
+  });
+}
+test('source-contained normal issuer pre-send binding refusal ends own writer once empty and joins natural negative',async()=>{
+  const f=probeCompositionFixtureV1('issuer',value=>{value.facts.child.ppid=999;}),vm=fixedProbeVmV1(f);
+  const t=await issueCompositionV1(f,vm,'owner-refusal');assert.deepEqual(f.control.endCalls,[Buffer.alloc(0)]);
+  await assertProbeRejectedV1(t,'MANUAL_ORPHAN_OWNER_REFUSED');vm.assertContained();
+});
+for(const [label,configure,args] of [
+  ['wrong caller file',f=>{f.process.argv[1]='/not-the-fixed-issuer.test.js';},[]],
+  ['extra public argument',()=>{},['caller-selected-frame']],
+]){
+  test('source-contained normal issuer refuses '+label+' before spawn',async()=>{
+    const f=probeCompositionFixtureV1('issuer',configure),vm=fixedProbeVmV1(f);
+    const t=trackProbePromiseV1(vm.actual.runManualOrphanLifecycleProbeV1(...args));await assertProbeRejectedV1(t,'MANUAL_ORPHAN_OWNER_REFUSED');
+    assert.deepEqual(f.control.spawnCalls,[]);vm.assertContained();
+  });
+}
+test('source-contained fixed child actual guard reader and receipt consumer accepts complete independent prerequisites',async()=>{
+  const f=probeCompositionFixtureV1('child'),vm=fixedProbeVmV1(f,true);await vm.childMain();
+  const bytes=Buffer.from(JSON.stringify(f.frame())+'\n');
+  assert.equal(f.control.stdout,JSON.stringify({schema:'setfarm.manual-orphan-lifecycle-probe-result.v1',frameSha256:createHash('sha256').update(bytes).digest('hex'),
+    pid:123,parentPid:122,fd4Closed:true,sourcePinsClosed:true})+'\n');
+  assert.equal(f.control.stderr,'');assert.equal(f.process.exitCode??0,0);vm.assertContained();
+});
+for(const [label,configure,code] of [
+  ['execArgv flag',f=>{f.process.execArgv=['--expose-gc'];},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['wrong argv0',f=>{f.process.argv0='/other/node';},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['wrong exact helper argv1',f=>{f.process.argv[1]='/other/manual-control-orphan-bootstrap-child-v1.mjs';},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['extra child argument',f=>{f.process.argv.push('extra');},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['wrong current directory',f=>{f.control.cwd='/other/root';},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['extra environment key',f=>{f.process.env.EXTRA='not permitted';},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['wrong PATH',f=>{f.process.env.PATH='/other/bin';},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['different measured own command',f=>{f.facts.child.raw+=' --other';},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['source pin close uncertainty',f=>{f.state.closeFailures.add(OBS_HELPER_PATH_V1);},'MANUAL_ORPHAN_CHILD_UNKNOWN'],
+]){
+  test('source-contained fixed child actual guard/close consumer refuses '+label,async()=>{
+    const f=probeCompositionFixtureV1('child',configure),vm=fixedProbeVmV1(f,true);await vm.childMain();
+    assert.equal(f.control.stdout,'');assert.equal(f.control.stderr,code+'\n');assert.equal(f.process.exitCode,1);vm.assertContained();
+  });
+}
+
+let actualFixedProbeControlV1;
+function requireActualFixedProbeControlV1(){
+  // No manual native child may be launched until the real zero-argument issuer
+  // has completed once. With absent contracts this fails inside the callback.
+  if(!actualFixedProbeControlV1)actualFixedProbeControlV1=helper.runManualOrphanLifecycleProbeV1();
+  return actualFixedProbeControlV1;
+}
+function assertActualProbeReceiptV1(receipt,parentPid){
+  assert.deepEqual(Object.keys(receipt),['schema','frameSha256','pid','parentPid','fd4Closed','sourcePinsClosed']);
+  assert.equal(receipt.schema,'setfarm.manual-orphan-lifecycle-probe-result.v1');assert.match(receipt.frameSha256,/^[a-f0-9]{64}$/);
+  assert.ok(Number.isSafeInteger(receipt.pid)&&receipt.pid>0&&receipt.pid<=2147483647);assert.notEqual(receipt.pid,parentPid);assert.equal(receipt.parentPid,parentPid);
+  assert.equal(receipt.fd4Closed,true);assert.equal(receipt.sourcePinsClosed,true);
+}
+test('actual Node26 Darwin zeroarg normal issuer completes its fixed child receipt and all owned closures',async()=>{
+  const receipt=await requireActualFixedProbeControlV1();
+  assert.equal(process.platform,'darwin');assert.match(process.versions.node,/^26\./);
+  assertActualProbeReceiptV1(receipt,process.pid);
+});
+async function actualFixedReceiverV1(transform,{missingEOF=false}={}){
+  await requireActualFixedProbeControlV1();
+  const localRequire=createRequire(import.meta.url),fs=localRequire('node:fs'),native=localRequire('node:child_process');
+  const nodePhysical=fs.realpathSync(process.execPath),helperPhysical=fs.realpathSync(OBS_HELPER_PATH_V1);
+  assert.equal(helperPhysical,OBS_HELPER_PATH_V1);
+  const root=path.resolve(path.dirname(OBS_TEST_PATH_V1),'../..'),source=helper.pinManualOrphanProbeSourcesV1();
+  let original=null,witness=null,joined=null,endAttempted=false,primary=null,result=null;
+  const endOnce=bytes=>{if(!endAttempted){endAttempted=true;original.stdio[4].end(bytes);}};
+  try{
+    const parentObserved=helper.observeManualOrphanProcessV1(process.pid),parent=parentObserved.pin;
+    original=native.spawn(nodePhysical,[helperPhysical],{cwd:root,argv0:nodePhysical,shell:false,detached:false,
+      env:{PATH:path.dirname(nodePhysical)+':/usr/bin:/bin',LANG:'C',LC_ALL:'C'},stdio:['ignore','pipe','pipe','ignore','pipe']});
+    witness=helper.observeManualOrphanOriginalChildV1(original);
+    // Separate original-handle joins prove actual channel and child closure even
+    // if a witness has already resolved a historical UNKNOWN diagnostic.
+    joined=Promise.all([new Promise(resolve=>original.once('close',(code,signal)=>resolve({code,signal}))),
+      ...[original.stdout,original.stderr,original.stdio[4]].map(stream=>new Promise(resolve=>stream.once('close',resolve)))]);
+    const childObserved=helper.observeManualOrphanProcessV1(original.pid),child=childObserved.pin;
+    assert.equal(child.pid,original.pid);assert.equal(child.ppid,parent.pid);assert.equal(parent.pid,process.pid);
+    assert.equal(child.uid,parent.uid);assert.equal(child.executable,nodePhysical);assert.equal(parent.executable,nodePhysical);
+    assert.equal(child.executableSha256,parent.executableSha256);assert.equal(childObserved.rawCommand,nodePhysical+' '+helperPhysical);
+    const frame={schema:'setfarm.manual-orphan-lifecycle-probe.v1',nonce:'c'.repeat(64),parent,child,
+      source:{helperSha256:source.hashes.helperSha256,issuerTestSha256:source.hashes.issuerTestSha256}};
+    const issued=Buffer.from(JSON.stringify(frame)+'\n');assert.deepEqual(helper.encodeManualOrphanProbeFrameV1(frame),issued);
+    const delivered=Buffer.from(transform?transform(frame,Buffer.from(issued)):issued);
+    source.check();assert.deepEqual(helper.observeManualOrphanProcessV1(parent.pid),parentObserved);
+    assert.deepEqual(helper.observeManualOrphanProcessV1(child.pid),childObserved);assert.equal(witness.snapshot().state,'pending');
+    if(missingEOF){
+      original.stdio[4].once('end',()=>endOnce());
+      original.stdio[4].write(delivered);
+    }else endOnce(delivered);
+    await witness.settled;const closes=await joined;
+    const current=witness.snapshot(),output=witness.output();assert.equal(current.state,'observed');
+    assert.deepEqual(current.exit,current.close);assert.deepEqual(current.close,closes[0]);assert.equal(current.close.signal,null);
+    assert.deepEqual(current.fd4,{finish:true,end:true,close:true});
+    assert.equal(current.stdout.end,true);assert.equal(current.stdout.close,true);assert.equal(current.stderr.end,true);assert.equal(current.stderr.close,true);
+    assert.ok(original.stdout.closed&&original.stderr.closed&&original.stdio[4].closed);
+    assert.equal(endAttempted,true);source.check();
+    result={frame,issued,delivered,snapshot:current,stdout:output.stdout,stderr:output.stderr};
+  }catch(error){
+    primary=error;
+    if(original){
+      try{endOnce();}catch{}
+      if(witness)await witness.settled;
+      if(joined)await joined;
+    }
+  }finally{source.close();}
+  if(primary)throw primary;
+  return result;
+}
+function assertActualReceiverReceiptV1(result){
+  const expected={schema:'setfarm.manual-orphan-lifecycle-probe-result.v1',frameSha256:createHash('sha256').update(result.delivered).digest('hex'),
+    pid:result.frame.child.pid,parentPid:result.frame.parent.pid,fd4Closed:true,sourcePinsClosed:true};
+  assertActualProbeReceiptV1(expected,process.pid);assert.deepEqual(result.stdout,Buffer.from(JSON.stringify(expected)+'\n'));return expected;
+}
+function canonicalReceiverBytesV1(frame){
+  const bytes=Buffer.from(JSON.stringify(frame)+'\n');
+  assert.deepEqual(helper.decodeManualOrphanProbeFrameV1(bytes),frame,'wrong binding fixture is otherwise canonical and shape-valid');
+  return bytes;
+}
+function assertActualReceiverRefusalV1(result,code){
+  assert.equal(result.snapshot.close.code,1);assert.deepEqual(result.stdout,Buffer.alloc(0));
+  assert.deepEqual(result.stderr,Buffer.from(code+'\n'));
+}
+for(const [label,transform,options,code] of [
+  ['extra JSON field',(_f,bytes)=>Buffer.from(bytes.toString('utf8').slice(0,-2)+',"extra":true}\n'),{},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['duplicate JSON key',(_f,bytes)=>Buffer.from(bytes.toString('utf8').replace('{"schema":','{"nonce":"'+ 'd'.repeat(64)+'","schema":')),{},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['invalid UTF8',()=>Buffer.from([0xff,0x0a]),{},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['truncated frame missing LF',(_f,bytes)=>bytes.subarray(0,-1),{},'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['wrong otherwise-current parent pin',frame=>{frame.parent={...frame.parent,pid:frame.parent.pid+1};return canonicalReceiverBytesV1(frame);},{},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['wrong otherwise-current child birth',frame=>{frame.child={...frame.child,startedAtUTC:new Date(Date.parse(frame.child.startedAtUTC)+1000).toISOString()};return canonicalReceiverBytesV1(frame);},{},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['wrong otherwise-current helper hash',frame=>{frame.source.helperSha256=(frame.source.helperSha256[0]==='0'?'1':'0')+frame.source.helperSha256.slice(1);return canonicalReceiverBytesV1(frame);},{},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['missing EOF until owned reader actual deadline',(_f,bytes)=>bytes,{missingEOF:true},'MANUAL_ORPHAN_CHILD_UNKNOWN'],
+]){
+  test('actual same fixed child receiver naturally closes for '+label,async()=>{
+    const result=await actualFixedReceiverV1(transform,options);assertActualReceiverRefusalV1(result,code);
+  });
+}
+test('actual same fixed child rejects completed prior-child frame by current binding with canonical bytes',async()=>{
+  const prior=await actualFixedReceiverV1();assert.equal(prior.snapshot.close.code,0);assert.deepEqual(prior.stderr,Buffer.alloc(0));
+  const receipt=assertActualReceiverReceiptV1(prior);
+  assert.equal(receipt.frameSha256,createHash('sha256').update(prior.issued).digest('hex'));
+  const replay=await actualFixedReceiverV1(current=>{
+    assert.notEqual(current.child.pid,prior.frame.child.pid,'fixture requires a different actual original child');
+    assert.deepEqual(helper.decodeManualOrphanProbeFrameV1(prior.issued),prior.frame);
+    return prior.issued;
+  });
+  assertActualReceiverRefusalV1(replay,'MANUAL_ORPHAN_OWNER_REFUSED');
+});
+test('actual nonce-only well-shaped change is accepted childside but differs from parents original issued digest',async()=>{
+  const result=await actualFixedReceiverV1(frame=>{frame.nonce='f'.repeat(64);return canonicalReceiverBytesV1(frame);});
+  assert.equal(result.snapshot.close.code,0);assert.deepEqual(result.stderr,Buffer.alloc(0));
+  const receipt=assertActualReceiverReceiptV1(result);
+  assert.equal(receipt.frameSha256,createHash('sha256').update(result.delivered).digest('hex'));
+  assert.notEqual(receipt.frameSha256,createHash('sha256').update(result.issued).digest('hex'));
+  // The source-contained normal issuer digest-mismatch case above exercises the
+  // actual parent's rejection body. This receiver case claims no nonce auth.
+});
+
+// Added interaction coverage of already implemented Root v2 semantics: a known
+// frame fault may refuse after its own observed close without fabricating EOF.
+for(const [label,chunk] of [['nonBuffer data','not a Buffer'],['16385 aggregate',Buffer.alloc(16385,0x20)]]){
+  test('source-contained fd4 reader '+label+' without EOF remains pending until known close then FRAME',async()=>{
+    const f=probeReaderFixtureV1(),vm=fixedProbeVmV1(f),t=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());
+    f.ledger.socket.emit('data',chunk);
+    await Promise.resolve();assert.equal(t.outcome,null,'a frame fault and destroy request do not invent actual close');
+    assert.equal(f.ledger.destroys,1);assert.equal(f.ledger.closed,false);assert.deepEqual(f.ledger.rawCloses,[]);
+    // Deliberately no end event: only the explicit known owned Socket close.
+    f.ledger.closed=true;f.ledger.socket.emit('close',false);
+    await assertProbeRejectedV1(t,'MANUAL_ORPHAN_FRAME_REFUSED');
+    assert.equal(f.ledger.destroys,1);assert.deepEqual(f.ledger.rawCloses,[]);
+    assert.deepEqual(vm.cleared,[vm.timers[0].handle]);vm.assertContained();
+  });
+}
+
+// Root-adopted Darwin effective metadata correction: the producer still sends
+// exactly3 keys; only this strict, current-UID runtime metadata is optional.
+for(const [label,value] of [
+  ['current UID and observed locale fields','0x1F5:0x23:0x18'],
+  ['current UID and zero uint32 suffixes','0x1F5:0x0:0x0'],
+  ['current UID and maximum uint32 suffixes','0x1F5:0xFFFFFFFF:0xFFFFFFFF'],
+]){
+  test('source-contained fixed child accepts canonical Darwin CF metadata '+label+' after reader and source close',async()=>{
+    const f=probeCompositionFixtureV1('child',fixture=>{fixture.process.env.__CF_USER_TEXT_ENCODING=value;});
+    assert.equal(f.process.platform,'darwin');assert.equal(f.process.getuid(),501,'independent fixture UID matches literal 0x1F5');
+    const vm=fixedProbeVmV1(f,true);await vm.childMain();
+    const bytes=Buffer.from(JSON.stringify(f.frame())+'\n');
+    const expected={schema:'setfarm.manual-orphan-lifecycle-probe-result.v1',frameSha256:createHash('sha256').update(bytes).digest('hex'),
+      pid:123,parentPid:122,fd4Closed:true,sourcePinsClosed:true};
+    assert.equal(f.control.stdout,JSON.stringify(expected)+'\n');assert.equal(f.control.stderr,'');assert.equal(f.process.exitCode,0);
+    assert.equal(f.control.reader.ledger.closed,true);assert.equal(f.control.reader.ledger.destroys,1);
+    assert.deepEqual(f.control.reader.ledger.rawCloses,[]);assert.ok(f.state.opened.length>0);vm.assertContained();
+  });
+}
+for(const [label,value,configure] of [
+  ['different UID','0x1F4:0x23:0x18',()=>{}],
+  ['empty value','',()=>{}],
+  ['empty field','0x1F5::0x18',()=>{}],
+  ['missing field','0x1F5:0x23',()=>{}],
+  ['extra field','0x1F5:0x23:0x18:0x0',()=>{}],
+  ['lowercase noncanonical hex','0x1f5:0x23:0x18',()=>{}],
+  ['leading zero','0x01F5:0x23:0x18',()=>{}],
+  ['nonhex field','0x1F5:0xG:0x18',()=>{}],
+  ['larger than uint32','0x1F5:0x100000000:0x18',()=>{}],
+  ['trailing newline','0x1F5:0x23:0x18\n',()=>{}],
+  ['space in field','0x1F5:0x23: 0x18',()=>{}],
+  ['CF key on linux','0x1F5:0x23:0x18',f=>{f.process.platform='linux';}],
+  ['CF plus unrelated key','0x1F5:0x23:0x18',f=>{f.process.env.UNRELATED='refuse';}],
+  ['CF plus changed baseline','0x1F5:0x23:0x18',f=>{f.process.env.LANG='en_US';}],
+  ['CF plus missing baseline','0x1F5:0x23:0x18',f=>{delete f.process.env.LC_ALL;}],
+]){
+  test('source-contained fixed child refuses Darwin CF metadata '+label+' before reading inherited4',async()=>{
+    const f=probeCompositionFixtureV1('child',fixture=>{
+      fixture.process.env.__CF_USER_TEXT_ENCODING=value;configure(fixture);
+    }),vm=fixedProbeVmV1(f,true);await vm.childMain();
+    assert.equal(f.control.stdout,'');assert.equal(f.control.stderr,'MANUAL_ORPHAN_OWNER_REFUSED\n');assert.equal(f.process.exitCode,1);
+    assert.deepEqual(f.control.reader.ledger.rawCloses,[4]);assert.equal(f.control.reader.ledger.adopted,false);
+    assert.deepEqual(f.control.reader.ledger.constructs,[]);assert.deepEqual(f.control.reader.ledger.fstats,[]);
+    assert.equal(f.state.opened.length,0);vm.assertContained();
+  });
+}

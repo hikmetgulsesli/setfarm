@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
-import {spawnSync} from 'node:child_process';
-import {createHash} from 'node:crypto';
+import {spawn,spawnSync} from 'node:child_process';
+import {createHash,randomBytes} from 'node:crypto';
+import * as net from 'node:net';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {TextDecoder,types} from 'node:util';
@@ -420,3 +421,289 @@ export function observeManualOrphanOriginalChildV1(child){
   for(const {name,stream} of present){try{stream.resume();}catch{fail(name);}}
   settle();return witness;
 }
+
+export function readManualOrphanProbeFd4V1(){
+  const extraArguments=arguments.length!==0;
+  return new Promise((resolve,reject)=>{
+    // Raw4 belongs here until a Socket has actually been returned. A failed
+    // constructor leaves adoption uncertain, so its result is always UNKNOWN.
+    const refuseRaw=unknown=>{
+      try{fs.closeSync(4);}catch{unknown=true;}
+      reject(unknown?probeCloseUnknownV1():probeOwnerRefusalV1());
+    };
+    let socket;
+    try{
+      const stat=fs.fstatSync(4);
+      if(extraArguments||(!stat.isFIFO()&&!stat.isSocket())){refuseRaw(false);return;}
+    }catch{refuseRaw(false);return;}
+    try{socket=new net.Socket({fd:4,readable:true,writable:false});}
+    catch{refuseRaw(true);return;}
+
+    let eof=false,closeCount=0,destroyAttempted=false,unknown=false,frameFault=false;
+    let timer=null,timerCleared=false,scheduled=false,total=0;
+    const chunks=[];
+    const clearOwnedTimer=()=>{
+      if(timer!==null&&!timerCleared){
+        timerCleared=true;
+        try{clearTimeout(timer);}catch{unknown=true;}
+      }
+    };
+    const requestClose=()=>{
+      if(!destroyAttempted){
+        destroyAttempted=true;
+        try{socket.destroy();}catch{unknown=true;}
+      }
+    };
+    const failUnknown=()=>{unknown=true;requestClose();};
+    const closed=hadError=>{
+      closeCount++;
+      // An already known syntax/limit fault may refuse after our own destroy,
+      // without inventing EOF. A fault-free close without EOF is UNKNOWN.
+      if(closeCount!==1||hadError===true||(!eof&&!frameFault))unknown=true;
+      clearOwnedTimer();
+      if(!scheduled){
+        scheduled=true;
+        // A synchronous destroy->close->throw must finish recording uncertainty
+        // before a positive can resolve. No close is invented by this microtask.
+        queueMicrotask(()=>{
+          if(unknown){reject(probeCloseUnknownV1());return;}
+          if(frameFault){reject(probeFrameRefusalV1());return;}
+          try{resolve(decodeManualOrphanProbeFrameV1(Buffer.concat(chunks,total)));}
+          catch{reject(probeFrameRefusalV1());}
+        });
+      }
+    };
+    try{
+      socket.on('error',()=>{failUnknown();});
+      socket.on('end',()=>{
+        if(eof||closeCount!==0)unknown=true;
+        eof=true;requestClose();
+      });
+      socket.on('close',closed);
+      socket.pause();
+      socket.on('data',chunk=>{
+        if(eof||closeCount!==0){failUnknown();return;}
+        if(types.isProxy(chunk)||!Buffer.isBuffer(chunk)){frameFault=true;requestClose();return;}
+        try{
+          const size=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),'byteLength').get.call(chunk);
+          if(size>16384-total){frameFault=true;requestClose();return;}
+          if(size>0){total+=size;chunks.push(Buffer.from(chunk));}
+        }catch{failUnknown();}
+      });
+      timer=setTimeout(()=>{failUnknown();},5000);
+      socket.resume();
+    }catch{failUnknown();}
+  });
+}
+
+function probeSanitizedErrorV1(error,allowFrame=false){
+  if(error?.message==='MANUAL_ORPHAN_CHILD_UNKNOWN')return probeCloseUnknownV1();
+  if(allowFrame&&error?.message==='MANUAL_ORPHAN_FRAME_REFUSED')return probeFrameRefusalV1();
+  return probeOwnerRefusalV1();
+}
+
+function probeLaunchContextV1(){
+  const locators=probeSourceLocatorsV1(),root=path.resolve(path.dirname(locators.helper),'../../..');
+  if(fs.realpathSync(locators.helper)!==locators.helper||fs.realpathSync(locators.issuer)!==locators.issuer
+    ||fs.realpathSync(root)!==root)throw probeOwnerRefusalV1();
+  const node=fs.realpathSync(process.execPath);
+  if(!probeExecutableV1(node))throw probeOwnerRefusalV1();
+  return {...locators,root,node};
+}
+
+function probeChildContextV1(context){
+  if(process.execPath!==context.node||process.argv0!==context.node||!Array.isArray(process.execArgv)
+    ||process.execArgv.length!==0||!Array.isArray(process.argv)||process.argv.length!==2
+    ||process.argv[0]!==context.node||process.argv[1]!==context.helper||process.cwd()!==context.root){
+    throw probeOwnerRefusalV1();
+  }
+  const expected={PATH:path.dirname(context.node)+':/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
+  const metadata='__CF_USER_TEXT_ENCODING',keys=Reflect.ownKeys(process.env);
+  const hasMetadata=Object.hasOwn(process.env,metadata);
+  if(keys.length!==(hasMetadata?4:3)||keys.some(key=>typeof key!=='string'
+    ||(key!==metadata&&(!Object.hasOwn(expected,key)||process.env[key]!==expected[key])))){
+    throw probeOwnerRefusalV1();
+  }
+  if(hasMetadata){
+    const uid=process.getuid(),value=process.env[metadata];
+    if(process.platform!=='darwin'||!Number.isSafeInteger(uid)||uid<0||uid>0xFFFFFFFF
+      ||typeof value!=='string')throw probeOwnerRefusalV1();
+    const fields=value.split(':');
+    if(fields.length!==3||fields.some(field=>{
+      const match=/^0x(?:0|[1-9A-F][0-9A-F]{0,7})$/.exec(field);
+      return match===null||match[0]!==field;
+    })||fields[0]!=='0x'+uid.toString(16).toUpperCase())throw probeOwnerRefusalV1();
+  }
+}
+
+function sameProbePinV1(first,second){
+  return ['pid','ppid','uid','pgid','startedAtUTC','executable','executableSha256','commandSha256']
+    .every(key=>first[key]===second[key]);
+}
+function sameProbeObservationV1(first,second){
+  return sameProbePinV1(first.pin,second.pin)&&first.rawCommand===second.rawCommand;
+}
+function probeObservedPairV1(context,parent,child,parentPid,childPid){
+  if(parent.pin.pid!==parentPid||child.pin.pid!==childPid||child.pin.ppid!==parentPid
+    ||parent.pin.uid!==process.getuid()||child.pin.uid!==parent.pin.uid
+    ||parent.pin.executable!==context.node||child.pin.executable!==context.node
+    ||parent.pin.executableSha256!==child.pin.executableSha256
+    ||child.rawCommand!==context.node+' '+context.helper)throw probeOwnerRefusalV1();
+}
+function probeReceiptV1(digest,pid,parentPid){
+  return {schema:'setfarm.manual-orphan-lifecycle-probe-result.v1',frameSha256:digest,
+    pid,parentPid,fd4Closed:true,sourcePinsClosed:true};
+}
+
+function probeChildOutputV1(){
+  let unknownWritten=false;
+  const unknown=()=>{
+    process.exitCode=1;
+    if(!unknownWritten){
+      unknownWritten=true;
+      try{process.stderr.write('MANUAL_ORPHAN_CHILD_UNKNOWN\n');}catch{}
+    }
+  };
+  // Native output errors must not become an unhandled raw diagnostic. These
+  // listeners are installed only in the direct child, never at module import.
+  if(typeof process.stderr.on==='function')process.stderr.on('error',()=>{process.exitCode=1;});
+  if(typeof process.stdout.on==='function')process.stdout.on('error',unknown);
+  return {unknown,writeFailure(error){
+    process.exitCode=1;
+    try{process.stderr.write(error.message+'\n');}catch{}
+  }};
+}
+
+async function runManualOrphanProbeChildV1(){
+  let source=null,readerStarted=false,receipt=null,failure=null;
+  const output=probeChildOutputV1();
+  try{
+    const context=probeLaunchContextV1();probeChildContextV1(context);
+    readerStarted=true;
+    const frame=await readManualOrphanProbeFd4V1();
+    probeChildContextV1(context);
+    source=pinManualOrphanProbeSourcesV1();
+    const parent=observeManualOrphanProcessV1(process.ppid),self=observeManualOrphanProcessV1(process.pid);
+    probeObservedPairV1(context,parent,self,process.ppid,process.pid);
+    if(!sameProbePinV1(frame.parent,parent.pin)||!sameProbePinV1(frame.child,self.pin)
+      ||frame.child.ppid!==frame.parent.pid||frame.parent.pid!==process.ppid
+      ||source.hashes.helperSha256!==frame.source.helperSha256
+      ||source.hashes.issuerTestSha256!==frame.source.issuerTestSha256)throw probeOwnerRefusalV1();
+    const digest=createHash('sha256').update(encodeManualOrphanProbeFrameV1(frame)).digest('hex');
+    source.check();
+    if(!sameProbeObservationV1(parent,observeManualOrphanProcessV1(process.ppid))
+      ||!sameProbeObservationV1(self,observeManualOrphanProcessV1(process.pid)))throw probeOwnerRefusalV1();
+    probeChildContextV1(context);source.check();
+    receipt=probeReceiptV1(digest,process.pid,process.ppid);
+  }catch(error){failure=probeSanitizedErrorV1(error,true);}
+  finally{
+    if(!readerStarted){
+      // A launch-guard refusal still closes only this child's inherited4 once.
+      try{fs.closeSync(4);}catch{failure=probeCloseUnknownV1();}
+    }
+    if(source){try{source.close();}catch{failure=probeCloseUnknownV1();}}
+  }
+  if(failure){output.writeFailure(failure);return;}
+  process.exitCode=0;
+  try{process.stdout.write(JSON.stringify(receipt)+'\n');}catch{output.unknown();}
+}
+
+function probeCurrentPendingV1(witness){
+  try{
+    const current=witness.snapshot();
+    if(current.state!=='pending'||current.exit!==null||current.close!==null)throw probeCloseUnknownV1();
+  }catch{throw probeCloseUnknownV1();}
+}
+function probeCurrentObservedV1(witness){
+  try{
+    const current=witness.snapshot();
+    if(current.state!=='observed')throw probeCloseUnknownV1();
+    return current;
+  }catch{throw probeCloseUnknownV1();}
+}
+function probeUnknownRefusalV1(witness,current){
+  return current.exit?.code===1&&witness.output().stderr.equals(Buffer.from('MANUAL_ORPHAN_CHILD_UNKNOWN\n'));
+}
+function probeIssuedReceiptV1(witness,current,expected){
+  const output=witness.output(),bytes=Buffer.from(JSON.stringify(expected)+'\n');
+  if(probeUnknownRefusalV1(witness,current))throw probeCloseUnknownV1();
+  if(current.exit?.code!==0||current.exit.signal!==null||current.close?.code!==0||current.close.signal!==null
+    ||!current.fd4.finish||!current.fd4.end||!current.fd4.close
+    ||!current.stdout.end||!current.stdout.close||!current.stderr.end||!current.stderr.close
+    ||current.stdout.bytes!==bytes.length||current.stderr.bytes!==0
+    ||!output.stdout.equals(bytes)||output.stderr.length!==0)throw probeOwnerRefusalV1();
+}
+
+export async function runManualOrphanLifecycleProbeV1(){
+  let source=null,child=null,witness=null,writer=null,endAttempted=false,receipt=null,failure=null;
+  const endOwnedWriter=bytes=>{
+    if(!endAttempted){
+      endAttempted=true;
+      try{
+        if(writer===null)writer=child.stdio[4];
+        writer.end(bytes);
+      }catch{throw probeCloseUnknownV1();}
+    }
+  };
+  try{
+    if(arguments.length!==0)throw probeOwnerRefusalV1();
+    const context=probeLaunchContextV1();
+    if(!Array.isArray(process.argv)||process.argv.length!==2||typeof process.argv[1]!=='string'
+      ||path.resolve(process.argv[1])!==context.issuer)throw probeOwnerRefusalV1();
+    source=pinManualOrphanProbeSourcesV1();
+    const parent=observeManualOrphanProcessV1(process.pid);
+    if(parent.pin.pid!==process.pid||parent.pin.uid!==process.getuid()||parent.pin.executable!==context.node){
+      throw probeOwnerRefusalV1();
+    }
+    child=spawn(context.node,[context.helper],{cwd:context.root,argv0:context.node,shell:false,detached:false,
+      env:{PATH:path.dirname(context.node)+':/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+      stdio:['ignore','pipe','pipe','ignore','pipe']});
+    witness=observeManualOrphanOriginalChildV1(child);
+    writer=child.stdio[4];probeCurrentPendingV1(witness);
+    const childObservation=observeManualOrphanProcessV1(child.pid);
+    probeObservedPairV1(context,parent,childObservation,process.pid,child.pid);
+    const frame={schema:'setfarm.manual-orphan-lifecycle-probe.v1',nonce:randomBytes(32).toString('hex'),
+      parent:parent.pin,child:childObservation.pin,
+      source:{helperSha256:source.hashes.helperSha256,issuerTestSha256:source.hashes.issuerTestSha256}};
+    const issued=encodeManualOrphanProbeFrameV1(frame);
+    receipt=probeReceiptV1(createHash('sha256').update(issued).digest('hex'),child.pid,process.pid);
+    source.check();
+    if(!sameProbeObservationV1(parent,observeManualOrphanProcessV1(process.pid))
+      ||!sameProbeObservationV1(childObservation,observeManualOrphanProcessV1(child.pid)))throw probeOwnerRefusalV1();
+    probeCurrentPendingV1(witness);endOwnedWriter(issued);
+    await witness.settled;
+    let current=probeCurrentObservedV1(witness);
+    source.check();current=probeCurrentObservedV1(witness);
+    probeIssuedReceiptV1(witness,current,receipt);
+  }catch(error){
+    failure=probeSanitizedErrorV1(error);
+    if(child!==null){
+      try{endOwnedWriter();}catch{failure=probeCloseUnknownV1();}
+      if(witness!==null){
+        try{
+          await witness.settled;
+          const current=probeCurrentObservedV1(witness);
+          if(probeUnknownRefusalV1(witness,current))failure=probeCloseUnknownV1();
+          if(source)source.check();
+          probeCurrentObservedV1(witness);
+        }catch(errorAfterJoin){
+          const joinedFailure=probeSanitizedErrorV1(errorAfterJoin);
+          if(joinedFailure.message==='MANUAL_ORPHAN_CHILD_UNKNOWN')failure=joinedFailure;
+        }
+      }else failure=probeCloseUnknownV1();
+    }
+  }finally{
+    if(child!==null){
+      try{probeCurrentObservedV1(witness);}catch{failure=probeCloseUnknownV1();}
+    }
+    if(source){try{source.close();}catch{failure=probeCloseUnknownV1();}}
+    if(child!==null){
+      try{probeCurrentObservedV1(witness);}catch{failure=probeCloseUnknownV1();}
+    }
+  }
+  if(failure)throw probeSanitizedErrorV1(failure);
+  probeCurrentObservedV1(witness);
+  return Object.freeze(receipt);
+}
+
+if(import.meta.main)void runManualOrphanProbeChildV1().catch(()=>{process.stderr.write('MANUAL_ORPHAN_CHILD_UNKNOWN\n');process.exitCode=1;});
