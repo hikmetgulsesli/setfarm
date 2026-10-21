@@ -698,6 +698,7 @@ const POST_TERMINAL_OWNER_FILES=Object.freeze([
   "v3-platform-preclaim-terminal.integration.test.ts",
   "v3-platform-preclaim-termination-race.integration.test.ts",
   "v3-pre-dispatch-failure.integration.test.ts",
+  "v3-predecessor-completion-claim.integration.test.ts",
   "v3-preparation-claim-authority.test.ts",
   "v3-setup-build-failure-cause.integration.test.ts",
   "v3-setup-build-untyped-build-failure.integration.test.ts",
@@ -711,16 +712,18 @@ test('after-terminal permits only fixed npm continuation argv in a frozen privat
   assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
   assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
 });
-test('after-terminal package command contains exactly23 fixed later owners and the unchanged five-package tail',()=>{
+test('after-terminal package command contains exactly24 fixed later owners and the unchanged five-package tail',()=>{
   const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
   const execution=readFileSync(new URL('../run-execution-attempt-tests.ts',import.meta.url),'utf8');
   const blocks=[...execution.matchAll(/const OWNER_BACKED_TESTS = new Set\(\[([\s\S]*?)\]\);/g)];
   assert.equal(blocks.length,1,'one maintained owner inventory');
   const owners=[...blocks[0][1].matchAll(/"([A-Za-z0-9.-]+\.test\.ts)"/g)].map(m=>m[1]).sort();
-  assert.equal(owners.length,39);assert.equal(owners.indexOf('run-terminal-transition.test.ts'),15);
+  assert.equal(new Set(owners).size,owners.length,'maintained owners are unique');
+  assert.equal(owners.filter(file=>file==='run-terminal-transition.test.ts').length,1,'one terminal transition boundary');
+  const terminalIndex=owners.indexOf('run-terminal-transition.test.ts');
   assert.equal(owners.filter(file=>file==='migration33-current-entry-observers.test.ts').length,1);
-  assert.deepEqual(owners.slice(16),POST_TERMINAL_OWNER_FILES);
-  assert.equal(POST_TERMINAL_OWNER_FILES.length,23);assert.equal(new Set(POST_TERMINAL_OWNER_FILES).size,23);
+  assert.deepEqual(owners.slice(terminalIndex+1),POST_TERMINAL_OWNER_FILES);
+  assert.equal(POST_TERMINAL_OWNER_FILES.length,24);assert.equal(new Set(POST_TERMINAL_OWNER_FILES).size,24);
   assert.equal(POST_TERMINAL_OWNER_FILES.includes('run-terminal-transition.test.ts'),false);
   const tail=['findings','evidence','recovery','evals','internal-production'].map(n=>'npm run test:'+n).join(' && ');
   const expected='node --import tsx scripts/run-execution-attempt-tests.ts '
@@ -918,7 +921,7 @@ test('after-cutover retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
@@ -972,7 +975,7 @@ test('after-receipt retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
@@ -1051,4 +1054,66 @@ test('migration33-adjacent-full plans only the fixed whole migrations P3 test ar
   });
   assert.equal(refused.error,undefined);assert.equal(refused.signal,null);assert.equal(refused.status,1);
   assert.equal(refused.stdout,'');assert.equal(refused.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
+});
+
+// Slice1 declares a pure vector only; actual route refusal is source-contained
+// in manual-orphan-bootstrap-owned-route-v1.test.js, with all effects intercepted.
+test('manual-orphan-bootstrap pure plan selects the one fixed inactive owned route',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'manual-orphan-bootstrap'});
+  assert.deepEqual(value.test,[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+    'node','--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts',
+  ]);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+
+test('manual-orphan-bootstrap pure plan refuses caller selectors and command tails',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['MANUAL-ORPHAN-BOOTSTRAP','manual-orphan-bootstrap extra',
+    'manual-orphan-bootstrap;echo denied','test:manual-orphan-bootstrap',
+    'https://127.0.0.1/','postgresql://127.0.0.1/postgres',
+    'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+});
+
+test('manual-orphan-bootstrap addition preserves all thirteen prior literal plan vectors',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const npm='/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js';
+  const isolated=['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+    'node','--import','tsx','--test','--test-concurrency=1'];
+  const expected={
+    findings:[npm,'run','test:findings'],all:[npm,'test'],
+    'readonly-verifiers':['--import','tsx','--test','--test-concurrency=1',
+      'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
+      'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts'],
+    receipt:[...isolated,'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts'],
+    'after-scripts':[npm,'run','test:after-scripts'],
+    'after-terminal':[npm,'run','test:after-terminal'],
+    'after-findings':[npm,'run','test:after-findings'],
+    'after-internal-pure':[npm,'run','test:after-internal-pure'],
+    'after-local-custody':[npm,'run','test:after-local-custody'],
+    'after-cutover':[npm,'run','test:after-cutover'],
+    'after-receipt':[npm,'run','test:after-receipt'],
+    'migration33-observers':[...isolated,'tests/execution-attempts/migration33-current-entry-observers.test.ts'],
+    'migration33-adjacent-full':[...isolated,'tests/execution-attempts/migrations.test.ts'],
+  };
+  assert.equal(Object.keys(expected).length,13);
+  for(const [mode,vector] of Object.entries(expected)){
+    const value=plan({root,port:55439,mode});
+    assert.deepEqual(value.test,vector,mode);
+    assert.equal(Object.isFrozen(value.test),true,mode);
+  }
+});
+
+test('manual-orphan-bootstrap direct CLI refuses extra argv before cluster effects',()=>{
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'manual-orphan-bootstrap','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,
+    env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.equal(child.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
 });

@@ -22,6 +22,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import postgres from "postgres";
+import { classifyManualOrphanVectorV1 } from "../tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs";
 import { isTask4CommandV1, readTask4Fd4V1, prepareTask4ContextV1, observeTask4OriginalChildV1,
   observeTask4ProcessV1, task4CanonicalV1, pinTask4DirectoryV1, readTask4ProofV1, publishTask4ProofV1,
   validateTask4ParentEnvelopeV1, validateTask4RunnerEnvelopeV1 } from "../tests/fixtures/mission-control-render-smoke-owned-v1.js";
@@ -689,7 +690,11 @@ async function verifyPrimaryCloneV1(
 let task4InvocationV1 = false;
 async function main(): Promise<void> {
   if (process.env.SETFARM_PG_URL !== undefined) throw new Error("ISOLATED_TEST_AMBIENT_PG_URL_FORBIDDEN");
+  const separator = process.argv.indexOf("--");
+  const manualOrphanRoute = classifyManualOrphanVectorV1(separator >= 0 ? process.argv.slice(separator + 1) : []);
+  if (manualOrphanRoute === "near") throw new Error("MANUAL_ORPHAN_ROUTE_REFUSED");
   const command = commandArguments();
+  if (manualOrphanRoute === "exact") throw new Error("MANUAL_ORPHAN_SLICE2_UNAVAILABLE");
   task4InvocationV1 = isTask4CommandV1(command);
   const task4Setup = task4InvocationV1 ? await readTask4Fd4V1("setup") : undefined;
   const adminUrl = normalizedAdminUrlV1();

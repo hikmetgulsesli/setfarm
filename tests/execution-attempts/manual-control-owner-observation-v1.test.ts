@@ -7,7 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { test } from "node:test";
 import ts from "typescript";
-import { z } from "zod";
+import { ManualOwnerV1Schema } from "../../src/execution/schemas/manual-evaluation-record-v1.js";
 import { ObservedControlWorkerOwnerV1Schema, ControlWorkerFatalErrorV1 } from "../../src/execution/schemas/manual-control-worker-channel-v1.js";
 // Extract unchanged source function bodies; this is OS observation only. The
 // child has no selected installation, DB, operational entry or external effects.
@@ -30,8 +30,8 @@ test("actual owned Node child preserves full executable, exact args digest and s
         assert.ok(child.pid);
         const ps = (args: string[]) => { const result = spawnSync("/bin/ps", args, { encoding: "utf8", env: environment, timeout: 5000, maxBuffer: 65536 }); assert.equal(result.status, 0); return result.stdout; };
         const expected = { pid: child.pid, processStartedAt: new Date(`${ps(["-ww", "-p", String(child.pid), "-o", "lstart="]).trim()} UTC`).toISOString(), processGroupId: Number(ps(["-ww", "-p", String(child.pid), "-o", "pgid="]).trim()), source: "observed_os", executable, script, commandHash: createHash("sha256").update(`${executable} ${script} --job-id ${jobId}`).digest("hex") };
-        const admission = declarations("src/execution/manual-test-admission-v1.ts", ["Hash", "OwnerSchema", "digestV1", "refuseV1", "psV1", "processOwnerV1"]);
-        const admissionObserver = new Function("fs", "path", "createHash", "spawnSync", "z", admission + ";return processOwnerV1;")(fs, path, createHash, spawnSync, z);
+        const admission = declarations("src/execution/manual-test-admission-v1.ts", ["digestV1", "refuseV1", "psV1", "processOwnerV1"]);
+        const admissionObserver = new Function("fs", "path", "createHash", "spawnSync", "OwnerSchema", admission + ";return processOwnerV1;")(fs, path, createHash, spawnSync, ManualOwnerV1Schema);
         const channel = declarations("src/execution/manual-test-worker-channel-v1.ts", ["fail", "observeOwner"]);
         const channelObserver = new Function("fs", "createHash", "spawnSync", "process", "ObservedControlWorkerOwnerV1Schema", "ControlWorkerFatalErrorV1", channel + ";return observeOwner;")(fs, createHash, spawnSync, Object.freeze({ pid: child.pid, execPath: executable, argv: Object.freeze([executable, script, "--job-id", jobId]) }), ObservedControlWorkerOwnerV1Schema, ControlWorkerFatalErrorV1);
         const observed: Record<string, unknown> = {};

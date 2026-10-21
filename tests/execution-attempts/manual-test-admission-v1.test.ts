@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import ts from "typescript";
 import { test } from "node:test";
 import { z } from "zod";
+import { ManualClosureV1Schema } from "../../src/execution/schemas/manual-evaluation-record-v1.js";
 
 // These tests stay on the raw runner: parsing must not open a database,
 // inspect private operational material, or create a selected runtime root.
@@ -310,14 +311,14 @@ test("process census refuses malformed rows and retains descendants or orphan gr
 function privateClosureComponent() {
   const source = fs.readFileSync(new URL("../../src/execution/manual-test-admission-v1.ts", import.meta.url), "utf8");
   const tree = ts.createSourceFile("manual.ts", source, ts.ScriptTarget.Latest, true);
-  const names = ["Hash", "AcquireSchema", "OwnerSchema", "ClosureSchema", "refuseV1", "beginCustodyOperationV1"];
+  const names = ["refuseV1", "beginCustodyOperationV1"];
   const declarations = names.map(name => {
     const node = tree.statements.find(statement => (ts.isFunctionDeclaration(statement) && statement.name?.text === name)
       || (ts.isVariableStatement(statement) && statement.declarationList.declarations.some(declaration => declaration.name.getText(tree) === name)));
     assert.ok(node, `complete production ${name} required`); return node.getText(tree);
   }).join("\n");
   const compiled = ts.transpileModule(declarations, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
-  return new Function("z", "path", `${compiled};return {ClosureSchema,beginCustodyOperationV1};`)(z, path);
+  return new Function("ClosureSchema", `${compiled};return {ClosureSchema,beginCustodyOperationV1};`)(ManualClosureV1Schema);
 }
 
 test("private closure binds exact intent owner mode and released archive without accepting public outcome authority", () => {
