@@ -304,3 +304,360 @@ test('source-contained guard-removal exposes Task4 then admin after exact isolat
   assert.equal(mutant.calls.forbidden,0);assert.deepEqual(mutant.forbiddenSites,[]);
   assert.deepEqual(mutant.calls.spawn,[]);
 });
+
+// Phase A: incremental codec contracts. Missing codec exports are absent-contract
+// scaffolding only; these semantic assertions remain when the real exports exist.
+// This fixture is shape data, not a process observation or ownership proof.
+function codecFrameV1(){
+  return {
+    schema:'setfarm.manual-orphan-lifecycle-probe.v1',nonce:'c'.repeat(64),
+    parent:{pid:122,ppid:121,uid:501,pgid:122,startedAtUTC:'2026-10-21T00:00:00.000Z',
+      executable:'/usr/bin/node',executableSha256:'a'.repeat(64),commandSha256:'b'.repeat(64)},
+    child:{pid:123,ppid:122,uid:501,pgid:122,startedAtUTC:'2026-10-21T00:00:00.000Z',
+      executable:'/usr/bin/node',executableSha256:'a'.repeat(64),commandSha256:'b'.repeat(64)},
+    source:{helperSha256:'d'.repeat(64),issuerTestSha256:'e'.repeat(64)},
+  };
+}
+// Independently written wire literal: no encoder or fixture serialization builds
+// this oracle. Its final LF is part of both the wire format and the digest.
+const CODEC_EXPECTED_V1=Buffer.from('{"schema":"setfarm.manual-orphan-lifecycle-probe.v1","nonce":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","parent":{"pid":122,"ppid":121,"uid":501,"pgid":122,"startedAtUTC":"2026-10-21T00:00:00.000Z","executable":"/usr/bin/node","executableSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commandSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"child":{"pid":123,"ppid":122,"uid":501,"pgid":122,"startedAtUTC":"2026-10-21T00:00:00.000Z","executable":"/usr/bin/node","executableSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commandSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"source":{"helperSha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","issuerTestSha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}}\n','utf8');
+const CODEC_TEXT_V1=CODEC_EXPECTED_V1.toString('utf8');
+function frameRefusedV1(action,label){
+  let caught;
+  try{action();}catch(error){caught=error;}
+  assert.ok(caught instanceof Error,label+' must throw Error');
+  assert.equal(caught.message,'MANUAL_ORPHAN_FRAME_REFUSED',label+' must sanitize its error');
+  return caught;
+}
+function reverseOwnKeysV1(value){
+  return Object.fromEntries(Object.entries(value).reverse());
+}
+
+test('codec encoder emits the independently ordered exact bytes including LF',()=>{
+  const bytes=helper.encodeManualOrphanProbeFrameV1(codecFrameV1());
+  assert.ok(Buffer.isBuffer(bytes));assert.deepEqual(bytes,CODEC_EXPECTED_V1);
+  const expectedDigest=createHash('sha256').update(CODEC_EXPECTED_V1).digest('hex');
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),expectedDigest);
+  assert.notEqual(expectedDigest,createHash('sha256').update(CODEC_EXPECTED_V1.subarray(0,-1)).digest('hex'));
+});
+test('codec encoder reconstructs canonical top process and source key order',()=>{
+  const frame=codecFrameV1();
+  frame.parent=reverseOwnKeysV1(frame.parent);frame.child=reverseOwnKeysV1(frame.child);
+  frame.source=reverseOwnKeysV1(frame.source);
+  assert.deepEqual(helper.encodeManualOrphanProbeFrameV1(reverseOwnKeysV1(frame)),CODEC_EXPECTED_V1);
+});
+test('codec decoder accepts the known bytes and deeply freezes every object',()=>{
+  const frame=helper.decodeManualOrphanProbeFrameV1(Buffer.from(CODEC_EXPECTED_V1));
+  assert.deepEqual(frame,codecFrameV1());
+  for(const value of [frame,frame.parent,frame.child,frame.source]){
+    assert.equal(Object.getPrototypeOf(value),Object.prototype);
+    assert.equal(Object.isFrozen(value),true);
+  }
+  assert.throws(()=>{frame.nonce='f'.repeat(64);},TypeError);
+  assert.throws(()=>{frame.parent.pid=999;},TypeError);
+  assert.throws(()=>{frame.child.commandSha256='f'.repeat(64);},TypeError);
+  assert.throws(()=>{frame.source.helperSha256='f'.repeat(64);},TypeError);
+});
+test('codec encoder retains no aliases to input objects or previously returned buffers',()=>{
+  const input=codecFrameV1(),bytes=helper.encodeManualOrphanProbeFrameV1(input);
+  input.nonce='f'.repeat(64);input.parent.pid=999;input.child.executable='/changed/node';
+  input.source.helperSha256='f'.repeat(64);
+  assert.deepEqual(bytes,CODEC_EXPECTED_V1);
+  bytes.fill(0);
+  assert.deepEqual(helper.encodeManualOrphanProbeFrameV1(codecFrameV1()),CODEC_EXPECTED_V1);
+});
+test('codec decoded data retains no aliases to the input buffer or later decodes',()=>{
+  const input=Buffer.from(CODEC_EXPECTED_V1),first=helper.decodeManualOrphanProbeFrameV1(input);
+  input.fill(0);
+  assert.deepEqual(first,codecFrameV1());
+  assert.deepEqual(helper.encodeManualOrphanProbeFrameV1(first),CODEC_EXPECTED_V1);
+  const second=helper.decodeManualOrphanProbeFrameV1(Buffer.from(CODEC_EXPECTED_V1));
+  for(const key of ['parent','child','source'])assert.notEqual(first[key],second[key]);
+  assert.notEqual(first,second);assert.deepEqual(second,codecFrameV1());
+});
+test('codec accepts a shape-valid changed nonce and hashes its changed exact bytes',()=>{
+  const frame=codecFrameV1();frame.nonce='f'.repeat(64);
+  const expected=Buffer.from(CODEC_TEXT_V1.replace('"nonce":"'+'c'.repeat(64)+'"','"nonce":"'+'f'.repeat(64)+'"'));
+  const bytes=helper.encodeManualOrphanProbeFrameV1(frame);
+  assert.deepEqual(bytes,expected);assert.deepEqual(helper.decodeManualOrphanProbeFrameV1(expected),frame);
+  assert.notEqual(createHash('sha256').update(bytes).digest('hex'),
+    createHash('sha256').update(CODEC_EXPECTED_V1).digest('hex'));
+  // This is codec shape/digest behavior only, never child nonce authentication.
+});
+
+const CODEC_DECODER_REFUSALS_V1=[
+  ['string instead of Buffer',()=>CODEC_TEXT_V1],
+  ['Uint8Array instead of Buffer',()=>new Uint8Array(CODEC_EXPECTED_V1)],
+  ['empty Buffer',()=>Buffer.alloc(0)],
+  ['16385 byte Buffer',()=>Buffer.alloc(16385,0x20)],
+  ['UTF8 BOM',()=>Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),CODEC_EXPECTED_V1])],
+  ['CRLF ending',()=>Buffer.from(CODEC_TEXT_V1.slice(0,-1)+'\r\n')],
+  ['missing final LF',()=>CODEC_EXPECTED_V1.subarray(0,-1)],
+  ['leading whitespace',()=>Buffer.from(' '+CODEC_TEXT_V1)],
+  ['trailing JSON whitespace before LF',()=>Buffer.from(CODEC_TEXT_V1.slice(0,-1)+' \n')],
+  ['extra final LF',()=>Buffer.from(CODEC_TEXT_V1+'\n')],
+  ['trailing JSON record',()=>Buffer.from(CODEC_TEXT_V1+'{}\n')],
+  ['invalid UTF8 inside a JSON string',()=>Buffer.concat([
+    Buffer.from(CODEC_TEXT_V1.split('/usr/bin/node')[0]),Buffer.from([0xff]),
+    Buffer.from('/usr/bin/node'+CODEC_TEXT_V1.split('/usr/bin/node').slice(1).join('/usr/bin/node')),
+  ])],
+  ['duplicate top key',()=>Buffer.from(CODEC_TEXT_V1.replace('{"schema":','{"nonce":"'+'c'.repeat(64)+'","schema":'))],
+  ['duplicate nested process key',()=>Buffer.from(CODEC_TEXT_V1.replace('"child":{"pid":123,','"child":{"pid":123,"pid":123,'))],
+  ['duplicate nested source key',()=>Buffer.from(CODEC_TEXT_V1.replace('"source":{','"source":{"helperSha256":"'+'d'.repeat(64)+'",'))],
+  ['alternate top key order',()=>{
+    const {schema,...rest}=codecFrameV1();return Buffer.from(JSON.stringify({...rest,schema})+'\n');
+  }],
+  ['alternate nested process key order',()=>{
+    const frame=codecFrameV1();frame.child=reverseOwnKeysV1(frame.child);return Buffer.from(JSON.stringify(frame)+'\n');
+  }],
+  ['alternate nested source key order',()=>{
+    const frame=codecFrameV1();frame.source=reverseOwnKeysV1(frame.source);return Buffer.from(JSON.stringify(frame)+'\n');
+  }],
+  ['alternate valid JSON escape',()=>Buffer.from(CODEC_TEXT_V1.replace('/usr/bin/node','\\/usr/bin/node'))],
+  ['invalid JSON syntax',()=>Buffer.from('{"schema":}\n')],
+  ['extra schema permission field',()=>Buffer.from(CODEC_TEXT_V1.slice(0,-2)+',"permission":true}\n')],
+  ['missing nonce field',()=>Buffer.from(CODEC_TEXT_V1.replace('"nonce":"'+'c'.repeat(64)+'",',''))],
+  ['wrong source hash field',()=>Buffer.from(CODEC_TEXT_V1.replace('"helperSha256":','"sourceSha256":'))],
+  ['out of range nested process id',()=>Buffer.from(CODEC_TEXT_V1.replace('"pid":123','"pid":2147483648'))],
+];
+for(const [label,input] of CODEC_DECODER_REFUSALS_V1){
+  test('codec decoder refuses '+label+' with the fixed error',()=>{
+    frameRefusedV1(()=>helper.decodeManualOrphanProbeFrameV1(input()),label);
+  });
+}
+
+const CODEC_ENCODER_SHAPE_REFUSALS_V1=[
+  ['top array',()=>[]],['top null',()=>null],
+  ['top nonplain prototype',()=>Object.assign(Object.create({inherited:true}),codecFrameV1())],
+  ['top null prototype',()=>Object.assign(Object.create(null),codecFrameV1())],
+  ['parent array',frame=>{frame.parent=[];return frame;}],
+  ['parent null',frame=>{frame.parent=null;return frame;}],
+  ['parent nonplain prototype',frame=>{frame.parent=Object.assign(Object.create({inherited:true}),frame.parent);return frame;}],
+  ['child array',frame=>{frame.child=[];return frame;}],
+  ['child null',frame=>{frame.child=null;return frame;}],
+  ['child nonplain prototype',frame=>{frame.child=Object.assign(Object.create({inherited:true}),frame.child);return frame;}],
+  ['source array',frame=>{frame.source=[];return frame;}],
+  ['source null',frame=>{frame.source=null;return frame;}],
+  ['source nonplain prototype',frame=>{frame.source=Object.assign(Object.create({inherited:true}),frame.source);return frame;}],
+  ['top extra field',frame=>{frame.permission=true;return frame;}],
+  ['top missing field',frame=>{delete frame.nonce;return frame;}],
+  ['parent extra field',frame=>{frame.parent.permission=true;return frame;}],
+  ['parent missing field',frame=>{delete frame.parent.pgid;return frame;}],
+  ['child extra field',frame=>{frame.child.permission=true;return frame;}],
+  ['child missing field',frame=>{delete frame.child.startedAtUTC;return frame;}],
+  ['source extra field',frame=>{frame.source.permission=true;return frame;}],
+  ['source missing field',frame=>{delete frame.source.issuerTestSha256;return frame;}],
+  ['wrong source field',frame=>{frame.source.sourceSha256=frame.source.helperSha256;delete frame.source.helperSha256;return frame;}],
+  ['wrong schema type',frame=>{frame.schema=1;return frame;}],
+  ['wrong schema value',frame=>{frame.schema='setfarm.manual-orphan-runner-setup.v1';return frame;}],
+  ['wrong nonce type',frame=>{frame.nonce=123;return frame;}],
+  ['wrong timestamp type',frame=>{frame.child.startedAtUTC=Date.UTC(2026,9,21);return frame;}],
+  ['wrong executable type',frame=>{frame.child.executable=new String('/usr/bin/node');return frame;}],
+  ['wrong executable hash type',frame=>{frame.child.executableSha256=null;return frame;}],
+  ['wrong command hash type',frame=>{frame.parent.commandSha256=false;return frame;}],
+  ['wrong source hash type',frame=>{frame.source.issuerTestSha256=123;return frame;}],
+];
+for(const [label,make] of CODEC_ENCODER_SHAPE_REFUSALS_V1){
+  test('codec encoder refuses '+label+' with the fixed error',()=>{
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(make(codecFrameV1())),label);
+  });
+}
+for(const location of ['top','parent','child','source']){
+  test('codec encoder refuses symbol data on '+location,()=>{
+    const frame=codecFrameV1(),object=location==='top'?frame:frame[location];
+    object[Symbol('unserializable')]='hidden';
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),location+' symbol');
+  });
+  test('codec encoder refuses nonenumerable data on '+location,()=>{
+    const frame=codecFrameV1(),object=location==='top'?frame:frame[location];
+    Object.defineProperty(object,'hidden',{value:'not a wire field',enumerable:false});
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),location+' nonenumerable');
+  });
+}
+for(const [location,key] of [['top','nonce'],['parent','pid'],['child','commandSha256'],['source','helperSha256']]){
+  test('codec encoder refuses '+location+' getter before invoking it',()=>{
+    const frame=codecFrameV1(),object=location==='top'?frame:frame[location];let calls=0;
+    Object.defineProperty(object,key,{enumerable:true,configurable:true,get(){calls++;return 'private getter value';}});
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),location+' getter');
+    assert.equal(calls,0,'shape validation must inspect descriptors before reading any getter');
+  });
+}
+test('codec encoder refuses a setter-only accessor without invoking it',()=>{
+  const frame=codecFrameV1();let calls=0;
+  Object.defineProperty(frame.source,'issuerTestSha256',{enumerable:true,configurable:true,set(){calls++;}});
+  frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),'setter-only accessor');
+  assert.equal(calls,0);
+});
+for(const field of ['pid','ppid','uid','pgid']){
+  test('codec encoder refuses invalid '+field+' integer domain',()=>{
+    const invalid=['123',null,NaN,Infinity,1.5,-1,2147483648,Number.MAX_SAFE_INTEGER+1];
+    if(field!=='uid')invalid.push(0);
+    for(const value of invalid){
+      const frame=codecFrameV1();frame.child[field]=value;
+      frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),field+'='+String(value));
+    }
+  });
+}
+test('codec encoder also validates the parent integer domain',()=>{
+  const frame=codecFrameV1();frame.parent.pid=0;
+  frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),'parent pid zero');
+});
+for(const [label,values] of [
+  ['minimum ids and root uid',{pid:1,ppid:1,uid:0,pgid:1}],
+  ['maximum bounded integers',{pid:2147483647,ppid:2147483647,uid:2147483647,pgid:2147483647}],
+]){
+  test('codec accepts '+label+' as shape data only',()=>{
+    const frame=codecFrameV1();Object.assign(frame.child,values);
+    const bytes=helper.encodeManualOrphanProbeFrameV1(frame);
+    for(const [key,value] of Object.entries(values))assert.ok(bytes.includes(Buffer.from('"'+key+'":'+value)));
+    assert.deepEqual(helper.decodeManualOrphanProbeFrameV1(bytes),frame);
+  });
+}
+for(const [label,value] of [
+  ['uppercase hex','C'.repeat(64)],['short hex','c'.repeat(63)],['long hex','c'.repeat(65)],
+  ['nonhex character','g'.repeat(64)],['empty hash',''],
+]){
+  test('codec encoder refuses '+label+' nonce',()=>{
+    const frame=codecFrameV1();frame.nonce=value;
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),label);
+  });
+}
+for(const [location,field] of [
+  ['parent','executableSha256'],['parent','commandSha256'],
+  ['child','executableSha256'],['child','commandSha256'],
+  ['source','helperSha256'],['source','issuerTestSha256'],
+]){
+  test('codec encoder validates lowercase hex in '+location+'.'+field,()=>{
+    const frame=codecFrameV1();frame[location][field]='A'.repeat(64);
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),location+'.'+field);
+  });
+}
+for(const [label,value] of [
+  ['nonleap February 29','2026-02-29T00:00:00.000Z'],['April 31','2026-04-31T00:00:00.000Z'],
+  ['month 13','2026-13-21T00:00:00.000Z'],['day zero','2026-10-00T00:00:00.000Z'],
+  ['hour 24','2026-10-21T24:00:00.000Z'],['minute 60','2026-10-21T00:60:00.000Z'],
+  ['second 60','2026-10-21T00:00:60.000Z'],['nonzero milliseconds','2026-10-21T00:00:00.001Z'],
+  ['missing milliseconds','2026-10-21T00:00:00Z'],['timezone offset','2026-10-21T00:00:00.000+00:00'],
+  ['unpadded month','2026-1-21T00:00:00.000Z'],
+]){
+  test('codec encoder refuses timestamp '+label,()=>{
+    const frame=codecFrameV1();frame.child.startedAtUTC=value;
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),label);
+  });
+}
+test('codec accepts a real leap calendar date without process identity credit',()=>{
+  const frame=codecFrameV1();frame.parent.startedAtUTC=frame.child.startedAtUTC='2024-02-29T23:59:59.000Z';
+  const expected=Buffer.from(CODEC_TEXT_V1.replaceAll('2026-10-21T00:00:00.000Z','2024-02-29T23:59:59.000Z'));
+  assert.deepEqual(helper.encodeManualOrphanProbeFrameV1(frame),expected);
+  assert.deepEqual(helper.decodeManualOrphanProbeFrameV1(expected),frame);
+});
+for(const [label,value] of [
+  ['root slash','/'],['relative path','usr/bin/node'],['dot segment','/usr/./bin/node'],
+  ['parent segment','/usr/bin/../node'],['repeated slash','/usr//bin/node'],['trailing slash','/usr/bin/node/'],
+  ['NUL','/usr/bin/no\u0000de'],['newline','/usr/bin/no\nde'],['tab','/usr/bin/no\tde'],
+  ['DEL control','/usr/bin/no\u007fde'],['over4096 ASCII bytes','/'+'n'.repeat(4096)],
+  ['over4096 UTF8 bytes with fewer characters','/'+'é'.repeat(2048)],
+]){
+  test('codec encoder refuses executable '+label+' syntactically',()=>{
+    const frame=codecFrameV1();frame.child.executable=value;
+    frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),label);
+  });
+}
+for(const [label,value] of [
+  ['4096 ASCII bytes','/'+'n'.repeat(4095)],
+  ['4096 UTF8 bytes','/'+'é'.repeat(2047)+'n'],
+]){
+  test('codec accepts normalized executable at '+label+' without resolving it',()=>{
+    assert.equal(Buffer.byteLength(value,'utf8'),4096);
+    const frame=codecFrameV1();frame.parent.executable=frame.child.executable=value;
+    const expected=Buffer.from(CODEC_TEXT_V1.replaceAll('/usr/bin/node',value),'utf8');
+    assert.deepEqual(helper.encodeManualOrphanProbeFrameV1(frame),expected);
+    assert.deepEqual(helper.decodeManualOrphanProbeFrameV1(expected),frame);
+  });
+}
+
+// Separate Task1 classifier coverage: these assertions may already pass and do
+// not supply incremental codec RED or lifecycle/ownership evidence.
+const CLASSIFIER_MALFORMED_V1=[
+  ['undefined',()=>undefined],['null',()=>null],['string',()=>FILE],['array-like object',()=>({0:FILE,length:1})],
+  ['number cell',()=>[123]],['boxed string cell',()=>[new String(FILE)]],
+  ['sparse array',()=>new Array(1)],
+  ['inherited hole',()=>{
+    const cells=new Array(1),prototype=Object.create(Array.prototype);
+    prototype[0]=FILE;Object.setPrototypeOf(cells,prototype);return cells;
+  }],
+];
+for(const name of ['classifyManualOrphanVectorV1','mentionsManualOrphanFileV1']){
+  for(const [label,make] of CLASSIFIER_MALFORMED_V1){
+    test('pure classifier '+name+' refuses '+label+' with a fresh fixed Error',()=>{
+      const first=frameRefusedV1(()=>helper[name](make()),label);
+      const second=frameRefusedV1(()=>helper[name](make()),label);
+      assert.notEqual(first,second,'refusals must not reuse an Error instance');
+    });
+  }
+}
+for(const [label,cells,classification,mentions] of [
+  ['exact vector',[...VECTOR],'exact',true],
+  ['near uppercase filename',[...VECTOR.slice(0,5),FILE.toUpperCase()],'near',true],
+  ['unrelated ordinary cells',['node','unrelated.test.ts'],'unrelated',false],
+  ['empty ordinary array',[],'unrelated',false],
+]){
+  test('pure classifier ordinary '+label+' keeps both literal outputs',()=>{
+    assert.equal(helper.classifyManualOrphanVectorV1(cells),classification);
+    assert.equal(helper.mentionsManualOrphanFileV1(cells),mentions);
+  });
+}
+
+// Codec review I1: JSON escaping can overflow the total frame while each
+// normalized executable remains exactly4096 UTF8 bytes. These are shape data.
+function assertEscapedPathFixtureV1(value){
+  assert.equal(Buffer.byteLength(value,'utf8'),4096,'individual executable stays within its byte cap');
+  assert.equal(value.length,4096,'fixture uses ASCII characters only');
+  assert.equal(value[0],'/');
+  assert.equal([...value.slice(1)].every(character=>character==='"'||character==='\\'||character==='n'),true,
+    'one nonempty segment with no slash/dot/control/NUL keeps the path syntactically normalized');
+}
+for(const [label,character] of [['double quotes','"'],['backslashes','\\']]){
+  test('codec encoder refuses total overflow from valid4096-byte executable '+label,()=>{
+    const frame=codecFrameV1();frame.parent.executable=frame.child.executable='/'+character.repeat(4095);
+    assertEscapedPathFixtureV1(frame.parent.executable);assertEscapedPathFixtureV1(frame.child.executable);
+    // Independent ordered fixture serialization, never encoder-produced bytes.
+    // Baseline893 +2*(4096-13) path bytes +8190 escape bytes =17249 incl LF.
+    const expected=Buffer.from(JSON.stringify(frame)+'\n','utf8');
+    assert.equal(expected.length,17249);assert.equal(expected.at(-1),0x0a);
+    frameRefusedV1(()=>helper.decodeManualOrphanProbeFrameV1(expected),label+' oversized wire');
+    const first=frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),label+' total overflow');
+    const second=frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),label+' total overflow again');
+    assert.notEqual(first,second,'oversized encoder refusals must create fresh Errors');
+  });
+}
+for(const [label,childQuotes,childPlain,size] of [
+  ['one byte below cap',3229,866,16383],
+  ['exact cap',3230,865,16384],
+]){
+  test('codec accepts escaped valid4096-byte paths with total frame '+label+' including LF',()=>{
+    const frame=codecFrameV1();
+    frame.parent.executable='/'+ '"'.repeat(4095);
+    frame.child.executable='/'+ '"'.repeat(childQuotes)+'n'.repeat(childPlain);
+    assertEscapedPathFixtureV1(frame.parent.executable);assertEscapedPathFixtureV1(frame.child.executable);
+    // 9059 bytes before escaping +4095 parent escapes +literal child quote count.
+    const expected=Buffer.from(JSON.stringify(frame)+'\n','utf8');
+    assert.equal(expected.length,size);assert.equal(expected.at(-1),0x0a);
+    assert.deepEqual(helper.encodeManualOrphanProbeFrameV1(frame),expected);
+    assert.deepEqual(helper.decodeManualOrphanProbeFrameV1(expected),frame);
+  });
+}
+test('codec encoder refuses escaped valid4096-byte paths at16385 total bytes including LF',()=>{
+  const frame=codecFrameV1();
+  frame.parent.executable='/'+ '"'.repeat(4095);
+  frame.child.executable='/'+ '"'.repeat(3231)+'n'.repeat(864);
+  assertEscapedPathFixtureV1(frame.parent.executable);assertEscapedPathFixtureV1(frame.child.executable);
+  // 9059 +4095 +3231 =16385. Without the required final LF it would fit.
+  const expected=Buffer.from(JSON.stringify(frame)+'\n','utf8');
+  assert.equal(expected.length,16385);assert.equal(expected.subarray(0,-1).length,16384);
+  assert.equal(expected.at(-1),0x0a);
+  frameRefusedV1(()=>helper.decodeManualOrphanProbeFrameV1(expected),'16385-byte wire');
+  const first=frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),'16385-byte frame');
+  const second=frameRefusedV1(()=>helper.encodeManualOrphanProbeFrameV1(frame),'16385-byte frame again');
+  assert.notEqual(first,second);
+});
