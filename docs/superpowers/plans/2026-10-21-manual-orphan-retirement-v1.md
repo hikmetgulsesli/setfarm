@@ -72,7 +72,8 @@ Paths below are relative to the Setfarm writer unless explicitly qualified.
 | Create | `tests/execution-attempts/manual-control-orphan-maintenance-v1.test.ts` | Import/entry restrictions, private capability negative tests, safe response and CLI parser. |
 | Create | `tests/execution-attempts/manual-control-orphan-retirement-v1.isolated-pg.test.ts` | Real transaction/fence/resolver/concurrency checks in an owned private test database. |
 | Create | `tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts` | Genuine separately built old-target/new-maintenance pair, no production-loader substitutions. |
-| Create | `tests/execution-attempts/helpers/manual-control-orphan-fixture-v1.ts` | Synthetic data builders and scoped temporary fixture composition; no live path defaults. |
+| Create in Task1 | `tests/execution-attempts/helpers/manual-control-orphan-fixture-v1.ts` | Pure synthetic data only; never imports DB/native/fixture IO and never accepts a live root. |
+| Create in Task2A | `tests/execution-attempts/helpers/manual-control-orphan-bootstrap-fixture-v1.ts` | Separate explicit owned genuine-bootstrap fixture setup/lifecycle; no module-time IO, private/live defaults or production selector escape. |
 | Modify | `tests/execution-attempts/manual-test-admission-v1.test.ts` | Namespace/ordinary guard/import regression coverage. |
 | Modify in Task1 | `tests/execution-attempts/manual-control-owner-observation-v1.test.ts` | Adapt Source-component schema bindings to the real extracted pure exports while preserving owned native observation assertions. |
 | Modify in Task1 | `tests/execution-attempts/manual-test-worker-v1.test.ts:512-520` | The existing start-child Source-component harness also extracts the moved acquire/reservation/slot/owner declarations; bind the real pure exports while preserving all insertion-proof assertions. |

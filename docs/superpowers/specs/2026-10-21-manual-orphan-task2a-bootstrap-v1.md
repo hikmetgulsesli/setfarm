@@ -60,7 +60,7 @@ Order: known launch/M dependencies → actual independent M observer → fixed l
 
 ## A2 — proportional evidence and staged delivery
 
-File Map: adopted CLI/adapter; `src/installation/manual-orphan-bootstrap-pins-v1.ts`; compact profile above; planned `tests/execution-attempts/manual-control-orphan-maintenance-v1.test.ts`, `manual-control-orphan-bootstrap-v1.integration.test.ts`, `helpers/manual-control-orphan-fixture-v1.ts`. Change execution-attempt routing/isolated runner only for one exact owned genuine-bootstrap route; no raw or generic command/env/module lane.
+File Map: adopted CLI/adapter; `src/installation/manual-orphan-bootstrap-pins-v1.ts`; compact profile above; planned `tests/execution-attempts/manual-control-orphan-maintenance-v1.test.ts`, `manual-control-orphan-bootstrap-v1.integration.test.ts`, `helpers/manual-control-orphan-bootstrap-fixture-v1.ts`. Keep the existing Task1 fixture purely data-only and unchanged. The separate bootstrap helper owns explicit fixture setup/lifecycle functions and performs no module-time IO. Change execution-attempt routing/isolated runner only for one exact owned genuine-bootstrap route; no raw or generic command/env/module lane.
 
 Current runner injects projection/preload/clone PG (`scripts/run-isolated-postgres-tests.ts:398-430,551-569,690-743`); genuine child receives none. Preserve actual setup/private-cluster/parent-child/Node/path/DB-role ownership and exit+close+streams/client closure. Setup uses stock M/T and generated I via existing create/initialize/verify/activate APIs under separate isolated authority; no I5 copy/retarget or live credential/schema authority. Shared canonical cutover guard remains actual and must pass; no HOME/mock/account/OS expansion. Missing fixture conditions stay unrun.
 
