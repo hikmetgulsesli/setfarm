@@ -337,3 +337,45 @@ export function makeSyntheticManualOrphanEvidenceV1(mode: "early_cancel" | "cont
   return { evidence: JSON.parse(JSON.stringify(evidence)) as ManualOrphanEvidenceV1,
     priorRecord: JSON.parse(JSON.stringify(priorRecord)) as ManualRecordV1 };
 }
+
+/** A later actual progress transition preserves the broker's cancellation latch. */
+export function makeSyntheticManualOrphanPostCancelProgressEvidenceV1() {
+  const fixture = makeSyntheticManualOrphanEvidenceV1(), e = fixture.evidence;
+  const entry = e.mc.index.value.jobs.find(j => j.receipt.jobId === JOB)!;
+  const receipt = ControlJobReceiptV1Schema.parse({ ...entry.receipt, revision: 5, updatedAt: time(30),
+    state: "cancelling", phase: "case_running", currentCaseId: "utility-status-baseline", ownedRunId: RUN, code: null });
+  const mapping = { sequence: 3, hash: h("retained-post-cancel-progress-worker-frame"), ack: {
+    schema: "setfarm.manual-control-worker-channel.v1" as const, jobId: JOB, channelId: CHANNEL, intentHash: e.intent.file.bytes.sha256,
+    direction: "broker_to_worker" as const, sequence: 5,
+    body: { type: "ack" as const, workerSequence: 3, workerFrameHash: h("retained-post-cancel-progress-worker-frame"), receiptRevision: 5, receipt },
+    mac: h("retained-post-cancel-progress-ack-mac") } };
+  const snapshot = document(`${MC}/jobs/${JOB}/receipt-${String(5).padStart(20, "0")}.json`, { receipt, mapping });
+  e.mc.receipts.push(snapshot); entry.receipt = receipt; entry.frames.push(mapping);
+  e.mc.index.value.revision++;
+  e.mc.index = document(`${MC}/index.json`, e.mc.index.value);
+  e.namespace.directories.find(d => d.relative === `${MC}/jobs/${JOB}`)!.names.push(snapshot.file.relative.split("/").at(-1)!);
+  e.namespace.directories.find(d => d.relative === `${MC}/jobs/${JOB}`)!.names.sort();
+  return { evidence: JSON.parse(JSON.stringify(e)) as ManualOrphanEvidenceV1, priorRecord: fixture.priorRecord };
+}
+
+/** Literal direct producer ordering from original admission267, no runtime IO. */
+export function makeSyntheticManualOrphanClosedDirectEvidenceV1() {
+  const fixture = makeSyntheticManualOrphanEvidenceV1(), e = fixture.evidence;
+  const jobId = id(7), directOwner = owner(701, "/fixture/old/dist/evals/convergence-runner.js");
+  const input = { jobId, kind: "convergence_full8" as const, selectionHash: e.reservation.value.reservation.selectionHash,
+    sourceSha: SOURCE, suiteHash: e.reservation.value.reservation.suiteHash! };
+  const direct = document(`${ROOT}/direct/${jobId}.json`, {
+    schema: "setfarm.manual-direct-evaluation-intent.v1" as const, ...input,
+    executionMode: "execute" as const, owner: directOwner, nonceDigest: h("closed-direct-nonce") }, "record");
+  const closure = document(`${ROOT}/closures/${jobId}.json`, { ...input,
+    schema: "setfarm.manual-control-custody-closed.v1" as const, executionMode: "execute" as const, intentOrigin: "direct" as const,
+    intentHash: direct.file.bytes.sha256, nonceDigest: direct.value.nonceDigest, owner: directOwner,
+    closure: { kind: "never_reserved" as const } }, "record");
+  e.namespace.otherIntents.push({ origin: "direct", jobId, intent: direct, closure });
+  e.namespace.closures.push(closure);
+  for (const directory of [`${ROOT}/direct`, `${ROOT}/closures`]) {
+    e.namespace.directories.find(d => d.relative === directory)!.names.push(`${jobId}.json`);
+    e.namespace.directories.find(d => d.relative === directory)!.names.sort();
+  }
+  return { evidence: JSON.parse(JSON.stringify(e)) as ManualOrphanEvidenceV1, priorRecord: fixture.priorRecord };
+}

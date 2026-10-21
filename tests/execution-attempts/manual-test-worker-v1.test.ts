@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import ts from "typescript";
+import { ManualReservationV1Schema, ManualSlotV1Schema, ManualOwnerV1Schema } from "../../src/execution/schemas/manual-evaluation-record-v1.js";
 // Source component extraction adds test exports only. Actual function bodies,
 // filesystem operations and pure schemas remain production code. No activated
 // compiled entry, selected role, DB, service or provider is fabricated here.
@@ -510,13 +511,13 @@ async function startProofComponentFixture() {
     const selected={directory:h.root,paths:{root:h.root,repository:h.root},assertUnchanged(){}};
     const childOwner={...owner,pid:124,script:path.join(h.root,"dist/cli/cli.js"),executable:fs.realpathSync(process.execPath)};
     const source=fs.readFileSync("src/execution/manual-test-admission-v1.ts","utf8"),tree=ts.createSourceFile("manual.ts",source,ts.ScriptTarget.Latest,true);
-    const names=["Hash","AcquireSchema","ReservationSchema","SlotSchema","OwnerSchema","StartChildProofSchemaV1","refuseV1","sameStatV1","pinParentsV1","assertParentsV1","readPrivateFileV1","stableV1","syncDirectoryV1","publishExclusiveV1","sameOwnerV1","digestV1","optionalStatV1","createChildV1","startProofPathV1","startJournalV1","publishSelectedManualStartChildV1","readStartChildProofV1"];
+    const names=["Hash","StartChildProofSchemaV1","refuseV1","sameStatV1","pinParentsV1","assertParentsV1","readPrivateFileV1","stableV1","syncDirectoryV1","publishExclusiveV1","sameOwnerV1","digestV1","optionalStatV1","createChildV1","startProofPathV1","startJournalV1","publishSelectedManualStartChildV1","readStartChildProofV1"];
     const nodes=tree.statements.filter(node=>ts.isFunctionDeclaration(node)?names.includes(node.name?.text??""):ts.isVariableStatement(node)&&node.declarationList.declarations.some(d=>ts.isIdentifier(d.name)&&names.includes(d.name.text)));
     assert.equal(nodes.length,names.length);
     const body=ts.transpileModule(nodes.map(node=>node.getText(tree)).join("\n"),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace(/^export /gm,"");
     const {z}=await import("zod"),{createHash}=await import("node:crypto");
     const held={record,pin:null as any};
-    const deps={fs,path,z,createHash,...canonical,...channel,process:new Proxy(process,{get(target,key){if(key==="pid")return 124;if(key==="ppid")return owner.pid;return Reflect.get(target,key);}}),selectionV1:()=>({selected}),rootV1:()=>({selected,root:path.join(h.root,"evals/manual-controls")}),heldV1:(reservation:any)=>{assert.deepEqual(reservation,record.reservation);return held;},observeStartChildV1:()=>childOwner,processOwnerV1:()=>owner};
+    const deps={fs,path,z,createHash,ReservationSchema:ManualReservationV1Schema,SlotSchema:ManualSlotV1Schema,OwnerSchema:ManualOwnerV1Schema,...canonical,...channel,process:new Proxy(process,{get(target,key){if(key==="pid")return 124;if(key==="ppid")return owner.pid;return Reflect.get(target,key);}}),selectionV1:()=>({selected}),rootV1:()=>({selected,root:path.join(h.root,"evals/manual-controls")}),heldV1:(reservation:any)=>{assert.deepEqual(reservation,record.reservation);return held;},observeStartChildV1:()=>childOwner,processOwnerV1:()=>owner};
     const api=new Function(...Object.keys(deps),body+";return {publishSelectedManualStartChildV1,readStartChildProofV1,readPrivateFileV1,startJournalV1};")(...Object.values(deps));
     const reservationPath=path.join(h.root,"evals/manual-controls/reservation.json"),intentPath=path.join(h.root,"intent.json");
     fs.writeFileSync(reservationPath,JSON.stringify(record)+"\n",{mode:0o600});fs.writeFileSync(intentPath,"{}\n",{mode:0o600});

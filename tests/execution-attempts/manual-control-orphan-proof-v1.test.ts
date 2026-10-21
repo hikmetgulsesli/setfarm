@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
 import { createV3ReleaseAdmissionV1, convergenceArtifactRef } from "../../src/execution/v3-release-admission.js";
-import { makeSyntheticManualOrphanEvidenceV1, makeSyntheticManualOrphanMaintenanceResidueV1, syntheticBytesV1 } from "./helpers/manual-control-orphan-fixture-v1.js";
+import { makeSyntheticManualOrphanEvidenceV1, makeSyntheticManualOrphanMaintenanceResidueV1,
+  makeSyntheticManualOrphanPostCancelProgressEvidenceV1, makeSyntheticManualOrphanClosedDirectEvidenceV1,
+  syntheticBytesV1 } from "./helpers/manual-control-orphan-fixture-v1.js";
 import type { ManualOrphanEvidenceV1 } from "../../src/execution/schemas/manual-control-orphan-retirement-v1.js";
 
 // Intentionally unresolved until Task1 implementation. A missing module is the
@@ -538,4 +540,221 @@ test("all sixteen independent activity counters are required exact safe counts a
   }
   const extra = fresh(); Reflect.set(extra.database.activityRows[0]!, "idle", true); refuse(extra, "MALFORMED");
   for (const count of [0, 2]) { const e = fresh(); e.database.activityRows = count === 0 ? [] : [e.database.activityRows[0]!, structuredClone(e.database.activityRows[0]!)]; refuse(e, "ACTIVITY"); }
+});
+
+// Root-scoped DTO reconciliation: the broker loss flag has no durable field
+// in this prepublication DTO. Preserve valid journal syntax and every byte join.
+test("channel_lost ancestry refuses without inventing durable broker-loss provenance", () => {
+  const e = fresh();
+  const record = e.journal.find(d => d.value.event.type === "cancel_latched");
+  assert.ok(record);
+  record.value.event = { type: "cancel_latched", source: "channel_lost", requestId: null };
+  syncJournal(e);
+  const parsed = parseManualOrphanEvidenceV1(e);
+  assert.deepEqual(parsed.journal.find(d => d.value.event.type === "cancel_latched")!.value.event,
+    { type: "cancel_latched", source: "channel_lost", requestId: null });
+  refuse(e, "JOURNAL");
+});
+
+// Review regressions are intentionally separate from the established oracles.
+// Instrumentation is synchronous, fixture construction precedes it, and both
+// globals are restored even when an assertion or production parser throws.
+function observeParserWork(action: () => void, options: { encoded?: string; text?: string; stopFirstBase64?: boolean } = {}) {
+  const from = Buffer.from, parse = JSON.parse;
+  const observed = { forbiddenDecodes: 0, forbiddenParses: 0, allBase64Decodes: 0, allParses: 0 };
+  const stop = new Error("review-regression bounded decode sentinel");
+  Buffer.from = function (...args: unknown[]) {
+    if (typeof args[0] === "string" && args[1] === "base64") {
+      observed.allBase64Decodes++;
+      if (args[0] === options.encoded) observed.forbiddenDecodes++;
+      if (options.stopFirstBase64) throw stop;
+    }
+    return Reflect.apply(from, Buffer, args);
+  } as typeof Buffer.from;
+  JSON.parse = function (...args: unknown[]) {
+    observed.allParses++;
+    if (args[0] === options.text) observed.forbiddenParses++;
+    return Reflect.apply(parse, JSON, args);
+  } as typeof JSON.parse;
+  try { action(); }
+  finally { Buffer.from = from; JSON.parse = parse; }
+  assert.equal(Buffer.from, from); assert.equal(JSON.parse, parse);
+  return observed;
+}
+
+test("review regression: cap+1 head bytes with a lied small length never reach decode or JSON.parse", () => {
+  const e = fresh(), head = e.journalHead;
+  const text = Buffer.from(head.file.bytes.base64, "base64").toString().trimEnd().padEnd(1025, " ");
+  assert.equal(Buffer.byteLength(text), 1025);
+  head.file.bytes = { ...syntheticBytesV1(text), byteLength: 1 };
+  for (const stat of [head.file.descriptorBefore, head.file.descriptorAfter, head.file.namedAfter]) stat.size = "1";
+  e.request.expectedJournalHeadHash = head.file.bytes.sha256;
+  const observed = observeParserWork(() => assert.throws(() => parseManualOrphanEvidenceV1(e)),
+    { encoded: head.file.bytes.base64, text });
+  assert.deepEqual({ decodes: observed.forbiddenDecodes, parses: observed.forbiddenParses }, { decodes: 0, parses: 0 },
+    "the actual cap must prevent both decoding and raw JSON parsing despite continuable child issues");
+});
+
+function actualProjectionBytes(value: unknown): number {
+  if (value === null || typeof value !== "object") return 0;
+  if (!Array.isArray(value) && Object.hasOwn(value, "base64") && Object.hasOwn(value, "byteLength")) {
+    const encoded = Reflect.get(value, "base64") as string;
+    return encoded.length / 4 * 3 - (encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0);
+  }
+  return Object.values(value).reduce<number>((n, child) => n + actualProjectionBytes(child), 0);
+}
+
+function aggregateBudgetEvidence(extraByte: 0 | 1, lie: boolean): Evidence {
+  const e = fresh(), cap = 128 * 1024 * 1024, chunk = 64 * 1024;
+  let remaining = cap + extraByte - actualProjectionBytes(e);
+  assert.ok(remaining > 0);
+  const repeatedBytes = syntheticBytesV1(Buffer.alloc(chunk, 120));
+  const listing = e.namespace.directories.find(d => d.relative === "evals/manual-controls")!;
+  for (let i = 0; remaining > 0; i++) {
+    const size = Math.min(chunk, remaining), file = structuredClone(e.reservation.file);
+    file.relative = `evals/manual-controls/aggregate-budget-${i}.bin`;
+    file.bytes = { ...(size === chunk ? repeatedBytes : syntheticBytesV1(Buffer.alloc(size, 121))), byteLength: lie ? 1 : size };
+    for (const stat of [file.descriptorBefore, file.descriptorAfter, file.namedAfter]) {
+      stat.size = String(file.bytes.byteLength); stat.ino = String(900000 + i);
+    }
+    e.namespace.unexpectedFiles.push(file); listing.names.push(file.relative.split("/").at(-1)!);
+    remaining -= size;
+  }
+  listing.names.sort();
+  assert.ok(e.namespace.unexpectedFiles.length <= 4096);
+  assert.equal(actualProjectionBytes(e), cap + extraByte);
+  return e;
+}
+
+test("review regression: aggregate exact budget reaches only the instrumented first decode", () => {
+  const e = aggregateBudgetEvidence(0, false);
+  const observed = observeParserWork(() => assert.throws(() => parseManualOrphanEvidenceV1(e)), { stopFirstBase64: true });
+  assert.equal(observed.allBase64Decodes, 1, "exact128MiB budget is not rejected as over budget; sentinel stops allocation");
+  assert.equal(observed.allParses, 0);
+});
+
+for (const lie of [false, true]) test(`review regression: aggregate budget+1 rejects before any decode${lie ? " despite lied lengths" : ""}`, () => {
+  const e = aggregateBudgetEvidence(1, lie);
+  const observed = observeParserWork(() => assert.throws(() => parseManualOrphanEvidenceV1(e)), { stopFirstBase64: true });
+  assert.equal(observed.allBase64Decodes, 0, "logical aggregate size must be checked before allocating any decoded projection");
+  assert.equal(observed.allParses, 0);
+});
+
+test("review regression: descriptor boundary rejects proxies and accessors without invoking traps", () => {
+  const e = fresh(); let traps = 0;
+  const proxy = new Proxy(e, { get() { traps++; throw new Error("get trap must not run"); },
+    ownKeys() { traps++; throw new Error("ownKeys trap must not run"); },
+    getOwnPropertyDescriptor() { traps++; throw new Error("descriptor trap must not run"); } });
+  assert.throws(() => parseManualOrphanEvidenceV1(proxy)); assert.equal(traps, 0);
+  Object.defineProperty(e.request, "requestId", { enumerable: true, get() { traps++; throw new Error("getter must not run"); } });
+  assert.throws(() => parseManualOrphanEvidenceV1(e)); assert.equal(traps, 0);
+});
+
+test("review regression: detached cycles and excessive depth refuse before decoding", () => {
+  const cyclic = fresh(); Reflect.set(cyclic.namespace, "cycle", cyclic);
+  const deep = fresh(); let nested: object = {};
+  for (let i = 0; i < 65; i++) nested = { child: nested };
+  Reflect.set(deep.namespace, "deep", nested);
+  for (const value of [cyclic, deep]) {
+    const observed = observeParserWork(() => assert.throws(() => parseManualOrphanEvidenceV1(value)), { stopFirstBase64: true });
+    assert.equal(observed.allBase64Decodes, 0);
+  }
+});
+
+function propagateFinalCancellationReceipt(e: Evidence) {
+  const entry = e.mc.index.value.jobs.find(j => j.receipt.jobId === e.request.jobId)!;
+  const receipt = e.mc.receipts[3]!.value.receipt;
+  entry.receipt = structuredClone(receipt); entry.cancel!.receipt = structuredClone(receipt);
+  encodeDocument(e.mc.receipts[3]!); encodeDocument(e.mc.index);
+}
+
+for (const [name, change] of [
+  ["currentCaseId", (e: Evidence) => { e.mc.receipts[3]!.value.receipt.currentCaseId = "utility-status-baseline"; }],
+  ["ownedRunId", (e: Evidence) => { e.mc.receipts[3]!.value.receipt.ownedRunId = "orphan_fixture_run_1"; }],
+  ["reportRefs", (e: Evidence) => { e.mc.receipts[3]!.value.receipt.reportRefs = { resultHash: HASH }; }],
+] as const) test(`review regression: cancellation cannot change unrelated ${name} after coherent index propagation`, () => {
+  const e = fresh(), mappingBefore = structuredClone(e.mc.receipts[3]!.value.mapping);
+  change(e); propagateFinalCancellationReceipt(e);
+  assert.deepEqual(e.mc.receipts[3]!.value.mapping, mappingBefore, "original ACK remains untouched");
+  assert.deepEqual(parseManualOrphanEvidenceV1(e), e, "only semantic transition ancestry is invalid");
+  refuse(e, "AUTHENTICATION");
+});
+
+test("review regression: first mapping must contain the actual ready-produced receipt", () => {
+  const e = fresh(), snapshot = e.mc.receipts[1]!, entry = e.mc.index.value.jobs.find(j => j.receipt.jobId === e.request.jobId)!;
+  snapshot.value.receipt.state = "running";
+  snapshot.value.mapping!.ack.body.receipt = structuredClone(snapshot.value.receipt);
+  entry.frames[0]!.ack.body.receipt = structuredClone(snapshot.value.receipt);
+  encodeDocument(snapshot); encodeDocument(e.mc.index);
+  assert.deepEqual(parseManualOrphanEvidenceV1(e), e);
+  refuse(e, "AUTHENTICATION");
+});
+
+test("review regression: later progress retains sticky cancellation and legal broker ACK gap", () => {
+  const e = makeSyntheticManualOrphanPostCancelProgressEvidenceV1().evidence;
+  assert.deepEqual(e.mc.index.value.jobs[0]!.frames.map(m => [m.sequence, m.ack.sequence]), [[1, 2], [2, 3], [3, 5]]);
+  assert.equal(e.mc.receipts[3]!.value.mapping!.ack.body.receipt.revision, 3);
+  assert.equal(e.mc.receipts[4]!.value.receipt.cancelRequested, true);
+  assert.equal(proveManualOrphanRetirementV1(parseManualOrphanEvidenceV1(freeze(e))).status, "eligible");
+});
+
+test("review regression: later new mapping cannot revert an accepted cancellation", () => {
+  const e = structuredClone(makeSyntheticManualOrphanPostCancelProgressEvidenceV1().evidence) as Evidence;
+  const snapshot = e.mc.receipts[4]!, entry = e.mc.index.value.jobs.find(j => j.receipt.jobId === e.request.jobId)!;
+  snapshot.value.receipt.state = "running"; snapshot.value.receipt.cancelRequested = false;
+  snapshot.value.mapping!.ack.body.receipt = structuredClone(snapshot.value.receipt);
+  entry.receipt = structuredClone(snapshot.value.receipt); entry.frames[2] = structuredClone(snapshot.value.mapping!);
+  encodeDocument(snapshot); encodeDocument(e.mc.index);
+  assert.equal(entry.cancel!.receipt.cancelRequested, true, "accepted cancellation ancestry is retained");
+  assert.deepEqual(parseManualOrphanEvidenceV1(e), e);
+  refuse(e, "AUTHENTICATION");
+});
+
+test("review regression: a preboundary operator cancellation cannot become continue and final_without_promotion", () => {
+  const e = fresh(), boundary = e.journal[17]!.value.event, final = e.journal[18]!.value.event;
+  assert.equal(boundary.type, "finalization_boundary"); assert.equal(final.type, "artifacts_stored");
+  if (boundary.type !== "finalization_boundary" || final.type !== "artifacts_stored") assert.fail();
+  boundary.decision = "continue"; final.stage = "final_without_promotion";
+  syncJournal(e);
+  assert.deepEqual(parseManualOrphanEvidenceV1(e), e);
+  assert.equal(e.namespace.startChildren[0]!.value.journal.hash, e.journal[6]!.file.bytes.sha256);
+  assert.equal(e.journal[9]!.value.event.type, "cancel_latched");
+  refuse(e, "JOURNAL");
+});
+
+test("review regression: literal schema-first retained closed DIRECT intent remains eligible", () => {
+  const e = makeSyntheticManualOrphanClosedDirectEvidenceV1().evidence;
+  const direct = e.namespace.otherIntents.find(i => i.origin === "direct")!;
+  assert.ok(direct && direct.origin === "direct");
+  assert.deepEqual(Object.keys(direct.intent.value), ["schema", "jobId", "kind", "selectionHash", "sourceSha", "suiteHash", "executionMode", "owner", "nonceDigest"]);
+  assert.equal(Buffer.from(direct.intent.file.bytes.base64, "base64").toString(), JSON.stringify(direct.intent.value) + "\n");
+  assert.ok(Buffer.from(direct.intent.file.bytes.base64, "base64").toString().startsWith('{"schema":"setfarm.manual-direct-evaluation-intent.v1","jobId":'));
+  assert.deepEqual(direct.closure!.value.closure, { kind: "never_reserved" });
+  assert.equal(e.history.length, 6); assert.deepEqual(e.history, makeSyntheticManualOrphanEvidenceV1().evidence.history);
+  assert.equal(direct.closure!.value.intentHash, direct.intent.file.bytes.sha256);
+  assert.equal(proveManualOrphanRetirementV1(parseManualOrphanEvidenceV1(freeze(e))).status, "eligible");
+});
+
+test("review regression: retained DIRECT original bytes must agree with its detached value", () => {
+  const e = structuredClone(makeSyntheticManualOrphanClosedDirectEvidenceV1().evidence) as Evidence;
+  const direct = e.namespace.otherIntents.find(i => i.origin === "direct")!;
+  assert.ok(direct && direct.origin === "direct");
+  const text = JSON.stringify({ ...direct.intent.value, nonceDigest: HASH }) + "\n";
+  direct.intent.file.bytes = syntheticBytesV1(text);
+  for (const stat of [direct.intent.file.descriptorBefore, direct.intent.file.descriptorAfter, direct.intent.file.namedAfter]) stat.size = String(direct.intent.file.bytes.byteLength);
+  direct.closure!.value.intentHash = direct.intent.file.bytes.sha256; encodeDocument(direct.closure!, "record");
+  const at = e.namespace.closures.findIndex(c => c.value.jobId === direct.jobId);
+  e.namespace.closures[at] = structuredClone(direct.closure!);
+  assert.notEqual(JSON.parse(text).nonceDigest, direct.intent.value.nonceDigest);
+  refuse(e, "MALFORMED");
+});
+
+test("review regression: retained DIRECT closure nonce cannot cross an otherwise coherent intent", () => {
+  const e = structuredClone(makeSyntheticManualOrphanClosedDirectEvidenceV1().evidence) as Evidence;
+  const direct = e.namespace.otherIntents.find(i => i.origin === "direct")!;
+  assert.ok(direct && direct.origin === "direct");
+  direct.closure!.value.nonceDigest = HASH; encodeDocument(direct.closure!, "record");
+  e.namespace.closures[e.namespace.closures.findIndex(c => c.value.jobId === direct.jobId)] = structuredClone(direct.closure!);
+  assert.equal(direct.closure!.value.intentHash, direct.intent.file.bytes.sha256);
+  refuse(e, "OTHER_OWNER");
 });

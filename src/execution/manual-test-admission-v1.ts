@@ -19,35 +19,16 @@ import { ControlPrivateIntentV1Schema, ControlWorkerCustodyV1Schema, hashControl
 
 import { parseWorkerJournalHeadV1, parseWorkerJournalRecordV1, hashWorkerJournalRecordV1, hashObservedControlWorkerOwnerV1, type WorkerJournalRefV1 } from "./schemas/manual-control-worker-channel-v1.js";
 
+import { ManualAcquireV1Schema as AcquireSchema, ManualReservationV1Schema as ReservationSchema,
+  ManualSlotV1Schema as SlotSchema, ManualOwnerV1Schema as OwnerSchema,
+  ManualClosureV1Schema as ClosureSchema, ManualRecordV1Schema as RecordSchema,
+} from "./schemas/manual-evaluation-record-v1.js";
+
 const Hash = z.string().regex(/^[a-f0-9]{64}$/);
-const AcquireSchema = z.object({ jobId: z.string().uuid().refine(value => value === value.toLowerCase()), kind: z.enum(["activation_preflight", "convergence_full8"]),
-  selectionHash: Hash, sourceSha: z.string().regex(/^[a-f0-9]{40}$/), suiteHash: Hash.nullable() }).strict();
-const ReservationSchema = AcquireSchema.extend({ revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  phase: z.enum(["pending", "active", "cancelling", "ownership_unknown", "released"]) }).strict();
 export type ManualEvaluationReservationV1 = Readonly<z.infer<typeof ReservationSchema>>;
-const SlotSchema = z.object({ admissionHash: Hash, slotHash: Hash, caseHash: Hash, taskHash: Hash, repetition: z.literal(1) }).strict();
 export type BoundCanarySlotV1 = Readonly<Omit<z.infer<typeof SlotSchema>, "repetition"> & { repetition: number }>;
-const OwnerSchema = z.object({ pid: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  processStartedAt: z.string().datetime().refine(value => Number.isFinite(new Date(value).getTime()) && new Date(value).toISOString() === value),
-  processGroupId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), source: z.literal("observed_os"),
-  executable: z.string().min(1).max(4096).refine(value => path.isAbsolute(value) && path.normalize(value) === value && !/[\u0000-\u001f\u007f]/.test(value)),
-  script: z.string().min(1).max(4096).refine(value => path.isAbsolute(value) && path.normalize(value) === value && !/[\u0000-\u001f\u007f]/.test(value)), commandHash: Hash }).strict();
-const ClosureSchema = AcquireSchema.extend({ schema: z.literal("setfarm.manual-control-custody-closed.v1"),
-  executionMode: z.enum(["preflight", "execute"]), intentOrigin: z.enum(["mission_control", "direct"]),
-  intentHash: Hash, nonceDigest: Hash, owner: OwnerSchema,
-  closure: z.discriminatedUnion("kind", [z.object({ kind: z.literal("never_reserved") }).strict(),
-    z.object({ kind: z.literal("reservation_released"), revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), recordHash: Hash }).strict()]),
-}).strict().superRefine((value, context) => {
-  if ((value.kind === "convergence_full8") !== (value.suiteHash !== null)
-    || (value.kind === "activation_preflight" && (value.executionMode !== "preflight" || value.intentOrigin !== "mission_control"))) {
-    context.addIssue({ code: "custom", message: "Closure recipe identity mismatch" });
-  }
-});
 type ClosureV1 = z.infer<typeof ClosureSchema>;
 type Owner = Readonly<z.infer<typeof OwnerSchema>>;
-const RecordSchema = z.object({ schema: z.literal("setfarm.manual-evaluation-record.v1"), reservation: ReservationSchema,
-  owner: OwnerSchema, intentHash: Hash, nonceDigest: Hash, admissionHash: Hash.nullable(), slots: z.array(SlotSchema).max(8),
-  executionMode: z.enum(["preflight", "execute"]) }).strict();
 type RecordV1 = z.infer<typeof RecordSchema>;
 type ParentPin = { locator: string; stat: fs.BigIntStats };
 type FilePin = { locator: string; bytes: Buffer; stat: fs.BigIntStats; parents: ParentPin[] };
