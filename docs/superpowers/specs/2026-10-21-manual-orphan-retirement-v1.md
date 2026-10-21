@@ -11,6 +11,10 @@ Reservation history is GLOBAL; valid prior released jobs remain. Preserve exact 
 
 Status: Root-adopted Source specification; no successful test, retirement or rollout admission is claimed. Initial Source-only drafting preceded adoption. No repository files, runtime artifacts, original custody, journal, DB state, OS configuration, credentials, ACLs, or services were changed.
 
+## Staged read-only bootstrap refinement
+
+The companion `2026-10-21-manual-orphan-task2a-bootstrap-v1.md` controls the first Task2A delivery. It supersedes this document's full-maintenance capability/observe/retire shorthand only for that read-only stage: exact `observe-bootstrap`, actual distinct M/T admission, actual old prepare/assert/client/close and sanitized observation, with all effect verbs refused. WeakSet/effect capability remains a later consumer requirement. The new fixed release-layout locator is explicitly a new packaging rule, not a path recovered from installation records. Existing normal Source/activation/DB/guard requirements remain unchanged. No publication or full8/rollout authority follows from the staged observation.
+
 ## Bounded objective and provenance
 
 Retire the reservation for job `d756f305-338b-4613-a055-36773303628c` at installation `fdd9fe74-ccee-4673-a727-64fe57f68ad0`, preserving its failure and unknown historical custody. The target remains the immutable release with Source `161297ffca6adf2851918a93d492e1c9a77ce59d`. The separately reviewed new maintenance program must have its own clean-main stock build.
