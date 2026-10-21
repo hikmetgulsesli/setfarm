@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -185,8 +185,10 @@ export function runManualOrphanSourceContextNegativeV1(input: Readonly<{
 // cannot identify which original-launch/argv/environment check caused refusal.
 export async function runManualOrphanCompiledCliNegativeV1(args: readonly string[]): Promise<void> {
   const ts = await import("typescript");
-  const temporary = mkdtempSync(join(tmpdir(), "setfarm-orphan-component-"));
+  const temporaryLocator = mkdtempSync(join(tmpdir(), "setfarm-orphan-component-"));
   try {
+    // Match Node's physical module URLs (for example /private/tmp on Darwin).
+    const temporary = realpathSync(temporaryLocator);
     writeFileSync(join(temporary, "package.json"), '{"type":"module"}\n');
     const componentLocators = [
       "cli/manual-control-orphan-retirement-v1",
@@ -201,7 +203,7 @@ export async function runManualOrphanCompiledCliNegativeV1(args: readonly string
         fileName: `${locator}.ts`,
         compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
       }).outputText);
-      return pathToFileURL(output).href;
+      return pathToFileURL(realpathSync(output)).href;
     });
     const preload = join(temporary, "component-tripwire.mjs");
     writeFileSync(preload, `
@@ -264,6 +266,6 @@ export async function runManualOrphanCompiledCliNegativeV1(args: readonly string
     assert.equal(result.stdout, "");
     assert.equal(result.stderr, "BOOTSTRAP_CONTEXT_REFUSED\n");
   } finally {
-    rmSync(temporary, { recursive: true, force: true });
+    rmSync(temporaryLocator, { recursive: true, force: true });
   }
 }

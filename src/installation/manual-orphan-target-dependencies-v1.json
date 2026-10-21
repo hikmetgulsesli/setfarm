@@ -1,0 +1,1022 @@
+{
+  "schema": "setfarm.manual-orphan-target-dependencies.v1",
+  "platform": "darwin",
+  "arch": "arm64",
+  "target": {
+    "sourceSha": "161297ffca6adf2851918a93d492e1c9a77ce59d",
+    "sourceTreeHash": "a3cc0791c5e64b2e82e81aff56f01d8f116bf524",
+    "outputTreeHash": "caa79b9899c9067f5ad9c35593f302d8eaac9983e87e22b215bbafcbe74859bb",
+    "lockSha256": "a7619de7cab700d96ce2c8073f842f9f02f480ff704d0ac689914f0f3e9267fc",
+    "metadata": {
+      "BUILD_INFO.json": "1b11ef6abedad54aba59cd0222365af3335abe905688657afad89e9f554c1d0c",
+      "PLATFORM_BUILD_OUTPUT_TREE.json": "147abc1e2de33491c6c8bd6e594361d606bb80fa60c7419c3ab92826de762554",
+      "PLATFORM_RELEASE_MANIFEST.json": "b41d199d8a98a38306857931afe5c349eed42ce669ab9193614d4146c40b8e1f"
+    }
+  },
+  "provenance": {
+    "inventoryReceiptSha256": "8fc7961c767c849bafe1a38d067e5667e3e335264dd64f5249bd78e552b733ed",
+    "archiveEqualityReceiptSha256": "b69b87d869068416b2ec7d31c15a474e69c10eb92a4831801c2dd510446f4065"
+  },
+  "packages": [
+    {
+      "locator": "node_modules/postgres",
+      "name": "postgres",
+      "version": "3.4.8",
+      "lockIntegrity": "sha512-d+JFcLM17njZaOLkv6SCev7uoLaBtfK86vMUXhW1Z4glPWh4jozno9APvW/XKFJ3CCxVoC7OL38BqRydtu5nGg==",
+      "inventoryHash": "f637c4e26b60d71692542661d95f246faacaa84c5271aaba48935eda9e1f4f47",
+      "fileCount": 37,
+      "byteLength": 299870
+    },
+    {
+      "locator": "node_modules/zod",
+      "name": "zod",
+      "version": "4.4.3",
+      "lockIntegrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
+      "inventoryHash": "b13968adc50fe78bf25afcd6deee94b95eb9a10facaed4467b3036764451e921",
+      "fileCount": 718,
+      "byteLength": 4558122
+    },
+    {
+      "locator": "node_modules/yaml",
+      "name": "yaml",
+      "version": "2.9.0",
+      "lockIntegrity": "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==",
+      "inventoryHash": "686aded00ccb77b2796c1202375689811360e8b838ce5980cb39f187d82f68a7",
+      "fileCount": 233,
+      "byteLength": 685953
+    }
+  ],
+  "targetResolution": [
+    {
+      "row": [
+        "esm",
+        "dist/db-pg.js",
+        "postgres",
+        "node_modules/postgres/src/index.js"
+      ],
+      "members": [
+        "dist/db-pg.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/contracts/operational-active-run-status-v1.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/contracts/operational-active-run-status-v1.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/evidence/runtime-evidence-contract-v1.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/evidence/runtime-evidence-contract-v1.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/evidence/schemas/evidence-adapter-definition-catalog-v2.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/evidence/schemas/evidence-adapter-definition-catalog-v2.js",
+        "dist/evidence/schemas/evidence-receipt-v2.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/execution/v3-preparation-claim-authority-v2.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/execution/v3-preparation-claim-authority-v2.js",
+        "dist/execution/v3-seal-capacity.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/execution/schemas/candidate-build-receipt-v2.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/execution/schemas/candidate-build-receipt-v2.js",
+        "dist/execution/schemas/canonical-runtime-tree-v2.js",
+        "dist/execution/schemas/execution-attempt-v1.js",
+        "dist/execution/schemas/operational-event-v1.js",
+        "dist/execution/schemas/operational-failure-cause-v1.js",
+        "dist/execution/schemas/platform-release-common-v2.js",
+        "dist/execution/schemas/platform-release-content-store-census-v3.js",
+        "dist/execution/schemas/platform-release-content-store-durable-record-test-v3.js",
+        "dist/execution/schemas/platform-release-content-store-test-v3.js",
+        "dist/execution/schemas/process-identity-v1.js",
+        "dist/execution/schemas/runtime-completion-plan-v1.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/findings/finding-set.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/findings/finding-set.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/installation/fresh-installation-runtime-v1.js",
+        "postgres",
+        "node_modules/postgres/src/index.js"
+      ],
+      "members": [
+        "dist/installation/fresh-installation-runtime-v1.js",
+        "dist/installation/fresh-installation-v1.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/installation/fresh-installation-private-assets-v1.js",
+        "yaml",
+        "node_modules/yaml/dist/index.js"
+      ],
+      "members": [
+        "dist/installation/fresh-installation-private-assets-v1.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/product-compiler/artifact-closure.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/product-compiler/artifact-closure.js",
+        "dist/product-compiler/artifact-envelope.js",
+        "dist/product-compiler/artifact-publication-batch-identity.js",
+        "dist/product-compiler/product-delivery-profile-catalog-v2.js",
+        "dist/product-compiler/product-evidence-capability-policy-v2.js",
+        "dist/product-compiler/stack-semantic-source-rules-catalog-v1.js",
+        "dist/product-compiler/stack-topology-catalog.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/product-compiler/requirements/task-requirements-v1.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/product-compiler/requirements/task-requirements-v1.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/product-compiler/schemas/action-input-transport-v2.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/product-compiler/schemas/action-input-transport-v2.js",
+        "dist/product-compiler/schemas/action-invocation-interface-intent-v1.js",
+        "dist/product-compiler/schemas/build-topology-v1.js",
+        "dist/product-compiler/schemas/build-topology-v3.js",
+        "dist/product-compiler/schemas/byte-bundle-v1.js",
+        "dist/product-compiler/schemas/common-v1.js",
+        "dist/product-compiler/schemas/common-v2.js",
+        "dist/product-compiler/schemas/deep-byte-bundle-verification-receipt-v2.js",
+        "dist/product-compiler/schemas/design-generation-targets-v1.js",
+        "dist/product-compiler/schemas/design-interaction-graph-v2.js",
+        "dist/product-compiler/schemas/design-source-closure-v2.js",
+        "dist/product-compiler/schemas/file-tree-manifest-v3.js",
+        "dist/product-compiler/schemas/host-node-toolchain-receipt-v2.js",
+        "dist/product-compiler/schemas/implementation-slice-v2-legacy.js",
+        "dist/product-compiler/schemas/implementation-slice-v2.js",
+        "dist/product-compiler/schemas/implementation-source-map-v1.js",
+        "dist/product-compiler/schemas/implementation-source-map-v2.js",
+        "dist/product-compiler/schemas/invocation-input-transport-set-v2.js",
+        "dist/product-compiler/schemas/invocation-input-transport-v2.js",
+        "dist/product-compiler/schemas/node-execution-layout-catalog-v2.js",
+        "dist/product-compiler/schemas/node-product-runtime-source-v2.js",
+        "dist/product-compiler/schemas/node-product-test-source-v2.js",
+        "dist/product-compiler/schemas/node-scaffold-execution-environment-v2.js",
+        "dist/product-compiler/schemas/node-scaffold-private-materialization-v2.js",
+        "dist/product-compiler/schemas/node-scaffold-toolchain-catalog-v2.js",
+        "dist/product-compiler/schemas/node-toolchain-archive-inventory-v2.js",
+        "dist/product-compiler/schemas/node-toolchain-distribution-v2.js",
+        "dist/product-compiler/schemas/node-toolchain-private-tree-v2.js",
+        "dist/product-compiler/schemas/node-toolchain-provisioning-v2.js",
+        "dist/product-compiler/schemas/path-token-v2.js",
+        "dist/product-compiler/schemas/plan-semantic-proposal-v1.js",
+        "dist/product-compiler/schemas/product-build-packet-v3.js",
+        "dist/product-compiler/schemas/product-build-packet-v4.js",
+        "dist/product-compiler/schemas/product-compilation-attempt-v1.js",
+        "dist/product-compiler/schemas/product-runtime-behavior-contract-v1.js",
+        "dist/product-compiler/schemas/product-spec-v1.js",
+        "dist/product-compiler/schemas/product-spec-v2.js",
+        "dist/product-compiler/schemas/runtime-data-contract-v1.js",
+        "dist/product-compiler/schemas/semantic-realization-plan-v2.js",
+        "dist/product-compiler/schemas/semantic-source-intent-set-v1.js",
+        "dist/product-compiler/schemas/semantic-source-path-token-set-v2.js",
+        "dist/product-compiler/schemas/stack-semantic-source-rules-v1.js",
+        "dist/product-compiler/schemas/stitch-rendered-semantics-v1.js",
+        "dist/product-compiler/schemas/stitch-rendered-semantics-v2.js",
+        "dist/product-compiler/schemas/stitch-screen-index-v2.js",
+        "dist/product-compiler/schemas/story-plan-v2.js",
+        "dist/product-compiler/schemas/story-plan-v3.js"
+      ]
+    },
+    {
+      "row": [
+        "esm",
+        "dist/recovery/recovery-case.js",
+        "zod",
+        "node_modules/zod/index.js"
+      ],
+      "members": [
+        "dist/recovery/recovery-case.js",
+        "dist/recovery/recovery-delivery.js",
+        "dist/recovery/v3-downstream-terminal-cause-v1.js",
+        "dist/recovery/v3-recovery-claim-authority.js"
+      ]
+    }
+  ],
+  "targetAbsences": [
+    "dist/contracts/node_modules/zod",
+    "dist/evidence/node_modules/zod",
+    "dist/evidence/schemas/node_modules/zod",
+    "dist/execution/node_modules/zod",
+    "dist/execution/schemas/node_modules/zod",
+    "dist/findings/node_modules/zod",
+    "dist/installation/node_modules/postgres",
+    "dist/installation/node_modules/yaml",
+    "dist/internal-production/node_modules/zod",
+    "dist/node_modules/postgres",
+    "dist/node_modules/yaml",
+    "dist/node_modules/zod",
+    "dist/product-compiler/node_modules/zod",
+    "dist/product-compiler/requirements/node_modules/zod",
+    "dist/product-compiler/schemas/node_modules/zod",
+    "dist/recovery/node_modules/zod",
+    "dist/contracts/package.json",
+    "dist/evidence/package.json",
+    "dist/evidence/schemas/package.json",
+    "dist/execution/package.json",
+    "dist/execution/schemas/package.json",
+    "dist/findings/package.json",
+    "dist/installation/package.json",
+    "dist/internal-production/package.json",
+    "dist/package.json",
+    "dist/product-compiler/package.json",
+    "dist/product-compiler/requirements/package.json",
+    "dist/product-compiler/schemas/package.json",
+    "dist/recovery/package.json"
+  ],
+  "maintenanceObserver": {
+    "sourceClosure": [
+      {
+        "locator": "src/db/artifact-publication-batch-plan-migration.ts",
+        "sha256": "fd903fb1055e9f8057d3f2c598d2c15a7f7ba8704fa19fe15be11d1a481f47d4"
+      },
+      {
+        "locator": "src/db/base-schema-readonly-verifier-v1.ts",
+        "sha256": "0f6e8d1b16a56fb8b2c449b6704dc18c008b61bbd9dac1e44f9d86706d64327c"
+      },
+      {
+        "locator": "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+        "sha256": "1f5b1f1c9d54051b674ad883c1b1e5998df6f3e5b5f77fe6d7f960337b6b4ff6"
+      },
+      {
+        "locator": "src/db/contract-spine-migration-checksum.ts",
+        "sha256": "9c28bb15b191cafecf7eed60ef7537f1873e68417bb00fc4c4ffbf2c8c505ce4"
+      },
+      {
+        "locator": "src/db/contract-spine-migration-digests.generated.ts",
+        "sha256": "4b8e307863fbd9ce07e9612c969701d5732840bdbac3ec620cf006505b1d2c69"
+      },
+      {
+        "locator": "src/db/contract-spine-migration-source-integrity.ts",
+        "sha256": "164abbd2fcb2680a1bc9ad1927c2ee5dd3f9c733b725940cb51eb45045a06bdb"
+      },
+      {
+        "locator": "src/db/contract-spine-migrations.ts",
+        "sha256": "41577ba2212eb63b7166df481b679c6bb06ae2f8e3b2f500a173e6ec17932b29"
+      },
+      {
+        "locator": "src/db/contract-spine-readonly-verifier-v1.ts",
+        "sha256": "cd75e67eec06c0f99f00e85499009d66d26521695d51e481eb0a24261c4c014d"
+      },
+      {
+        "locator": "src/db/contract-spine-runtime-access-readonly-verifier-v1.ts",
+        "sha256": "ee4dd468b8eedbadc39be36bdf6919e6a4c89b56f5bd7141db33fcde249fb54b"
+      },
+      {
+        "locator": "src/db/database-wall-clock.ts",
+        "sha256": "d6b74ec1d98b222b09cd4b306679ffffcddfbf32c7f6ac9cfbc408dc622c2348"
+      },
+      {
+        "locator": "src/db/operational-failure-cause-authority-v2-migration.ts",
+        "sha256": "4dcf99604e0c3818749d7b21d189823e912655f3a1241bc397c04dd97e685184"
+      },
+      {
+        "locator": "src/db/operational-failure-cause-authority-v3-catalog.ts",
+        "sha256": "8852ae1d03270b7a335d09413db77642c88f1dda8dccd41d27b05b16fd698631"
+      },
+      {
+        "locator": "src/db/operational-failure-cause-authority-v3-migration.ts",
+        "sha256": "9525ac775c6b265164bc2bf08295fef83e0d9d5773fba8621f13fe1e72113e3f"
+      },
+      {
+        "locator": "src/db/ordinary-base-schema-v1.ts",
+        "sha256": "3564f530b77d1c16136c962018c161ef230b4b6caca65addc8911cef0b3f089b"
+      },
+      {
+        "locator": "src/db/platform-release-store-record-ledger-v3-migration.ts",
+        "sha256": "525fce9d123459d0c45d69491d5734e16ef4386b6868d4a7afffced087204ade"
+      },
+      {
+        "locator": "src/db/preparation-authority-v2-migration.ts",
+        "sha256": "9e4ed2104ab18fb4249017451bd8561fa339e41f650c0ede1f6036ec07f23aa5"
+      },
+      {
+        "locator": "src/db/public-object-owner-readonly-verifier-v1.ts",
+        "sha256": "776d875aaa271928421d09178760bf7a8fc1db6b4278b7bea32c32c8a26eb8d2"
+      },
+      {
+        "locator": "src/db/runtime-completion-manifest-authority-migration.ts",
+        "sha256": "59644016df77867cd871a8042843bc9b36ce9e092b5b8577c973962bf390c261"
+      },
+      {
+        "locator": "src/db/v3-story-claim-runtime-binding-v1-migration.ts",
+        "sha256": "7c887e5060d0d39dc6dee20f80e32d17246b364913d2411d562ea16a98a1dd19"
+      },
+      {
+        "locator": "src/evidence/runtime-evidence-contract-v1.ts",
+        "sha256": "e16dda4dccd85f2f277a1d5bdcfb45a27782a330a022401aa4a9b4a1beb7fb00"
+      },
+      {
+        "locator": "src/evidence/schemas/evidence-adapter-definition-catalog-v2.ts",
+        "sha256": "0ad6c04a895151bf3a63255f9120ced8901c1257286fb97ea515fd95c7a907bb"
+      },
+      {
+        "locator": "src/evidence/schemas/evidence-receipt-v2.ts",
+        "sha256": "7a0752696a98fcd06e0fc65827fa83c5e340abd72c51be5faf9f87144d2bbef3"
+      },
+      {
+        "locator": "src/execution/operational-failure-cause-authority-v1.ts",
+        "sha256": "7b0176ec8e19672f8d016e0baa96cf5c36311fb205086e7b717b2a4b187f924d"
+      },
+      {
+        "locator": "src/execution/operational-failure-cause-authority-v2.ts",
+        "sha256": "23fa50bb10a598a076f4f19e10e2c3e398de8c231332f8c292ead8f795d1b64c"
+      },
+      {
+        "locator": "src/execution/operational-failure-cause-authority-v3.ts",
+        "sha256": "119b05fc8be20f9ecf44f06ec4132e27e2c3463c63698c2b55e3aadf371d2c17"
+      },
+      {
+        "locator": "src/execution/recovery-source-bootstrap-repository-v1.ts",
+        "sha256": "7341de3ac763cd50e9f17baa63997766ed9d8117f92ff599877b23edc6d49340"
+      },
+      {
+        "locator": "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
+        "sha256": "ffaca0598f9b4d09a286bd02508344f42fd0fb528d3ade783cb17bb18d4152bb"
+      },
+      {
+        "locator": "src/execution/schemas/candidate-build-receipt-v2.ts",
+        "sha256": "4bfdf356c22176a64e42ab3ebf0c068fdbfb196a06f6dcb95efffd0e577d16ce"
+      },
+      {
+        "locator": "src/execution/schemas/canonical-runtime-tree-v2.ts",
+        "sha256": "509dc3d49e8a1fbaefa2d73c524ac82b8381202a9bb6923497836838f3103e1f"
+      },
+      {
+        "locator": "src/execution/schemas/execution-attempt-v1.ts",
+        "sha256": "f52f156f4f92ebd000e341c29b73501e604ca47d39ae5e9ce058962526654a09"
+      },
+      {
+        "locator": "src/execution/schemas/operational-event-v1.ts",
+        "sha256": "35f60e0297548a83c113e5fe3257ab89a3752d5af4b143a375fd444a91014114"
+      },
+      {
+        "locator": "src/execution/schemas/operational-failure-cause-v1.ts",
+        "sha256": "e2b21028e0d78df9cd83d96430b68075696823c01721ba128d14cb414317d550"
+      },
+      {
+        "locator": "src/execution/schemas/platform-release-common-v2.ts",
+        "sha256": "4cc3b3e99daf8e2dc36c3077e26051f961242fb0ed29e5251055aa46a6468c35"
+      },
+      {
+        "locator": "src/execution/schemas/platform-release-content-store-census-v3.ts",
+        "sha256": "24fc97fde14d8d5614955ed3208d107ed2cacf7f2d9eb5caf2859ea9710b75a1"
+      },
+      {
+        "locator": "src/execution/schemas/platform-release-content-store-durable-record-test-v3.ts",
+        "sha256": "b5488f89230f99fb073bb3c79eebe086f7630457ed20066687229bf963c7cc21"
+      },
+      {
+        "locator": "src/execution/schemas/platform-release-content-store-test-v3.ts",
+        "sha256": "127ed110e137e887fa104d3513b2cb2f67177b0b7bad748740080950394c8a8d"
+      },
+      {
+        "locator": "src/execution/schemas/process-identity-v1.ts",
+        "sha256": "95487bfab0cf505301f98ec5c71988ec2e787cdfd59299508922c2307444e40f"
+      },
+      {
+        "locator": "src/execution/schemas/runtime-completion-plan-v1.ts",
+        "sha256": "45df208e06cd73953bd6e787eb500e788275e32f872633a4179daf96e09ff58c"
+      },
+      {
+        "locator": "src/execution/v3-git-revision.ts",
+        "sha256": "ca261f23f2403bee6439004c6324c7a058354e89110892012d7ae01c5f818a5e"
+      },
+      {
+        "locator": "src/execution/v3-preparation-claim-authority-v2.ts",
+        "sha256": "39b42e94e7eff279d3d54dc3f0dd558c5b74a3827bcb4e5508946973f0ad4d88"
+      },
+      {
+        "locator": "src/findings/finding-set.ts",
+        "sha256": "5db0cdd58e289eeff95bf8ab0eefb45687a22ae6482797fb258d0ba2d896b223"
+      },
+      {
+        "locator": "src/findings/legacy-finding-publication-inventory-v1.ts",
+        "sha256": "16f4cee8e25fc1e88125b5cc58d8c9fcf59beec708ab01ecf254923da598010e"
+      },
+      {
+        "locator": "src/installation/fresh-installation-catalog-v1.ts",
+        "sha256": "b9ce42ad0bceeeac7b84c0df7450ed148be163d529297846cd1c0f26362d1e34"
+      },
+      {
+        "locator": "src/installation/fresh-installation-origin-v1.ts",
+        "sha256": "1a9c9f037d42af444df81ab1e5cc23366b1382da19e5b85aeb54ada6ee94222c"
+      },
+      {
+        "locator": "src/installation/fresh-installation-private-assets-v1.ts",
+        "sha256": "c1e06eefce8138345a6f15095b50d43232b8d0535d2e309a2cbbf80f2702d553"
+      },
+      {
+        "locator": "src/installation/fresh-installation-records-v1.ts",
+        "sha256": "68d41837a2961421f7d6d92d133cf07007e9527e8fac927d80f7c04cde25c5e2"
+      },
+      {
+        "locator": "src/installation/fresh-installation-runtime-v1.ts",
+        "sha256": "69f775ebbdcf07fe6f1abd6e80111e7e4910b423de51aac91ad2617b616b68d5"
+      },
+      {
+        "locator": "src/installation/fresh-installation-source-v1.ts",
+        "sha256": "9f55be69eaaa5ff0638edd6229fb77e944a7beccd56c7148fb69706a469dba62"
+      },
+      {
+        "locator": "src/installation/fresh-installation-v1.ts",
+        "sha256": "f25755fa0535e7f68ad2e1c209be3f8ce0b6a669ba9df8b2698261e8f2d31526"
+      },
+      {
+        "locator": "src/internal-production/baseline-post-handoff-receipt-v1.ts",
+        "sha256": "f64947121326ceb9bf8c82f6ea4be22b7f24bd7cf0f5b4b51056234ce0020a4c"
+      },
+      {
+        "locator": "src/internal-production/baseline-workspace-authority-path-v1.ts",
+        "sha256": "d6547a403d0a7d9edc4005607db8935e099eb9c6b8d979a93f35839442f1d96e"
+      },
+      {
+        "locator": "src/internal-production/owner-admission-head-v1.ts",
+        "sha256": "dfa9264010bae75f416626ab138116459aa74ad96f50caa775a2d4fe13c9dad4"
+      },
+      {
+        "locator": "src/internal-production/owner-admission-v1.ts",
+        "sha256": "281d62959a2892d972f0ed26ee1b33939a7b7f84eaaff915469d3e2b19f09981"
+      },
+      {
+        "locator": "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
+        "sha256": "b4860a4faad4dc57cbe2dfcb43de06dac2db29e14aacfccb44c4bbde6334bdd7"
+      },
+      {
+        "locator": "src/product-compiler/artifact-capacity.ts",
+        "sha256": "0ac6f6584030e73e5a1b678b8ed56703635f6ff16f42b9e0fe5acc32dd28aa35"
+      },
+      {
+        "locator": "src/product-compiler/artifact-closure.ts",
+        "sha256": "ced731ef4997b880e3b2428103dc72b2e74a4b2e9bebdd5232107e2137f8dea2"
+      },
+      {
+        "locator": "src/product-compiler/artifact-envelope.ts",
+        "sha256": "9d06463c39a77a2ad6d9adc39eeb03f6fdbd88e20a74b62c375019ff188c6850"
+      },
+      {
+        "locator": "src/product-compiler/artifact-publication-batch-identity.ts",
+        "sha256": "a6574c2ec7ee248c9302a91f0f21a06ae53f48973d1e13b7a10d6e9fc5ad780a"
+      },
+      {
+        "locator": "src/product-compiler/artifact-publication-batch-plan-binding.ts",
+        "sha256": "74929588142737ad872e490a5304d3d657a3b70d7136e56ea1fb9ae0f309467f"
+      },
+      {
+        "locator": "src/product-compiler/artifact-store-batch-plan.ts",
+        "sha256": "23c417c99048a40a62c27772d1b7d53316eea5430ee4512906a933f5047ca1a6"
+      },
+      {
+        "locator": "src/product-compiler/bounded-canonical-json.ts",
+        "sha256": "20ff8547bb848e053bed3db42e28c90ed38605e17537a8b24dd8f69388c1819a"
+      },
+      {
+        "locator": "src/product-compiler/canonical-json.ts",
+        "sha256": "cf31de2205cdffd97170fd69951e09ab70b45eb0c4b365184a3c5456ec1a0337"
+      },
+      {
+        "locator": "src/product-compiler/english-text-contract-v1.ts",
+        "sha256": "62adaa79889eefa0087fd303c88d1c8275f05339d4ec1a1030c859a3e5a47582"
+      },
+      {
+        "locator": "src/product-compiler/product-delivery-profile-catalog-v2.ts",
+        "sha256": "4fa46f48b268bd9ecc05e8cc8190ce67927174650d25c9c575a20c2ed672a3ce"
+      },
+      {
+        "locator": "src/product-compiler/product-evidence-capability-policy-v2.ts",
+        "sha256": "ecd0d70c78133cbe83fe4a93bf07eee4954121a8d424f199f174033187ec877a"
+      },
+      {
+        "locator": "src/product-compiler/requirements/task-requirements-v1.ts",
+        "sha256": "4657a924e0b0a9ce9bf434da1613c789119836666006bd05ff5a3f47883b6ff7"
+      },
+      {
+        "locator": "src/product-compiler/schemas/action-input-transport-v2.ts",
+        "sha256": "1ae5988f622a8029c001d5367990c683db17eff31fb538e0b74e61a28bf61000"
+      },
+      {
+        "locator": "src/product-compiler/schemas/action-invocation-interface-intent-v1.ts",
+        "sha256": "54c425c05bb98c8a2299270294080ec834841e16752f1ca6e0f32fbaaad49dc0"
+      },
+      {
+        "locator": "src/product-compiler/schemas/build-topology-v1.ts",
+        "sha256": "92b3931a97cc3cb11f890046e2d37e1ca763cf2cd10bd7e51c18305049f89cf9"
+      },
+      {
+        "locator": "src/product-compiler/schemas/build-topology-v3.ts",
+        "sha256": "9627aa50af1331a81844df7b1932ffe99d615e8c21a80003a646b725d67aed1d"
+      },
+      {
+        "locator": "src/product-compiler/schemas/byte-bundle-v1.ts",
+        "sha256": "63bf2699b078049b6b7a7f52396491e2a4c28cd2c8d2440d11573e1a55d2f694"
+      },
+      {
+        "locator": "src/product-compiler/schemas/common-v1.ts",
+        "sha256": "e6b490bc92c1f20a9400c02ea1ae744082fc362d6fbca93ff529ca4ed8601b27"
+      },
+      {
+        "locator": "src/product-compiler/schemas/common-v2.ts",
+        "sha256": "35d8661c89bfbbd4eb8712070fd77609cb7321adfbabaa8124249b35dd301867"
+      },
+      {
+        "locator": "src/product-compiler/schemas/deep-byte-bundle-verification-receipt-v2.ts",
+        "sha256": "b85c8a2ac7e702b5274cb9de43c8efa88fba94319506c75083b5225053b1a13d"
+      },
+      {
+        "locator": "src/product-compiler/schemas/design-generation-targets-v1.ts",
+        "sha256": "127e11c74176091f08b041499d51957b493a5e5258fb35aeeaeccc5e5ad4c626"
+      },
+      {
+        "locator": "src/product-compiler/schemas/design-interaction-graph-v2.ts",
+        "sha256": "33ef2dc5e8cb058fc7f01a14943273ea61665716ea0ba8b5a2ebb0d9c69b8a6d"
+      },
+      {
+        "locator": "src/product-compiler/schemas/design-source-closure-v2.ts",
+        "sha256": "166e335bfa94407dd3e91eaac59cdff01c62bcf28830a14c9c8cb9e9cc2e994b"
+      },
+      {
+        "locator": "src/product-compiler/schemas/file-tree-manifest-v3.ts",
+        "sha256": "79ce74baecf3505c33e89e9f8655bdee3d1b71255210cd6b0daafac495528c97"
+      },
+      {
+        "locator": "src/product-compiler/schemas/generated-source-contract-v2.ts",
+        "sha256": "a162b345065d154cf468e3cb6033853da7d49da04f4fd08740336f31f693aeab"
+      },
+      {
+        "locator": "src/product-compiler/schemas/host-node-toolchain-receipt-v2.ts",
+        "sha256": "3193e4278619d19c06d913d140cc7e4be4382b6d3f081c87db6aab12611e7338"
+      },
+      {
+        "locator": "src/product-compiler/schemas/implementation-slice-v2-legacy.ts",
+        "sha256": "63acfad984f227125edccdeff7d911e5426ff38c3a281e5f2d8ac01a3798a3c0"
+      },
+      {
+        "locator": "src/product-compiler/schemas/implementation-slice-v2.ts",
+        "sha256": "781d2ca194b94dbc30240864f21e6e2a0cdc636c533626ca2bbb0caee67c8b39"
+      },
+      {
+        "locator": "src/product-compiler/schemas/implementation-source-map-v1.ts",
+        "sha256": "ddaf745bd0825779b371de39cc7f55457c0319c9c1d395382342f7c4fa21b89b"
+      },
+      {
+        "locator": "src/product-compiler/schemas/implementation-source-map-v2.ts",
+        "sha256": "00f6c3aed6dd6411a5606cd5243c4acb72197c7015bf026d7a4fb13015932505"
+      },
+      {
+        "locator": "src/product-compiler/schemas/invocation-input-transport-set-v2.ts",
+        "sha256": "4a106d74cb3f597a58333012e792708a738ef0ffbf1532ddd651ad5f9328009d"
+      },
+      {
+        "locator": "src/product-compiler/schemas/invocation-input-transport-v2.ts",
+        "sha256": "7d945163d937bd709e01a13a1c0030dd2a24b41944abad518505b78d9ee117e8"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-execution-layout-catalog-v2.ts",
+        "sha256": "91fb1bd5200fb60068ce1d55037346669c810b7d14328ddfe0b8c628e0498b84"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-product-runtime-source-v2.ts",
+        "sha256": "0c3824b59a474d8e117ddeb0080f5749ee76d7263b838ba87c9114203e6242e2"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-product-test-source-v2.ts",
+        "sha256": "25066618b2ed3705ad5ff70276ae4e5e6ec021d450c4404fe3915d034dfd502b"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-scaffold-execution-environment-v2.ts",
+        "sha256": "c2333b4e535d67cf9c30a24312fbe4b165ec1319c49d90c8c3f2eb0bb22babe4"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-scaffold-private-materialization-v2.ts",
+        "sha256": "dae85d73812eb2a9139c0b9bfece5af116dba0eba58a467711352f31e0a5ba48"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-scaffold-toolchain-catalog-v2.ts",
+        "sha256": "5525ec816e730b6f02bcfe810d7283a286dc4ee88bd4b909fefb02101478403e"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-toolchain-archive-inventory-v2.ts",
+        "sha256": "d6af0a5a8590c807984496b7566f6afe3e4abde2738b0c51292b0af5f3f2f6b1"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-toolchain-distribution-v2.ts",
+        "sha256": "a5a54670b4d2e3b0edf0ebad27f1469b5f55a9f231781e1fc1e0a2822854fed0"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-toolchain-private-tree-v2.ts",
+        "sha256": "012447cb00c369702a1d4718e499a6a0d5ca571ae88b470f6a676fa0c70e777c"
+      },
+      {
+        "locator": "src/product-compiler/schemas/node-toolchain-provisioning-v2.ts",
+        "sha256": "f29e4ec28d33c9ba22556fea543c86802067bb6bd486613267e220406d9468cd"
+      },
+      {
+        "locator": "src/product-compiler/schemas/npm-lock-v3-grammar-v2.ts",
+        "sha256": "3047fbad1426b14e117d17028a8849217e25d873e1f7276f775dd524fb4ac7a8"
+      },
+      {
+        "locator": "src/product-compiler/schemas/path-token-v2.ts",
+        "sha256": "e2e475bb067556ebcd58f0d3e009894d30415937aceca7d84861382bc18723bf"
+      },
+      {
+        "locator": "src/product-compiler/schemas/plan-semantic-proposal-v1.ts",
+        "sha256": "1ef203219c64abb0cf70ddd5f876af91be74c8d53a315ace2acb628426359094"
+      },
+      {
+        "locator": "src/product-compiler/schemas/product-build-packet-v3.ts",
+        "sha256": "8cfb50edde4138dd273db4646ecc3682b7532c834c9d583613a747448101ac22"
+      },
+      {
+        "locator": "src/product-compiler/schemas/product-build-packet-v4.ts",
+        "sha256": "3ec8ff130c6ecbda1ba85b5bd3b7049b59b2a320718afac8cfc1ebbc6439e9fa"
+      },
+      {
+        "locator": "src/product-compiler/schemas/product-compilation-attempt-v1.ts",
+        "sha256": "306189a1b12026d1f028eb1a7aa79841b70ae6b1d6cb294a0edc996931acdd5e"
+      },
+      {
+        "locator": "src/product-compiler/schemas/product-runtime-behavior-contract-v1.ts",
+        "sha256": "c1f11f88b20e6881539d9778d31f14d041ade58a914dcbaa7633e8338c2307df"
+      },
+      {
+        "locator": "src/product-compiler/schemas/product-spec-v1.ts",
+        "sha256": "def282da834223a0759f8012cf0e47389f22451ef8b68b943c4ae00b7924ef13"
+      },
+      {
+        "locator": "src/product-compiler/schemas/product-spec-v2.ts",
+        "sha256": "abc25040a73c18f58e922150c3304a20345facaa630fd5784ebdf66c323e749f"
+      },
+      {
+        "locator": "src/product-compiler/schemas/runtime-data-contract-v1.ts",
+        "sha256": "921ce205c8302dd6e3d7e8059e39159383c98162aadf4eca005615db5d51c3df"
+      },
+      {
+        "locator": "src/product-compiler/schemas/semantic-realization-plan-v2.ts",
+        "sha256": "6a83d84e732b8ea1682d099d240bf7e245e37389236d1ed00836d8eabc038bf2"
+      },
+      {
+        "locator": "src/product-compiler/schemas/semantic-source-intent-set-v1.ts",
+        "sha256": "a63fcb7b8f422f96010bb03c2f013314f2a6925ef3730d2b28f62643f851bdd7"
+      },
+      {
+        "locator": "src/product-compiler/schemas/semantic-source-path-token-set-v2.ts",
+        "sha256": "586ee2b8d1f41a5fc50a173e9ede2e977718575099e08a491608f20fdba334e7"
+      },
+      {
+        "locator": "src/product-compiler/schemas/stack-semantic-source-rules-v1.ts",
+        "sha256": "818b0f03faf4bcbaeca1e53fcb7c74e92a018979f3e4beb5314e03c2dc338e0d"
+      },
+      {
+        "locator": "src/product-compiler/schemas/stitch-rendered-semantics-v1.ts",
+        "sha256": "aad52e9b8d00cfcbb5429a5a1ee82454d778f765b0003ec22510a7f4496aaa5f"
+      },
+      {
+        "locator": "src/product-compiler/schemas/stitch-rendered-semantics-v2.ts",
+        "sha256": "0f4b2f7a0c5ce9c2741bbeb9d9bac251180ac6fbd18f36bf3cb4bcb747acd33c"
+      },
+      {
+        "locator": "src/product-compiler/schemas/stitch-screen-index-v2.ts",
+        "sha256": "baccde7550fe50d6929f1b90ad05872f02c12690190c3cbc312c245c80c1fcbf"
+      },
+      {
+        "locator": "src/product-compiler/schemas/story-plan-v2.ts",
+        "sha256": "e9239155d8f3f0b84ef03d40583c974eb7af34a82c77aa2a10d0a8f341552059"
+      },
+      {
+        "locator": "src/product-compiler/schemas/story-plan-v3.ts",
+        "sha256": "18caa3dd1df0f23e70fcf50d856ff35a928cb8194e860e6ae370be31affd2403"
+      },
+      {
+        "locator": "src/product-compiler/stack-semantic-source-rules-catalog-v1.ts",
+        "sha256": "77fa9155c541e5f3b4c8496f4d3ed393087cd4e82e1c2cf41aed791ee2fcd83b"
+      },
+      {
+        "locator": "src/product-compiler/stack-topology-catalog.ts",
+        "sha256": "ccb857f2ae10fa173ac61c57481c330933a6709258fc9b8a926ce48437f1afe8"
+      },
+      {
+        "locator": "src/recovery/recovery-case.ts",
+        "sha256": "5b70670e296fda850fd3ad958f402af71871aefd95fc8c729b7ba0df8c7bf020"
+      },
+      {
+        "locator": "src/recovery/recovery-delivery.ts",
+        "sha256": "06a05273193cfa36f7be95fe2da2738158ff1521df6d6ec114039a4fdd21b8a4"
+      },
+      {
+        "locator": "src/recovery/v3-downstream-terminal-cause-v1.ts",
+        "sha256": "63f4ae858ad88f09415e2df81cd200b3b6e58d241c8b1b2d9e6fe5bd3e4f6103"
+      },
+      {
+        "locator": "src/recovery/v3-recovery-claim-authority.ts",
+        "sha256": "c5cebe095d7432384d8b482b410df502eaf832a68a619e5b6c7a1bb60e39826d"
+      }
+    ],
+    "resolution": [
+      {
+        "row": [
+          "esm",
+          "dist/evidence/runtime-evidence-contract-v1.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/evidence/runtime-evidence-contract-v1.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/evidence/schemas/evidence-adapter-definition-catalog-v2.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/evidence/schemas/evidence-adapter-definition-catalog-v2.js",
+          "dist/evidence/schemas/evidence-receipt-v2.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/execution/v3-preparation-claim-authority-v2.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/execution/v3-preparation-claim-authority-v2.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/execution/schemas/candidate-build-receipt-v2.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/execution/schemas/candidate-build-receipt-v2.js",
+          "dist/execution/schemas/canonical-runtime-tree-v2.js",
+          "dist/execution/schemas/execution-attempt-v1.js",
+          "dist/execution/schemas/operational-event-v1.js",
+          "dist/execution/schemas/operational-failure-cause-v1.js",
+          "dist/execution/schemas/platform-release-common-v2.js",
+          "dist/execution/schemas/platform-release-content-store-census-v3.js",
+          "dist/execution/schemas/platform-release-content-store-durable-record-test-v3.js",
+          "dist/execution/schemas/platform-release-content-store-test-v3.js",
+          "dist/execution/schemas/process-identity-v1.js",
+          "dist/execution/schemas/runtime-completion-plan-v1.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/findings/finding-set.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/findings/finding-set.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/installation/fresh-installation-runtime-v1.js",
+          "postgres",
+          "node_modules/postgres/src/index.js"
+        ],
+        "members": [
+          "dist/installation/fresh-installation-runtime-v1.js",
+          "dist/installation/fresh-installation-v1.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/installation/fresh-installation-private-assets-v1.js",
+          "yaml",
+          "node_modules/yaml/dist/index.js"
+        ],
+        "members": [
+          "dist/installation/fresh-installation-private-assets-v1.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/product-compiler/artifact-closure.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/product-compiler/artifact-closure.js",
+          "dist/product-compiler/artifact-envelope.js",
+          "dist/product-compiler/artifact-publication-batch-identity.js",
+          "dist/product-compiler/product-delivery-profile-catalog-v2.js",
+          "dist/product-compiler/product-evidence-capability-policy-v2.js",
+          "dist/product-compiler/stack-semantic-source-rules-catalog-v1.js",
+          "dist/product-compiler/stack-topology-catalog.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/product-compiler/requirements/task-requirements-v1.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/product-compiler/requirements/task-requirements-v1.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/product-compiler/schemas/action-input-transport-v2.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/product-compiler/schemas/action-input-transport-v2.js",
+          "dist/product-compiler/schemas/action-invocation-interface-intent-v1.js",
+          "dist/product-compiler/schemas/build-topology-v1.js",
+          "dist/product-compiler/schemas/build-topology-v3.js",
+          "dist/product-compiler/schemas/byte-bundle-v1.js",
+          "dist/product-compiler/schemas/common-v1.js",
+          "dist/product-compiler/schemas/common-v2.js",
+          "dist/product-compiler/schemas/deep-byte-bundle-verification-receipt-v2.js",
+          "dist/product-compiler/schemas/design-generation-targets-v1.js",
+          "dist/product-compiler/schemas/design-interaction-graph-v2.js",
+          "dist/product-compiler/schemas/design-source-closure-v2.js",
+          "dist/product-compiler/schemas/file-tree-manifest-v3.js",
+          "dist/product-compiler/schemas/host-node-toolchain-receipt-v2.js",
+          "dist/product-compiler/schemas/implementation-slice-v2-legacy.js",
+          "dist/product-compiler/schemas/implementation-slice-v2.js",
+          "dist/product-compiler/schemas/implementation-source-map-v1.js",
+          "dist/product-compiler/schemas/implementation-source-map-v2.js",
+          "dist/product-compiler/schemas/invocation-input-transport-set-v2.js",
+          "dist/product-compiler/schemas/invocation-input-transport-v2.js",
+          "dist/product-compiler/schemas/node-execution-layout-catalog-v2.js",
+          "dist/product-compiler/schemas/node-product-runtime-source-v2.js",
+          "dist/product-compiler/schemas/node-product-test-source-v2.js",
+          "dist/product-compiler/schemas/node-scaffold-execution-environment-v2.js",
+          "dist/product-compiler/schemas/node-scaffold-private-materialization-v2.js",
+          "dist/product-compiler/schemas/node-scaffold-toolchain-catalog-v2.js",
+          "dist/product-compiler/schemas/node-toolchain-archive-inventory-v2.js",
+          "dist/product-compiler/schemas/node-toolchain-distribution-v2.js",
+          "dist/product-compiler/schemas/node-toolchain-private-tree-v2.js",
+          "dist/product-compiler/schemas/node-toolchain-provisioning-v2.js",
+          "dist/product-compiler/schemas/path-token-v2.js",
+          "dist/product-compiler/schemas/plan-semantic-proposal-v1.js",
+          "dist/product-compiler/schemas/product-build-packet-v3.js",
+          "dist/product-compiler/schemas/product-build-packet-v4.js",
+          "dist/product-compiler/schemas/product-compilation-attempt-v1.js",
+          "dist/product-compiler/schemas/product-runtime-behavior-contract-v1.js",
+          "dist/product-compiler/schemas/product-spec-v1.js",
+          "dist/product-compiler/schemas/product-spec-v2.js",
+          "dist/product-compiler/schemas/runtime-data-contract-v1.js",
+          "dist/product-compiler/schemas/semantic-realization-plan-v2.js",
+          "dist/product-compiler/schemas/semantic-source-intent-set-v1.js",
+          "dist/product-compiler/schemas/semantic-source-path-token-set-v2.js",
+          "dist/product-compiler/schemas/stack-semantic-source-rules-v1.js",
+          "dist/product-compiler/schemas/stitch-rendered-semantics-v1.js",
+          "dist/product-compiler/schemas/stitch-rendered-semantics-v2.js",
+          "dist/product-compiler/schemas/stitch-screen-index-v2.js",
+          "dist/product-compiler/schemas/story-plan-v2.js",
+          "dist/product-compiler/schemas/story-plan-v3.js"
+        ]
+      },
+      {
+        "row": [
+          "esm",
+          "dist/recovery/recovery-case.js",
+          "zod",
+          "node_modules/zod/index.js"
+        ],
+        "members": [
+          "dist/recovery/recovery-case.js",
+          "dist/recovery/recovery-delivery.js",
+          "dist/recovery/v3-downstream-terminal-cause-v1.js",
+          "dist/recovery/v3-recovery-claim-authority.js"
+        ]
+      }
+    ],
+    "absences": [
+      "dist/evidence/node_modules/zod",
+      "dist/evidence/package.json",
+      "dist/evidence/schemas/node_modules/zod",
+      "dist/evidence/schemas/package.json",
+      "dist/execution/node_modules/zod",
+      "dist/execution/package.json",
+      "dist/execution/schemas/node_modules/zod",
+      "dist/execution/schemas/package.json",
+      "dist/findings/node_modules/zod",
+      "dist/findings/package.json",
+      "dist/installation/node_modules/postgres",
+      "dist/installation/node_modules/yaml",
+      "dist/installation/package.json",
+      "dist/internal-production/node_modules/zod",
+      "dist/internal-production/package.json",
+      "dist/node_modules/postgres",
+      "dist/node_modules/yaml",
+      "dist/node_modules/zod",
+      "dist/package.json",
+      "dist/product-compiler/node_modules/zod",
+      "dist/product-compiler/package.json",
+      "dist/product-compiler/requirements/node_modules/zod",
+      "dist/product-compiler/requirements/package.json",
+      "dist/product-compiler/schemas/node_modules/zod",
+      "dist/product-compiler/schemas/package.json",
+      "dist/recovery/node_modules/zod",
+      "dist/recovery/package.json"
+    ]
+  }
+}
