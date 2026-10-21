@@ -45,7 +45,7 @@ The cumulative v2 map stays EIGHT implementation files: Slice2 adds/extends `tes
 
 **Produces:** immutable `MANUAL_ORPHAN_BASENAME_V1`, `MANUAL_ORPHAN_VECTOR_V1`; pure `mentionsManualOrphanFileV1(cells)` and `classifyManualOrphanVectorV1(cells)` with exact companion-spec semantics. Main actual future mode/vector cannot reach effects.
 
-- [ ] Step1 — Add local literal vectors and Source-contained actual-consumer harnesses to path6, and constructor assertions to path2, before the new helper exists. Do not import a nonexistent helper for the initial RED. Tests must run actual current function/branch Source, not test a duplicated classifier.
+- [x] Step1 — Add local literal vectors and Source-contained actual-consumer harnesses to path6, and constructor assertions to path2, before the new helper exists. Do not import a nonexistent helper for the initial RED. Tests must run actual current function/branch Source, not test a duplicated classifier.
 
 Test-local harness contracts (not production exports):
 
@@ -82,9 +82,9 @@ assert.equal(w.thrown,'MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED');
 assert.equal(w.calls.spawn.length,0);
 ```
 
-- [ ] Step2 — Root runs the new focused cases against existing Source. Expected semantic RED: constructor returns existing MODE_INVALID; isolated runner reaches Task4/admin sentinel; wrapper routes the supplied discovered filename raw (or explicit missing filename UNKNOWN), all contrary to the required boundary. Record exact failure and original test-process result. Missing helper/file/export is NOT the accepted RED.
+- [x] Step2 — Root runs the new focused cases against existing Source. Expected semantic RED: constructor returns existing MODE_INVALID; isolated runner reaches Task4/admin sentinel; wrapper routes the supplied discovered filename raw (or explicit missing filename UNKNOWN), all contrary to the required boundary. Record exact failure and original test-process result. Missing helper/file/export is NOT the accepted RED.
 
-- [ ] Step3 — Create inert constants/classifiers in path5, with no module-time IO. Exact algorithm:
+- [x] Step3 — Create inert constants/classifiers in path5, with no module-time IO. Exact algorithm:
 
 ```js
 const mentions=cells=>cells.some(cell=>cell.toLowerCase().includes(MANUAL_ORPHAN_BASENAME_V1));
@@ -107,9 +107,9 @@ No literal ready flag/config switch/descriptor makes it active. Extra argv still
 
 Wrapper: check explicit process.argv.slice(2) mentions before current requested validation; check no-args discovery for reserved basename before any raw/owner launch. Throw fixed CONSTRUCTOR_REQUIRED. Do not register the nonexistent integration file in owner set. Isolated main: retain ambient SETFARM_PG_URL check; classify raw cells after first `--`; near throws ROUTE_REFUSED; parse command through existing commandArguments; exact throws SLICE2_UNAVAILABLE before Task4. Neither branch reads FD4.
 
-- [ ] Step4 — Add finite near-match cases: uppercase basename, `./` prefix, absolute prefix, backslash path, suffix `.bak`, extra operand, extra flag, changed concurrency and genuine path in a nonfinal cell. All reserved mentions must refuse before P3. Existing malformed unrelated commands retain their existing grammar failure. Add wrapper no-args discovery containing reserved file; must refuse before even unrelated raw tests execute, without modifying filesystem.
+- [x] Step4 — Add finite near-match cases: uppercase basename, `./` prefix, absolute prefix, backslash path, suffix `.bak`, extra operand, extra flag, changed concurrency and genuine path in a nonfinal cell. All reserved mentions must refuse before P3. Existing malformed unrelated commands retain their existing grammar failure. Add wrapper no-args discovery containing reserved file; must refuse before even unrelated raw tests execute, without modifying filesystem.
 
-- [ ] Step5 — Run Task1 tests and the existing constructor test file. Calibrate both unavailable branches by IN-MEMORY removal → first downstream sentinel becomes reachable. Check a table of all13 prior modes against existing literal vectors and environment recordings; new pure vector is the only extra case. Unknown mode/URL/command-tail/extra argv retains existing rejection. Preserve all existing inventory assertions.
+- [x] Step5 — Run Task1 tests and the existing constructor test file. Calibrate both unavailable branches by IN-MEMORY removal → first downstream sentinel becomes reachable. Check a table of all13 prior modes against existing literal vectors and environment recordings; new pure vector is the only extra case. Unknown mode/URL/command-tail/extra argv retains existing rejection. Preserve all existing inventory assertions.
 
 ## Task 2: Exact codec, observation and real minimal child
 
@@ -212,13 +212,21 @@ Slice2 retains actual current Root setup/cluster/role/credential/cleanup and ori
 
 ## Acceptance checklist and draft status
 
-- [ ] Current consumer semantic RED captured; missing file/export alone not counted.
-- [ ] Actual two closed inventories remain asserted, now exactly14 members; all13 prior vectors/env unchanged.
-- [ ] Exact inactive constructor/isolated route always refuses before downstream effects; near matches never reach P3; wrapper cannot raw-dispatch genuine file.
+- [x] Current consumer semantic RED captured; missing file/export alone not counted.
+- [x] Actual two closed inventories remain asserted, now exactly14 members; all13 prior vectors/env unchanged.
+- [x] Exact inactive constructor/isolated route always refuses before downstream effects; near matches never reach P3; wrapper cannot raw-dispatch genuine file.
 - [ ] Normal issuer has only its fixed minimal child, no caller selectors or setup/permission data.
 - [ ] Exact canonical frame and independently observed immediate parent/self/source files enforced; nonce role correctly limited to correlation.
 - [ ] Real positive and real receiver negatives include actual original exit+close, streams and FD4 close; event/VM simulations separately labeled.
 - [ ] All actual Source pins close or UNKNOWN overrides; no orphan signal/cleanup behavior added.
 - [ ] Root required focused tests/noEmit/review observed; no PG/build/bootstrap/publication credit inferred.
 
-Root adopts this finite Slice1 subplan. No missing implementation input is left behind a placeholder issuer. Its actual implementation/execution/results are still pending. Actual generated-I/PG setup and later Task2A gates remain UNRUN by design.
+Root adopts this finite Slice1 subplan. No missing implementation input is left behind a placeholder issuer. Task1 is implemented and verified as recorded below; Task2 codec/minimal-child implementation and Task3 final slice verification remain pending. Actual generated-I/PG setup and later Task2A gates remain UNRUN by design.
+
+## Verified Task1 checkpoint (2026-10-21)
+
+Root observed current-consumer RED: original70132 exit1,283 tests,256 pass/27 expected failures (24 consumer routing mismatches plus3 new inventory/plan contracts). The subsequent frozen six-file implementation passed285/285 on admitted Node26, original85425 exit0,0failed/skipped/cancelled; this includes231 constructor contracts and54 source-contained route/guard-calibration cases. Both original stdout/stderr reached EOF and closed;2415 Source pins were unchanged. Adjacent Node22 src-only noEmit original85426 exited0 with empty output; it does not typecheck scripts/MJS.
+
+Independent Task1 spec and quality review approved the six-file package, C0/I0/M1. Minor deferred: direct malformed-array coverage of both pure classifier exports; carry into the next test group. Root confirmed all four production/profile hashes unchanged against their recorded freeze; no protected-surface edit is present in this Task1 diff. Live oldT/I5 were not modified by this Source work.
+
+Task1 evidence is inactive-route/pure/Source-contained verification only. No minimal child has been implemented or launched, no PG setup issuer exists, both unavailability guards remain unconditional, and genuine M/T/generated-I/fixed-I5/full-adapter drift/full8 gates remain unrun. GitHub automated review previously failed account quota and provides no approval; no merge, stock build or rollout follows from this checkpoint.

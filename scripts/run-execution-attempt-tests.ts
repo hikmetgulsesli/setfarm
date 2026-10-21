@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mentionsManualOrphanFileV1 } from "../tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const TEST_ROOT = path.join(ROOT, "tests/execution-attempts");
@@ -66,15 +67,21 @@ function run(args: string[], env: NodeJS.ProcessEnv = process.env): void {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-const discovered = readdirSync(TEST_ROOT, { withFileTypes: true })
-  .filter((entry) => entry.isFile() && entry.name.endsWith(".test.ts"))
-  .map((entry) => entry.name)
-  .sort();
+const args = process.argv.slice(2);
+if (mentionsManualOrphanFileV1(args)) throw new Error("MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED");
+
+const files = readdirSync(TEST_ROOT, { withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map((entry) => entry.name);
+if (args.length === 0 && mentionsManualOrphanFileV1(files)) {
+  throw new Error("MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED");
+}
+const discovered = files.filter((file) => file.endsWith(".test.ts")).sort();
 for (const file of OWNER_BACKED_TESTS) {
   if (!discovered.includes(file)) throw new Error(`EXECUTION_ATTEMPT_OWNER_TEST_MISSING:${file}`);
 }
 
-const requested = process.argv.slice(2).map((locator) => {
+const requested = args.map((locator) => {
   const normalized = locator.startsWith(TEST_PREFIX) ? locator.slice(TEST_PREFIX.length) : locator;
   if (!discovered.includes(normalized)) throw new Error(`EXECUTION_ATTEMPT_TEST_UNKNOWN:${locator}`);
   return normalized;

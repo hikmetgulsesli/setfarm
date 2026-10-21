@@ -166,7 +166,7 @@ Slice2 consumes fixed constants/classifiers, exact canonical codec pattern, proc
 
 Root separately admits original constructor launch, source/dependency closure and actual setup/cluster/role/credential/cleanup scope. Neither existing private constructor Source, test success, a frame nor the string mode supplies that admission. Generated-I and actual old preparation remain UNRUN until then. Full-adapter T Source drift still needs the independently owned exact-layout topology/actual original-process phase observation identified in v2; transport work does not fix it. Fixed-I5 positive remains separate.
 
-Root adopts the finite Slice1 only under standing continuation authority for this causal test prerequisite. All execution/result claims remain unrun until actually captured. No permission question or execution-choice prompt is required for these ordinary Source edits.
+Root adopts the finite Slice1 only under standing continuation authority for this causal test prerequisite. Task1 inactive-route execution is now captured in the companion plan checkpoint; Task2 codec/minimal-child and subsequent execution gates remain unrun. No permission question or execution-choice prompt is required for these ordinary Source edits.
 
 ## Root adoption clarifications
 

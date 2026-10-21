@@ -921,7 +921,7 @@ test('after-cutover retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
@@ -975,7 +975,7 @@ test('after-receipt retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
@@ -1054,4 +1054,66 @@ test('migration33-adjacent-full plans only the fixed whole migrations P3 test ar
   });
   assert.equal(refused.error,undefined);assert.equal(refused.signal,null);assert.equal(refused.status,1);
   assert.equal(refused.stdout,'');assert.equal(refused.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
+});
+
+// Slice1 declares a pure vector only; actual route refusal is source-contained
+// in manual-orphan-bootstrap-owned-route-v1.test.js, with all effects intercepted.
+test('manual-orphan-bootstrap pure plan selects the one fixed inactive owned route',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'manual-orphan-bootstrap'});
+  assert.deepEqual(value.test,[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+    'node','--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts',
+  ]);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+
+test('manual-orphan-bootstrap pure plan refuses caller selectors and command tails',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['MANUAL-ORPHAN-BOOTSTRAP','manual-orphan-bootstrap extra',
+    'manual-orphan-bootstrap;echo denied','test:manual-orphan-bootstrap',
+    'https://127.0.0.1/','postgresql://127.0.0.1/postgres',
+    'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+});
+
+test('manual-orphan-bootstrap addition preserves all thirteen prior literal plan vectors',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const npm='/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js';
+  const isolated=['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+    'node','--import','tsx','--test','--test-concurrency=1'];
+  const expected={
+    findings:[npm,'run','test:findings'],all:[npm,'test'],
+    'readonly-verifiers':['--import','tsx','--test','--test-concurrency=1',
+      'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
+      'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts'],
+    receipt:[...isolated,'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts'],
+    'after-scripts':[npm,'run','test:after-scripts'],
+    'after-terminal':[npm,'run','test:after-terminal'],
+    'after-findings':[npm,'run','test:after-findings'],
+    'after-internal-pure':[npm,'run','test:after-internal-pure'],
+    'after-local-custody':[npm,'run','test:after-local-custody'],
+    'after-cutover':[npm,'run','test:after-cutover'],
+    'after-receipt':[npm,'run','test:after-receipt'],
+    'migration33-observers':[...isolated,'tests/execution-attempts/migration33-current-entry-observers.test.ts'],
+    'migration33-adjacent-full':[...isolated,'tests/execution-attempts/migrations.test.ts'],
+  };
+  assert.equal(Object.keys(expected).length,13);
+  for(const [mode,vector] of Object.entries(expected)){
+    const value=plan({root,port:55439,mode});
+    assert.deepEqual(value.test,vector,mode);
+    assert.equal(Object.isFrozen(value.test),true,mode);
+  }
+});
+
+test('manual-orphan-bootstrap direct CLI refuses extra argv before cluster effects',()=>{
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'manual-orphan-bootstrap','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,
+    env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.equal(child.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
 });
