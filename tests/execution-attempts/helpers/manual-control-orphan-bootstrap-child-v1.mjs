@@ -1739,7 +1739,8 @@ const probeFd4PolicyV1=Object.freeze({owned:false,unknown:probeCloseUnknownV1});
 const ownedFd4PolicyV1=Object.freeze({owned:true,unknown:ownedTransportUnknownV1});
 let ownedInherited4ClaimV1=null;
 function manualOrphanFd4ClaimV1(){
-  return {attempted:true,adopted:false,rawCloseAttempted:false,socketCloseRequested:false,actualCloseSeen:false,uncertain:false};
+  return {attempted:true,adopted:false,rawCloseAttempted:false,socketCloseRequested:false,actualCloseSeen:false,
+    uncertain:false,outputUncertain:false};
 }
 function reserveManualOrphanFd4V1(){
   if(ownedInherited4ClaimV1!==null)throw ownedInherited4ClaimV1.uncertain?ownedTransportUnknownV1():probeOwnerRefusalV1();
@@ -1918,19 +1919,20 @@ function probeReceiptV1(digest,pid,parentPid){
 function probeChildOutputV1(unknownError=probeCloseUnknownV1){
   let unknownWritten=false;
   const unknown=()=>{
+    const error=unknownError(); // Retain the fault before any diagnostic write.
     process.exitCode=1;
     if(!unknownWritten){
       unknownWritten=true;
-      try{process.stderr.write(unknownError().message+'\n');}catch{}
+      try{process.stderr.write(error.message+'\n');}catch{}
     }
   };
   // Native output errors must not become an unhandled raw diagnostic. These
   // listeners are installed only in the direct child, never at module import.
-  if(typeof process.stderr.on==='function')process.stderr.on('error',()=>{process.exitCode=1;});
+  if(typeof process.stderr.on==='function')process.stderr.on('error',()=>{unknownError();process.exitCode=1;});
   if(typeof process.stdout.on==='function')process.stdout.on('error',unknown);
   return {unknown,writeFailure(error){
     process.exitCode=1;
-    try{process.stderr.write(error.message+'\n');}catch{}
+    try{process.stderr.write(error.message+'\n');}catch{unknownError();}
   }};
 }
 
@@ -1938,6 +1940,7 @@ function manualOrphanEntryErrorV1(error,policy){
   if(error?.message==='MANUAL_ORPHAN_CHILD_UNKNOWN'||error?.message==='MANUAL_ORPHAN_CLEANUP_UNKNOWN')return policy.unknown();
   if(error?.message==='MANUAL_ORPHAN_FRAME_REFUSED')return probeFrameRefusalV1();
   if(error?.message==='MANUAL_ORPHAN_SETUP_REFUSED')return Error('MANUAL_ORPHAN_SETUP_REFUSED');
+  if(policy===ownedFd4PolicyV1&&error?.message==='MANUAL_ORPHAN_CASE_REFUSED')return Error('MANUAL_ORPHAN_CASE_REFUSED');
   return probeOwnerRefusalV1();
 }
 async function runManualOrphanProbeChildV1(){
@@ -1952,16 +1955,21 @@ async function runManualOrphanProbeChildV1(){
   }
   let source=null,readerStarted=false,receipt=null,failure=null,output=null,policy=probeFd4PolicyV1;
   try{
-    output=probeChildOutputV1(()=>policy.unknown());
+    output=probeChildOutputV1(()=>{
+      claim.outputUncertain=true;
+      if(policy===ownedFd4PolicyV1)claim.uncertain=true;
+      return policy.unknown();
+    });
     const context=probeLaunchContextV1();policy=manualOrphanEntryPolicyV1(context);
+    // An output error can precede policy resolution. Preserve legacy behavior,
+    // but owned custody and any later reservation must retain that uncertainty.
+    if(policy===ownedFd4PolicyV1&&claim.outputUncertain)claim.uncertain=true;
     readerStarted=true;
     const frame=await readManualOrphanFd4V1(policy,decodeManualOrphanEntryInputV1,claim);
+    if(policy===ownedFd4PolicyV1&&claim.outputUncertain)throw ownedTransportUnknownV1();
     if(frame.schema!=='setfarm.manual-orphan-lifecycle-probe.v1'){
-      // Explicit unavailable capability, AFTER canonical union decoding and
-      // known inherited-input closure. No Source holder, role, server, module,
-      // SQL, release selection or provision/activation handler is reachable.
-      throw Error('MANUAL_ORPHAN_SETUP_REFUSED');
-    }
+      receipt=await runManualOrphanOwnedPhaseV1(context,frame,policy);
+    }else{
     // Probe data keeps its strict OLD context even when admitted/read under the
     // new transport profile. It never calls the public legacy reader again.
     probeChildContextV1(context);
@@ -1978,12 +1986,16 @@ async function runManualOrphanProbeChildV1(){
       ||!sameProbeObservationV1(self,observeManualOrphanProcessV1(process.pid)))throw probeOwnerRefusalV1();
     probeChildContextV1(context);source.check();
     receipt=probeReceiptV1(digest,process.pid,process.ppid);
+    }
   }catch(error){failure=manualOrphanEntryErrorV1(error,policy);}
   finally{
     if(!readerStarted)closeManualOrphanRaw4V1(claim);
-    if(claim.uncertain)failure=policy.unknown();
+    if(claim.uncertain||(policy===ownedFd4PolicyV1&&claim.outputUncertain))failure=policy.unknown();
     if(source){try{source.close();}catch{claim.uncertain=true;failure=policy.unknown();}}
   }
+  // Recheck after cleanup, before any success exit/receipt decision. A later
+  // output event still retains the same fact and forces exitCode back to one.
+  if(policy===ownedFd4PolicyV1&&claim.outputUncertain)failure=ownedTransportUnknownV1();
   if(failure){
     if(output)output.writeFailure(failure);
     else{try{process.exitCode=1;process.stderr.write(failure.message+'\n');}catch{}}
@@ -2092,3 +2104,736 @@ export async function runManualOrphanLifecycleProbeV1(){
 }
 
 if(import.meta.main)void runManualOrphanProbeChildV1().catch(()=>{process.stderr.write('MANUAL_ORPHAN_CHILD_UNKNOWN\n');process.exitCode=1;});
+
+// Owned phases use private DATA consumers. Neither these comparisons nor a
+// decoded frame supplies Source, process, filesystem or connection authority.
+function requireManualOrphanOwnedHelperContextV1(context,frame,policy){
+  try{
+    // Old transport must refuse before even consulting the new account APIs.
+    if(policy!==ownedFd4PolicyV1)throw probeOwnerRefusalV1();
+    const c=probeOwnDataV1(context,['helper','issuer','root','node']);
+    const workspace='/Users/setrox/ai/setrox',targetRoot=workspace+'/releases/setfarm-161297ff';
+    if(!['provision','activate','old_entry_positive','new_entry_refusal'].includes(frame.purpose)
+      ||c.node!==ownedNodeV1||path.dirname(c.root)!==workspace+'/releases'
+      ||!/^setfarm-[a-f0-9]{8}$/.test(path.basename(c.root))||c.root===targetRoot
+      ||c.helper!==c.root+'/tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs'
+      ||c.issuer!==c.root+'/scripts/__tests__/manual-orphan-bootstrap-owned-route-v1.test.js')throw probeOwnerRefusalV1();
+    manualOrphanChildContextV1(c,ownedTransportPathV1);
+    const account=userInfo();
+    if(account.homedir!=='/Users/setrox'||account.uid!==501||account.gid!==20
+      ||process.getuid()!==501||process.geteuid()!==501||process.getgid()!==20||process.getegid()!==20
+      ||process.platform!=='darwin'||process.arch!=='arm64'||process.version!=='v26.4.0'
+      ||process.pid!==frame.child.pid||process.ppid!==frame.parent.pid
+      ||path.basename(c.root)!=='setfarm-'+frame.source.maintenance.sha.slice(0,8))throw probeOwnerRefusalV1();
+    return Object.freeze({maintenanceRoot:c.root,targetRoot,node:c.node,helper:c.helper,workspace});
+  }catch{throw probeOwnerRefusalV1();}
+}
+function checkManualOrphanPhaseGraphV1(frame,observations,derived){
+  try{
+    const require=value=>{if(!value)throw probeOwnerRefusalV1();};
+    const mechanical=frame.purpose==='old_entry_positive'||frame.purpose==='new_entry_refusal';
+    const o=probeOwnDataV1(observations,['constructor','runner','parent','child','server']);
+    for(const key of ['constructor','runner','parent','child','server']){
+      const observation=probeOwnDataV1(o[key],['pin','rawCommand']);
+      const pin=orderedProbeProcessV1(observation.pin);require(sameProbePinV1(pin,frame[key])&&pin.uid===501);
+      require(typeof observation.rawCommand==='string'&&ownedSourceHashV1(observation.rawCommand)===pin.commandSha256);
+      require(pin.executable===(key==='server'?derived.nativeTools.postgres.path:ownedNodeV1));
+      require(pin.executableSha256===(key==='server'?derived.nativeTools.postgres.sha256:ownedNodeHashV1));
+    }
+    require(frame.runner.ppid===frame.constructor.pid&&frame.server.ppid===frame.constructor.pid
+      &&frame.child.ppid===frame.parent.pid&&frame.child.pid!==frame.parent.pid
+      &&frame.parent.pid===(mechanical?frame.parent.pid:frame.runner.pid)
+      &&(!mechanical||frame.parent.ppid===frame.runner.pid));
+    if(!mechanical)require(sameProbePinV1(frame.parent,frame.runner));
+    require(new Set([frame.constructor.pid,frame.runner.pid,frame.server.pid,frame.child.pid,
+      ...(mechanical?[frame.parent.pid]:[])]).size===(mechanical?5:4));
+    const rootMatch=/^\/opt\/homebrew\/opt\/postgresql@17\/bin\/postgres -D (\/tmp\/setfarm-task6a-pg\.[A-Za-z0-9]+)\/data -h 127\.0\.0\.1 -p ([0-9]+) -k \1 -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=50$/.exec(o.server.rawCommand);
+    require(rootMatch!==null);const root=rootMatch[1],port=Number(rootMatch[2]),physicalRoot='/private'+root;
+    require(String(port)===rootMatch[2]&&port===frame.cluster.port&&port!==5432&&port>=1024&&port<=65535
+      &&root===derived.root&&port===derived.port&&physicalRoot===derived.physicalRoot
+      &&derived.dataDirectory===root+'/data'&&derived.installationsDirectory===physicalRoot+'/installations');
+    const runner=ownedNodeV1+' --import tsx scripts/run-isolated-postgres-tests.ts -- '+MANUAL_ORPHAN_VECTOR_V1.join(' ');
+    require(o.constructor.rawCommand===ownedNodeV1+' '+derived.maintenanceRoot+'/scripts/run-private-postgres-tests.mjs manual-orphan-bootstrap'
+      &&o.runner.rawCommand===runner&&o.child.rawCommand===ownedNodeV1+' '+derived.helper
+      &&o.parent.rawCommand===(mechanical?ownedNodeV1+' --import tsx --test --test-isolation=none tests/execution-attempts/'+MANUAL_ORPHAN_BASENAME_V1:runner));
+    return Object.freeze({...derived,root,physicalRoot,port});
+  }catch{throw probeOwnerRefusalV1();}
+}
+function deriveManualOrphanPhaseEndpointV1(purpose,derived,input,preparedView){
+  try{
+    if(!ownedIntegerV1(derived.port,1024,65535)||derived.port===5432)throw probeOwnerRefusalV1();
+    if(purpose==='provision'||purpose==='activate'){
+      const data=probeOwnDataV1(input,purpose==='provision'?['adminPassword']:['adminPassword','installation']);
+      if(!probeHexV1(data.adminPassword))throw probeOwnerRefusalV1();
+      if(purpose==='activate')ownedInstallationV1(data.installation,false);
+      return 'postgresql://postgres:'+data.adminPassword+'@127.0.0.1:'+derived.port+'/postgres';
+    }
+    if(purpose!=='old_entry_positive'&&purpose!=='new_entry_refusal')throw probeOwnerRefusalV1();
+    const data=probeOwnDataV1(input,['installation']),installation=ownedInstallationV1(data.installation,true);
+    const value=preparedView.runtimeUrl,endpoint=new URL(value);
+    if(typeof value!=='string'||!['postgres:','postgresql:'].includes(endpoint.protocol)
+      ||endpoint.hostname!=='127.0.0.1'||endpoint.port!==String(derived.port)||endpoint.username!==installation.runtimeRole
+      ||endpoint.pathname!=='/'+installation.databaseName||!probeHexV1(endpoint.password)||endpoint.search||endpoint.hash
+      ||endpoint.href!==value||preparedView.origin.installationId!==installation.installationId
+      ||preparedView.origin.databaseOid!==installation.databaseOid||preparedView.runtimeOid!==installation.runtimeOid
+      ||preparedView.ownerOid!==installation.ownerOid||preparedView.committed!==true)throw probeOwnerRefusalV1();
+    return value;
+  }catch{throw probeOwnerRefusalV1();}
+}
+function validateManualOrphanPhaseIdentityV1(rows,expected,retainedPair){
+  try{
+    const require=value=>{if(!value)throw probeOwnerRefusalV1();};
+    const oid=value=>{require(typeof value==='string'&&/^[1-9][0-9]{0,9}$/.test(value));const n=Number(value);
+      require(ownedIntegerV1(n,1,4294967295)&&String(n)===value);return n;};
+    require(Array.isArray(rows)&&rows.length===1);const r=rows[0];
+    const row=probeOwnDataV1(r,['systemIdentifier','postmasterStartedAtUTC','serverVersionNum','serverAddress','serverPort',
+      'database','databaseOid','ownerOid','currentUser','sessionUser','runtimeOid','pid','backendStartedAtUTC','datid','usesysid']);
+    const c=expected.cluster;
+    const provisional=expected.databaseName==='postgres'&&expected.currentRole==='postgres'
+      &&expected.sessionRole==='postgres'&&expected.runtimeOid===null
+      &&expected.databaseOid===null&&expected.ownerOid===null&&expected.userOid===null;
+    require(provisional||[expected.databaseOid,expected.ownerOid,expected.userOid].every(n=>ownedIntegerV1(n,1,4294967295)));
+    const databaseOid=oid(row.databaseOid),ownerOid=oid(row.ownerOid),datid=oid(row.datid),userOid=oid(row.usesysid);
+    require(typeof row.systemIdentifier==='string'&&/^[1-9][0-9]{0,19}$/.test(row.systemIdentifier)
+      &&BigInt(row.systemIdentifier)<=18446744073709551615n&&row.systemIdentifier===c.systemIdentifier
+      &&ownedMicrosecondTimestampV1(row.postmasterStartedAtUTC)&&row.postmasterStartedAtUTC===c.postmasterStartedAtUTC
+      &&typeof row.serverVersionNum==='string'&&/^17[0-9]{4}$/.test(row.serverVersionNum)
+      &&Number(row.serverVersionNum)===c.serverVersionNum&&row.serverAddress==='127.0.0.1'&&row.serverPort===c.port
+      &&row.database===expected.databaseName&&(provisional?datid===databaseOid&&userOid===ownerOid:
+        databaseOid===expected.databaseOid&&ownerOid===expected.ownerOid)
+      &&row.currentUser===expected.currentRole&&row.sessionUser===expected.sessionRole
+      &&(expected.runtimeOid===null?row.runtimeOid===null:oid(row.runtimeOid)===expected.runtimeOid)
+      &&probeIntegerV1(row.pid,1)&&ownedMicrosecondTimestampV1(row.backendStartedAtUTC)
+      &&(provisional||datid===expected.databaseOid&&userOid===expected.userOid));
+    const pair={pid:row.pid,backendStartedAtUTC:row.backendStartedAtUTC,datid:oid(row.datid),usesysid:oid(row.usesysid)};
+    if(retainedPair!==null){const old=probeOwnDataV1(retainedPair,['pid','backendStartedAtUTC','datid','usesysid']);
+      require(Object.keys(pair).every(key=>old[key]===pair[key]));}
+    return Object.freeze(pair);
+  }catch{throw probeOwnerRefusalV1();}
+}
+function validateManualOrphanPhaseBaselineV1(rows,expected,installation){
+  try{
+    const require=value=>{if(!value)throw probeOwnerRefusalV1();};
+    const input=probeOwnDataV1(rows,['databases','roles','memberships']);
+    require(Array.isArray(input.databases)&&Array.isArray(input.roles)&&Array.isArray(input.memberships)
+      &&input.databases.length<=(installation?4:3)&&input.roles.length<=(installation?130:128)&&input.memberships.length<=256);
+    let databases=input.databases,roles=input.roles;
+    if(installation!==null){
+      const i=ownedInstallationV1(installation,Object.hasOwn(installation,'activationCatalogHash'));
+      const db=databases.filter(r=>r.name===i.databaseName),owner=roles.filter(r=>r.name===i.ownerRole),runtime=roles.filter(r=>r.name===i.runtimeRole);
+      require(db.length===1&&owner.length===1&&runtime.length===1&&db[0].oid===i.databaseOid&&db[0].ownerOid===i.ownerOid
+        &&db[0].allowConnections===true&&db[0].connectionLimit===-1&&Object.keys(db[0]).length===5);
+      for(const [row,oid,login] of [[owner[0],i.ownerOid,false],[runtime[0],i.runtimeOid,true]]){
+        probeOwnDataV1(row,['name','oid','superuser','inherit','createRole','createDb','login','replication','bypassRls','connectionLimit','validUntilUTC']);
+        require(row.oid===oid&&row.login===login&&row.superuser===false&&row.inherit===false&&row.createRole===false&&row.createDb===false
+          &&row.replication===false&&row.bypassRls===false&&row.connectionLimit===-1&&row.validUntilUTC===null);
+      }
+      require(databases.filter(r=>r.oid===i.databaseOid).length===1
+        &&roles.filter(r=>r.oid===i.ownerOid).length===1&&roles.filter(r=>r.oid===i.runtimeOid).length===1);
+      require(input.memberships.every(r=>!['roleOid','memberOid','grantorOid'].some(key=>r[key]===i.ownerOid||r[key]===i.runtimeOid)));
+      databases=databases.filter(r=>r!==db[0]);roles=roles.filter(r=>r!==owner[0]&&r!==runtime[0]);
+    }
+    const result=canonicalizeManualOrphanClusterBaselineV1({databases,roles,memberships:input.memberships});
+    for(const key of ['databaseBaselineSha256','roleBaselineSha256','membershipBaselineSha256'])require(result[key]===expected[key]);
+    return result;
+  }catch{throw probeOwnerRefusalV1();}
+}
+function projectManualOrphanPhaseInstallationV1(recordView,expected,stage){
+  try{
+    const require=value=>{if(!value)throw probeOwnerRefusalV1();};
+    require(['committed','before-activation','activated'].includes(stage));
+    const v=probeOwnDataV1(recordView,['prepared','directory','activation','observedSchemaCatalogHash','observedActivationCatalogHash',
+      'activationAbsenceObserved','staleAbsenceRefused','selectedDirectory','activationReturn']);
+    const p=probeOwnDataV1(v.prepared,['origin','catalogHash','ownerOid','runtimeOid','runtimeUrl','committed','baseRecordBytes','baseRecordPins']);
+    const o=probeOwnDataV1(p.origin,['schema','installationId','operationId','systemIdentifier','databaseOid','databaseName','ownerRole','runtimeRole','sourceSha','migrations']);
+    require(o.schema==='setfarm.fresh-installation-origin.v1'&&o.systemIdentifier===expected.cluster.systemIdentifier
+      &&o.sourceSha===expected.sourceSha&&p.committed===true&&p.catalogHash===v.observedSchemaCatalogHash
+      &&Array.isArray(o.migrations)&&o.migrations.length===33&&Array.isArray(expected.migrations)&&expected.migrations.length===33);
+    for(let index=0;index<33;index++){
+      const m=probeOwnDataV1(o.migrations[index],['version','name','checksum','migrationClass']),e=expected.migrations[index];
+      require(m.version===index+1&&m.migrationClass===(index===31?'guarded':'automatic')
+        &&typeof m.name==='string'&&m.name.length>0&&probeHexV1(m.checksum)&&Object.keys(m).every(k=>m[k]===e[k]));
+    }
+    const directory=probeOwnDataV1(v.directory,['realpath','dev','ino','uid','gid','mode']);
+    require(directory.realpath===expected.installationsDirectory+'/'+o.installationId&&v.selectedDirectory===directory.realpath);
+    const result={installationId:o.installationId,operationId:o.operationId,directory:{dev:directory.dev,ino:directory.ino,
+      uid:directory.uid,gid:directory.gid,mode:directory.mode},databaseName:o.databaseName,databaseOid:o.databaseOid,
+      ownerRole:o.ownerRole,ownerOid:p.ownerOid,runtimeRole:o.runtimeRole,runtimeOid:p.runtimeOid,sourceSha:o.sourceSha,schemaCatalogHash:p.catalogHash};
+    const pins=probeOwnDataV1(p.baseRecordPins,ownedCreatedRecordKeysV1);
+    result.records=Object.fromEntries(ownedCreatedRecordKeysV1.map(key=>[key,ownedRecordV1(pins[key],key==='runtime-credentials.json'?4096:32768)]));
+    const old=expected.installation;
+    if(old!==null){
+      const prior=ownedInstallationV1(old,false);
+      for(const key of ['installationId','operationId','databaseName','databaseOid','ownerRole','ownerOid','runtimeRole','runtimeOid','sourceSha','schemaCatalogHash'])require(result[key]===prior[key]);
+      require(Object.keys(result.directory).every(key=>result.directory[key]===prior.directory[key]));
+      for(const key of ownedCreatedRecordKeysV1)require(result.records[key].bytes===prior.records[key].bytes&&result.records[key].sha256===prior.records[key].sha256);
+    }
+    if(stage==='activated'){
+      const a=v.activation;require(a!==null&&a.acknowledged===true&&v.staleAbsenceRefused===true
+        &&a.prepared.catalogHash===v.observedActivationCatalogHash&&a.prepared.catalogHash!==p.catalogHash
+        &&JSON.stringify(a.prepared.directoryIdentity)===JSON.stringify(v.directory));
+      // Stock records use canonical JSON key order; compare the actual facts,
+      // not insertion order inherited from an earlier factory object.
+      const activatedOrigin=probeOwnDataV1(a.prepared.origin,Object.keys(o));
+      require(Object.keys(o).filter(key=>key!=='migrations').every(key=>activatedOrigin[key]===o[key])
+        &&Array.isArray(activatedOrigin.migrations)&&activatedOrigin.migrations.length===33);
+      for(let index=0;index<33;index++){
+        const row=probeOwnDataV1(activatedOrigin.migrations[index],['version','name','checksum','migrationClass']);
+        require(Object.keys(row).every(key=>row[key]===o.migrations[index][key]));
+      }
+      const activationPins=probeOwnDataV1(a.baseRecordPins,ownedCreatedRecordKeysV1);
+      for(const key of ownedCreatedRecordKeysV1)require(activationPins[key].bytes===pins[key].bytes&&activationPins[key].sha256===pins[key].sha256);
+      for(const key of ['schema-prepared.json','schema-committed.json'])require(a.prepared.schemaRecordPins[key].sha256===pins[key].sha256
+        &&a.prepared.schemaRecordPins[key].bytes===pins[key].bytes);
+      const returned=probeOwnDataV1(v.activationReturn,['schema','state','installationId','sourceSha','catalogHash']);
+      require(returned.schema==='setfarm.fresh-installation-activation-verification.v1'&&returned.state==='activated'
+        &&returned.installationId===o.installationId&&returned.sourceSha===o.sourceSha&&returned.catalogHash===a.prepared.catalogHash);
+      result.activationCatalogHash=a.prepared.catalogHash;
+      result.records['activation-prepared.json']=ownedRecordV1(a.preparedPin,32768);
+      result.records['activated.json']=ownedRecordV1(a.activatedPin,32768);
+    }else require(v.activation===null&&v.activationAbsenceObserved===true&&v.observedActivationCatalogHash===null&&v.activationReturn===null);
+    return freezeOwnedDataV1(ownedInstallationV1(result,stage==='activated'));
+  }catch{throw probeOwnerRefusalV1();}
+}
+function createManualOrphanPhaseSqlLedgerV1(){
+  let pool=null,reserved=null,poolCaptured=false,reservationCaptured=false,pair=null,pending=null;
+  let stopped=false,releaseAttempted=false,endAttempted=false,unknown=false,closed=false,closing=null;
+  const clocks=[],mark=()=>{unknown=true;closed=false;};
+  const sample=()=>{for(const item of clocks)item.clock.check(!item.done);};
+  const current=()=>{sample();return Object.freeze({poolCaptured,reservationCaptured,pending:pending?.kind??null,
+    stopped,releaseAttempted,endAttempted,unknown,closed,pair});};
+  const refusal=()=>ownedTransportUnknownV1();
+  const ready=()=>{sample();if(unknown||stopped||pending!==null){mark();throw refusal();}};
+  async function collect(kind,start,retain){
+    const item={clock:manualOrphanMonotonicClockV1(5000,mark,mark),done:false};clocks.push(item);
+    // Cleanup still attempts end after preexisting faults, but a normal query
+    // cannot start under an unavailable clock. Every started operation is joined.
+    item.clock.check();if(unknown&&kind!=='end')throw refusal();
+    const operation={kind,join:null};let timer=null,result,failed=false;
+    pending=operation;
+    try{
+      let raw;
+      try{raw=start();}catch{mark();failed=true;}
+      if(!failed){
+        operation.join=Promise.resolve(raw).then(value=>{if(retain)retain(value);return value;},()=>{mark();failed=true;});
+        try{timer=setTimeout(mark,5000);}catch{mark();}
+        result=await operation.join;
+      }
+    }catch{mark();}
+    finally{
+      item.clock.check();item.done=true;
+      if(timer!==null)try{clearTimeout(timer);}catch{mark();}
+      if(pending===operation)pending=null;sample();
+    }
+    if(unknown)throw refusal();return result;
+  }
+  const ownSql=`pg_backend_pid() AS pid,
+    to_char(a.backend_start AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "backendStartedAtUTC",
+    a.datid::text AS datid,a.usesysid::text AS usesysid`;
+  const identitySql=`SELECT ${ownSql},control.system_identifier::text AS "systemIdentifier",
+    to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "postmasterStartedAtUTC",
+    current_setting('server_version_num') AS "serverVersionNum",host(inet_server_addr()) AS "serverAddress",
+    inet_server_port() AS "serverPort",current_database() AS database,d.oid::text AS "databaseOid",d.datdba::text AS "ownerOid",
+    current_user::text AS "currentUser",session_user::text AS "sessionUser",
+    CASE WHEN current_user='postgres' THEN NULL ELSE r.oid::text END AS "runtimeOid"
+    FROM pg_catalog.pg_stat_activity a JOIN pg_catalog.pg_database d ON d.oid=a.datid
+    JOIN pg_catalog.pg_roles r ON r.oid=a.usesysid CROSS JOIN pg_catalog.pg_control_system() control WHERE a.pid=pg_backend_pid()`;
+  const catalogSql={
+    databases:`SELECT datname AS name,oid::float8 AS oid,datdba::float8 AS "ownerOid",datallowconn AS "allowConnections",datconnlimit AS "connectionLimit" FROM pg_catalog.pg_database ORDER BY datname COLLATE "C",oid LIMIT 5`,
+    roles:`SELECT rolname AS name,oid::float8 AS oid,rolsuper AS superuser,rolinherit AS inherit,rolcreaterole AS "createRole",
+      rolcreatedb AS "createDb",rolcanlogin AS login,rolreplication AS replication,rolbypassrls AS "bypassRls",rolconnlimit AS "connectionLimit",
+      CASE WHEN rolvaliduntil IS NULL THEN NULL WHEN rolvaliduntil='infinity'::timestamptz THEN 'infinity'
+      WHEN rolvaliduntil='-infinity'::timestamptz THEN '-infinity' ELSE to_char(rolvaliduntil AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END AS "validUntilUTC"
+      FROM pg_catalog.pg_roles ORDER BY rolname COLLATE "C",oid LIMIT 131`,
+    memberships:`SELECT roleid::float8 AS "roleOid",member::float8 AS "memberOid",grantor::float8 AS "grantorOid",
+      admin_option AS "adminOption",inherit_option AS "inheritOption",set_option AS "setOption" FROM pg_catalog.pg_auth_members ORDER BY roleid,member,grantor LIMIT 257`,
+  };
+  const rowKeys={databases:['name','oid','ownerOid','allowConnections','connectionLimit'],
+    roles:['name','oid','superuser','inherit','createRole','createDb','login','replication','bypassRls','connectionLimit','validUntilUTC'],
+    memberships:['roleOid','memberOid','grantorOid','adminOption','inheritOption','setOption']};
+  return Object.freeze({
+    capturePool(value){if(poolCaptured||stopped){mark();throw refusal();}pool=value;poolCaptured=true;},
+    async reserve(){
+      ready();if(!poolCaptured||reservationCaptured){mark();throw refusal();}
+      try{
+        await collect('reserve',()=>pool.reserve(),value=>{reserved=value;reservationCaptured=true;});
+        if((typeof reserved!=='function'&&typeof reserved!=='object')||reserved===null
+          ||typeof reserved.unsafe!=='function'||typeof reserved.release!=='function')throw refusal();
+      }catch{mark();throw refusal();}
+    },
+    async query(kind,expected){
+      ready();if(!reservationCaptured||!['identity','databases','roles','memberships'].includes(kind)
+        ||(kind!=='identity'&&pair===null)){mark();throw refusal();}
+      try{
+        const sql=kind==='identity'?identitySql:`SELECT ${ownSql},COALESCE((SELECT json_agg(c) FROM (${catalogSql[kind]}) c),'[]'::json) AS rows FROM pg_catalog.pg_stat_activity a WHERE a.pid=pg_backend_pid()`;
+        const result=await collect('query',()=>reserved.unsafe(sql));
+        if(!Array.isArray(result)||result.length!==1)throw refusal();
+        const row=result[0];
+        if(kind==='identity'){
+          const keys=['systemIdentifier','postmasterStartedAtUTC','serverVersionNum','serverAddress','serverPort','database','databaseOid',
+            'ownerOid','currentUser','sessionUser','runtimeOid','pid','backendStartedAtUTC','datid','usesysid'];
+          const normalized=Object.fromEntries(keys.map(key=>[key,row[key]]));
+          const actual=validateManualOrphanPhaseIdentityV1([normalized],expected,pair);
+          if(pair===null)pair=actual;return pair;
+        }
+        if(row.pid!==pair.pid||row.backendStartedAtUTC!==pair.backendStartedAtUTC
+          ||row.datid!==String(pair.datid)||row.usesysid!==String(pair.usesysid)
+          ||!Array.isArray(row.rows)||row.rows.length>({databases:4,roles:130,memberships:256}[kind]))throw refusal();
+        const values=row.rows.map(value=>probeOwnDataV1(value,rowKeys[kind]));
+        sample();if(unknown)throw refusal();return freezeOwnedDataV1(values);
+      }catch{mark();throw refusal();}
+    },
+    close(){
+      stopped=true;
+      if(closing!==null)return closing.then(()=>{sample();if(unknown)throw refusal();});
+      closing=(async()=>{
+        // A pending reserve/query keeps custody until its real settlement,
+        // including any late returned reservation; a deadline is not a join.
+        const active=pending;if(active!==null&&active.join!==null)try{await active.join;}catch{mark();}
+        // Let the operation's own completion/validation continuation finish.
+        if(active!==null)await Promise.resolve();
+        sample();
+        if(poolCaptured&&!endAttempted){
+          await collect('end',()=>{
+            if(reservationCaptured&&!releaseAttempted){releaseAttempted=true;try{reserved.release();}catch{mark();}}
+            endAttempted=true;return pool.end({timeout:5});
+          }).catch(()=>{mark();});
+        }
+        sample();closed=!unknown&&poolCaptured&&endAttempted&&pending===null;
+        if(unknown||!closed)throw refusal();
+      })();return closing;
+    },
+    current,
+    onclose(){if(!endAttempted)mark();},
+  });
+}
+function captureManualOrphanPhaseDatabaseV1(actualDatabaseNamespace){
+  const namespace=actualDatabaseNamespace;
+  let closeAttempted=false,pending=false,unknown=false,closed=false,closing=null,clock=null,complete=false;
+  const mark=()=>{unknown=true;closed=false;};
+  const sample=()=>{if(clock!==null)clock.check(!complete);};
+  const current=()=>{sample();return Object.freeze({closeAttempted,pending,unknown,closed});};
+  return Object.freeze({current,close(){
+    if(closing!==null)return closing.then(()=>{sample();if(unknown)throw ownedTransportUnknownV1();});
+    // Allocate the outer promise before invoking fallible namespace properties.
+    let finish,fail;closing=new Promise((resolve,reject)=>{finish=resolve;fail=reject;});
+    clock=manualOrphanMonotonicClockV1(5000,mark,mark);clock.check();
+    let timer=null,retained=null,getter,fulfilled=false;
+    const fence=()=>{try{getter();mark();}catch(error){if(error?.message!=='FRESH_INSTALLATION_DATABASE_NOT_PREPARED'
+      &&error?.message!=='FRESH_INSTALLATION_SELECTION_REFUSED')mark();}};
+    closeAttempted=true;
+    try{
+      // Retain the actual returned promise BEFORE getter capture or fencing.
+      const raw=namespace.pgClose();retained=Promise.resolve(raw);pending=true;
+      getter=namespace.getSql;
+      if(typeof getter!=='function')mark();else fence();
+    }catch{mark();}
+    if(retained!==null)try{timer=setTimeout(mark,5000);}catch{mark();}
+    (async()=>{
+      if(retained!==null){try{await retained;fulfilled=true;}catch{mark();}}
+      sample();complete=true;pending=false;
+      if(timer!==null)try{clearTimeout(timer);}catch{mark();}
+      // No other public method is legal beyond this captured getter fence.
+      if(fulfilled&&typeof getter==='function')fence();sample();
+      closed=!unknown&&retained!==null;
+      if(unknown||!closed)fail(ownedTransportUnknownV1());else finish();
+    })().catch(()=>{mark();fail(ownedTransportUnknownV1());});
+    return closing;
+  }});
+}
+
+async function provisionManualOrphanOwnedPhaseV1(phase){
+  const {frame,derived}=phase;
+  const endpoint=deriveManualOrphanPhaseEndpointV1(frame.purpose,derived,frame.input,null);
+  await phase.qualify(endpoint,null,null);
+  const factory=await phase.load('factory');
+  phase.check();phase.capacity();
+  let owner;
+  try{
+    owner=await factory.createFreshInstallationV1({adminUrl:endpoint,baseDirectory:derived.installationsDirectory,
+      sourceSha:phase.source.target.sha});
+    phase.retainFactory(owner); // Before ANY returned property is inspected.
+  }catch{phase.unknown();throw ownedTransportUnknownV1();}
+  phase.check();
+  if(owner===null||typeof owner!=='object'||typeof owner.initialize!=='function'
+    ||typeof owner.verifyRuntime!=='function'||typeof owner.close!=='function')throw ownedTransportUnknownV1();
+  const initialized=await phase.effect(()=>owner.initialize());
+  phase.require(JSON.stringify(initialized)===JSON.stringify(owner.origin));
+  const verification=await phase.effect(()=>owner.verifyRuntime());
+  phase.require(verification===undefined);
+  const prepared=phase.readPrepared(owner.directory,null);
+  phase.require(owner.installationId===prepared.origin.installationId&&owner.directory===phase.directory
+    &&owner.databaseName===prepared.origin.databaseName&&owner.ownerRole===prepared.origin.ownerRole
+    &&owner.runtimeRole===prepared.origin.runtimeRole);
+  const actualOrigin=probeOwnDataV1(owner.origin,['schema','installationId','operationId','systemIdentifier','databaseOid',
+    'databaseName','ownerRole','runtimeRole','sourceSha','migrations']);
+  phase.require(Object.keys(actualOrigin).filter(key=>key!=='migrations').every(key=>actualOrigin[key]===prepared.origin[key])
+    &&Array.isArray(actualOrigin.migrations)&&actualOrigin.migrations.length===33);
+  for(let index=0;index<33;index++)for(const key of ['version','name','checksum','migrationClass'])
+    phase.require(actualOrigin.migrations[index][key]===prepared.origin.migrations[index][key]);
+  const absent=phase.records.captureFreshInstallationActivationAbsenceV1(phase.directory);absent();
+  const installation=phase.project('committed',null,null,true,false,null);
+  // The same admin reservation/pair spans factory work; no qualification reconnect.
+  await phase.catalog(installation);
+  await phase.closeQualification();
+  await phase.closeFactory();absent();phase.check();
+  return {state:'schema-verified',installation,factoryOwnerClose:'fulfilled'};
+}
+async function activateManualOrphanOwnedPhaseV1(phase){
+  const {frame,derived}=phase,installation=frame.input.installation;
+  const prepared=phase.readPrepared(derived.installationsDirectory+'/'+installation.installationId,installation);
+  const absent=phase.records.captureFreshInstallationActivationAbsenceV1(phase.directory);
+  absent();phase.project('before-activation',installation,null,true,false,null);
+  const endpoint=deriveManualOrphanPhaseEndpointV1(frame.purpose,derived,frame.input,prepared);
+  await phase.qualify(endpoint,installation,null);
+  await phase.closeQualification();
+  const activation=await phase.load('activation');
+  const selected=await phase.select(false);
+  phase.require(selected.selection.freshInstallationSelectionV1.activation===null);
+  selected.selection.assertFreshInstallationSelectionUnchangedV1();phase.unprepared(selected.database);
+  absent();phase.check();phase.capacity();
+  const returned=await phase.effect(()=>activation.activateFreshInstallationManifestAV1({directory:phase.directory,adminUrl:endpoint}));
+  const verified=await phase.effect(()=>activation.verifyFreshInstallationActivationV1(phase.directory));
+  phase.require(JSON.stringify(returned)===JSON.stringify(verified));
+  phase.expectedRefusal(absent,'FRESH_INSTALLATION_RECORDS_REFUSED');
+  phase.expectedRefusal(()=>selected.selection.assertFreshInstallationSelectionUnchangedV1(),'FRESH_INSTALLATION_SELECTION_REFUSED');
+  const observed=phase.readActivation();
+  const activated=phase.project('activated',installation,observed,false,true,verified);
+  phase.check();await phase.closeDatabase();phase.check();
+  return {state:'activation-verified',installation:activated,selectionBefore:'schema-committed-unactivated',
+    selectionAfter:'stale-refused',databaseModuleClose:'fulfilled'};
+}
+async function oldEntryManualOrphanOwnedPhaseV1(phase){
+  await phase.qualifyMechanical();
+  const {database,entry}=await phase.select(false);
+  phase.unprepared(database);phase.check();
+  await phase.effect(()=>entry.prepareFreshInstallationOperationalEntryV1());
+  const first=database.getSql();
+  phase.require(first!==null&&(typeof first==='function'||typeof first==='object'));
+  entry.assertFreshInstallationOperationalEntryV1();database.assertSelectedFreshInstallationOperationalDatabaseV1();
+  phase.require(database.getSql()===first);phase.check();
+  await phase.effect(()=>entry.prepareFreshInstallationOperationalEntryV1());
+  entry.assertFreshInstallationOperationalEntryV1();database.assertSelectedFreshInstallationOperationalDatabaseV1();
+  phase.require(database.getSql()===first);phase.check();
+  await phase.closeDatabase();phase.check();
+  return {state:'old-entry-verified',maintenance:phase.source.maintenance,target:phase.source.target,
+    installationId:phase.frame.input.installation.installationId,sameClient:true,entryAssert:true,databaseAssert:true,
+    close:'fulfilled',closedGetter:'refused'};
+}
+async function newEntryManualOrphanOwnedPhaseV1(phase){
+  await phase.qualifyMechanical();
+  phase.require(phase.source.maintenance.sha!==phase.prepared.origin.sourceSha
+    &&phase.prepared.origin.sourceSha===phase.source.target.sha);
+  const {database,entry}=await phase.select(true);
+  phase.unprepared(database);phase.check();
+  // Only this actual public invocation is the expected negative. Loader,
+  // selection, record and qualification failures cannot satisfy the case.
+  let refused=false;
+  try{await entry.prepareFreshInstallationOperationalEntryV1();}
+  catch(error){if(error?.message==='FRESH_INSTALLATION_OPERATIONAL_ENTRY_REFUSED')refused=true;
+    else{phase.unknown();throw ownedTransportUnknownV1();}}
+  phase.check();
+  if(!refused)throw Error('MANUAL_ORPHAN_CASE_REFUSED');
+  await phase.closeDatabase();phase.check();
+  return {state:'source-mismatch-refused',maintenance:phase.source.maintenance,target:phase.source.target,
+    installationId:phase.frame.input.installation.installationId,mismatch:'maintenance-sha-vs-target-origin',
+    close:'fulfilled',closedGetter:'refused'};
+}
+
+async function runManualOrphanOwnedPhaseV1(context,frame,policy){
+  // This is the sole construction site for the private phase context. Its
+  // first gate intentionally precedes Source/process/native/package access.
+  const admitted=requireManualOrphanOwnedHelperContextV1(context,frame,policy);
+  const claim=ownedInherited4ClaimV1;
+  if(claim===null||claim.uncertain||claim.outputUncertain||!claim.actualCloseSeen)throw ownedTransportUnknownV1();
+  let holder=null,pins=null,resources=null,derived=null,observations=null;
+  let unknown=false,finished=false,selectedDirectory=null,selectionMade=false;
+  let sql=null,qualified=false,expectedIdentity=null,databaseClose=null,factory=null,factoryClose=null;
+  let factoryCloseAttempted=false,prepared=null,directory=null,records=null,migrations=null;
+  let activationState=null,result=null,failure=null,purposeTimer=null;
+  const operationClocks=[],aliases=[],moduleCache=new Map();
+  const initialEnvironment=Object.fromEntries(Object.keys(process.env).map(key=>[key,process.env[key]]));
+  const burn=()=>{unknown=true;};
+  const require=value=>{if(!value)throw probeOwnerRefusalV1();};
+  const clock=manualOrphanMonotonicClockV1(ownedChildPoliciesV1[frame.purpose].deadline,burn,burn);
+  const sample=()=>{
+    clock.check(!finished);for(const operation of operationClocks)operation.clock.check(!operation.complete);
+    if(claim.uncertain||claim.outputUncertain||ownedSourceCleanupUncertainV1)burn();
+    if(sql?.current().unknown||databaseClose?.current().unknown)burn();
+    if(unknown)throw ownedTransportUnknownV1();
+  };
+  const contextCurrent=()=>{
+    const account=userInfo();
+    require(account.homedir==='/Users/setrox'&&account.uid===501&&account.gid===20
+      &&process.getuid()===501&&process.geteuid()===501&&process.getgid()===20&&process.getegid()===20
+      &&process.platform==='darwin'&&process.arch==='arm64'&&process.version==='v26.4.0'
+      &&process.execPath===admitted.node&&process.argv0===admitted.node&&process.execArgv.length===0
+      &&process.argv.length===2&&process.argv[0]===admitted.node&&process.argv[1]===admitted.helper
+      &&process.cwd()===admitted.maintenanceRoot&&process.pid===frame.child.pid&&process.ppid===frame.parent.pid);
+    const keys=Object.keys(process.env),expected=Object.keys(initialEnvironment);
+    require(keys.length===expected.length+(selectionMade?1:0)
+      &&expected.every(key=>process.env[key]===initialEnvironment[key])
+      &&keys.every(key=>Object.hasOwn(initialEnvironment,key)||(selectionMade&&key==='SETFARM_INSTALLATION_DIR'))
+      &&(!selectionMade||process.env.SETFARM_INSTALLATION_DIR===selectedDirectory));
+  };
+  const check=()=>{
+    try{
+      sample();contextCurrent();holder?.check();pins?.check();
+      for(const alias of aliases){const stat=fs.lstatSync(alias.path,{bigint:true});
+        require(stat.isSymbolicLink()&&ownedSourceSameV1(alias.stat,stat,true)&&fs.readlinkSync(alias.path)===alias.text
+          &&fs.realpathSync(alias.path)===alias.physical);}
+      if(observations!==null){
+        const now={};for(const key of ['constructor','runner','parent','child','server']){
+          now[key]=observeManualOrphanProcessV1(observations[key].pin.pid);
+          require(sameProbeObservationV1(now[key],observations[key]));
+        }
+        checkManualOrphanPhaseGraphV1(frame,now,derived);
+      }
+      prepared?.assertUnchanged();activationState?.assertUnchanged();sample();
+    }catch(error){if(holder!==null)burn();throw unknown?ownedTransportUnknownV1():error;}
+  };
+  // All started calls are awaited to settlement. A purpose/deadline fault may
+  // prevent the next effect, but cannot discard this actual pending promise.
+  const effect=async start=>{
+    check();require(qualified);let value;
+    try{value=await start();}catch{burn();throw ownedTransportUnknownV1();}
+    check();return value;
+  };
+  const joinClose=async start=>{
+    const item={clock:manualOrphanMonotonicClockV1(5000,burn,burn),complete:false};operationClocks.push(item);
+    let timer=null;
+    try{
+      item.clock.check();const pending=Promise.resolve(start());
+      try{timer=setTimeout(burn,5000);}catch{burn();}
+      await pending;
+    }catch{burn();}
+    finally{item.clock.check();item.complete=true;if(timer!==null)try{clearTimeout(timer);}catch{burn();}}
+    sample();
+  };
+  const closeFactory=async()=>{
+    if(factory===null)return;
+    if(factoryClose===null){
+      // Allocate before reading close, retain the one actual owner even if its
+      // property is malformed. No retry after a thrown close or partial factory.
+      factoryClose=(async()=>{if(factoryCloseAttempted){burn();throw ownedTransportUnknownV1();}
+        factoryCloseAttempted=true;await joinClose(()=>factory.close());})();
+    }
+    await factoryClose;sample();
+  };
+  const closeQualification=async()=>{if(sql!==null){await sql.close();require(sql.current().closed);sample();}};
+  const closeDatabase=async()=>{if(databaseClose!==null){await databaseClose.close();require(databaseClose.current().closed);sample();}};
+  const detach=value=>JSON.parse(JSON.stringify(value));
+  const directoryData=stat=>({dev:String(stat.dev),ino:String(stat.ino),uid:Number(stat.uid),gid:Number(stat.gid),mode:Number(stat.mode&0o7777n)});
+  const privateDirectory=(locator,wanted)=>{
+    const stat=pins.directory(locator),data=directoryData(stat);
+    require(stat.uid===501n&&stat.gid===20n&&(stat.mode&0o7777n)===0o700n);
+    if(wanted)require(Object.keys(data).every(key=>wanted[key]===data[key]));return data;
+  };
+  const capacity=()=>{const space=fs.statfsSync(derived.physicalRoot,{bigint:true});
+    require(space.bavail*space.bsize>=8n*1024n**3n+64n*1024n**2n);};
+  const load=async key=>{
+    check();
+    const paths={factory:admitted.targetRoot+'/dist/installation/fresh-installation-v1.js',
+      records:admitted.targetRoot+'/dist/installation/fresh-installation-records-v1.js',
+      migrations:admitted.targetRoot+'/dist/db/contract-spine-migrations.js',
+      activation:admitted.targetRoot+'/dist/installation/fresh-installation-activation-v1.js',
+      postgres:admitted.targetRoot+'/node_modules/postgres/src/index.js',
+      targetDatabase:admitted.targetRoot+'/dist/db-pg.js',targetEntry:admitted.targetRoot+'/dist/installation/fresh-installation-entry-v1.js',
+      targetSelection:admitted.targetRoot+'/dist/installation/fresh-installation-selection-v1.js',
+      maintenanceDatabase:admitted.maintenanceRoot+'/dist/db-pg.js',maintenanceEntry:admitted.maintenanceRoot+'/dist/installation/fresh-installation-entry-v1.js',
+      maintenanceSelection:admitted.maintenanceRoot+'/dist/installation/fresh-installation-selection-v1.js'};
+    require(Object.hasOwn(paths,key));
+    if(moduleCache.has(key))return moduleCache.get(key);
+    const actual=await import(pathToFileURL(paths[key]).href);
+    // Database namespace custody precedes any checkpoint or property access.
+    if(key==='targetDatabase'||key==='maintenanceDatabase'){
+      require(databaseClose===null);databaseClose=captureManualOrphanPhaseDatabaseV1(actual);
+    }
+    moduleCache.set(key,actual);check();return actual;
+  };
+  const recordPins=(names,expected)=>{
+    for(const name of names){
+      const file=pins.file(directory+'/'+name,name==='runtime-credentials.json'?4096:32768);
+      require(file.stat.uid===501n&&file.stat.gid===20n&&(file.stat.mode&0o7777n)===0o600n
+        &&file.bytes.length===expected[name].bytes&&file.sha256===expected[name].sha256);
+    }
+  };
+  const readPrepared=(locator,installation)=>{
+    check();require(typeof locator==='string'&&path.dirname(locator)===derived.installationsDirectory
+      &&ownedUuidV1(path.basename(locator))&&(directory===null||directory===locator));
+    directory=locator;privateDirectory(directory,installation?.directory);
+    const actual=records.readFreshInstallationPreparedStateV1(directory,true);
+    prepared=actual; // Retain the actual stock unchanged assertion as well as DATA.
+    require(prepared.origin.installationId===path.basename(directory)&&prepared.origin.sourceSha===holder.source.target.sha);
+    recordPins(ownedCreatedRecordKeysV1,prepared.baseRecordPins);prepared.assertUnchanged();check();return prepared;
+  };
+  const readActivation=()=>{
+    check();const actual=records.readFreshInstallationActivationStateV1(directory,'required');activationState=actual;
+    require(actual!==null&&actual.acknowledged===true);
+    recordPins(['activation-prepared.json','activated.json'],{'activation-prepared.json':actual.preparedPin,'activated.json':actual.activatedPin});
+    actual.assertUnchanged();check();return actual;
+  };
+  const project=(stage,installation,activation,absence,stale,returned)=>{
+    check();const p={};for(const key of ['origin','catalogHash','ownerOid','runtimeOid','runtimeUrl','committed','baseRecordBytes','baseRecordPins'])p[key]=prepared[key];
+    const view={prepared:detach(p),directory:{realpath:directory,...privateDirectory(directory,installation?.directory)},
+      activation:activation===null?null:detach({prepared:activation.prepared,preparedPin:activation.preparedPin,activatedPin:activation.activatedPin,
+        acknowledged:activation.acknowledged,baseRecordPins:activation.baseRecordPins}),
+      observedSchemaCatalogHash:prepared.catalogHash,observedActivationCatalogHash:activation?.prepared.catalogHash??null,
+      activationAbsenceObserved:absence,staleAbsenceRefused:stale,selectedDirectory:directory,activationReturn:returned};
+    return projectManualOrphanPhaseInstallationV1(view,{cluster:frame.cluster,sourceSha:holder.source.target.sha,migrations,
+      installationsDirectory:derived.installationsDirectory,installation},stage);
+  };
+  const query=async(kind,expected)=>{check();const value=await sql.query(kind,expected);check();return value;};
+  const catalog=async installation=>{
+    require(sql!==null&&expectedIdentity!==null);
+    const databases=await query('databases'),roles=await query('roles'),memberships=await query('memberships');
+    const canonical=validateManualOrphanPhaseBaselineV1({databases,roles,memberships},frame.cluster,installation);
+    // The baseline digests authenticate these independent exact names/security
+    // facts. Initial admin OIDs must JOIN the already retained own pair.
+    const pair=sql.current().pair,db=canonical.databases.filter(row=>row.name==='postgres'),role=canonical.roles.filter(row=>row.name==='postgres');
+    require(db.length===1&&role.length===1&&db[0].ownerOid===role[0].oid&&db[0].allowConnections===true
+      &&db[0].connectionLimit===-1&&role[0].superuser===true&&role[0].inherit===true&&role[0].createRole===true
+      &&role[0].createDb===true&&role[0].login===true&&role[0].replication===true&&role[0].bypassRls===true
+      &&role[0].connectionLimit===-1&&role[0].validUntilUTC===null);
+    if(expectedIdentity.currentRole==='postgres'){
+      require(pair.datid===db[0].oid&&pair.usesysid===role[0].oid);
+      if(expectedIdentity.databaseOid===null)expectedIdentity=Object.freeze({...expectedIdentity,databaseOid:pair.datid,ownerOid:pair.usesysid,userOid:pair.usesysid});
+      else require(expectedIdentity.databaseOid===pair.datid&&expectedIdentity.ownerOid===pair.usesysid&&expectedIdentity.userOid===pair.usesysid);
+    }
+    await query('identity',expectedIdentity);check();return canonical;
+  };
+  const qualify=async(endpoint,installation,runtime)=>{
+    require(sql===null&&!qualified);check();
+    const driver=await load('postgres');require(typeof driver.default==='function');
+    sql=createManualOrphanPhaseSqlLedgerV1();
+    let pool;
+    try{pool=driver.default(endpoint,{max:1,connect_timeout:5,idle_timeout:0,max_lifetime:0,
+      connection:{statement_timeout:5000,lock_timeout:5000},onclose:sql.onclose,onnotice(){}});
+      sql.capturePool(pool);
+    }catch{burn();throw ownedTransportUnknownV1();}
+    check();await sql.reserve();check();
+    expectedIdentity=Object.freeze(runtime===null?{cluster:frame.cluster,databaseName:'postgres',databaseOid:null,ownerOid:null,
+      currentRole:'postgres',sessionRole:'postgres',runtimeOid:null,userOid:null}:{cluster:frame.cluster,
+      databaseName:installation.databaseName,databaseOid:installation.databaseOid,ownerOid:installation.ownerOid,
+      currentRole:installation.runtimeRole,sessionRole:installation.runtimeRole,runtimeOid:installation.runtimeOid,userOid:installation.runtimeOid});
+    await query('identity',expectedIdentity);
+    // No phase/effect token is enabled by the provisional identity above.
+    await catalog(installation);qualified=true;check();
+  };
+  const expectedRefusal=(call,code)=>{let refused=false;try{call();}catch(error){refused=error?.message===code;}
+    if(!refused)throw Error('MANUAL_ORPHAN_CASE_REFUSED');};
+  const unprepared=namespace=>expectedRefusal(()=>namespace.getSql(),'FRESH_INSTALLATION_DATABASE_NOT_PREPARED');
+  const qualifyMechanical=async()=>{
+    const installation=frame.input.installation;
+    const p=readPrepared(derived.installationsDirectory+'/'+installation.installationId,installation);
+    const active=readActivation();
+    // The real stock verifier below supplies the mechanical return observation.
+    // Complete SQL identity/baseline qualification closes first.
+    const endpoint=deriveManualOrphanPhaseEndpointV1(frame.purpose,derived,frame.input,p);
+    await qualify(endpoint,installation,p);await closeQualification();
+    const activation=await load('activation');const verified=await effect(()=>activation.verifyFreshInstallationActivationV1(directory));
+    // A fresh mechanical phase never had an unactivated absence snapshot.
+    // Join actual authenticated observations directly; do not fabricate the
+    // transition-only staleAbsenceRefused input of the activation projector.
+    const carried=ownedInstallationV1(installation,true),origin=p.origin;
+    for(const key of ['installationId','operationId','databaseName','databaseOid','ownerRole','runtimeRole','sourceSha'])
+      require(origin[key]===carried[key]);
+    require(origin.systemIdentifier===frame.cluster.systemIdentifier&&p.ownerOid===carried.ownerOid
+      &&p.runtimeOid===carried.runtimeOid&&p.catalogHash===carried.schemaCatalogHash
+      &&active.prepared.catalogHash===carried.activationCatalogHash&&p.catalogHash!==active.prepared.catalogHash
+      &&origin.migrations.length===33&&migrations.length===33);
+    for(let index=0;index<33;index++)for(const key of ['version','name','checksum','migrationClass'])
+      require(origin.migrations[index][key]===migrations[index][key]);
+    const identity={realpath:directory,...privateDirectory(directory,carried.directory)};
+    require(JSON.stringify(active.prepared.origin)===JSON.stringify(origin)
+      &&JSON.stringify(active.prepared.directoryIdentity)===JSON.stringify(identity));
+    for(const name of ownedCreatedRecordKeysV1){
+      require(p.baseRecordPins[name].bytes===carried.records[name].bytes&&p.baseRecordPins[name].sha256===carried.records[name].sha256
+        &&active.baseRecordPins[name].bytes===carried.records[name].bytes&&active.baseRecordPins[name].sha256===carried.records[name].sha256);
+    }
+    for(const name of ['schema-prepared.json','schema-committed.json'])require(active.prepared.schemaRecordPins[name].bytes===carried.records[name].bytes
+      &&active.prepared.schemaRecordPins[name].sha256===carried.records[name].sha256);
+    for(const [name,pin] of [['activation-prepared.json',active.preparedPin],['activated.json',active.activatedPin]])
+      require(pin.bytes===carried.records[name].bytes&&pin.sha256===carried.records[name].sha256);
+    const receipt=probeOwnDataV1(verified,['schema','state','installationId','sourceSha','catalogHash']);
+    require(receipt.schema==='setfarm.fresh-installation-activation-verification.v1'&&receipt.state==='activated'
+      &&receipt.installationId===carried.installationId&&receipt.sourceSha===carried.sourceSha&&receipt.catalogHash===carried.activationCatalogHash);
+    check();
+  };
+  const select=async maintenance=>{
+    require(qualified&&sql?.current().closed&&!selectionMade&&prepared!==null);check();
+    selectionMade=true;selectedDirectory=directory;process.env.SETFARM_INSTALLATION_DIR=directory;
+    check();
+    const prefix=maintenance?'maintenance':'target';
+    const database=await load(prefix+'Database'),selection=await load(prefix+'Selection');
+    const selected=selection.freshInstallationSelectionV1;
+    require(selected!==null&&selected.directory===directory);selection.assertFreshInstallationSelectionUnchangedV1();
+    check();
+    const entry=frame.purpose==='activate'?null:await load(prefix+'Entry');
+    return {database,selection,entry};
+  };
+  try{
+    clock.check();sample();
+    try{purposeTimer=setTimeout(burn,ownedChildPoliciesV1[frame.purpose].deadline);}catch{burn();}
+    sample();holder=await holdManualOrphanOwnedSourcesV1();
+    // Returned Source is retained before any shape/source/property inspection.
+    sample(); // A fault during Source acquisition forbids subsequent native work.
+    require(holder!==null&&typeof holder.check==='function'&&typeof holder.close==='function');
+    require(JSON.stringify(ownedSourcesV1(holder.source))===JSON.stringify(frame.source));
+    resources=ownedSourceResourcesV1();pins=ownedSourcePinsV1(resources,'/Users/setrox');
+    const alias=(locator,physical,text,uid)=>{
+      const stat=fs.lstatSync(locator,{bigint:true});
+      require(stat.isSymbolicLink()&&stat.uid===uid&&stat.nlink===1n&&fs.readlinkSync(locator)===text&&fs.realpathSync(locator)===physical);
+      aliases.push({path:locator,physical,text,stat});
+    };
+    const pgAlias='/opt/homebrew/opt/postgresql@17',pgText=fs.readlinkSync(pgAlias);
+    require(/^\.\.\/Cellar\/postgresql@17\/17\.[0-9]+(?:_[0-9]+)?$/.test(pgText));
+    const pgPhysical=path.resolve(path.dirname(pgAlias),pgText);alias(pgAlias,pgPhysical,pgText,501n);
+    const native=pins.file(pgPhysical+'/bin/postgres',536870912);
+    require((native.stat.mode&0o111n)!==0n);
+    const tmpText=fs.readlinkSync('/tmp');require(tmpText==='private/tmp'||tmpText==='/private/tmp');
+    alias('/tmp','/private/tmp',tmpText,0n);
+    const tmp=pins.directory('/private/tmp');require(tmp.uid===0n&&(tmp.mode&0o7777n)===0o1777n);
+    observations={};for(const key of ['constructor','runner','parent','child','server'])observations[key]=observeManualOrphanProcessV1(frame[key].pid);
+    const match=/^\/opt\/homebrew\/opt\/postgresql@17\/bin\/postgres -D (\/tmp\/setfarm-task6a-pg\.[A-Za-z0-9]+)\/data -h 127\.0\.0\.1 -p ([0-9]+) -k /.exec(observations.server.rawCommand);
+    require(match!==null);const root=match[1],physicalRoot='/private'+root;
+    derived={...admitted,nativeTools:{postgres:{path:pgPhysical+'/bin/postgres',sha256:native.sha256}},
+      root,physicalRoot,dataDirectory:root+'/data',port:Number(match[2]),installationsDirectory:physicalRoot+'/installations'};
+    derived=checkManualOrphanPhaseGraphV1(frame,observations,derived);
+    privateDirectory(physicalRoot,frame.cluster.root);privateDirectory(physicalRoot+'/data',frame.cluster.data);
+    privateDirectory(derived.installationsDirectory,frame.installations);check();capacity();
+    records=await load('records');const journal=await load('migrations');
+    migrations=detach(journal.getContractSpineCurrentHeadJournalIdentitiesV1());require(migrations.length===33);check();
+    const phase={frame,derived,source:holder.source,records,require,check,capacity,load,effect,unknown:burn,
+      qualify,catalog,closeQualification,closeDatabase,closeFactory,readPrepared,readActivation,project,
+      qualifyMechanical,select,unprepared,expectedRefusal,
+      retainFactory(value){require(factory===null);factory=value;},get prepared(){return prepared;},get directory(){return directory;}};
+    if(frame.purpose==='provision')result=await provisionManualOrphanOwnedPhaseV1(phase);
+    else if(frame.purpose==='activate')result=await activateManualOrphanOwnedPhaseV1(phase);
+    else if(frame.purpose==='old_entry_positive')result=await oldEntryManualOrphanOwnedPhaseV1(phase);
+    else if(frame.purpose==='new_entry_refusal')result=await newEntryManualOrphanOwnedPhaseV1(phase);
+    else throw probeFrameRefusalV1();
+    check();
+  }catch(error){
+    if(sql!==null&&!sql.current().closed)burn();
+    failure=manualOrphanEntryErrorV1(error,policy);
+  }
+  finally{
+    // Every acquired obligation gets its one safe cleanup attempt even after a
+    // failed checkpoint. No DROP, retry, reconnect, cancellation or state reset.
+    for(const close of [closeQualification,closeFactory,closeDatabase])try{await close();}catch{burn();}
+    if(holder!==null)try{check();}catch{burn();}
+    if(resources!==null)try{resources.close();}catch{burn();}
+    if(holder!==null)try{holder.close();}catch{burn();}
+    clock.check();finished=true;
+    if(purposeTimer!==null)try{clearTimeout(purposeTimer);}catch{burn();}
+    try{sample();}catch{burn();}
+  }
+  if(unknown)throw ownedTransportUnknownV1();
+  if(failure)throw failure;
+  sample();
+  return decodeManualOrphanOwnedPhaseResultV1(encodeManualOrphanOwnedPhaseResultV1({
+    schema:'setfarm.manual-orphan-owned-phase-result.v1',run:frame.run,purpose:frame.purpose,
+    frameSha256:ownedSourceHashV1(encodeManualOrphanOwnedPhaseFrameV1(frame)),pid:process.pid,parentPid:process.ppid,
+    fd4Closed:true,sourcePinsClosed:true,result}));
+}

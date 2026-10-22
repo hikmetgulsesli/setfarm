@@ -1424,6 +1424,7 @@ function fixedProbeVmV1(bindings={},expose=false){
   let source=lowerFixedProbeEntryV1(readFileSync(HELPER,'utf8'),expose);
   assert.equal([...source.matchAll(/\bimport\.meta\.url\b/g)].length,1);
   source=replaceOnce(source,'import.meta.url',JSON.stringify(HELPER.href),'fixed probe locator');
+  if(bindings.task5bPrivate===true)source+=task5bPrivateExposureV1();
   const c=capture(),pureUtil=createRequire(import.meta.url)('node:util'),timers=[],cleared=[],faults=[];
   const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
   const clock={setTimeout:guard((callback,delay)=>{
@@ -1445,10 +1446,10 @@ function fixedProbeVmV1(bindings={},expose=false){
   assert.deepEqual((compiled.diagnostics??[]).filter(item=>item.category===ts.DiagnosticCategory.Error),[]);
   const context={exports:{},Buffer,URL,Error,TextDecoder:pureUtil.TextDecoder,queueMicrotask,
     process:closedModule(c,'fixed probe process',bindings.process??{}),console:closedModule(c,'fixed probe console'),...clock,
-    require(specifier){assert.ok(modules.has(specifier),'unlisted fixed probe import '+specifier);return modules.get(specifier);}};
+    require(specifier){if(bindings.task5bPrivate===true&&!modules.has(specifier))faults.push('unexpected Task5B deferred import');assert.ok(modules.has(specifier),'unlisted fixed probe import '+specifier);return modules.get(specifier);}};
   runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
   assert.equal(timers.length,0,'import creates no timer');assert.equal(c.calls.forbidden,0,'import performs no IO');
-  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,assertContained(){
+  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
     assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));assert.deepEqual(faults,[],'no swallowed binding assertion');
     if(bindings.assertClean)bindings.assertClean();
   }};
@@ -3631,7 +3632,7 @@ const TASK3_ENV_V1=[
 for(const [label,profile,configure,admitted] of TASK3_ENV_V1){
   test('Task3 H exact launch admission '+label,async()=>{task3ContractsV1();
     const entry=task3EntryV1(task3WireV1('provision'),{profile,configure});await entry.vm.childMain();
-    task3EntryRefusedV1(entry,admitted?'MANUAL_ORPHAN_SETUP_REFUSED':'MANUAL_ORPHAN_OWNER_REFUSED');
+    task3EntryRefusedV1(entry,admitted?'MANUAL_ORPHAN_OWNER_REFUSED':'MANUAL_ORPHAN_OWNER_REFUSED');
     assert.deepEqual(entry.reader.ledger.fstats,admitted?[4]:[]);
     assert.deepEqual(entry.reader.ledger.rawCloses,admitted?[]:[4]);assert.equal(entry.reader.ledger.adopted,admitted);
     if(admitted)assert.equal(entry.reader.ledger.closed,true);
@@ -3651,7 +3652,7 @@ for(const [label,bytes] of [['runner setup',()=>Buffer.from(OWN_SETUP_WIRE)],['i
 }
 for(const purpose of ['provision','activate','old_entry_positive','new_entry_refusal']){
   test('Task3 H canonical '+purpose+' reaches only known-close SETUP capability barrier',async()=>{task3ContractsV1();
-    const entry=task3EntryV1(task3WireV1(purpose));await entry.vm.childMain();task3EntryRefusedV1(entry,'MANUAL_ORPHAN_SETUP_REFUSED');
+    const entry=task3EntryV1(task3WireV1(purpose));await entry.vm.childMain();task3EntryRefusedV1(entry,'MANUAL_ORPHAN_OWNER_REFUSED');
     assert.deepEqual(entry.reader.ledger.fstats,[4]);assert.equal(entry.reader.ledger.constructs.length,1);
     assert.equal(entry.reader.ledger.closed,true);assert.equal(entry.reader.ledger.destroys,1);
   });
@@ -3688,7 +3689,7 @@ for(const order of ['owned then union','union then owned']){
       first=trackProbePromiseV1(entry.vm.childMain());const before=task3IoV1(entry.reader);
       second=trackProbePromiseV1(entry.vm.actual.readManualOrphanOwnedFd4V1('runner'));
       await assertProbeRejectedV1(second,'MANUAL_ORPHAN_OWNER_REFUSED');assert.deepEqual(task3IoV1(entry.reader),before);assert.equal(first.outcome,null);
-      task3FinishReadV1(entry.reader,task3WireV1('provision'));await first.done;task3EntryRefusedV1(entry,'MANUAL_ORPHAN_SETUP_REFUSED');
+      task3FinishReadV1(entry.reader,task3WireV1('provision'));await first.done;task3EntryRefusedV1(entry,'MANUAL_ORPHAN_OWNER_REFUSED');
     }
     assert.deepEqual(entry.reader.ledger.fstats,[4]);assert.equal(entry.reader.ledger.constructs.length,1);entry.vm.assertContained();
   });
@@ -3700,7 +3701,7 @@ test('Task3 R launch guard reentrant owned call sees reserved claim before falli
     };
   }});vm=entry.vm;const main=trackProbePromiseV1(vm.childMain());assert.ok(reentered);
   await assertProbeRejectedV1(reentered,'MANUAL_ORPHAN_OWNER_REFUSED');assert.equal(main.outcome,null);
-  task3FinishReadV1(entry.reader,task3WireV1('provision'));await main.done;task3EntryRefusedV1(entry,'MANUAL_ORPHAN_SETUP_REFUSED');
+  task3FinishReadV1(entry.reader,task3WireV1('provision'));await main.done;task3EntryRefusedV1(entry,'MANUAL_ORPHAN_OWNER_REFUSED');
 });
 test('Task3 R launch refusal raw closes once and reentry never touches replacement4',async()=>{task3ContractsV1();
   const entry=task3EntryV1(Buffer.alloc(0),{configure({f}){f.process.env.EXTRA='refused';}});await entry.vm.childMain();
@@ -3802,8 +3803,8 @@ const TASK3_ACTUAL_NEGATIVES_V1=[
   ['duplicate key',()=>Buffer.from(OWN_SETUP_WIRE.replace('{"schema":','{"run":"'+OWN_C+'","schema":')),'MANUAL_ORPHAN_FRAME_REFUSED'],
   ['runner setup schema',()=>Buffer.from(OWN_SETUP_WIRE),'MANUAL_ORPHAN_FRAME_REFUSED'],
   ['forbidden helper integration',()=>task3WireV1('integration'),'MANUAL_ORPHAN_FRAME_REFUSED'],
-  ['canonical provision',()=>task3WireV1('provision'),'MANUAL_ORPHAN_SETUP_REFUSED'],
-  ['canonical mechanical refusal',()=>task3WireV1('new_entry_refusal'),'MANUAL_ORPHAN_SETUP_REFUSED'],
+  ['canonical provision',()=>task3WireV1('provision'),'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['canonical mechanical refusal',()=>task3WireV1('new_entry_refusal'),'MANUAL_ORPHAN_OWNER_REFUSED'],
 ];
 for(const [label,bytes,expected] of TASK3_ACTUAL_NEGATIVES_V1){
   test('Task3 I actual physical fixed helper '+label+' has natural owned joins and no receipt',async()=>{task3ContractsV1();
@@ -5652,4 +5653,802 @@ test('Task5A 15 detached exact output preserves old facades and intrinsic Buffer
     assert.deepEqual(intrinsic.output().stdout,bytes);assert.equal(lengthHits,0);assert.equal(f.resumed.includes('stdout'),true);
     assert.equal(f.resumed.includes('stderr'),true);assert.equal(f.resumed.includes('fd4'),true);
   }finally{f.assertGuarded();vm.assertContained();}
+});
+
+// Task5B Phase A: narrow private consumers only. No caller-created Source or
+// phase owner enters these tests. Root executes RED; this author does not.
+function task5bPrivateExposureV1(){return `
+;globalThis.__task5bPrivateV1={
+  requireManualOrphanOwnedHelperContextV1:typeof requireManualOrphanOwnedHelperContextV1==='function'?requireManualOrphanOwnedHelperContextV1:null,
+  checkManualOrphanPhaseGraphV1:typeof checkManualOrphanPhaseGraphV1==='function'?checkManualOrphanPhaseGraphV1:null,
+  deriveManualOrphanPhaseEndpointV1:typeof deriveManualOrphanPhaseEndpointV1==='function'?deriveManualOrphanPhaseEndpointV1:null,
+  validateManualOrphanPhaseIdentityV1:typeof validateManualOrphanPhaseIdentityV1==='function'?validateManualOrphanPhaseIdentityV1:null,
+  validateManualOrphanPhaseBaselineV1:typeof validateManualOrphanPhaseBaselineV1==='function'?validateManualOrphanPhaseBaselineV1:null,
+  projectManualOrphanPhaseInstallationV1:typeof projectManualOrphanPhaseInstallationV1==='function'?projectManualOrphanPhaseInstallationV1:null,
+  createManualOrphanPhaseSqlLedgerV1:typeof createManualOrphanPhaseSqlLedgerV1==='function'?createManualOrphanPhaseSqlLedgerV1:null,
+  captureManualOrphanPhaseDatabaseV1:typeof captureManualOrphanPhaseDatabaseV1==='function'?captureManualOrphanPhaseDatabaseV1:null,
+  manualOrphanEntryErrorV1:typeof manualOrphanEntryErrorV1==='function'?manualOrphanEntryErrorV1:null,
+  provisionManualOrphanOwnedPhaseV1:typeof provisionManualOrphanOwnedPhaseV1==='function',
+  activateManualOrphanOwnedPhaseV1:typeof activateManualOrphanOwnedPhaseV1==='function',
+  oldEntryManualOrphanOwnedPhaseV1:typeof oldEntryManualOrphanOwnedPhaseV1==='function',
+  newEntryManualOrphanOwnedPhaseV1:typeof newEntryManualOrphanOwnedPhaseV1==='function',
+  runManualOrphanOwnedPhaseV1:typeof runManualOrphanOwnedPhaseV1==='function',
+  probePolicy:probeFd4PolicyV1,
+  ownedPolicy:ownedFd4PolicyV1,
+  dataFromJson(text){return JSON.parse(text);}
+};
+`;}
+function task5bGateV1(){
+  task3ContractsV1();
+  let importing=true,environment;
+  const importReads=[],processBinding={},osBinding={};
+  Object.defineProperty(processBinding,'env',{enumerable:true,get(){
+    if(importing){importReads.push('process.env');throw Error('TEST_INERT_ENV_READ');}return environment;
+  },set(value){environment=value;}});
+  const vm=task3VmV1({task5bPrivate:true,process:processBinding,os:osBinding});importing=false;
+  const api=vm.task5bPrivate;assert.ok(api,'missing Task5B private exposure');
+  for(const name of ['requireManualOrphanOwnedHelperContextV1','checkManualOrphanPhaseGraphV1',
+    'deriveManualOrphanPhaseEndpointV1','validateManualOrphanPhaseIdentityV1','validateManualOrphanPhaseBaselineV1',
+    'projectManualOrphanPhaseInstallationV1','createManualOrphanPhaseSqlLedgerV1','captureManualOrphanPhaseDatabaseV1',
+    'manualOrphanEntryErrorV1','dataFromJson'])assert.equal(typeof api[name],'function','missing-private-consumer '+name);
+  for(const name of ['provisionManualOrphanOwnedPhaseV1','activateManualOrphanOwnedPhaseV1',
+    'oldEntryManualOrphanOwnedPhaseV1','newEntryManualOrphanOwnedPhaseV1','runManualOrphanOwnedPhaseV1'])
+    assert.equal(api[name],true,'missing-private-handler '+name);
+  assert.equal(Object.isFrozen(api.probePolicy),true);assert.equal(api.probePolicy.owned,false);
+  assert.equal(Object.isFrozen(api.ownedPolicy),true);assert.equal(api.ownedPolicy.owned,true);
+  assert.deepEqual(importReads,[],'no caught module-time selection/environment observation');
+  vm.assertContained();return {...vm,api,processBinding,osBinding};
+}
+const task5bDataV1=(vm,value)=>vm.api.dataFromJson(JSON.stringify(value));
+const task5bPlainV1=value=>JSON.parse(JSON.stringify(value));
+function task5bRefusedV1(fn,code='MANUAL_ORPHAN_OWNER_REFUSED'){
+  assert.throws(fn,error=>error?.message===code);
+}
+async function task5bRejectV1(promise,code='MANUAL_ORPHAN_CLEANUP_UNKNOWN'){
+  await assert.rejects(promise,error=>error?.message===code);
+}
+function task5bCasesV1(count){
+  const reached=[];return {run(name,body){assert.ok(!reached.includes(name));body();reached.push(name);},
+    async wait(name,body){assert.ok(!reached.includes(name));await body();reached.push(name);},
+    done(){assert.equal(reached.length,count,'all enumerated consumer scenarios reached');}};
+}
+function task5bDerivedV1(){return {maintenanceRoot:SOURCE_M_V1,targetRoot:SOURCE_T_V1,
+  node:TASK3_NODE_V1,helper:SOURCE_M_V1+SOURCE_SUFFIX_V1,workspace:SOURCE_WORKSPACE_V1,
+  nativeTools:{postgres:{path:'/opt/homebrew/Cellar/postgresql@17/17.6/bin/postgres',sha256:OWN_H}},
+  root:'/tmp/setfarm-task6a-pg.T5b123',physicalRoot:'/private/tmp/setfarm-task6a-pg.T5b123',
+  dataDirectory:'/tmp/setfarm-task6a-pg.T5b123/data',port:55439,
+  installationsDirectory:'/private/tmp/setfarm-task6a-pg.T5b123/installations'};}
+function task5bContextV1(vm){
+  const d=task5bDerivedV1(),frame=task5bGraphV1().frame;
+  const context={root:d.maintenanceRoot,node:d.node,helper:d.helper,
+    issuer:d.maintenanceRoot+'/scripts/__tests__/manual-orphan-bootstrap-owned-route-v1.test.js'};
+  const account={homedir:'/Users/setrox',uid:501,gid:20};
+  Object.assign(vm.processBinding,{execPath:d.node,argv0:d.node,execArgv:[],argv:[d.node,d.helper],
+    cwd:()=>context.root,env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},platform:'darwin',arch:'arm64',version:'v26.4.0',
+    getuid:()=>501,geteuid:()=>501,getgid:()=>20,getegid:()=>20,pid:104,ppid:102});
+  vm.osBinding.userInfo=()=>account;
+  return {context,frame,account,policy:vm.api.ownedPolicy,d};
+}
+function task5bGraphV1(mechanical=false){
+  const d=task5bDerivedV1(),frame=ownedPhaseData(mechanical?'old_entry_positive':'provision');
+  const raw={constructor:TASK3_NODE_V1+' '+SOURCE_M_V1+'/scripts/run-private-postgres-tests.mjs manual-orphan-bootstrap',
+    runner:TASK3_NODE_V1+' --import tsx scripts/run-isolated-postgres-tests.ts -- '+VECTOR.join(' '),
+    parent:mechanical?TASK3_NODE_V1+' --import tsx --test --test-isolation=none '+FILE:
+      TASK3_NODE_V1+' --import tsx scripts/run-isolated-postgres-tests.ts -- '+VECTOR.join(' '),
+    child:TASK3_NODE_V1+' '+d.helper,
+    server:'/opt/homebrew/opt/postgresql@17/bin/postgres -D '+d.dataDirectory+' -h 127.0.0.1 -p 55439 -k '+d.root+
+      ' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=50'};
+  const observations={};
+  for(const key of ['constructor','runner','parent','child','server']){
+    frame[key].executable=key==='server'?d.nativeTools.postgres.path:TASK3_NODE_V1;
+    frame[key].executableSha256=key==='server'?d.nativeTools.postgres.sha256:SOURCE_NODE_HASH_V1;
+    frame[key].commandSha256=createHash('sha256').update(raw[key]).digest('hex');
+    observations[key]={pin:{...frame[key]},rawCommand:raw[key]};
+  }
+  return {frame,observations,derived:d};
+}
+function task5bIdentityV1(){
+  const i=ownedInstallationData(true),cluster=ownedClusterData();
+  const expected={cluster,databaseName:i.databaseName,databaseOid:7,ownerOid:7,
+    currentRole:i.runtimeRole,sessionRole:i.runtimeRole,runtimeOid:8,userOid:8};
+  const rows=[{systemIdentifier:'123',postmasterStartedAtUTC:'2026-10-21T00:00:00.123456Z',
+    serverVersionNum:'170001',serverAddress:'127.0.0.1',serverPort:55439,database:i.databaseName,
+    databaseOid:'7',ownerOid:'7',currentUser:i.runtimeRole,sessionUser:i.runtimeRole,runtimeOid:'8',
+    pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:'7',usesysid:'8'}];
+  return {rows,expected};
+}
+const TASK5B_PAIR_V1={pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:7,usesysid:8};
+function task5bIdentityCallV1(vm,f,pair=null){return vm.api.validateManualOrphanPhaseIdentityV1(
+  task5bDataV1(vm,f.rows),task5bDataV1(vm,f.expected),pair);}
+function task5bBaselineV1(stage='initial'){
+  const rows=task4aCatalogV1(),literal=task4aLiteralOutputV1(),expected={
+    databaseBaselineSha256:literal.databaseBaselineSha256,roleBaselineSha256:literal.roleBaselineSha256,
+    membershipBaselineSha256:literal.membershipBaselineSha256};
+  const installation=stage==='initial'?null:ownedInstallationData(stage==='activated');
+  if(installation){
+    rows.databases.push({name:installation.databaseName,oid:7,ownerOid:7,allowConnections:true,connectionLimit:-1});
+    rows.roles.push({name:installation.ownerRole,oid:7,superuser:false,inherit:false,createRole:false,createDb:false,
+      login:false,replication:false,bypassRls:false,connectionLimit:-1,validUntilUTC:null},
+    {name:installation.runtimeRole,oid:8,superuser:false,inherit:false,createRole:false,createDb:false,
+      login:true,replication:false,bypassRls:false,connectionLimit:-1,validUntilUTC:null});
+  }
+  return {rows,expected,installation};
+}
+function task5bBaselineCallV1(vm,f){return vm.api.validateManualOrphanPhaseBaselineV1(
+  task5bDataV1(vm,f.rows),task5bDataV1(vm,f.expected),task5bDataV1(vm,f.installation));}
+function task5bProjectionV1(activated=false){
+  const installation=ownedInstallationData(activated),d=task5bDerivedV1();
+  // Finite detached migration observations, compared to independent expected
+  // identities. These are not an imported stock manifest or a Source claim.
+  const migrations=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33]
+    .map(version=>({version,name:'fixture-migration-'+version,checksum:OWN_H,migrationClass:version===32?'guarded':'automatic'}));
+  const origin={schema:'setfarm.fresh-installation-origin.v1',installationId:OWN_ID,operationId:OWN_OP,
+    systemIdentifier:'123',databaseOid:7,databaseName:installation.databaseName,ownerRole:installation.ownerRole,
+    runtimeRole:installation.runtimeRole,sourceSha:OWN_T,migrations};
+  const prepared={origin,catalogHash:OWN_H,ownerOid:7,runtimeOid:8,
+    runtimeUrl:'postgresql://'+installation.runtimeRole+':'+OWN_C+'@127.0.0.1:55439/'+installation.databaseName,
+    committed:true,baseRecordBytes:36880,baseRecordPins:ownedInstallationData().records};
+  const selectedDirectory=d.installationsDirectory+'/'+OWN_ID;
+  // Projection carries only fields consumed from already validated stock
+  // activation state; SourceAuthority/current validation remains stock's job.
+  const activation=activated?{prepared:{origin,catalogHash:OWN_B,
+    directoryIdentity:{realpath:selectedDirectory,...ownedDirData()},schemaRecordPins:{
+      'schema-prepared.json':installation.records['schema-prepared.json'],
+      'schema-committed.json':installation.records['schema-committed.json']}},
+    preparedPin:installation.records['activation-prepared.json'],activatedPin:installation.records['activated.json'],
+    acknowledged:true,baseRecordBytes:36880,baseRecordPins:prepared.baseRecordPins}:null;
+  const recordView={prepared,directory:{realpath:selectedDirectory,...ownedDirData()},activation,
+    observedSchemaCatalogHash:OWN_H,observedActivationCatalogHash:activated?OWN_B:null,
+    activationAbsenceObserved:!activated,staleAbsenceRefused:activated,selectedDirectory,
+    activationReturn:activated?{schema:'setfarm.fresh-installation-activation-verification.v1',state:'activated',
+      installationId:OWN_ID,sourceSha:OWN_T,catalogHash:OWN_B}:null};
+  const expected={cluster:ownedClusterData(),sourceSha:OWN_T,migrations:task5bPlainV1(migrations),
+    installationsDirectory:d.installationsDirectory,installation:activated?ownedInstallationData():null};
+  return {recordView,expected,stage:activated?'activated':'committed',installation};
+}
+function task5bProjectV1(vm,f){return vm.api.projectManualOrphanPhaseInstallationV1(
+  task5bDataV1(vm,f.recordView),task5bDataV1(vm,f.expected),f.stage);}
+
+// Break: new private declarations must stay inert and must not become exports.
+test('Task5B private contracts and inert module',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(4);
+  cases.run('all13 present',()=>assert.equal(Object.keys(vm.api).length,17));
+  cases.run('public exports unchanged',()=>assert.deepEqual(Object.keys(vm.actual).sort(),[
+    'MANUAL_ORPHAN_BASENAME_V1','MANUAL_ORPHAN_VECTOR_V1','mentionsManualOrphanFileV1','classifyManualOrphanVectorV1',
+    'encodeManualOrphanProbeFrameV1','decodeManualOrphanProbeFrameV1','canonicalizeManualOrphanClusterBaselineV1',
+    'encodeManualOrphanRunnerSetupFrameV1','decodeManualOrphanRunnerSetupFrameV1',
+    'encodeManualOrphanOwnedPhaseFrameV1','decodeManualOrphanOwnedPhaseFrameV1',
+    'encodeManualOrphanOwnedPhaseResultV1','decodeManualOrphanOwnedPhaseResultV1',
+    'encodeManualOrphanIntegrationResultV1','decodeManualOrphanIntegrationResultV1',
+    'encodeManualOrphanRunnerResultV1','decodeManualOrphanRunnerResultV1','holdManualOrphanOwnedSourcesV1',
+    'pinManualOrphanProbeSourcesV1','observeManualOrphanProcessV1','observeManualOrphanOriginalChildV1',
+    'observeManualOrphanOwnedChildV1','observeManualOrphanOwnedIntegrationChildV1',
+    'readManualOrphanProbeFd4V1','readManualOrphanOwnedFd4V1','runManualOrphanLifecycleProbeV1',
+  ].sort()));
+  cases.run('no import timer IO selection',()=>{assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);
+    assert.equal(vm.monotonic.state.accesses,0);assert.deepEqual(Object.keys(vm.processBinding),['env','hrtime']);vm.assertContained();});
+  cases.run('deferred imports unrequested',()=>{assert.equal(Object.hasOwn(vm.actual,'runManualOrphanOwnedPhaseV1'),false);vm.assertContained();});
+  cases.done();
+});
+// Break: pre-Source owned context must reject the writer and old transport.
+test('Task5B actual owned context before effects',()=>{
+  const gate=task5bGateV1(),cases=task5bCasesV1(12);gate.assertContained();
+  for(const [name,mutate,valid] of [
+    ['valid physical context',()=>{},true],['W',f=>{f.context.root='/Users/setrox/ai/setrox/.worktrees/writer';},false],
+    ['target as M',f=>{f.context.root=SOURCE_T_V1;},false],['other release parent',f=>{f.context.root='/other/releases/setfarm-88888888';},false],
+    ['malformed release name',f=>{f.context.root=SOURCE_WORKSPACE_V1+'/releases/setfarm-zzzzzzzz';},false],
+    ['legacy policy',(f,vm)=>{f.policy=vm.api.probePolicy;},false],['wrong node',(f,vm)=>{vm.processBinding.execPath='/wrong/node';},false],
+    ['execArgv',(f,vm)=>{vm.processBinding.execArgv=['--inspect'];},false],
+    ['cwd',(f,vm)=>{vm.processBinding.cwd=()=>'/wrong';},false],
+    ['env extra',(f,vm)=>{vm.processBinding.env.HOME='/Users/setrox';},false],
+    ['account IDs',f=>{f.account.uid=502;f.account.gid=21;},false],
+    ['selected env preexisting',(f,vm)=>{vm.processBinding.env.SETFARM_INSTALLATION_DIR='/synthetic';},false],
+  ])cases.run(name,()=>{const vm=task5bGateV1(),f=task5bContextV1(vm);mutate(f,vm);
+    if(f.context.root!==f.d.maintenanceRoot){
+      f.context.helper=f.context.root+SOURCE_SUFFIX_V1;
+      f.context.issuer=f.context.root+'/scripts/__tests__/manual-orphan-bootstrap-owned-route-v1.test.js';
+      vm.processBinding.argv[1]=f.context.helper;
+    }
+    const call=()=>vm.api.requireManualOrphanOwnedHelperContextV1(task5bDataV1(vm,f.context),task5bDataV1(vm,f.frame),f.policy);
+    if(valid){const got=call();assert.equal(got.maintenanceRoot,SOURCE_M_V1);assert.equal(got.targetRoot,SOURCE_T_V1);}
+    else task5bRefusedV1(call);assert.equal(vm.timers.length,0);vm.assertContained();
+  });cases.done();
+});
+// Break: independently observed pins and exact raw commands must agree.
+test('Task5B graph and raw vector comparator',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(12);
+  for(const [name,mechanical,mutate,valid] of [
+    ['valid direct parent',false,()=>{},true],['valid mechanical parent',true,()=>{},true],
+    ['wrong childPID',false,f=>{f.observations.child.pin.pid=106;},false],
+    ['PPID',false,f=>{f.observations.child.pin.ppid=101;},false],
+    ['runnerPID',false,f=>{f.observations.runner.pin.pid=108;},false],
+    ['constructorPID',false,f=>{f.observations.constructor.pin.pid=109;},false],
+    ['serverPID',false,f=>{f.observations.server.pin.pid=110;},false],
+    ['uid',false,f=>{f.observations.child.pin.uid=502;},false],
+    ['startedAt',false,f=>{f.observations.child.pin.startedAtUTC='2026-10-21T00:00:01.000Z';},false],
+    ['executablehash',false,f=>{f.observations.child.pin.executableSha256=OWN_C;},false],
+    ['commandhash',false,f=>{f.observations.child.pin.commandSha256=OWN_C;},false],
+    ['raw vector extra operand',false,f=>{f.observations.server.rawCommand+=' --extra';
+      const digest=createHash('sha256').update(f.observations.server.rawCommand).digest('hex');
+      f.observations.server.pin.commandSha256=digest;f.frame.server.commandSha256=digest;},false],
+  ])cases.run(name,()=>{const f=task5bGraphV1(mechanical);mutate(f);
+    const call=()=>vm.api.checkManualOrphanPhaseGraphV1(task5bDataV1(vm,f.frame),task5bDataV1(vm,f.observations),task5bDataV1(vm,f.derived));
+    if(valid){const got=call();assert.equal(got.port,55439);assert.equal(got.physicalRoot,'/private/tmp/setfarm-task6a-pg.T5b123');}
+    else task5bRefusedV1(call);vm.assertContained();
+  });cases.done();
+});
+// Break: mechanical phases cannot borrow admin credentials or alternate URLs.
+test('Task5B purpose-specific endpoint consumer',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(12);
+  for(const [name,purpose,mutate,valid] of [
+    ['valid provision','provision',()=>{},true],['activate','activate',()=>{},true],
+    ['mechanical runtime','old_entry_positive',()=>{},true],
+    ['absent admin','provision',f=>{delete f.input.adminPassword;},false],
+    ['extra admin on mechanical','old_entry_positive',f=>{f.input.adminPassword=OWN_H;},false],
+    ['hostlocalhost','old_entry_positive',f=>{f.prepared.runtimeUrl=f.prepared.runtimeUrl.replace('127.0.0.1','localhost');},false],
+    ['missing port','old_entry_positive',f=>{f.prepared.runtimeUrl=f.prepared.runtimeUrl.replace(':55439','');},false],
+    ['port5432','old_entry_positive',f=>{f.prepared.runtimeUrl=f.prepared.runtimeUrl.replace(':55439',':5432');},false],
+    ['wrong derived port','old_entry_positive',f=>{f.prepared.runtimeUrl=f.prepared.runtimeUrl.replace(':55439',':55440');},false],
+    ['wrong DB','old_entry_positive',f=>{f.prepared.runtimeUrl=f.prepared.runtimeUrl.replace('/setfarm_install_','/other_');},false],
+    ['wrong role','old_entry_positive',f=>{f.prepared.runtimeUrl=f.prepared.runtimeUrl.replace('sf_runtime_','sf_owner_');},false],
+    ['query fragment options','old_entry_positive',f=>{f.prepared.runtimeUrl+='?options=-c%20role%3Dpostgres#extra';},false],
+  ])cases.run(name,()=>{const f={input:ownedPhaseData(purpose).input,prepared:task5bProjectionV1(true).recordView.prepared};mutate(f);
+    const call=()=>vm.api.deriveManualOrphanPhaseEndpointV1(purpose,task5bDataV1(vm,task5bDerivedV1()),task5bDataV1(vm,f.input),task5bDataV1(vm,f.prepared));
+    if(valid){const got=call();assert.equal(got,purpose==='old_entry_positive'?f.prepared.runtimeUrl:
+      'postgresql://postgres:'+OWN_H+'@127.0.0.1:55439/postgres');}else task5bRefusedV1(call);vm.assertContained();
+  });cases.done();
+});
+// Break: canonical uint64/OID and PG17 identity boundaries must be lossless.
+test('Task5B identity exact valid DATA',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(5);
+  for(const [name,mutate] of [
+    ['ordinary runtime',()=>{}],['explicit admin expectedidentity',f=>{Object.assign(f.expected,{databaseName:'postgres',databaseOid:5,
+      ownerOid:1,currentRole:'postgres',sessionRole:'postgres',runtimeOid:null,userOid:1});Object.assign(f.rows[0],{
+      database:'postgres',databaseOid:'5',ownerOid:'1',currentUser:'postgres',sessionUser:'postgres',runtimeOid:null,datid:'5',usesysid:'1'});} ],
+    ['maximal permitted uint64string',f=>{f.expected.cluster.systemIdentifier=f.rows[0].systemIdentifier='18446744073709551615';}],
+    ['high unsigned OIDs',f=>{Object.assign(f.expected,{databaseOid:4294967295,ownerOid:4294967294,runtimeOid:4294967293,userOid:4294967293});
+      Object.assign(f.rows[0],{databaseOid:'4294967295',ownerOid:'4294967294',runtimeOid:'4294967293',datid:'4294967295',usesysid:'4294967293'});}],
+    ['microsecond PG17 upperbound',f=>{f.expected.cluster.serverVersionNum=179999;f.rows[0].serverVersionNum='179999';
+      f.expected.cluster.postmasterStartedAtUTC=f.rows[0].postmasterStartedAtUTC='2024-02-29T23:59:59.999999Z';}],
+  ])cases.run(name,()=>{const f=task5bIdentityV1();mutate(f);const got=task5bIdentityCallV1(vm,f);
+    assert.deepEqual(task5bPlainV1(got),{pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:f.expected.databaseOid,usesysid:f.expected.userOid});
+    assert.equal(Object.isFrozen(got),true);vm.assertContained();
+  });cases.done();
+});
+// Break: each identity field is checked against independently held expectation.
+test('Task5B identity mismatch refuses',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(16);
+  for(const [name,key,value] of [
+    ['systemID','systemIdentifier','124'],['start','postmasterStartedAtUTC','2026-10-21T00:00:00.123457Z'],
+    ['millisecond truncated start','postmasterStartedAtUTC','2026-10-21T00:00:00.123Z'],['PG18','serverVersionNum','180000'],
+    ['versiontext noncanonical','serverVersionNum','0170001'],['hostCIDR','serverAddress','127.0.0.1/32'],
+    ['NULLhost','serverAddress',null],['port','serverPort',55440],['DBname','database','postgres'],
+    ['DB OID','databaseOid','9'],['ownerOID','ownerOid','9'],['currentrole','currentUser','postgres'],
+    ['sessionrole','sessionUser','postgres'],['runtimeOID','runtimeOid','9'],
+  ])cases.run(name,()=>{const f=task5bIdentityV1();f.rows[0][key]=value;task5bRefusedV1(()=>task5bIdentityCallV1(vm,f));vm.assertContained();});
+  cases.run('missing row',()=>{const f=task5bIdentityV1();f.rows=[];task5bRefusedV1(()=>task5bIdentityCallV1(vm,f));});
+  cases.run('duplicate row',()=>{const f=task5bIdentityV1();f.rows.push({...f.rows[0]});task5bRefusedV1(()=>task5bIdentityCallV1(vm,f));});
+  cases.done();vm.assertContained();
+});
+// Break: a changed connection cannot refresh the retained own backend pair.
+test('Task5B immutable own backend pair',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(9);
+  cases.run('firstcapture',()=>{const f=task5bIdentityV1(),got=task5bIdentityCallV1(vm,f);f.rows[0].pid=999;
+    assert.deepEqual(task5bPlainV1(got),TASK5B_PAIR_V1);assert.equal(Object.isFrozen(got),true);});
+  cases.run('identical repeat',()=>{const f=task5bIdentityV1(),pair=task5bIdentityCallV1(vm,f);
+    assert.deepEqual(task5bPlainV1(task5bIdentityCallV1(vm,f,pair)),TASK5B_PAIR_V1);});
+  for(const [name,key,value] of [['pid drift','pid',701],['backendstart drift','backendStartedAtUTC','2026-10-21T00:00:01.234568Z'],
+    ['datid drift','datid','9'],['usesysid drift','usesysid','9'],['missing ownrow','pid',undefined],['null ownstart','backendStartedAtUTC',null]])
+    cases.run(name,()=>{const f=task5bIdentityV1(),pair=task5bIdentityCallV1(vm,f);f.rows[0][key]=value;
+      task5bRefusedV1(()=>task5bIdentityCallV1(vm,f,pair));assert.deepEqual(task5bPlainV1(pair),TASK5B_PAIR_V1);});
+  await cases.wait('pair refresh attempt after fault',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);
+    f.nextRows=task5bIdentityV1().rows;f.nextRows[0].pid=701;
+    await task5bRejectV1(f.ledger.query('identity',task5bDataV1(vm,task5bIdentityV1().expected)));
+    const count=f.calls.queries.length;f.nextRows=task5bIdentityV1().rows;
+    await task5bRejectV1(f.ledger.query('identity',task5bDataV1(vm,task5bIdentityV1().expected)));
+    assert.equal(f.calls.queries.length,count);assert.deepEqual(task5bPlainV1(f.ledger.current().pair),TASK5B_PAIR_V1);
+    await task5bRejectV1(f.ledger.close());f.check();});
+  cases.done();vm.assertContained();
+});
+// Break: generated exact rows must be removed only after positive matching.
+test('Task5B baseline stage success DATA',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(3);
+  for(const stage of ['initial','committed','activated'])cases.run(stage,()=>{
+    const got=task5bBaselineCallV1(vm,task5bBaselineV1(stage));assert.deepEqual(task5bPlainV1(got),task4aLiteralOutputV1());vm.assertContained();
+  });cases.done();
+});
+// Break: residual canonicalization must see all unrelated and generated facts.
+test('Task5B residual baseline refusal',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(12);
+  for(const [name,mutate] of [
+    ['extra DB',f=>{f.rows.databases.push({...f.rows.databases[3],name:'extra',oid:9});}],
+    ['missing generatedDB',f=>{f.rows.databases.pop();}],['DB OID reuse',f=>{f.rows.databases[3].oid=5;}],
+    ['ownerOID drift',f=>{f.rows.databases[3].ownerOid=1;}],
+    ['extra role',f=>{f.rows.roles.push({...f.rows.roles[4],name:'extra',oid:9});}],
+    ['runtimeflags',f=>{f.rows.roles[4].superuser=true;}],['ownerflags',f=>{f.rows.roles[3].login=true;}],
+    ['generatedmembership role',f=>{f.rows.memberships.push({roleOid:7,memberOid:1,grantorOid:1,adminOption:false,inheritOption:false,setOption:false});}],
+    ['generatedmembership member',f=>{f.rows.memberships.push({roleOid:1,memberOid:8,grantorOid:1,adminOption:false,inheritOption:false,setOption:false});}],
+    ['generatedmembership grantor',f=>{f.rows.memberships.push({roleOid:1,memberOid:2,grantorOid:7,adminOption:false,inheritOption:false,setOption:false});}],
+    ['overflow',f=>{f.rows.memberships=Array.from({length:257},()=>({...f.rows.memberships[0]}));}],
+    ['framedigest mismatch',f=>{f.expected.membershipBaselineSha256=OWN_C;}],
+  ])cases.run(name,()=>{const f=task5bBaselineV1('committed');mutate(f);task5bRefusedV1(()=>task5bBaselineCallV1(vm,f));vm.assertContained();});
+  cases.done();
+});
+// Break: a void verifier result cannot stand in for actual record observations.
+test('Task5B actual installation projection',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(8);
+  cases.run('valid seven',()=>{const f=task5bProjectionV1();assert.deepEqual(task5bPlainV1(task5bProjectV1(vm,f)),f.installation);});
+  cases.run('valid nine',()=>{const f=task5bProjectionV1(true);assert.deepEqual(task5bPlainV1(task5bProjectV1(vm,f)),f.installation);});
+  cases.run('privateURL omitted',()=>{const f=task5bProjectionV1(),got=task5bProjectV1(vm,f);
+    assert.equal(JSON.stringify(got).includes('runtimeUrl'),false);assert.equal(JSON.stringify(got).includes(OWN_C),false);});
+  cases.run('void verifyRuntime does not supply state',()=>{const f=task5bProjectionV1();f.recordView.prepared=null;
+    task5bRefusedV1(()=>task5bProjectV1(vm,f));});
+  cases.run('wrong origin OIDs',()=>{const f=task5bProjectionV1(true);f.recordView.prepared.origin.databaseOid=9;
+    task5bRefusedV1(()=>task5bProjectV1(vm,f));});
+  cases.run('migration mismatch',()=>{const f=task5bProjectionV1();f.recordView.prepared.origin.migrations[32].checksum=OWN_B;
+    task5bRefusedV1(()=>task5bProjectV1(vm,f));});
+  cases.run('changed oldpin',()=>{const f=task5bProjectionV1(true);f.recordView.prepared.baseRecordPins['planned.json'].sha256=OWN_B;
+    task5bRefusedV1(()=>task5bProjectV1(vm,f));});
+  cases.run('catalog stage mismatch',()=>{const f=task5bProjectionV1(true);f.recordView.observedActivationCatalogHash=OWN_H;
+    task5bRefusedV1(()=>task5bProjectV1(vm,f));});
+  cases.done();vm.assertContained();
+});
+// Break: the projection must require actual absence/staleness observations.
+test('Task5B activation-stage DATA comparisons',()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(8);
+  cases.run('unactivated observed absence',()=>{const f=task5bProjectionV1();f.stage='before-activation';f.expected.installation=ownedInstallationData();
+    assert.deepEqual(task5bPlainV1(task5bProjectV1(vm,f)),f.installation);});
+  cases.run('activated required record view',()=>{const f=task5bProjectionV1(true);assert.deepEqual(task5bPlainV1(task5bProjectV1(vm,f)),f.installation);});
+  cases.run('observed stale oldselection predicate',()=>{const f=task5bProjectionV1(true);assert.equal(f.recordView.staleAbsenceRefused,true);
+    assert.deepEqual(task5bPlainV1(task5bProjectV1(vm,f)),f.installation);});
+  for(const [name,mutate] of [
+    ['missing expected stale observation',f=>{f.recordView.staleAbsenceRefused=false;}],
+    ['missing newpin',f=>{f.recordView.activation.activatedPin=null;}],
+    ['changed oldpin',f=>{f.recordView.prepared.baseRecordPins['schema-committed.json'].bytes++;}],
+    ['activation return mismatch',f=>{f.recordView.activationReturn.catalogHash=OWN_H;}],
+    ['selected directory mismatch',f=>{f.recordView.selectedDirectory+='/other';}],
+  ])cases.run(name,()=>{const f=task5bProjectionV1(true);mutate(f);task5bRefusedV1(()=>task5bProjectV1(vm,f));});
+  cases.done();vm.assertContained();
+});
+
+function task5bDeferredV1(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});
+  return {promise,resolve,reject};}
+async function task5bPumpV1(){
+  await Promise.resolve();await Promise.resolve();await Promise.resolve();await Promise.resolve();
+  await Promise.resolve();await Promise.resolve();await Promise.resolve();await Promise.resolve();
+}
+function task5bDeadlineV1(vm){
+  const live=vm.timers.filter(timer=>!vm.cleared.includes(timer.handle));assert.equal(live.length,1,'one actual outstanding operation budget');
+  assert.equal(live[0].delay,5000);vm.monotonic.state.ms+=5000;live[0].callback();
+}
+function task5bGuardV1(faults,fn){return (...args)=>{try{return fn(...args);}catch(error){
+  if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;
+}};}
+function task5bSqlFixtureV1(vm){
+  const faults=[],calls={log:[],reserves:0,releases:0,ends:0,queries:[]};
+  const f={vm,faults,calls,reserveValue:null,reserveThrows:false,queryThrows:false,queryRejects:false,
+    nextValue:null,nextRows:null,releaseThrows:false,endThrows:false,endRejects:false,endValue:null,
+    shapeThrows:false,releaseMicrotask:false,oncloseDuringEnd:false};
+  const guard=fn=>task5bGuardV1(faults,fn);
+  const reservation=guard(()=>assert.fail('qualification uses fixed unsafe SELECT, never an unclassified query'));
+  reservation.unsafe=guard((sql,...rest)=>{
+    assert.equal(typeof sql,'string');assert.deepEqual(rest,[],'fixed read-only SQL has no caller parameter channel');
+    assert.equal(calls.releases,0);assert.equal(calls.ends,0);assert.equal(calls.reserves,1);
+    assert.match(sql,/^\s*(?:WITH\b|SELECT\b)/i);assert.match(sql,/pg_backend_pid\s*\(/i);
+    assert.match(sql,/pg_stat_activity/i);assert.match(sql,/backend_start/i);assert.match(sql,/datid/i);assert.match(sql,/usesysid/i);
+    assert.doesNotMatch(sql,/pg_authid|data_directory|unix_socket_directories|\b(?:INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|GRANT|REVOKE)\b/i);
+    let kind;
+    if(/pg_control_system/i.test(sql))kind='identity';
+    else if(/pg_auth_members/i.test(sql))kind='memberships';
+    else if(/pg_roles/i.test(sql))kind='roles';
+    else if(/pg_database/i.test(sql))kind='databases';
+    else assert.fail('query is one fixed qualification kind');
+    if(kind==='identity')assert.match(sql,/host\s*\(\s*(?:pg_catalog\.)?inet_server_addr\s*\(/i);
+    else assert.match(sql,/LIMIT\s+(?:4|5|129|131|257)\b/i);
+    calls.queries.push(kind);calls.log.push('query:'+kind);
+    if(f.queryThrows)throw Error('PRIVATE_QUERY_THROW');
+    if(f.queryRejects)return Promise.reject(Error('PRIVATE_QUERY_REJECT'));
+    if(f.nextValue!==null){const value=f.nextValue;f.nextValue=null;return value;}
+    const own={pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:'7',usesysid:'8'};
+    const raw=f.nextRows??(kind==='identity'?task5bIdentityV1().rows:[{...own,rows:task4aCatalogV1()[kind]}]);f.nextRows=null;
+    // Driver-owned array metadata is deliberately present; it is not baseline
+    // DATA and must be removed by the real consumer's explicit projection.
+    const rows=task5bDataV1(vm,raw);rows.count=rows.length;rows.command='SELECT';return Promise.resolve(rows);
+  });
+  reservation.release=guard(()=>{calls.releases++;calls.log.push('release');assert.equal(calls.releases,1);
+    queueMicrotask(()=>{f.releaseMicrotask=true;});if(f.releaseThrows)throw Error('PRIVATE_RELEASE_THROW');});
+  const pool=guard(()=>assert.fail('no unreserved pool query'));
+  Object.defineProperty(pool,'reserve',{get:guard(()=>{
+    if(f.shapeThrows)throw Error('PRIVATE_RESERVE_PROPERTY');
+    return guard(()=>{calls.reserves++;calls.log.push('reserve');assert.equal(calls.reserves,1);
+      if(f.reserveThrows)return Promise.reject(Error('PRIVATE_RESERVE_REJECT'));
+      return f.reserveValue??Promise.resolve(reservation);});
+  })});
+  pool.end=guard(options=>{calls.ends++;calls.log.push('end');assert.equal(calls.ends,1);
+    assert.deepEqual(task5bPlainV1(options),{timeout:5});assert.equal(f.releaseMicrotask,false,'end invoked synchronously after release');
+    if(f.oncloseDuringEnd)f.ledger.onclose();
+    if(f.endThrows)throw Error('PRIVATE_END_THROW');if(f.endRejects)return Promise.reject(Error('PRIVATE_END_REJECT'));
+    return f.endValue??Promise.resolve();
+  });
+  f.pool=pool;f.reservation=reservation;f.ledger=vm.api.createManualOrphanPhaseSqlLedgerV1();
+  assert.deepEqual(Object.keys(f.ledger).sort(),['capturePool','close','current','onclose','query','reserve']);
+  f.check=()=>{assert.deepEqual(faults,[],'consumer catches must not swallow retained-client fixture assertions');
+    const now=f.ledger.current();assert.deepEqual(Object.keys(now).sort(),[
+      'closed','endAttempted','pair','pending','poolCaptured','releaseAttempted','reservationCaptured','stopped','unknown']);
+    assert.equal(now.releaseAttempted,calls.releases===1);assert.equal(now.endAttempted,calls.ends===1);
+    assert.equal(Object.isFrozen(now),true);vm.assertContained();};
+  return f;
+}
+async function task5bSqlReadyV1(f){
+  f.ledger.capturePool(f.pool);await f.ledger.reserve();
+  const identity=await f.ledger.query('identity',task5bDataV1(f.vm,task5bIdentityV1().expected));
+  assert.deepEqual(task5bPlainV1(identity),TASK5B_PAIR_V1);assert.equal(Object.isFrozen(identity),true);
+  assert.deepEqual(task5bPlainV1(f.ledger.current().pair),TASK5B_PAIR_V1);f.check();
+}
+function task5bSqlUnknownV1(f){assert.equal(f.ledger.current().unknown,true);assert.equal(f.ledger.current().closed,false);f.check();}
+async function task5bTrackUnknownV1(t){const outcome=await t.done;assert.equal(outcome.error?.message,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');}
+function task5bQueryV1(f,kind='identity'){return f.ledger.query(kind,task5bDataV1(f.vm,task5bIdentityV1().expected));}
+
+// Break: a late reserve must remain retained even after its budget has expired.
+test('Task5B retained SQL acquire/reserve',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(7);
+  await cases.wait('pool retained before shape failure',async()=>{const f=task5bSqlFixtureV1(vm);f.shapeThrows=true;
+    // Capture is retention-only. Fallible member access belongs to reserve.
+    f.ledger.capturePool(f.pool);assert.equal(f.ledger.current().poolCaptured,true);
+    await task5bRejectV1(f.ledger.reserve());await task5bRejectV1(f.ledger.close());
+    assert.equal(f.calls.reserves,0);assert.equal(f.calls.ends,1);task5bSqlUnknownV1(f);});
+  await cases.wait('reserve once',async()=>{const f=task5bSqlFixtureV1(vm);f.ledger.capturePool(f.pool);await f.ledger.reserve();
+    assert.equal(f.calls.reserves,1);assert.equal(f.ledger.current().reservationCaptured,true);
+    assert.equal(f.ledger.current().pending,null);await f.ledger.close();assert.equal(f.ledger.current().closed,true);f.check();});
+  await cases.wait('reserve rejection',async()=>{const f=task5bSqlFixtureV1(vm);f.reserveThrows=true;f.ledger.capturePool(f.pool);
+    await task5bRejectV1(f.ledger.reserve());await task5bRejectV1(f.ledger.close());assert.equal(f.calls.releases,0);assert.equal(f.calls.ends,1);f.check();});
+  await cases.wait('reserve pending',async()=>{const f=task5bSqlFixtureV1(vm),d=task5bDeferredV1();f.reserveValue=d.promise;f.ledger.capturePool(f.pool);
+    const pending=trackProbePromiseV1(f.ledger.reserve());await task5bPumpV1();assert.equal(pending.outcome,null);
+    assert.equal(f.ledger.current().pending,'reserve');assert.equal(f.calls.ends,0);
+    d.resolve(f.reservation);await pending.done;assert.equal(pending.outcome.error,undefined);await f.ledger.close();f.check();});
+  await cases.wait('late returned reservation after deadline',async()=>{const f=task5bSqlFixtureV1(vm),d=task5bDeferredV1();f.reserveValue=d.promise;f.ledger.capturePool(f.pool);
+    const reserve=trackProbePromiseV1(f.ledger.reserve());await task5bPumpV1();task5bDeadlineV1(vm);
+    const close=trackProbePromiseV1(f.ledger.close());await task5bPumpV1();assert.equal(reserve.outcome,null);assert.equal(close.outcome,null);
+    assert.equal(f.calls.releases,0);assert.equal(f.calls.ends,0);d.resolve(f.reservation);
+    await task5bTrackUnknownV1(reserve);await task5bTrackUnknownV1(close);assert.equal(f.calls.releases,1);assert.equal(f.calls.ends,1);task5bSqlUnknownV1(f);});
+  await cases.wait('unexpected onclose',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);f.ledger.onclose();
+    task5bSqlUnknownV1(f);const count=f.calls.queries.length;await task5bRejectV1(task5bQueryV1(f));assert.equal(f.calls.queries.length,count);
+    await task5bRejectV1(f.ledger.close());f.check();});
+  await cases.wait('repeated reserve blocked',async()=>{const f=task5bSqlFixtureV1(vm);f.ledger.capturePool(f.pool);await f.ledger.reserve();
+    await task5bRejectV1(f.ledger.reserve());assert.equal(f.calls.reserves,1);await task5bRejectV1(f.ledger.close());f.check();});
+  cases.done();vm.assertContained();
+});
+// Break: pending qualification is never abandoned to release/end or refreshed.
+test('Task5B actual pending query ledger',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(10);
+  await cases.wait('retain actual thenable',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);
+    const d=task5bDeferredV1();let assimilations=0;f.nextValue={then(resolve,reject){assimilations++;return d.promise.then(resolve,reject);}};
+    const query=trackProbePromiseV1(task5bQueryV1(f));await task5bPumpV1();assert.equal(assimilations,1);assert.equal(query.outcome,null);
+    assert.equal(f.ledger.current().pending,'query');d.resolve(task5bDataV1(vm,task5bIdentityV1().rows));
+    await query.done;assert.equal(query.outcome.error,undefined);await f.ledger.close();f.check();});
+  await cases.wait('serial query',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);await task5bQueryV1(f);
+    assert.deepEqual(f.calls.queries,['identity','identity']);assert.deepEqual(task5bPlainV1(f.ledger.current().pair),TASK5B_PAIR_V1);
+    // A completed query's cleared budget cannot expire because later work takes time.
+    const before=vm.cleared.length;vm.monotonic.state.ms+=6000;assert.equal(f.ledger.current().unknown,false);assert.ok(before>0);
+    await f.ledger.close();f.check();});
+  await cases.wait('concurrent query denied',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);const d=task5bDeferredV1();f.nextValue=d.promise;
+    const first=trackProbePromiseV1(task5bQueryV1(f));await task5bPumpV1();await task5bRejectV1(task5bQueryV1(f));
+    assert.equal(f.calls.queries.length,2);d.resolve(task5bDataV1(vm,task5bIdentityV1().rows));await task5bTrackUnknownV1(first);
+    await task5bRejectV1(f.ledger.close());f.check();});
+  await cases.wait('synchronous throw',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);f.queryThrows=true;
+    await task5bRejectV1(task5bQueryV1(f));await task5bRejectV1(f.ledger.close());task5bSqlUnknownV1(f);});
+  await cases.wait('rejection',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);f.queryRejects=true;
+    await task5bRejectV1(task5bQueryV1(f));await task5bRejectV1(f.ledger.close());task5bSqlUnknownV1(f);});
+  await cases.wait('pending deadline',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);const d=task5bDeferredV1();f.nextValue=d.promise;
+    const query=trackProbePromiseV1(task5bQueryV1(f));await task5bPumpV1();task5bDeadlineV1(vm);await task5bPumpV1();
+    assert.equal(query.outcome,null);assert.equal(f.ledger.current().pending,'query');task5bSqlUnknownV1(f);
+    d.resolve(task5bDataV1(vm,task5bIdentityV1().rows));await task5bTrackUnknownV1(query);await task5bRejectV1(f.ledger.close());f.check();});
+  await cases.wait('late fulfill staysunknown',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);const d=task5bDeferredV1();f.nextValue=d.promise;
+    const query=trackProbePromiseV1(task5bQueryV1(f));await task5bPumpV1();task5bDeadlineV1(vm);d.resolve(task5bDataV1(vm,task5bIdentityV1().rows));
+    await task5bTrackUnknownV1(query);assert.equal(f.ledger.current().pending,null);task5bSqlUnknownV1(f);
+    await task5bRejectV1(f.ledger.close());f.check();});
+  await cases.wait('late reject staysunknown',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);const d=task5bDeferredV1();f.nextValue=d.promise;
+    const query=trackProbePromiseV1(task5bQueryV1(f));await task5bPumpV1();task5bDeadlineV1(vm);d.reject(Error('PRIVATE_LATE_QUERY'));
+    await task5bTrackUnknownV1(query);await task5bRejectV1(f.ledger.close());task5bSqlUnknownV1(f);});
+  await cases.wait('close waits pending no early release',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);const d=task5bDeferredV1();f.nextValue=d.promise;
+    const query=trackProbePromiseV1(task5bQueryV1(f)),close=trackProbePromiseV1(f.ledger.close());await task5bPumpV1();
+    assert.equal(close.outcome,null);assert.equal(f.calls.releases,0);assert.equal(f.calls.ends,0);
+    assert.equal(f.ledger.current().stopped,true);d.resolve(task5bDataV1(vm,task5bIdentityV1().rows));
+    await query.done;await close.done;assert.equal(query.outcome.error,undefined);assert.equal(close.outcome.error,undefined);
+    assert.deepEqual(f.calls.log.slice(-2),['release','end']);f.check();});
+  await cases.wait('empty membership envelope still checks pair',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);
+    f.nextRows=[{pid:701,backendStartedAtUTC:TASK5B_PAIR_V1.backendStartedAtUTC,datid:'7',usesysid:'8',rows:[]}];
+    await task5bRejectV1(task5bQueryV1(f,'memberships'));assert.equal(f.calls.queries.at(-1),'memberships');
+    assert.deepEqual(task5bPlainV1(f.ledger.current().pair),TASK5B_PAIR_V1);await task5bRejectV1(f.ledger.close());f.check();});
+  cases.done();vm.assertContained();
+});
+// Break: release/end ordering, one-attempt flags and elapsed proof are required.
+test('Task5B qualification release/end',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(8);
+  await cases.wait('exact synchronous release end',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);f.oncloseDuringEnd=true;
+    await f.ledger.close();assert.deepEqual(f.calls.log.slice(-2),['release','end']);assert.equal(f.ledger.current().closed,true);
+    assert.equal(f.ledger.current().unknown,false);f.check();});
+  await cases.wait('release throw',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);f.releaseThrows=true;
+    await task5bRejectV1(f.ledger.close());assert.equal(f.calls.releases,1);assert.equal(f.calls.ends,1);task5bSqlUnknownV1(f);});
+  await cases.wait('end throw',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);f.endThrows=true;
+    await task5bRejectV1(f.ledger.close());assert.equal(f.calls.ends,1);task5bSqlUnknownV1(f);});
+  await cases.wait('end rejection',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);f.endRejects=true;
+    await task5bRejectV1(f.ledger.close());assert.equal(f.calls.ends,1);task5bSqlUnknownV1(f);});
+  await cases.wait('end pending deadline',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);const d=task5bDeferredV1();f.endValue=d.promise;
+    const close=trackProbePromiseV1(f.ledger.close());await task5bPumpV1();assert.equal(f.ledger.current().pending,'end');task5bDeadlineV1(vm);
+    await task5bPumpV1();assert.equal(close.outcome,null);task5bSqlUnknownV1(f);d.resolve();await task5bTrackUnknownV1(close);f.check();});
+  await cases.wait('late fulfill cannotclear',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);const d=task5bDeferredV1();f.endValue=d.promise;
+    const close=trackProbePromiseV1(f.ledger.close());await task5bPumpV1();vm.monotonic.state.ms+=5001;d.resolve();
+    await task5bTrackUnknownV1(close);task5bSqlUnknownV1(f);assert.equal(f.ledger.current().pending,null);});
+  await cases.wait('secondclose no retry',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);f.endRejects=true;
+    await task5bRejectV1(f.ledger.close());await task5bRejectV1(f.ledger.close());assert.equal(f.calls.releases,1);assert.equal(f.calls.ends,1);f.check();});
+  await cases.wait('no query reconnect afterstop',async()=>{const f=task5bSqlFixtureV1(vm);await task5bSqlReadyV1(f);await f.ledger.close();
+    const before={...f.calls,log:[...f.calls.log],queries:[...f.calls.queries]};await task5bRejectV1(task5bQueryV1(f));await task5bRejectV1(f.ledger.reserve());
+    assert.deepEqual(f.calls,before);f.check();});
+  cases.done();vm.assertContained();
+});
+
+function task5bNamespaceFixtureV1(vm,{code='FRESH_INSTALLATION_DATABASE_NOT_PREPARED'}={}){
+  const faults=[],calls=[],d=task5bDeferredV1();
+  const f={vm,faults,calls,d,getterMode:'refused',closeMode:'deferred',gets:0,closes:0,forbidden:[],resolved:false};
+  const guard=fn=>task5bGuardV1(faults,fn);
+  const namespace={pgClose:guard(()=>{f.closes++;calls.push('pgClose');assert.equal(f.closes,1);
+    if(f.closeMode==='throw')throw Error('PRIVATE_PGCLOSE_THROW');
+    if(f.closeMode==='reject')return Promise.reject(Error('PRIVATE_PGCLOSE_REJECT'));
+    return d.promise;
+  }),getSql:guard(()=>{f.gets++;calls.push('getSql');assert.equal(f.closes,1,'getter fences occur after sole explicit close');
+    if(f.getterMode==='resolves'||(f.getterMode==='post-resolves'&&f.gets>1))return {};
+    if(f.getterMode==='unexpected')throw Error('PRIVATE_GETTER_DETAIL');
+    throw Error(code);
+  })};
+  const forbidden=name=>guard(()=>{f.forbidden.push(name);assert.fail('forbidden postclose '+name);});
+  namespace.assertSelectedFreshInstallationOperationalDatabaseV1=forbidden('db.assert');
+  namespace.prepareSelectedFreshInstallationDatabaseV1=forbidden('db.prepare');
+  namespace.assertFreshInstallationOperationalEntryV1=forbidden('entry.assert');
+  namespace.prepareFreshInstallationOperationalEntryV1=forbidden('entry.prepare');
+  f.namespace=namespace;f.capture=()=>vm.api.captureManualOrphanPhaseDatabaseV1(namespace);
+  f.fulfill=()=>{f.resolved=true;d.resolve();};
+  f.check=()=>{assert.deepEqual(faults,[],'consumer catch cannot swallow captured-namespace fixture assertion');
+    assert.deepEqual(f.forbidden,[]);vm.assertContained();};
+  return f;
+}
+function task5bCloseObjectV1(f){const captured=f.capture();assert.deepEqual(Object.keys(captured).sort(),['close','current']);
+  const now=captured.current();assert.deepEqual(task5bPlainV1(now),{closeAttempted:false,pending:false,unknown:false,closed:false});
+  assert.equal(Object.isFrozen(now),true);return captured;}
+function task5bCloseUnknownV1(captured){assert.equal(captured.current().unknown,true);assert.equal(captured.current().closed,false);}
+// Break: getter fences must use one captured namespace around actual settlement.
+test('Task5B captured namespace normal fence',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(4);
+  await cases.wait('immediate refusal before await',async()=>{const f=task5bNamespaceFixtureV1(vm),c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());assert.deepEqual(f.calls,['pgClose','getSql']);assert.equal(close.outcome,null);
+    f.fulfill();await close.done;assert.equal(close.outcome.error,undefined);assert.equal(c.current().closed,true);f.check();});
+  await cases.wait('deferred close fulfillment',async()=>{const f=task5bNamespaceFixtureV1(vm),c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());await task5bPumpV1();assert.equal(close.outcome,null);assert.equal(c.current().pending,true);
+    f.fulfill();await close.done;assert.equal(close.outcome.error,undefined);assert.equal(c.current().pending,false);f.check();});
+  await cases.wait('postawait refusal',async()=>{const f=task5bNamespaceFixtureV1(vm,{code:'FRESH_INSTALLATION_SELECTION_REFUSED'}),c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());f.fulfill();await close.done;assert.equal(close.outcome.error,undefined);
+    assert.deepEqual(f.calls,['pgClose','getSql','getSql']);const cleared=vm.cleared.length;
+    vm.monotonic.state.ms+=6000;assert.equal(c.current().closed,true);assert.equal(c.current().unknown,false);assert.ok(cleared>0);f.check();});
+  await cases.wait('same namespace despite unused namespace',async()=>{const f=task5bNamespaceFixtureV1(vm),unused=task5bNamespaceFixtureV1(vm);
+    const c=task5bCloseObjectV1(f),close=trackProbePromiseV1(c.close());f.fulfill();await close.done;
+    assert.equal(close.outcome.error,undefined);assert.deepEqual(f.calls,['pgClose','getSql','getSql']);assert.deepEqual(unused.calls,[]);f.check();unused.check();});
+  cases.done();vm.assertContained();
+});
+// Break: close uncertainty is sticky and cannot be repaired by a later fulfill.
+test('Task5B captured namespace close failures',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(8);
+  await cases.wait('close throw',async()=>{const f=task5bNamespaceFixtureV1(vm);f.closeMode='throw';const c=task5bCloseObjectV1(f);
+    await task5bRejectV1(c.close());assert.equal(f.closes,1);task5bCloseUnknownV1(c);f.check();});
+  await cases.wait('rejected promise',async()=>{const f=task5bNamespaceFixtureV1(vm);f.closeMode='reject';const c=task5bCloseObjectV1(f);
+    await task5bRejectV1(c.close());task5bCloseUnknownV1(c);f.check();});
+  await cases.wait('deadline pending',async()=>{const f=task5bNamespaceFixtureV1(vm),c=task5bCloseObjectV1(f),close=trackProbePromiseV1(c.close());
+    await task5bPumpV1();task5bDeadlineV1(vm);await task5bPumpV1();assert.equal(close.outcome,null);assert.equal(c.current().pending,true);
+    task5bCloseUnknownV1(c);f.fulfill();await task5bTrackUnknownV1(close);f.check();});
+  await cases.wait('late fulfillment unknown',async()=>{const f=task5bNamespaceFixtureV1(vm),c=task5bCloseObjectV1(f),close=trackProbePromiseV1(c.close());
+    await task5bPumpV1();vm.monotonic.state.ms+=5001;f.fulfill();await task5bTrackUnknownV1(close);task5bCloseUnknownV1(c);f.check();});
+  await cases.wait('immediate getter resolves',async()=>{const f=task5bNamespaceFixtureV1(vm);f.getterMode='resolves';const c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());f.fulfill();await task5bTrackUnknownV1(close);task5bCloseUnknownV1(c);f.check();});
+  await cases.wait('postawait getter resolves',async()=>{const f=task5bNamespaceFixtureV1(vm);f.getterMode='post-resolves';const c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());f.fulfill();await task5bTrackUnknownV1(close);assert.equal(f.gets,2);task5bCloseUnknownV1(c);f.check();});
+  await cases.wait('close property fault',async()=>{const f=task5bNamespaceFixtureV1(vm);Object.defineProperty(f.namespace,'pgClose',{
+    get(){f.calls.push('close-property');throw Error('PRIVATE_CLOSE_PROPERTY');}});const c=task5bCloseObjectV1(f);
+    await task5bRejectV1(c.close());assert.equal(c.current().closeAttempted,true);task5bCloseUnknownV1(c);f.check();});
+  await cases.wait('repeat close no secondinvoke',async()=>{const f=task5bNamespaceFixtureV1(vm),c=task5bCloseObjectV1(f);
+    const first=trackProbePromiseV1(c.close()),second=trackProbePromiseV1(c.close());await task5bPumpV1();assert.equal(f.closes,1);
+    assert.equal(first.outcome,null);assert.equal(second.outcome,null);f.fulfill();await first.done;await second.done;
+    assert.equal(first.outcome.error,undefined);assert.equal(second.outcome.error,undefined);assert.equal(f.closes,1);f.check();});
+  cases.done();vm.assertContained();
+});
+// Break: an immediate fence fault must not discard the already-started pgClose.
+test('Task5B failed immediate fence still joins',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(5);
+  await cases.wait('getter resolves pending',async()=>{const f=task5bNamespaceFixtureV1(vm);f.getterMode='resolves';const c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());await task5bPumpV1();assert.equal(close.outcome,null);assert.equal(c.current().pending,true);
+    task5bCloseUnknownV1(c);f.fulfill();await task5bTrackUnknownV1(close);assert.equal(f.closes,1);f.check();});
+  await cases.wait('getter unexpected behavior pending',async()=>{const f=task5bNamespaceFixtureV1(vm);f.getterMode='unexpected';const c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());await task5bPumpV1();assert.equal(close.outcome,null);task5bCloseUnknownV1(c);
+    f.fulfill();await task5bTrackUnknownV1(close);f.check();});
+  await cases.wait('later close fulfillment',async()=>{const f=task5bNamespaceFixtureV1(vm);f.getterMode='resolves';const c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());await task5bPumpV1();assert.equal(close.outcome,null);f.getterMode='refused';f.fulfill();
+    await task5bTrackUnknownV1(close);assert.equal(c.current().pending,false);task5bCloseUnknownV1(c);assert.equal(f.closes,1);f.check();});
+  await cases.wait('later rejection',async()=>{const f=task5bNamespaceFixtureV1(vm);f.getterMode='resolves';const c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());await task5bPumpV1();assert.equal(close.outcome,null);f.d.reject(Error('PRIVATE_CLOSE_LATE_REJECT'));
+    await task5bTrackUnknownV1(close);assert.equal(c.current().pending,false);task5bCloseUnknownV1(c);f.check();});
+  await cases.wait('late fault while waiting',async()=>{const local=task5bGateV1(),f=task5bNamespaceFixtureV1(local);f.getterMode='resolves';const c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());await task5bPumpV1();local.monotonic.state.mode='throw';f.getterMode='refused';f.fulfill();
+    await task5bTrackUnknownV1(close);task5bCloseUnknownV1(c);assert.equal(f.closes,1);f.check();});
+  cases.done();vm.assertContained();
+});
+// Break: close must never call entry/prepare/database assertions afterward.
+test('Task5B postclose forbidden APIs',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(3);
+  for(const [name,code] of [['old namespace','FRESH_INSTALLATION_DATABASE_NOT_PREPARED'],
+    ['activation namespace','FRESH_INSTALLATION_SELECTION_REFUSED'],['new namespace','FRESH_INSTALLATION_DATABASE_NOT_PREPARED']])
+    await cases.wait(name,async()=>{const f=task5bNamespaceFixtureV1(vm,{code}),c=task5bCloseObjectV1(f),close=trackProbePromiseV1(c.close());
+      f.fulfill();await close.done;assert.equal(close.outcome.error,undefined);assert.deepEqual(f.calls,['pgClose','getSql','getSql']);
+      assert.equal(c.current().closed,true);assert.deepEqual(f.forbidden,[]);f.check();});
+  cases.done();vm.assertContained();
+});
+// Break: private diagnostics are fixed and cleanup uncertainty dominates case.
+test('Task5B fixed diagnostic precedence',async()=>{
+  const vm=task5bGateV1(),cases=task5bCasesV1(8),owned=vm.api.ownedPolicy,legacy=vm.api.probePolicy;
+  for(const [name,message,want] of [['FRAME','MANUAL_ORPHAN_FRAME_REFUSED','MANUAL_ORPHAN_FRAME_REFUSED'],
+    ['OWNER','MANUAL_ORPHAN_OWNER_REFUSED','MANUAL_ORPHAN_OWNER_REFUSED'],
+    ['SETUP','MANUAL_ORPHAN_SETUP_REFUSED','MANUAL_ORPHAN_SETUP_REFUSED'],
+    ['CASE owned','MANUAL_ORPHAN_CASE_REFUSED','MANUAL_ORPHAN_CASE_REFUSED'],
+    ['CLEANUP_UNKNOWN','MANUAL_ORPHAN_CLEANUP_UNKNOWN','MANUAL_ORPHAN_CLEANUP_UNKNOWN'],
+    ['arbitrary private exception redacted','PRIVATE_SECRET_SQL_DETAIL','MANUAL_ORPHAN_OWNER_REFUSED']])
+    cases.run(name,()=>assert.equal(vm.api.manualOrphanEntryErrorV1(Error(message),owned).message,want));
+  await cases.wait('unknown dominates case',async()=>{const f=task5bNamespaceFixtureV1(vm);f.getterMode='resolves';const c=task5bCloseObjectV1(f);
+    const close=trackProbePromiseV1(c.close());f.d.reject(Error('MANUAL_ORPHAN_CASE_REFUSED'));const outcome=await close.done;
+    assert.equal(outcome.error?.message,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.equal(vm.api.manualOrphanEntryErrorV1(outcome.error,owned).message,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');f.check();});
+  cases.run('legacy mapping preserved',()=>assert.equal(vm.api.manualOrphanEntryErrorV1(Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN'),legacy).message,
+    'MANUAL_ORPHAN_CHILD_UNKNOWN'));cases.done();vm.assertContained();
+});
+
+// Break: provisional admin identity must admit only the all-null bootstrap,
+// preserve the actual pair, and leave catalog binding/effect authority separate.
+test('Task5B initial admin identity bootstrap is provisional and bounded',()=>{
+  task3ContractsV1();
+  let importing=true,environment;
+  const importReads=[],processBinding={};
+  Object.defineProperty(processBinding,'env',{enumerable:true,get(){
+    if(importing){importReads.push('process.env');throw Error('TEST_INERT_ENV_READ');}return environment;
+  },set(value){environment=value;}});
+  const contained=task3VmV1({task5bPrivate:true,process:processBinding,os:{}});importing=false;
+  const api=contained.task5bPrivate;assert.ok(api,'missing Task5B private exposure');
+  assert.equal(typeof api.validateManualOrphanPhaseIdentityV1,'function',
+    'missing-private-consumer validateManualOrphanPhaseIdentityV1');
+  assert.deepEqual(importReads,[],'no caught module-time selection/environment observation');
+  contained.assertContained();
+  const vm={...contained,api},cases=task5bCasesV1(4);
+  const admin=()=>{
+    const f=task5bIdentityV1();
+    Object.assign(f.expected,{databaseName:'postgres',databaseOid:null,ownerOid:null,
+      currentRole:'postgres',sessionRole:'postgres',runtimeOid:null,userOid:null});
+    Object.assign(f.rows[0],{database:'postgres',databaseOid:'5',ownerOid:'1',currentUser:'postgres',
+      sessionUser:'postgres',runtimeOid:null,datid:'5',usesysid:'1'});
+    return f;
+  };
+  try{
+    cases.run('all-null admin then concrete same pair',()=>{
+      const f=admin(),pair=task5bIdentityCallV1(vm,f);
+      const wanted={pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:5,usesysid:1};
+      assert.deepEqual(task5bPlainV1(pair),wanted);assert.equal(Object.isFrozen(pair),true);
+      // Independently fixed fixture OIDs model the later binding; this pure DATA
+      // case does not claim the required complete catalog/effect barrier ran.
+      const concrete=admin();Object.assign(concrete.expected,{databaseOid:5,ownerOid:1,userOid:1});
+      const repeated=task5bIdentityCallV1(vm,concrete,pair);
+      assert.deepEqual(task5bPlainV1(repeated),wanted);assert.equal(Object.isFrozen(repeated),true);
+      assert.deepEqual(task5bPlainV1(pair),wanted);vm.assertContained();
+    });
+    cases.run('mechanical all-null expected refuses',()=>{
+      const f=task5bIdentityV1();Object.assign(f.expected,{databaseOid:null,ownerOid:null,userOid:null});
+      task5bRefusedV1(()=>task5bIdentityCallV1(vm,f));vm.assertContained();
+    });
+    cases.run('admin mixed-null expected refuses',()=>{
+      const f=admin();f.expected.ownerOid=1;
+      task5bRefusedV1(()=>task5bIdentityCallV1(vm,f));vm.assertContained();
+    });
+    cases.run('admin actual owner and own user OIDs disagree',()=>{
+      const f=admin();f.rows[0].ownerOid='2';
+      task5bRefusedV1(()=>task5bIdentityCallV1(vm,f));vm.assertContained();
+    });
+    cases.done();
+  }finally{
+    assert.deepEqual(importReads,[],'no caught module-time selection/environment observation');
+    vm.assertContained();
+  }
+});
+
+// Task5B fix1: real private direct entry and retained input, with only finite
+// output event boundaries. No successful Source/phase owner is manufactured.
+function task5bFix1OutputBoundaryV1(){
+  const faults=[],calls=[],emitted=[],channels={stdout:new EventEmitter(),stderr:new EventEmitter()};
+  return {
+    configure({f}){
+      for(const name of ['stdout','stderr']){
+        const stream=f.process[name];
+        // Preserve the existing contained write binding; capture only actual
+        // direct-entry listener registration on this output channel.
+        stream.on=task5bGuardV1(faults,(event,listener,...rest)=>{
+          assert.equal(event,'error');assert.equal(typeof listener,'function');assert.deepEqual(rest,[]);
+          assert.equal(channels[name].listenerCount('error'),0,'one direct-entry output listener');
+          calls.push(name);channels[name].on(event,listener);return stream;
+        });
+      }
+    },
+    emit(name){
+      assert.ok(name==='stdout'||name==='stderr');assert.equal(channels[name].listenerCount('error'),1);
+      emitted.push(name);assert.equal(channels[name].emit('error',Error('PRIVATE_TASK5B_FIX1_OUTPUT_DETAIL')),true);
+    },
+    check(name){
+      assert.deepEqual(faults,[],'output-boundary assertions cannot disappear inside production catches');
+      assert.deepEqual(calls,['stderr','stdout']);assert.deepEqual(emitted,[name]);
+      assert.equal(channels.stdout.listenerCount('error'),1);assert.equal(channels.stderr.listenerCount('error'),1);
+    },
+  };
+}
+async function task5bFix1OutputCaseV1(channel,timing){
+  assert.ok(channel==='stdout'||channel==='stderr');assert.ok(timing==='pending'||timing==='after-close');
+  const boundary=task5bFix1OutputBoundaryV1(),bytes=task3WireV1('provision');
+  const entry=task3EntryV1(bytes,{profile:'new',auto:false,configure:boundary.configure});
+  const main=trackProbePromiseV1(entry.vm.childMain()),socket=entry.reader.ledger.socket;
+  assert.ok(socket);assert.equal(main.outcome,null);assert.equal(entry.reader.ledger.closed,false);
+  assert.equal(entry.reader.ledger.adopted,true);assert.deepEqual(entry.reader.ledger.fstats,[4]);
+  assert.equal(entry.reader.ledger.constructs.length,1);
+  if(timing==='pending'){
+    boundary.emit(channel);await task5bPumpV1();
+    assert.equal(main.outcome,null,'output fault/exitCode/requested destroy cannot fabricate input close');
+    assert.equal(entry.reader.ledger.closed,false);assert.equal(entry.f.control.stdout,'');
+    assert.deepEqual(entry.reader.ledger.rawCloses,[]);entry.vm.assertContained();
+  }
+  socket.emit('data',Buffer.from(bytes));socket.emit('end');
+  await task5bPumpV1();assert.equal(main.outcome,null,'EOF still waits for the actual retained close');
+  assert.equal(entry.reader.ledger.destroys,1);assert.equal(entry.reader.ledger.closed,false);
+  entry.reader.ledger.closed=true;socket.emit('close',false);
+  // Intentionally no await between actual close and this output error: the
+  // reader has resolved, but direct entry has not resumed its await continuation.
+  if(timing==='after-close')boundary.emit(channel);
+  const outcome=await main.done;
+  assert.equal(outcome.error,undefined);assert.equal(Object.hasOwn(outcome,'value'),true);
+  assert.equal(main.outcome,outcome);assert.equal(entry.reader.ledger.closed,true);
+  assert.deepEqual(entry.reader.ledger.fstats,[4]);assert.equal(entry.reader.ledger.constructs.length,1);
+  assert.equal(entry.reader.ledger.destroys,1);assert.deepEqual(entry.reader.ledger.rawCloses,[]);
+  assert.equal(entry.vm.timers.length,1);assert.deepEqual(entry.vm.cleared,[entry.vm.timers[0].handle]);
+  boundary.check(channel);entry.reader.assertClean();entry.f.assertClean();entry.vm.assertContained();
+  assert.deepEqual(entry.effects,[]);assert.equal(entry.f.state.opened.length,0);
+  assert.equal(entry.f.control.stdout,'','a retained output fault never yields a receipt');
+  assert.equal(entry.f.process.exitCode,1);
+  const diagnostic=entry.f.control.stderr;
+  assert.equal(diagnostic.includes('PRIVATE_TASK5B_FIX1_OUTPUT_DETAIL'),false);
+  assert.ok(diagnostic.endsWith('\n'),'terminal fixed refusal has a complete line');
+  const lines=diagnostic.slice(0,-1).split('\n');
+  assert.equal(lines.at(-1),'MANUAL_ORPHAN_CLEANUP_UNKNOWN','the final refusal must remain unknown, not merely an earlier output diagnostic');
+  assert.ok(lines.every(line=>line==='MANUAL_ORPHAN_CLEANUP_UNKNOWN'),'only fixed unknown diagnostics, never raw details or another refusal');
+}
+// Break: stdout uncertainty must join the still-pending inherited reader.
+test('Task5B fix1 stdout fault retains pending input and dominates dispatch',async()=>{
+  const cases=task5bCasesV1(1);
+  await cases.wait('stdout error while reader pending',()=>task5bFix1OutputCaseV1('stdout','pending'));
+  cases.done();
+});
+// Break: stderr uncertainty needs the same sticky custody as stdout uncertainty.
+test('Task5B fix1 stderr fault retains pending input and dominates dispatch',async()=>{
+  const cases=task5bCasesV1(1);
+  await cases.wait('stderr error while reader pending',()=>task5bFix1OutputCaseV1('stderr','pending'));
+  cases.done();
+});
+// Break: a resolved input promise cannot erase a newer stdout error.
+test('Task5B fix1 stdout fault after input close remains absorbing',async()=>{
+  const cases=task5bCasesV1(1);
+  await cases.wait('stdout error synchronously after actual close',()=>task5bFix1OutputCaseV1('stdout','after-close'));
+  cases.done();
+});
+// Break: late stderr uncertainty must dominate the subsequent owner dispatch.
+test('Task5B fix1 stderr fault after input close remains absorbing',async()=>{
+  const cases=task5bCasesV1(1);
+  await cases.wait('stderr error synchronously after actual close',()=>task5bFix1OutputCaseV1('stderr','after-close'));
+  cases.done();
 });
