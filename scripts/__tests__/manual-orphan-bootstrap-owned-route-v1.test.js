@@ -28,7 +28,7 @@ const WRAPPER_SOURCE=readFileSync(WRAPPER,'utf8');
 const ownerMatches=[...WRAPPER_SOURCE.matchAll(/const OWNER_BACKED_TESTS = new Set\(\[([\s\S]*?)\]\);/g)];
 assert.equal(ownerMatches.length,1,'one observed owner inventory supplies complete discovery fixtures');
 const OWNER_FILES=[...ownerMatches[0][1].matchAll(/"([^"]+)"/g)].map(match=>match[1]);
-assert.equal(OWNER_FILES.length,43,'preserve the current complete owner discovery inventory');
+assert.equal(OWNER_FILES.length,44,'preserve the current complete owner discovery inventory');
 const discovery=(...extra)=>[...new Set([...OWNER_FILES,...extra])];
 const ENV=Object.freeze({PATH:'/inert/bin',LANG:'C',LC_ALL:'C',KEEP_ROUTE_SENTINEL:'kept'});
 
@@ -1458,7 +1458,7 @@ function fixedProbeVmV1(bindings={},expose=false){
   runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
   if(bindings.task5cFixture===true)task5cEvaluateFixtureV1(context,bindings,c,faults);
   assert.equal(timers.length,0,'import creates no timer');assert.equal(c.calls.forbidden,0,'import performs no IO');
-  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5cFixture===true?{fixtureExports:context.__task5cFixtureExportsV1,fixtureLexical:context.__task5cFixtureLexicalV1,fixtureFix1Lexical:context.__task5cFixtureFix1LexicalV1,...(bindings.task6CompletionLifetime===true?{task6CompletionChild:context.__task6CompletionChildV1}:{}),...(bindings.task4cIsolatedEntry===true?{task4cEntry:task4cEvaluateIsolatedEntryV1(context,bindings,c,faults)}:{})}:{}),...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
+  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5cFixture===true?{fixtureExports:context.__task5cFixtureExportsV1,fixtureLexical:context.__task5cFixtureLexicalV1,fixtureFix1Lexical:context.__task5cFixtureFix1LexicalV1,...(bindings.task6CompletionLifetime===true?{task6CompletionChild:context.__task6CompletionChildV1}:{}),...(bindings.task4cIsolatedEntry===true?{task4cEntry:task4cEvaluateIsolatedEntryV1(context,bindings,c,faults)}:{}),...(bindings.task6IntegrationModule===true?{task6Integration:task6EvaluateIntegrationV1(context,bindings,c,faults)}:{})}:{}),...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
     assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));assert.deepEqual(faults,[],'no swallowed binding assertion');
     if(bindings.assertClean)bindings.assertClean();
   }};
@@ -7761,4 +7761,417 @@ test('Task6 late fault private registrar refuses an unregistered completion',asy
   assert.equal(pending,true);assert.equal(history.state,'observed');assert.deepEqual(joined,{value:undefined});
   assert.equal(x.outputs.stdout.listenerCount('error'),0);assert.equal(x.outputs.stderr.listenerCount('error'),0);
   task6RefusalV1(refusal,'private registrar requires the exact R registered by its factory');
+});
+
+// Task6 genuine-integration appendix: 18 literal SCRIPT callbacks / 19 finite
+// scenarios. Missing genuine Source is lazy scaffold evidence only. The actual
+// body has two negative FD4 cases; producer DATA cases exercise the private
+// actual writer/codec/collector and never claim public fixture/C/owner success.
+const TASK6_INTEGRATION_MODULE_V1=new URL('../../tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts',import.meta.url);
+const TASK6_INTEGRATION_FIXTURE_SPECIFIER_V1='./helpers/manual-control-orphan-bootstrap-fixture-v1.js';
+// Independent complete expected membership: no expected string is read from
+// OWNER_BACKED_TESTS. The old top-level 43 assertion stays frozen for tests-first.
+const TASK6_EXPECTED_OWNER_FILES_V1=Object.freeze([
+  'attempt-reconciler.test.ts',
+  'claim-authority.test.ts',
+  'claim-attempt-transition.test.ts',
+  'claim-runtime-publication.test.ts',
+  'claim-step-v3-recovery.integration.test.ts',
+  'compiler-claim-fence.test.ts',
+  'concurrency.test.ts',
+  'control-evidence-admission-reader-v1.isolated-pg.test.ts',
+  'manual-test-admission-v1.isolated-pg.test.ts',
+  'migration-runtime-preservation.test.ts',
+  'migration33-current-entry-observers.test.ts',
+  'operational-event-delivery.test.ts',
+  'operational-outbox-publisher.test.ts',
+  'operational-outbox-repository.test.ts',
+  'post-claim-ownership-finalizer.integration.test.ts',
+  'repository.test.ts',
+  'run-operational-action.test.ts',
+  'run-protocol.test.ts',
+  'run-terminal-transition.test.ts',
+  'run-termination.test.ts',
+  'runtime-completion.test.ts',
+  'runtime-hooks.test.ts',
+  'runtime-session-repository.test.ts',
+  'story-publication.integration.test.ts',
+  'terminal-claim-runtime-reconciler.test.ts',
+  'v3-deploy-receipt-repository.test.ts',
+  'v3-deploy-refusal.integration.test.ts',
+  'v3-downstream-evidence-publication.test.ts',
+  'v3-downstream-recovery-transition.test.ts',
+  'v3-implementation-refusal.integration.test.ts',
+  'v3-operational-retry-lifecycle.integration.test.ts',
+  'v3-plan-invalid-proposal-retry.integration.test.ts',
+  'v3-plan-product-build-authority.integration.test.ts',
+  'v3-plan-refusal.integration.test.ts',
+  'v3-platform-preclaim-claim.integration.test.ts',
+  'v3-platform-preclaim-terminal.integration.test.ts',
+  'v3-platform-preclaim-termination-race.integration.test.ts',
+  'v3-pre-dispatch-failure.integration.test.ts',
+  'v3-predecessor-completion-claim.integration.test.ts',
+  'v3-preparation-claim-authority.test.ts',
+  'v3-setup-build-failure-cause.integration.test.ts',
+  'v3-setup-build-untyped-build-failure.integration.test.ts',
+  'v3-stage-input-unresolved.integration.test.ts',
+  'manual-control-orphan-bootstrap-v1.integration.test.ts',
+]);
+function task6IntegrationSourceV1(){
+  assert.equal(existsSync(TASK6_INTEGRATION_MODULE_V1),true,
+    'missing genuine integration module (scaffold only; not behavioral RED)');
+  return readFileSync(TASK6_INTEGRATION_MODULE_V1,'utf8');
+}
+function task6EvaluateIntegrationV1(context,bindings,c,faults){
+  const control=bindings.task6IntegrationControl;
+  assert.ok(control,'literal Task6 opt-in requires its finite control');
+  const source=task6IntegrationSourceV1(),fixture=context.__task5cFixtureExportsV1;
+  const guard=fn=>task5bGuardV1(control.assertions,fn);
+  const reject=label=>{control.forbidden.push(label);throw Error('TASK6_INTEGRATION_CONTAINMENT');};
+  const admitted=['node:test','node:buffer','node:process',TASK6_INTEGRATION_FIXTURE_SPECIFIER_V1];
+  // Static imports and runtime require attempts have separate ledgers. Even an
+  // unused forbidden import cannot disappear harmlessly during TS lowering.
+  const parsed=ts.createSourceFile(url.fileURLToPath(TASK6_INTEGRATION_MODULE_V1),source,ts.ScriptTarget.ES2022,true);
+  for(const statement of parsed.statements){
+    if(ts.isImportDeclaration(statement)||ts.isExportDeclaration(statement)){
+      assert.equal(ts.isImportDeclaration(statement),true,'genuine module has no reexports');
+      assert.equal(ts.isStringLiteral(statement.moduleSpecifier),true);
+      const specifier=statement.moduleSpecifier.text;control.staticImports.push(specifier);
+      assert.ok(admitted.includes(specifier),'only exact genuine integration imports');
+    }
+  }
+  assert.equal(control.staticImports.filter(value=>value==='node:test').length,1);
+  assert.equal(control.staticImports.filter(value=>value===TASK6_INTEGRATION_FIXTURE_SPECIFIER_V1).length,1);
+  assert.equal(new Set(control.staticImports).size,control.staticImports.length);
+  const originalProcess=context.process;
+  const processBinding=new Proxy(originalProcess,{
+    get(target,key){if(key==='__esModule')return false;
+      if(control.importing){control.moduleReads.push(String(key));return reject('module-time process read');}
+      return Reflect.get(target,key);},
+    set(target,key,value){if(control.importing){control.moduleReads.push(String(key));return reject('module-time process write');}
+      return Reflect.set(target,key,value);},
+  });
+  const register=guard((...args)=>{
+    assert.equal(control.importing,true);assert.equal(args.length,3);
+    const [title,options,body]=args;
+    assert.equal(title,'manual orphan bootstrap v1 preserves old entry and refuses maintenance source');
+    assert.deepEqual(task5cPlainV1(options),{concurrency:false});
+    assert.equal(typeof body,'function');assert.equal(body.constructor.name,'AsyncFunction');
+    control.registrations.push({title,options,body});assert.equal(control.registrations.length,1);
+  });
+  const testBinding=new Proxy(register,{get(target,key){
+    if(key==='__esModule')return false;if(key==='test')return register;
+    return reject('node:test.'+String(key));
+  }});
+  const modules=new Map([
+    ['node:test',testBinding],['node:buffer',closedModule(c,'Task6 integration buffer',{Buffer})],['node:process',processBinding],
+    [TASK6_INTEGRATION_FIXTURE_SPECIFIER_V1,fixture],
+  ]);
+  context.__task6IntegrationRequireV1=guard(specifier=>{
+    control.imports.push(specifier);if(!modules.has(specifier))return reject('import '+String(specifier));
+    if(specifier===TASK6_INTEGRATION_FIXTURE_SPECIFIER_V1)control.fixtureImports.push(fixture);
+    return modules.get(specifier);
+  });
+  const compiled=ts.transpileModule(source,{fileName:url.fileURLToPath(TASK6_INTEGRATION_MODULE_V1),
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},reportDiagnostics:true});
+  assert.deepEqual((compiled.diagnostics??[]).filter(item=>item.category===ts.DiagnosticCategory.Error),[],
+    'complete genuine module must lower before behavioral evidence');
+  context.process=processBinding;
+  // No body/catch/mapper replacement: only expose the fixed actual lexical
+  // factory after evaluating the entire original module in the existing realm.
+  runInNewContext('(function(exports,require){\n'+compiled.outputText+`\n;
+    globalThis.__task6IntegrationFactoryV1=typeof retainManualOrphanIntegrationMarkerWriterV1==='function'?retainManualOrphanIntegrationMarkerWriterV1:null;
+  })(globalThis.__task6IntegrationExportsV1={},globalThis.__task6IntegrationRequireV1);`,context,
+    {filename:url.fileURLToPath(TASK6_INTEGRATION_MODULE_V1),timeout:5000});
+  assert.deepEqual(Object.keys(context.__task6IntegrationExportsV1),[],'no new public integration API');
+  assert.equal(control.registrations.length,1);assert.deepEqual(control.moduleReads,[]);
+  assert.deepEqual(control.forbidden,[]);assert.deepEqual(control.assertions,[]);
+  assert.equal(c.calls.forbidden,0);assert.deepEqual(faults,[]);
+  const factory=context.__task6IntegrationFactoryV1;
+  assert.equal(typeof factory,'function','missing genuine private writer (scaffold only)');assert.equal(factory.length,0);
+  return {factory,registration:control.registrations[0],actualFixture:fixture};
+}
+function task6IntegrationVmV1(options={}){
+  task6IntegrationSourceV1(); // lazy, before any VM setup in these NEW cases only
+  const control={importing:true,registrations:[],staticImports:[],imports:[],fixtureImports:[],moduleReads:[],forbidden:[],assertions:[]};
+  const reader=probeReaderFixtureV1({kind:'file'}),binding={},outputs={},writes=[],events=[],reads=[];
+  const guard=fn=>function(...args){try{return Reflect.apply(fn,this,args);}catch(error){
+    if(error?.code==='ERR_ASSERTION')control.assertions.push(error.message);throw error;
+  }};let callback=null,exitCode,writeGetterReads=0;
+  const refuse=key=>{reads.push(key);throw Error('TASK6_FORBIDDEN_PROCESS_FIELD');};
+  for(const key of ['env','argv','execArgv','execPath','argv0','pid','ppid','cwd','chdir','kill','getuid','geteuid','getgid','getegid','platform','arch','version','on','once','exit'])
+    Object.defineProperty(binding,key,{get(){return refuse(key);}});
+  for(const name of ['stdout','stderr']){
+    const stream=new EventEmitter(),on=stream.on;
+    stream.on=guard(function(event,listener){
+      assert.equal(this,stream);assert.equal(control.importing,false);assert.equal(event,'error');assert.equal(typeof listener,'function');
+      const count=stream.listenerCount('error');assert.ok(count<(options.body===true?2:1));
+      assert.deepEqual(reader.ledger.fstats,count===0?[]:[4]);
+      events.push((count===0?'writer ':'fixture ')+name);return Reflect.apply(on,stream,[event,listener]);
+    });
+    const method=guard(function(...args){
+      assert.equal(control.importing,false);assert.equal(this,stream);assert.equal(name,'stdout');
+      assert.equal(args.length,2);const [bytes,done]=args;
+      assert.ok(Buffer.isBuffer(bytes));assert.ok(bytes.length>0&&bytes.length<=16384);assert.equal(bytes.at(-1),10);
+      assert.equal(typeof done,'function');assert.equal(writes.length,0,'one retained original marker operation');
+      writes.push(Buffer.from(bytes));callback=done;events.push('write');
+      if(options.writeThrow===true)throw Error('PRIVATE_TASK6_WRITE_SENTINEL');return true;
+    });
+    Object.defineProperty(stream,'write',{get:guard(()=>{
+      assert.equal(control.importing,false);assert.equal(name,'stdout');writeGetterReads++;
+      if(options.getterThrow===true)throw Error('PRIVATE_TASK6_GETTER_SENTINEL');return method;
+    })});
+    outputs[name]=stream;Object.defineProperty(binding,name,{get(){
+      if(control.importing)return refuse(name);return stream;
+    }});
+  }
+  Object.defineProperty(binding,'exitCode',{get(){if(control.importing)return refuse('exitCode');return exitCode;},
+    set:guard(value=>{assert.equal(control.importing,false);assert.equal(value,1);exitCode=value;events.push('exitCode');})});
+  const fs={...reader.fs,fstatSync:guard(fd=>{
+    assert.equal(options.body,true);assert.equal(outputs.stdout.listenerCount('error'),1);
+    assert.equal(outputs.stderr.listenerCount('error'),1);events.push('receiver fstat');
+    const result=reader.fs.fstatSync(fd);
+    if(options.duringFstatError===true){events.push('stdout error during fstat');
+      outputs.stdout.emit('error',Error('PRIVATE_TASK6_AWAIT_SENTINEL'));}
+    return result;
+  })};
+  const vm=task3VmV1({task5cFixture:true,task6IntegrationModule:true,task6IntegrationControl:control,
+    task4cActualFd4Negative:options.body===true,process:binding,fs,net:reader.net,assertClean:reader.assertClean});
+  const entry=vm.task6Integration;
+  assert.deepEqual(Object.keys(vm.fixtureExports).sort(),[
+    'runManualOrphanBootstrapIntegrationV1','runManualOrphanBootstrapRouteV1','runManualOrphanCompiledCliNegativeV1','runManualOrphanSourceContextNegativeV1']);
+  assert.equal(vm.fixtureExports.runManualOrphanBootstrapIntegrationV1.length,0);
+  assert.equal(entry.actualFixture,vm.fixtureExports);assert.deepEqual(control.fixtureImports,[vm.fixtureExports]);
+  assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);assert.deepEqual(events,[]);
+  control.importing=false;
+  const check=()=>{assert.deepEqual(reads,[]);assert.deepEqual(control.moduleReads,[]);assert.deepEqual(control.forbidden,[]);
+    assert.deepEqual(control.assertions,[],'no swallowed integration boundary assertions');
+    assert.ok(control.imports.every(specifier=>control.staticImports.includes(specifier)));
+    assert.equal(control.registrations.length,1);reader.assertClean();vm.assertContained();
+    if(options.body!==true){assert.deepEqual(reader.ledger.fstats,[]);assert.deepEqual(reader.ledger.rawCloses,[]);}
+    assert.deepEqual(reader.ledger.constructs,[]);assert.equal(reader.ledger.destroys,0);
+  };
+  const x={vm,entry,control,reader,outputs,writes,events,check,
+    get exitCode(){return exitCode;},get callback(){return callback;},get writeGetterReads(){return writeGetterReads;},
+    writer(){const writer=entry.factory();assert.equal(typeof writer,'function');assert.equal(writer.length,1);
+      assert.deepEqual(events,['writer stdout','writer stderr']);check();return writer;},
+  };check();return x;
+}
+function task6MarkerDataV1(x){
+  // Explicit component DATA, normalized by the real same-realm codec. This is
+  // deliberately not obtained by replacing a successful public fixture call.
+  const input=x.vm.fixtureLexical.dataFromJson(JSON.stringify(ownedIntegrationData()));
+  const encoded=x.vm.actual.encodeManualOrphanIntegrationResultV1(input);
+  assert.deepEqual(encoded,Buffer.from(OWN_INTEGRATION_WIRE));
+  const data=x.vm.actual.decodeManualOrphanIntegrationResultV1(encoded);task5cFrozenV1(data);
+  return {data,encoded};
+}
+async function task6MarkerPendingV1(x){
+  const {data,encoded}=task6MarkerDataV1(x),writer=x.writer(),tracked=trackProbePromiseV1(writer(data));
+  await task5bPumpV1();x.check();assert.equal(tracked.outcome,null);assert.equal(x.writes.length,1);
+  assert.deepEqual(x.writes[0],Buffer.concat([Buffer.from('MANUAL_ORPHAN_INTEGRATION_RESULT '),encoded]));
+  assert.equal(typeof x.callback,'function');return tracked;
+}
+function task6MarkerRejectedV1(x,outcome){
+  x.check();assert.ok(outcome.error instanceof Error);assert.equal(outcome.error.message,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+  assert.equal(Object.hasOwn(outcome,'value'),false);assert.equal(x.exitCode,1);
+  assert.ok(x.writes.every(bytes=>!bytes.includes(Buffer.from('PRIVATE_TASK6_'))));
+}
+async function task6MarkerSuccessfulV1(x){
+  const tracked=await task6MarkerPendingV1(x);x.callback();const outcome=await tracked.done;
+  x.check();assert.deepEqual(outcome,{value:undefined});assert.equal(x.exitCode,undefined);
+  assert.equal(x.vm.timers.length,0,'private marker writer creates no timer');return x.writes[0];
+}
+async function task6MarkerCaseV1(label,body,options={}){
+  const cases=task5bCasesV1(1);await cases.wait(label,async()=>{
+    const x=task6IntegrationVmV1(options);try{await body(x);}finally{x.check();}
+  });cases.done();
+}
+async function task6ActualBodyRefusalV1(duringFstatError){
+  const x=task6IntegrationVmV1({body:true,duringFstatError});
+  try{
+    const tracked=trackProbePromiseV1(x.entry.registration.body());const outcome=await tracked.done;x.check();
+    assert.ok(outcome.error instanceof Error);
+    assert.equal(outcome.error.message,duringFstatError?'MANUAL_ORPHAN_CLEANUP_UNKNOWN':'MANUAL_ORPHAN_OWNER_REFUSED');
+    assert.deepEqual(x.reader.ledger.fstats,[4]);assert.deepEqual(x.reader.ledger.rawCloses,[4]);
+    assert.deepEqual(x.writes,[]);assert.equal(x.callback,null);assert.equal(x.writeGetterReads,0);
+    const expected=['writer stdout','writer stderr','receiver fstat'];
+    if(duringFstatError)expected.push('stdout error during fstat','exitCode');
+    expected.push('fixture stdout','fixture stderr');assert.deepEqual(x.events,expected);
+    assert.equal(x.exitCode,duringFstatError?1:undefined);
+    assert.equal(x.vm.timers.length,1);assert.equal(x.vm.timers[0].delay,300000);
+    assert.deepEqual(x.vm.cleared,[x.vm.timers[0].handle]);
+    for(const name of ['stdout','stderr'])assert.equal(x.outputs[name].listenerCount('error'),2);
+  }finally{x.check();}
+}
+
+// Break: eager IO, extra registrations/imports or a parallel/skipped body.
+test('Task6 integration module registers one inert sequential test',async()=>{
+  await task6MarkerCaseV1('actual full module registration only',async x=>{
+    assert.equal(x.entry.registration.title,'manual orphan bootstrap v1 preserves old entry and refuses maintenance source');
+    assert.deepEqual(task5cPlainV1(x.entry.registration.options),{concurrency:false});
+    assert.deepEqual(x.events,[]);assert.deepEqual(x.writes,[]);assert.equal(x.callback,null);
+    assert.deepEqual(x.reader.ledger.fstats,[]);assert.equal(x.vm.timers.length,0);
+    for(const name of ['stdout','stderr'])assert.equal(x.outputs[name].listenerCount('error'),0);
+  });
+});
+// Break: losing actual FD4 refusal or output uncertainty while real fixture awaits.
+test('Task6 integration body preserves actual raw FD4 refusal',async()=>{
+  const cases=task5bCasesV1(2);
+  await cases.wait('actual nonpipe FD4 yields OWNER',()=>task6ActualBodyRefusalV1(false));
+  await cases.wait('original stdout error during actual fstat dominates OWNER',()=>task6ActualBodyRefusalV1(true));
+  cases.done();
+});
+// Break: registry omission/additional owner, or reserved raw dispatch admission.
+test('Task6 owner registry adds the reserved integration without raw admission',()=>{
+  const cases=task5bCasesV1(1);cases.run('complete literal 44 membership and actual explicit refusal',()=>{
+    assert.equal(TASK6_EXPECTED_OWNER_FILES_V1.length,44);assert.equal(new Set(TASK6_EXPECTED_OWNER_FILES_V1).size,44);
+    assert.equal(OWNER_FILES.length,44,'new owner registration contract (not an existing production bug)');
+    assert.equal(new Set(OWNER_FILES).size,44);
+    assert.deepEqual([...OWNER_FILES].sort(),[...TASK6_EXPECTED_OWNER_FILES_V1].sort());
+    const c=runWrapperSourceV1([FILE],[...TASK6_EXPECTED_OWNER_FILES_V1]);
+    assert.equal(c.thrown,'MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED');noEffects(c);assert.equal(c.stdout,'');assert.equal(c.stderr,'');
+  });cases.done();
+});
+// Break: no-args discovery dispatches the reserved integration. Existing behavior
+// can already pass this case; the tests-first phase must not manufacture RED.
+test('Task6 owner discovery still refuses the reserved integration',()=>{
+  const cases=task5bCasesV1(1);cases.run('actual no-args reserved discovery refusal',()=>{
+    const c=runWrapperSourceV1([],[...TASK6_EXPECTED_OWNER_FILES_V1]);
+    assert.equal(c.thrown,'MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED');noEffects(c);assert.equal(c.stdout,'');assert.equal(c.stderr,'');
+  });cases.done();
+});
+// Break: producer bytes diverge from codec, or collector credits missing closes.
+test('Task6 marker DATA matches the actual codec and integration collector',async()=>{
+  await task6MarkerCaseV1('producer and observer DATA simulation with actual original joins',async x=>{
+    const marker=await task6MarkerSuccessfulV1(x),f=task3EventFixtureV1('integration');
+    const w=x.vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child);
+    try{
+      f.child.emit('spawn');f.channels.stdout.emit('data',Buffer.concat([marker,Buffer.from(task5aReportV1())]));
+      task5aIntegrationV1(w,'pending');
+      for(const name of ['stdout','stderr']){f.channels[name].emit('end');f.channels[name].emit('close');}
+      f.channels.fd4.emit('finish');f.channels.fd4.emit('end');f.child.emit('exit',0,null);f.child.emit('close',0,null);
+      const before=w.snapshot().state;f.channels.fd4.emit('close');await w.settled;
+      assert.equal(before,'pending');task5aAcceptedV1(w);
+      assert.equal(x.vm.timers.length,1);assert.deepEqual(x.vm.cleared,[x.vm.timers[0].handle]);
+    }finally{f.assertGuarded();x.check();}
+  });
+});
+// Break: limiting JSON payload instead of the entire prefixed UTF-8 marker line.
+test('Task6 marker whole line cap rejects oversized DATA before write',async()=>{
+  await task6MarkerCaseV1('nonprotocol DATA exceeds whole-line cap only',async x=>{
+    const data={padding:'x'.repeat(16360)},payload=Buffer.from(JSON.stringify(data)+'\n');
+    assert.ok(payload.length<=16384);assert.ok(payload.length+Buffer.byteLength('MANUAL_ORPHAN_INTEGRATION_RESULT ')>16384);
+    const writer=x.writer(),outcome=await trackProbePromiseV1(writer(data)).done;
+    task6MarkerRejectedV1(x,outcome);assert.deepEqual(x.writes,[]);assert.equal(x.callback,null);
+  });
+});
+// Break: completion/retry before the one original write callback.
+test('Task6 marker retains the original pending write callback',async()=>{
+  await task6MarkerCaseV1('withheld original callback remains pending',async x=>{
+    const tracked=await task6MarkerPendingV1(x),original=x.callback;await task5bPumpV1();
+    const pending=tracked.outcome===null;original();const outcome=await tracked.done;
+    assert.equal(pending,true);assert.deepEqual(outcome,{value:undefined});assert.equal(x.callback,original);
+    assert.equal(x.writes.length,1);assert.equal(x.vm.timers.length,0);assert.equal(x.exitCode,undefined);
+  });
+});
+// Break: raw callback error leakage or retry after uncertain original output.
+test('Task6 marker callback error is fixed and never retried',async()=>{
+  await task6MarkerCaseV1('original callback error',async x=>{
+    const tracked=await task6MarkerPendingV1(x);x.callback(Error('PRIVATE_TASK6_CALLBACK_SENTINEL'));
+    task6MarkerRejectedV1(x,await tracked.done);assert.equal(x.writes.length,1);
+  });
+});
+// Break: an invocation throw fabricates callback settlement or retries output.
+test('Task6 marker invocation throw retains its original callback',async()=>{
+  await task6MarkerCaseV1('throw after acquiring original callback obligation',async x=>{
+    const tracked=await task6MarkerPendingV1(x);await task5bPumpV1();const pending=tracked.outcome===null;
+    x.callback();const outcome=await tracked.done;assert.equal(pending,true);
+    task6MarkerRejectedV1(x,outcome);assert.equal(x.writes.length,1);
+  },{writeThrow:true});
+});
+// Break: stdout error settles pending output without its original callback.
+test('Task6 marker original stdout error rejects pending output',async()=>{
+  await task6MarkerCaseV1('original stdout error while original callback pending',async x=>{
+    const tracked=await task6MarkerPendingV1(x);x.outputs.stdout.emit('error',Error('PRIVATE_TASK6_STDOUT_SENTINEL'));
+    await task5bPumpV1();const pending=tracked.outcome===null;x.callback();const outcome=await tracked.done;
+    assert.equal(pending,true);task6MarkerRejectedV1(x,outcome);assert.equal(x.writes.length,1);
+  });
+});
+// Break: callback success masks a synchronous fault before async continuation.
+test('Task6 marker original stderr error wins before continuation',async()=>{
+  await task6MarkerCaseV1('stderr error after callback before continuation',async x=>{
+    const tracked=await task6MarkerPendingV1(x);x.callback();x.outputs.stderr.emit('error',Error('PRIVATE_TASK6_STDERR_SENTINEL'));
+    task6MarkerRejectedV1(x,await tracked.done);assert.equal(x.writes.length,1);
+  });
+});
+// Break: listener removal loses post-fulfillment local failure signaling. This
+// exitCode assertion is not evidence of actual native reporter/process exit.
+test('Task6 marker late output error prevents clean process outcome',async()=>{
+  await task6MarkerCaseV1('retained stdout listener after writer fulfillment',async x=>{
+    await task6MarkerSuccessfulV1(x);x.outputs.stdout.emit('error',Error('PRIVATE_TASK6_LATE_SENTINEL'));
+    assert.equal(x.exitCode,1);assert.equal(x.writes.length,1);assert.equal(x.outputs.stdout.listenerCount('error'),1);
+    assert.equal(x.outputs.stderr.listenerCount('error'),1);assert.equal(x.vm.timers.length,0);
+  });
+});
+// Break: a duplicate of the SAME original callback is silently accepted late.
+test('Task6 marker duplicate original callback remains a late fault',async()=>{
+  await task6MarkerCaseV1('same original callback duplicated after fulfillment',async x=>{
+    await task6MarkerSuccessfulV1(x);const original=x.callback;original();
+    assert.equal(x.exitCode,1);assert.equal(x.callback,original);assert.equal(x.writes.length,1);assert.equal(x.vm.timers.length,0);
+  });
+});
+// Break: actual collector credits any passing title rather than the named test.
+test('Task6 marker actual collector rejects the wrong test title',async()=>{
+  await task6MarkerCaseV1('actual producer marker plus wrong-title transcript DATA',async x=>{
+    const marker=await task6MarkerSuccessfulV1(x),report=task5aReportV1().replace(TASK5A_PASS_NAME_V1,'wrong test title');
+    await task5aRefusedTranscriptV1(x.vm,Buffer.concat([marker,Buffer.from(report)]));
+  });
+});
+// Break: actual collector accepts a marker emitted after the named pass line.
+test('Task6 marker actual collector rejects reporter before marker',async()=>{
+  await task6MarkerCaseV1('named pass line precedes actual producer marker DATA',async x=>{
+    const marker=await task6MarkerSuccessfulV1(x),report=task5aReportV1(),split=report.indexOf('\n')+1;
+    await task5aRefusedTranscriptV1(x.vm,Buffer.concat([Buffer.from(report.slice(0,split)),marker,Buffer.from(report.slice(split))]));
+  });
+});
+// Break: observer deadline invents writer callback/physical closure. The
+// observer and writer have distinct obligations; neither simulates native C.
+test('Task6 marker parent observer deadline does not manufacture closure',async()=>{
+  await task6MarkerCaseV1('actual observer deadline while original output and channels remain owed',async x=>{
+    const tracked=await task6MarkerPendingV1(x),f=task3EventFixtureV1('integration'),closed=[];
+    for(const name of ['stdout','stderr','fd4'])f.channels[name].on('close',()=>closed.push(name));
+    f.child.on('close',()=>closed.push('child'));
+    const w=x.vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child);
+    try{
+      f.channels.stdout.emit('data',Buffer.concat([x.writes[0],Buffer.from(task5aReportV1())]));
+      assert.equal(x.vm.timers.length,1);assert.equal(x.vm.timers[0].delay,300000);
+      x.vm.monotonic.state.ms=300000;x.vm.timers[0].callback();await task5bPumpV1();
+      const pending=tracked.outcome===null,physicalBefore=[...closed],deadline=w.snapshot();
+      x.callback();const output=await tracked.done;task3CompleteV1(f,'integration');const history=await w.settled;
+      // Decisive assertions follow the retained original callback and all four
+      // physical close emissions; a timeout was never used as a close surrogate.
+      assert.equal(pending,true);assert.deepEqual(physicalBefore,[]);assert.deepEqual(output,{value:undefined});
+      assert.deepEqual(closed,['stdout','stderr','fd4','child']);assert.equal(deadline.state,'unknown');
+      assert.equal(deadline.reason,'deadline');assert.equal(history.state,'unknown');task5aIntegrationV1(w,'refused');
+      assert.equal(w.snapshot().state,'unknown');assert.deepEqual(x.vm.cleared,[x.vm.timers[0].handle]);
+    }finally{f.assertGuarded();x.check();}
+  });
+});
+// Break: builtin serialization failure leaks raw DATA or attempts output.
+test('Task6 marker serialization failure is sanitized before write',async()=>{
+  await task6MarkerCaseV1('explicit nonprotocol BigInt DATA',async x=>{
+    const writer=x.writer(),outcome=await trackProbePromiseV1(writer({PRIVATE_TASK6_BIGINT_SENTINEL:1n})).done;
+    task6MarkerRejectedV1(x,outcome);assert.deepEqual(x.writes,[]);assert.equal(x.callback,null);
+  });
+});
+// Break: write getter failure acquires a fictitious callback obligation.
+test('Task6 marker write getter failure acquires no callback',async()=>{
+  await task6MarkerCaseV1('actual stdout write getter fails before invocation',async x=>{
+    const {data}=task6MarkerDataV1(x),outcome=await trackProbePromiseV1((async()=>{
+      const writer=x.writer();await writer(data);
+    })()).done;
+    task6MarkerRejectedV1(x,outcome);assert.equal(x.writeGetterReads,1);assert.deepEqual(x.writes,[]);assert.equal(x.callback,null);
+    assert.equal(x.vm.timers.length,0);
+  },{getterThrow:true});
 });

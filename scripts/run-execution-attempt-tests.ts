@@ -20,6 +20,7 @@ const OWNER_BACKED_TESTS = new Set([
   "concurrency.test.ts",
   "control-evidence-admission-reader-v1.isolated-pg.test.ts",
   "manual-test-admission-v1.isolated-pg.test.ts",
+  "manual-control-orphan-bootstrap-v1.integration.test.ts",
   "migration-runtime-preservation.test.ts",
   "migration33-current-entry-observers.test.ts",
   "operational-event-delivery.test.ts",
