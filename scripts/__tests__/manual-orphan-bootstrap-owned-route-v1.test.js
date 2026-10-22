@@ -9,6 +9,13 @@ import * as url from 'node:url';
 import {runInNewContext} from 'node:vm';
 import test from 'node:test';
 
+// Reviewed fixed-host DATA, independently pinned here; never an ambient selector.
+const TASK7_POLICY_BYTES=readFileSync(new URL('../../src/installation/manual-orphan-fixed-host-policy-v1.json',import.meta.url));
+assert.equal(TASK7_POLICY_BYTES.length,318,'fixed-host policy exact byte count');
+assert.equal(createHash('sha256').update(TASK7_POLICY_BYTES).digest('hex'),
+  '4b7ed03bf755ec453e0c7a79d3fcf4f4f4fee387dc9bf551d55e41e7b2281dc5','independent fixed-host policy digest');
+const TASK7_HOST_POLICY=Object.freeze(JSON.parse(TASK7_POLICY_BYTES.toString('utf8')));
+
 // These are test literals, not a substitute classifier. Every route decision
 // below executes the complete current consumer Source in a contained VM.
 const BASENAME='manual-control-orphan-bootstrap-v1.integration.test.ts';
@@ -2432,8 +2439,8 @@ test('owned data decoder uses actual Buffer view length and never a forged own s
 // check/close still require Task7's actual reviewed finalized M.
 const SOURCE_NODE_V1='/opt/homebrew/Cellar/node/26.4.0/bin/node';
 const SOURCE_NODE_HASH_V1='59cd4fb59cf5bc239f43d5db8c0cd8c23c22db79419612b92da3b7cf34de8553';
-const SOURCE_HOME_V1='/Users/setrox';
-const SOURCE_WORKSPACE_V1='/Users/setrox/ai/setrox';
+const SOURCE_HOME_V1=TASK7_HOST_POLICY.home;
+const SOURCE_WORKSPACE_V1=TASK7_HOST_POLICY.workspace;
 const SOURCE_M_SHA_V1='8888888888888888888888888888888888888888';
 const SOURCE_M_V1=SOURCE_WORKSPACE_V1+'/releases/setfarm-88888888';
 const SOURCE_T_V1=SOURCE_WORKSPACE_V1+'/releases/setfarm-161297ff';
@@ -3568,7 +3575,7 @@ test('Task3 R local monotonic origin follows listener binding and cannot certify
 // lowering. Only launch/FD/native import boundaries are contained, no handlers
 // or predicate bodies are replaced. New profile models fixed Node/account.
 const TASK3_NODE_V1='/opt/homebrew/Cellar/node/26.4.0/bin/node';
-const TASK3_PATH_V1='/opt/homebrew/Cellar/node/26.4.0/bin:/Users/setrox/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+const TASK3_PATH_V1=TASK7_HOST_POLICY.path;
 function task3EntryV1(bytes,{profile='new',auto=true,readerOptions={},configure}={}){
   task3ContractsV1();const f=probeCompositionFixtureV1('child'),effects=[],calls=[],faults=[];
   const reader=probeReaderFixtureV1({...readerOptions,...(auto?{autoBytes:Buffer.from(bytes)}:{})});
@@ -3576,7 +3583,7 @@ function task3EntryV1(bytes,{profile='new',auto=true,readerOptions={},configure}
   const fs0=f.state.fs;f.fs={...fs0,fstatSync:(...args)=>reader.fs.fstatSync(...args),closeSync:(...args)=>reader.fs.closeSync(...args)};
   const noEffect=label=>(..._args)=>{effects.push(label);throw Error('FORBIDDEN_TASK3_EFFECT');};
   f.fs.openSync=noEffect('source/open');f.childProcess={spawn:noEffect('spawn'),spawnSync:noEffect('process observation')};
-  const account={username:'setrox',uid:501,gid:20,shell:'/bin/zsh',homedir:'/Users/setrox'};
+  const account={username:'setrox',uid:501,gid:20,shell:'/bin/zsh',homedir:TASK7_HOST_POLICY.home};
   f.os={userInfo(...args){try{assert.equal(args.length,0);}catch(error){faults.push(error.message);throw error;}
     calls.push('userInfo');return {...account};}};
   if(profile==='new'){
@@ -3606,7 +3613,7 @@ test('Task3 H private union preserves complete existing legacy probe positive co
 const TASK3_ENV_V1=[
   ['legacy','legacy',null,true],['new fixed baseline','new',null,true],
   ['new allowed CF','new',({f})=>{f.process.env.__CF_USER_TEXT_ENCODING='0x1F5:0x23:0x18';},true],
-  ['new extra HOME','new',({f})=>{f.process.env.HOME='/Users/setrox';},false],
+  ['new extra HOME','new',({f})=>{f.process.env.HOME=TASK7_HOST_POLICY.home;},false],
   ['new wrong locale','new',({f})=>{f.process.env.LANG='en_US';},false],
   ['new wrong physical Node','new',({f})=>{f.process.execPath=OBS_EXE_V1;f.process.argv0=OBS_EXE_V1;f.process.argv[0]=OBS_EXE_V1;},false],
   ['new wrong account home','new',({account})=>{account.homedir='/other/home';},false],
@@ -5704,7 +5711,7 @@ function task5bContextV1(vm){
   const d=task5bDerivedV1(),frame=task5bGraphV1().frame;
   const context={root:d.maintenanceRoot,node:d.node,helper:d.helper,
     issuer:d.maintenanceRoot+'/scripts/__tests__/manual-orphan-bootstrap-owned-route-v1.test.js'};
-  const account={homedir:'/Users/setrox',uid:501,gid:20};
+  const account={homedir:TASK7_HOST_POLICY.home,uid:501,gid:20};
   Object.assign(vm.processBinding,{execPath:d.node,argv0:d.node,execArgv:[],argv:[d.node,d.helper],
     cwd:()=>context.root,env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},platform:'darwin',arch:'arm64',version:'v26.4.0',
     getuid:()=>501,geteuid:()=>501,getgid:()=>20,getegid:()=>20,pid:104,ppid:102});
@@ -5816,13 +5823,13 @@ test('Task5B private contracts and inert module',()=>{
 test('Task5B actual owned context before effects',()=>{
   const gate=task5bGateV1(),cases=task5bCasesV1(12);gate.assertContained();
   for(const [name,mutate,valid] of [
-    ['valid physical context',()=>{},true],['W',f=>{f.context.root='/Users/setrox/ai/setrox/.worktrees/writer';},false],
+    ['valid physical context',()=>{},true],['W',f=>{f.context.root=TASK7_HOST_POLICY.workspace+'/.worktrees/writer';},false],
     ['target as M',f=>{f.context.root=SOURCE_T_V1;},false],['other release parent',f=>{f.context.root='/other/releases/setfarm-88888888';},false],
     ['malformed release name',f=>{f.context.root=SOURCE_WORKSPACE_V1+'/releases/setfarm-zzzzzzzz';},false],
     ['legacy policy',(f,vm)=>{f.policy=vm.api.probePolicy;},false],['wrong node',(f,vm)=>{vm.processBinding.execPath='/wrong/node';},false],
     ['execArgv',(f,vm)=>{vm.processBinding.execArgv=['--inspect'];},false],
     ['cwd',(f,vm)=>{vm.processBinding.cwd=()=>'/wrong';},false],
-    ['env extra',(f,vm)=>{vm.processBinding.env.HOME='/Users/setrox';},false],
+    ['env extra',(f,vm)=>{vm.processBinding.env.HOME=TASK7_HOST_POLICY.home;},false],
     ['account IDs',f=>{f.account.uid=502;f.account.gid=21;},false],
     ['selected env preexisting',(f,vm)=>{vm.processBinding.env.SETFARM_INSTALLATION_DIR='/synthetic';},false],
   ])cases.run(name,()=>{const vm=task5bGateV1(),f=task5bContextV1(vm);mutate(f,vm);
@@ -6649,8 +6656,8 @@ const TASK5C_LEAVES_V1=[
   'scripts/private-postgres-test-journal-v1.mjs','scripts/finding-test-preflight.mjs',
   'src/installation/manual-orphan-target-dependencies-v1.json',
 ];
-const TASK5C_ANCESTORS_V1=['/','/Users','/Users/setrox','/Users/setrox/ai','/Users/setrox/ai/setrox',
-  '/Users/setrox/ai/setrox/releases',SOURCE_M_V1,SOURCE_M_V1+'/scripts',SOURCE_M_V1+'/scripts/__tests__',
+const TASK5C_ANCESTORS_V1=['/',path.dirname(TASK7_HOST_POLICY.home),TASK7_HOST_POLICY.home,path.dirname(TASK7_HOST_POLICY.workspace),TASK7_HOST_POLICY.workspace,
+  TASK7_HOST_POLICY.releases,SOURCE_M_V1,SOURCE_M_V1+'/scripts',SOURCE_M_V1+'/scripts/__tests__',
   SOURCE_M_V1+'/tests',SOURCE_M_V1+'/tests/execution-attempts',SOURCE_M_V1+'/tests/execution-attempts/helpers',
   SOURCE_M_V1+'/src',SOURCE_M_V1+'/src/installation'];
 function task5cPinFixtureV1(stage='integration'){

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {spawnSync} from 'node:child_process';
 import {chmodSync,closeSync,constants,existsSync,mkdtempSync,openSync,readFileSync} from 'node:fs';
@@ -6,6 +8,13 @@ import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import test from 'node:test';
+
+// Reviewed fixed-host DATA, independently pinned here; never an ambient selector.
+const TASK7_POLICY_BYTES=readFileSync(new URL('../../src/installation/manual-orphan-fixed-host-policy-v1.json',import.meta.url));
+assert.equal(TASK7_POLICY_BYTES.length,318,'fixed-host policy exact byte count');
+assert.equal(createHash('sha256').update(TASK7_POLICY_BYTES).digest('hex'),
+  '4b7ed03bf755ec453e0c7a79d3fcf4f4f4fee387dc9bf551d55e41e7b2281dc5','independent fixed-host policy digest');
+const TASK7_HOST_POLICY=Object.freeze(JSON.parse(TASK7_POLICY_BYTES.toString('utf8')));
 
 const MODULE=new URL('../run-private-postgres-tests.mjs',import.meta.url);
 async function implementation(){
@@ -1123,8 +1132,8 @@ test('manual-orphan-bootstrap direct CLI refuses extra argv before cluster effec
 // The complete constructor is lowered only for ESM language containment; no
 // production guard or function body is removed, extracted, or substituted.
 const TASK4B_NODE='/opt/homebrew/Cellar/node/26.4.0/bin/node';
-const TASK4B_M='/Users/setrox/ai/setrox/releases/setfarm-3271862b';
-const TASK4B_PATH='/opt/homebrew/Cellar/node/26.4.0/bin:/Users/setrox/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+const TASK4B_M=TASK7_HOST_POLICY.releases+'/setfarm-3271862b';
+const TASK4B_PATH=TASK7_HOST_POLICY.path;
 const TASK4B_PRIVATE_NAMES=Object.freeze([
   'runManualOrphanConstructorV1','assertManualOrphanConstructorLaunchV1',
   'assertManualOrphanConstructorEnvironmentV1','requireManualOrphanConstructorSpaceV1',
@@ -1136,12 +1145,12 @@ const TASK4B_PRIVATE_NAMES=Object.freeze([
   'verifyManualOrphanConstructorQuiescenceV1',
 ]);
 
-async function task4bContainedConstructor(){
+async function task4bContainedConstructor({hostPolicy=false,moduleUrl=MODULE.href}={}){
   const actualRequire=createRequire(import.meta.url),ts=actualRequire('typescript');
   const fault=[],trace=[],timers=new Map();let nextTimer=1,now=0n;
   // Only inert module initialization precedes a private-function typeof gate.
   // Mutable seam maps remain empty until the particular test passes that gate.
-  const seams={fs:{},cp:{},os:{},helper:{},journal:{},postgres:null};
+  const seams={fs:{},cp:{},os:{},helper:{},journal:{},crypto:{},json:{},buffer:{},postgres:null};
   const deny=site=>(..._args)=>{fault.push(site);throw Error('TASK4B_UNLISTED_CALL');};
   const invoke=(site,fn,args)=>{
     try{return fn(...args);}catch(error){
@@ -1190,7 +1199,7 @@ async function task4bContainedConstructor(){
   const modules=new Map([
     ['node:fs',fs],['node:child_process',cp],['node:path',actualRequire('node:path')],
     ['node:url',actualRequire('node:url')],['node:crypto',closed('crypto',{
-      createHash:deny('crypto.createHash'),randomBytes:deny('crypto.randomBytes')})],
+      createHash:dispatch('crypto',seams.crypto,'createHash'),randomBytes:deny('crypto.randomBytes')})],
     ['node:os',closed('os',{userInfo:dispatch('os',seams.os,'userInfo')})],
     ['node:net',closed('net',{default:closed('net.default',{})})],
     ['node:timers/promises',closed('timers/promises',{})],
@@ -1206,7 +1215,8 @@ async function task4bContainedConstructor(){
   const source=readFileSync(MODULE,'utf8');
   const diagnostics='\nglobalThis.__task4bPrivate={'+TASK4B_PRIVATE_NAMES.map(name=>
     name+':typeof '+name+"==='function'?"+name+':undefined').join(',')+'};'
-    +'\nglobalThis.__task6ConstructorMainV1=main;';
+    +'\nglobalThis.__task6ConstructorMainV1=main;'
+    +(hostPolicy?'\nglobalThis.__task7PolicyPrivate={read:typeof readManualOrphanHostPolicyV1===\"function\"?readManualOrphanHostPolicyV1:undefined,context:assertManualOrphanConstructorContextV1};':'');
   const compiled=ts.transpileModule(source+diagnostics,{
     fileName:fileURLToPath(MODULE)+'.ts',reportDiagnostics:true,
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},
@@ -1225,7 +1235,12 @@ async function task4bContainedConstructor(){
   assert.deepEqual((compiled.diagnostics??[]).filter(item=>item.category===ts.DiagnosticCategory.Error),[],
     'complete constructor language containment must succeed before any predicate counts');
   const context={exports:{},Buffer,URL,Error,process:fake,
-    __task4bModuleMeta:Object.freeze({url:MODULE.href}),
+    __task4bModuleMeta:Object.freeze({url:moduleUrl}),
+    ...(hostPolicy?{Buffer:new Proxy(Buffer,{get(target,key){
+      if(key==='alloc')return dispatch('buffer',seams.buffer,'alloc');
+      if(key==='allocUnsafe'||key==='allocUnsafeSlow')return deny('buffer.'+key);
+      return Reflect.get(target,key);
+    }}),JSON:{parse:dispatch('json',seams.json,'parse'),stringify:JSON.stringify}}:{}),
     require(specifier){if(!modules.has(specifier))return deny('require:'+specifier)();return modules.get(specifier);},
     setTimeout(callback,ms){
       invoke('setTimeout',()=>{assert.equal(typeof callback,'function');assert.ok(Number.isFinite(ms)&&ms>=0);},[]);
@@ -1241,7 +1256,8 @@ async function task4bContainedConstructor(){
   assert.equal(timers.size,0,'module initialization cannot start an operation timer');
   assert.deepEqual(fake.eventNames(),[],'module initialization cannot install owner signal listeners');
   assert.equal(output.stdout.length+output.stderr.length,0,'module initialization remains inert');
-  return {bindings:context.__task4bPrivate,main:context.__task6ConstructorMainV1,seams,fake,fault,trace,timers,output,
+  return {bindings:context.__task4bPrivate,main:context.__task6ConstructorMainV1,hostPolicy:context.__task7PolicyPrivate,
+    seams,fake,fault,trace,timers,output,
     time(value){now=value;},
     fire(ms){const found=[...timers].filter(([,item])=>item.ms===ms);
       assert.equal(found.length,1,'one fixed timer '+ms);const [id,item]=found[0];timers.delete(id);item.callback();},
@@ -1279,7 +1295,7 @@ test('Task4B private owner refuses arguments before Source or resource acquisiti
 test('Task4B private owner refuses this nonrelease physical context before Source acquisition',async()=>{
   const h=await task4bContainedConstructor(),run=task4bBinding(h,'runManualOrphanConstructorV1');
   h.seams.journal.createPrivateTestTerminalMirrorV1=stream=>({write:bytes=>stream.write(bytes)});
-  h.seams.os.userInfo=()=>({homedir:'/Users/setrox',uid:501,gid:20,username:'setrox',shell:'/bin/zsh'});
+  h.seams.os.userInfo=()=>({homedir:TASK7_HOST_POLICY.home,uid:501,gid:20,username:'setrox',shell:'/bin/zsh'});
   h.fake.argv=[TASK4B_NODE,TASK4B_M+'/scripts/run-private-postgres-tests.mjs','manual-orphan-bootstrap'];
   h.seams.fs.realpathSync=value=>{h.trace.push(['realpath',String(value)]);return String(value);};
   await run();
@@ -1325,7 +1341,7 @@ async function task6ConstructorExactEntryV1(){
   });
   h.seams.os.userInfo=checked((...args)=>{
     assert.equal(args.length,0);identity.push('userInfo');
-    return {homedir:'/Users/setrox',uid:501,gid:20,username:'setrox',shell:'/bin/zsh'};
+    return {homedir:TASK7_HOST_POLICY.home,uid:501,gid:20,username:'setrox',shell:'/bin/zsh'};
   });
   h.seams.fs.realpathSync=checked(value=>{
     h.trace.push(['realpath',String(value)]);return String(value);
@@ -1390,16 +1406,16 @@ test('Task4B environment comparison permits only the exact baseline and canonica
   const h=await task4bContainedConstructor(),check=task4bBinding(h,'assertManualOrphanConstructorEnvironmentV1');
   const env={PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'};
   for(const extra of [{},{__CF_USER_TEXT_ENCODING:'0x1F5:0x0:0xFFFFFFFF'}])
-    assert.doesNotThrow(()=>check({...env,...extra},501,'darwin'));
+    assert.doesNotThrow(()=>check({...env,...extra},501,'darwin',TASK7_HOST_POLICY));
   for(const [label,extra] of [
-    ['PG selector',{PGPORT:'55439'}],['NODE_OPTIONS',{NODE_OPTIONS:''}],['HOME',{HOME:'/Users/setrox'}],
+    ['PG selector',{PGPORT:'55439'}],['NODE_OPTIONS',{NODE_OPTIONS:''}],['HOME',{HOME:TASK7_HOST_POLICY.home}],
     ['worker',{NODE_TEST_WORKER_ID:'1'}],['cache',{TSX_DISABLE_CACHE:'1'}],
     ['wrong PATH',{PATH:'/usr/bin:/bin'}],['lowercase CF',{__CF_USER_TEXT_ENCODING:'0x1f5:0x0:0x0'}],
     ['padded CF',{__CF_USER_TEXT_ENCODING:'0x01F5:0x0:0x0'}],
     ['wrong uid CF',{__CF_USER_TEXT_ENCODING:'0x1F4:0x0:0x0'}],
     ['overflow CF',{__CF_USER_TEXT_ENCODING:'0x1F5:0x100000000:0x0'}],
-  ])assert.throws(()=>check({...env,...extra},501,'darwin'),task4bRefused,label);
-  assert.throws(()=>check({...env,__CF_USER_TEXT_ENCODING:'0x1F5:0x0:0x0'},501,'linux'),task4bRefused);
+  ])assert.throws(()=>check({...env,...extra},501,'darwin',TASK7_HOST_POLICY),task4bRefused,label);
+  assert.throws(()=>check({...env,__CF_USER_TEXT_ENCODING:'0x1F5:0x0:0x0'},501,'linux',TASK7_HOST_POLICY),task4bRefused);
   h.clean();
 });
 
@@ -1495,7 +1511,7 @@ function task4bReleaseSyntheticObserver(child){
 test('Task4B spawn consumer captures its clock before permitting any native dispatch',async()=>{
   const h=await task4bContainedConstructor(),spawn=task4bBinding(h,'spawnManualOrphanConstructorChildV1');
   h.fake.hrtime={bigint(){h.trace.push('clock');throw Error('clock');}};
-  assert.throws(()=>spawn('initdb',[],TASK4B_M,{PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'}),task4bUnknown);
+  assert.throws(()=>spawn('initdb',[],TASK4B_M,{PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'},TASK7_HOST_POLICY),task4bUnknown);
   assert.deepEqual(h.trace,['clock']);h.clean();
 });
 
@@ -1516,7 +1532,7 @@ test('Task4B spawn consumer binds present original channels before postspawn clo
     const owned=spawn('runner',['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
       'node','--import','tsx','--test','--test-isolation=none',
       'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts'],TASK4B_M,
-      {PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'});
+      {PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'},TASK7_HOST_POLICY);
     assert.equal(owned.child,child);assert.equal(owned.writer,writer);
     for(const event of ['error','exit','close'])assert.ok(child.listenerCount(event)>0,event);
     for(const stream of [child.stderr,writer])for(const event of ['error','end','close'])
@@ -1772,8 +1788,8 @@ test('Task4B runner control staging caps at thirty two and burns overflow or flu
 // Supplementary metadata only: 11 immutable comparison files +14 canonical
 // ancestors. No whole-tree, byte/hash, package, build or target recheck claim.
 function task4bDeliveryFixture(h){
-  const directories=['/','/Users','/Users/setrox','/Users/setrox/ai','/Users/setrox/ai/setrox',
-    '/Users/setrox/ai/setrox/releases',TASK4B_M,TASK4B_M+'/scripts',TASK4B_M+'/scripts/__tests__',
+  const directories=['/',path.dirname(TASK7_HOST_POLICY.home),TASK7_HOST_POLICY.home,path.dirname(TASK7_HOST_POLICY.workspace),TASK7_HOST_POLICY.workspace,
+    TASK7_HOST_POLICY.releases,TASK4B_M,TASK4B_M+'/scripts',TASK4B_M+'/scripts/__tests__',
     TASK4B_M+'/tests',TASK4B_M+'/tests/execution-attempts',TASK4B_M+'/tests/execution-attempts/helpers',
     TASK4B_M+'/src',TASK4B_M+'/src/installation'];
   const leaves=[
@@ -1936,7 +1952,7 @@ test('Task4B fix1 outer child clock retains timely completion while refusing lat
       return witness;
     };
     try{
-      const owned=spawn(row.purpose,[],TASK4B_M,{PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'});
+      const owned=spawn(row.purpose,[],TASK4B_M,{PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'},TASK7_HOST_POLICY);
       assert.equal(dispatches,1,row.label);assert.equal(bindings,1,row.label);
       if(row.bindingLate){
         await owned.witness.settled;
@@ -2121,3 +2137,167 @@ test('Task4B fix1 close timer faults retain the one end and sanitize cleanup unc
     }finally{timer.restore();gate.resolve();await closing;await repeat;}
   }
 });
+
+
+// Task7 fixed-host bootstrap: complete actual constructor, opt-in private exposure.
+// Only the exact configuration FD and hash/JSON builtins are admitted below;
+// native, Source, database, arbitrary filesystem and timer seams remain closed.
+function task7PolicyReaderFixture(h,{fault='none',root=TASK4B_M,contextHome=TASK7_HOST_POLICY.home}={}){
+  const locator=root+'/src/installation/manual-orphan-fixed-host-policy-v1.json',fd=7301;
+  const bytes=Buffer.from(TASK7_POLICY_BYTES);
+  if(fault==='digest')bytes[bytes.indexOf('setrox')]='x'.charCodeAt(0);
+  const state={events:[],reads:[],allocations:[],opens:0,closes:0,closed:false,hashes:0,parses:0,digest:null,offset:0};
+  const stat=()=>({dev:1n,ino:fault==='identity'&&state.reads.length?74n:73n,
+    uid:fault==='owner'?502n:501n,gid:20n,mode:fault==='mode'?0o100620n:0o100600n,
+    nlink:1n,size:BigInt(fault==='size'?319:318),mtimeNs:1000n,ctimeNs:2000n,birthtimeNs:3000n,
+    isFile:()=>true,isDirectory:()=>false,isSymbolicLink:()=>fault==='symlink'});
+  const checked=fn=>(...args)=>{
+    try{return fn(...args);}catch(error){
+      if(error?.code==='ERR_ASSERTION')h.fault.push('Task7 policy boundary assertion');
+      throw error;
+    }
+  };
+  h.seams.buffer.alloc=checked(size=>{
+    assert.ok(size===318||size===1,'bounded configuration or EOF buffer only');
+    state.allocations.push(size);state.events.push(['allocate',size]);return Buffer.alloc(size);
+  });
+  h.seams.fs.realpathSync=checked(value=>{
+    assert.ok([locator,root,root+'/scripts/run-private-postgres-tests.mjs',contextHome].includes(value));
+    state.events.push(['realpath',value]);
+    if(value===locator&&fault==='missing')throw Error('PRIVATE_POLICY_MISSING_DETAIL');
+    return value;
+  });
+  h.seams.fs.lstatSync=checked((value,options)=>{
+    assert.equal(value,locator);assert.equal(options?.bigint,true);state.events.push(['named']);return stat();
+  });
+  h.seams.fs.openSync=checked((value,flags)=>{
+    assert.equal(value,locator);assert.equal(flags,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+    assert.equal(state.opens,0);state.opens++;state.events.push(['open']);return fd;
+  });
+  h.seams.fs.fstatSync=checked((actual,options)=>{
+    assert.equal(actual,fd);assert.equal(state.opens,1);assert.equal(state.closed,false);
+    assert.equal(options?.bigint,true);state.events.push(['held']);return stat();
+  });
+  h.seams.fs.readSync=checked((actual,buffer,offset,length,position)=>{
+    assert.equal(actual,fd);assert.equal(state.opens,1);assert.equal(state.closed,false);
+    assert.ok(Buffer.isBuffer(buffer));assert.ok(buffer.length<=318,'allocate only the authenticated size or EOF byte');
+    assert.ok(Number.isInteger(offset)&&offset>=0);assert.ok(Number.isInteger(length)&&length>0);
+    assert.ok(offset+length<=buffer.length);assert.equal(position,state.offset,'explicit contiguous file offset');
+    assert.ok(length<=(position===318?1:318-position));
+    state.reads.push({position,length});state.events.push(['read',position]);
+    if(fault==='read'||fault==='read-close')throw Error('PRIVATE_POLICY_READ_DETAIL');
+    if(fault==='zero'&&position>0)return 0;
+    if(position===318){
+      assert.equal(length,1);if(fault==='extra'){buffer[offset]=120;return 1;}return 0;
+    }
+    const count=Math.min(length,73);bytes.copy(buffer,offset,position,position+count);state.offset+=count;return count;
+  });
+  h.seams.fs.closeSync=checked(actual=>{
+    assert.equal(actual,fd);assert.equal(state.opens,1);assert.equal(state.closes,0);
+    state.closes++;state.closed=true;state.events.push(['close']);
+    if(fault==='close'||fault==='read-close')throw Error('PRIVATE_POLICY_CLOSE_DETAIL');
+  });
+  h.seams.crypto.createHash=checked(algorithm=>{
+    assert.equal(algorithm,'sha256');assert.equal(state.offset,318);
+    assert.equal(state.reads.at(-1).position,318,'EOF precedes authentication');
+    assert.equal(state.hashes,0);state.hashes++;state.events.push(['hash']);
+    const actual=createHash(algorithm);let updates=0;
+    const hash={update:checked(value=>{
+      assert.equal(updates++,0);assert.ok(Buffer.isBuffer(value));assert.deepEqual(value,bytes);
+      actual.update(value);return hash;
+    }),digest:checked(format=>{
+      assert.equal(format,'hex');assert.equal(updates,1);state.digest=actual.digest(format);return state.digest;
+    })};return hash;
+  });
+  h.seams.json.parse=checked(value=>{
+    assert.equal(state.digest,'4b7ed03bf755ec453e0c7a79d3fcf4f4f4fee387dc9bf551d55e41e7b2281dc5',
+      'authenticate the exact retained bytes before parsing');
+    assert.equal(value,bytes.toString('utf8'));assert.equal(state.parses,0);state.parses++;
+    state.events.push(['parse']);return JSON.parse(value);
+  });
+  return {state,bytes,locator,check(){
+    h.clean();assert.ok(state.opens<=1);assert.equal(state.closes,state.opens,'close every acquired FD exactly once');
+    assert.equal(state.closed,state.opens===1);assert.equal(h.timers.size,0);
+    assert.deepEqual(h.fake.eventNames(),[]);assert.equal(h.output.stdout.length+h.output.stderr.length,0);
+  }};
+}
+async function task7ReaderCase(fault){
+  const h=await task4bContainedConstructor({hostPolicy:true,
+    moduleUrl:new URL('file://'+TASK4B_M+'/scripts/run-private-postgres-tests.mjs').href});
+  const read=h.hostPolicy.read;
+  assert.equal(typeof read,'function','Task7 missing private reader scaffolding; no behavioral credit');
+  assert.equal(read.length,0,'configuration reader has no selector arguments');
+  const f=task7PolicyReaderFixture(h,{fault});let value,error;
+  try{value=read();}catch(caught){error=caught;}
+  f.check();
+  if(fault==='none'){
+    assert.equal(error,undefined);assert.equal(f.state.opens,1);assert.equal(f.state.closes,1);
+    assert.deepEqual(task4bPlain(value),TASK7_HOST_POLICY);assert.equal(Object.isFrozen(value),true);
+    assert.notEqual(value,TASK7_HOST_POLICY);assert.equal(f.state.parses,1);assert.equal(f.state.hashes,1);
+    assert.equal(f.state.events.at(-1)[0],'close','known close precedes returning usable configuration');
+    assert.throws(()=>{value.home='/changed-home';},TypeError);
+  }else{
+    assert.equal(value,undefined,'refusal cannot return usable configuration');
+    assert.equal(error?.message,['close','read-close'].includes(fault)?'MANUAL_ORPHAN_CLEANUP_UNKNOWN':'MANUAL_ORPHAN_OWNER_REFUSED');
+    if(['missing','symlink','owner','mode'].includes(fault))assert.equal(f.state.opens,0);
+    if(['missing','symlink','owner','mode','size'].includes(fault))assert.equal(f.state.reads.length,0);
+    if(['missing','symlink','owner','mode','size'].includes(fault))assert.deepEqual(f.state.allocations,[],
+      'reject metadata and wrong size before allocating configuration bytes');
+    if(fault!=='close')assert.equal(f.state.parses,0,'invalid bytes or custody never reach parsing');
+    if(fault==='digest')assert.equal(f.state.hashes,1,'changed valid JSON is rejected by authentication');
+    if(['zero','extra','identity','read','read-close'].includes(fault))assert.equal(f.state.hashes,0);
+    if(['digest','zero','extra','identity','read','close','read-close'].includes(fault))assert.equal(f.state.opens,1);
+  }
+}
+
+// Each fault changes one boundary; owner and mode are deliberately separate rows.
+test('Task7 host policy reader returns frozen authenticated data only after known close',()=>task7ReaderCase('none'));
+test('Task7 host policy reader refuses a missing configuration before opening',()=>task7ReaderCase('missing'));
+test('Task7 host policy reader refuses a symbolic link before opening',()=>task7ReaderCase('symlink'));
+test('Task7 host policy reader refuses a different file owner before opening',()=>task7ReaderCase('owner'));
+test('Task7 host policy reader refuses a writable file mode before opening',()=>task7ReaderCase('mode'));
+test('Task7 host policy reader refuses wrong byte length before reading',()=>task7ReaderCase('size'));
+test('Task7 host policy reader refuses changed valid JSON before parsing',()=>task7ReaderCase('digest'));
+test('Task7 host policy reader refuses a zero read before complete bytes',()=>task7ReaderCase('zero'));
+test('Task7 host policy reader refuses extra bytes after declared size',()=>task7ReaderCase('extra'));
+test('Task7 host policy reader refuses named or held identity drift',()=>task7ReaderCase('identity'));
+test('Task7 host policy reader sanitizes read failure after closing its FD',()=>task7ReaderCase('read'));
+test('Task7 host policy reader withholds valid data when close is uncertain',()=>task7ReaderCase('close'));
+test('Task7 host policy reader gives close uncertainty precedence over read failure',()=>task7ReaderCase('read-close'));
+
+async function task7ContextCase(fault){
+  const home=fault==='home'?'/alternate-account':TASK7_HOST_POLICY.home;
+  const root=fault==='home'?home+'/ai/setrox/releases/setfarm-3271862b':
+    fault==='parent'?TASK7_HOST_POLICY.workspace+'/other/setfarm-3271862b':TASK4B_M;
+  const script=root+'/scripts/run-private-postgres-tests.mjs';
+  const h=await task4bContainedConstructor({hostPolicy:true,moduleUrl:new URL('file://'+script).href});
+  const check=h.hostPolicy.context;assert.equal(typeof check,'function');assert.equal(check.length,0);
+  const f=task7PolicyReaderFixture(h,{root,contextHome:home}),observations=[];
+  h.seams.os.userInfo=()=>({homedir:home,uid:fault==='uid'?502:501,gid:fault==='gid'?21:20,
+    username:'setrox',shell:'/bin/zsh'});
+  h.fake.argv=[TASK4B_NODE,script,'manual-orphan-bootstrap'];h.fake.cwd=()=>root;
+  h.seams.helper.observeManualOrphanProcessV1=pid=>{
+    assert.equal(pid,h.fake.pid);observations.push(pid);
+    return {rawCommand:TASK4B_NODE+' '+script+' manual-orphan-bootstrap',pin:{pid:h.fake.pid,ppid:h.fake.ppid,
+      uid:501,executable:TASK4B_NODE,executableSha256:'59cd4fb59cf5bc239f43d5db8c0cd8c23c22db79419612b92da3b7cf34de8553'}};
+  };
+  let value,error;try{value=check();}catch(caught){error=caught;}
+  f.check();
+  if(fault==='none'){
+    assert.equal(error,undefined);assert.equal(value.root,root);assert.equal(value.script,script);
+    assert.deepEqual(task4bPlain(value.hostPolicy),TASK7_HOST_POLICY);assert.equal(Object.isFrozen(value.hostPolicy),true);
+    assert.deepEqual(observations,[h.fake.pid]);assert.equal(f.state.opens,1);assert.equal(f.state.parses,1);
+    assert.ok(f.state.closed,'config bootstrap is already closed before the next owner seam');
+  }else{
+    assert.equal(value,undefined);assert.equal(error?.message,'MANUAL_ORPHAN_OWNER_REFUSED');
+    assert.deepEqual(observations,[],'rejection precedes self-process/Source/native observations');
+    assert.equal(f.state.opens,fault==='home'?1:0);
+    if(fault!=='home')assert.deepEqual(f.state.events,[],'structural denial precedes configuration IO');
+    else assert.equal(f.state.parses,1,'self-consistent alternate home still meets the independent fixed-home boundary');
+  }
+}
+test('Task7 host context passes exact configured identity to the next owner seam',()=>task7ContextCase('none'));
+test('Task7 host context rejects a self-consistent different account home after authenticated read',()=>task7ContextCase('home'));
+test('Task7 host context rejects a different account UID before configuration IO',()=>task7ContextCase('uid'));
+test('Task7 host context rejects a different account GID before configuration IO',()=>task7ContextCase('gid'));
+test('Task7 host context rejects a different release parent before configuration IO',()=>task7ContextCase('parent'));

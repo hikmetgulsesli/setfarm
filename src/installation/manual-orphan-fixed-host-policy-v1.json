@@ -1,0 +1,7 @@
+{
+  "schema": "setfarm.manual-orphan-fixed-host-policy.v1",
+  "home": "/Users/setrox",
+  "workspace": "/Users/setrox/ai/setrox",
+  "releases": "/Users/setrox/ai/setrox/releases",
+  "path": "/opt/homebrew/Cellar/node/26.4.0/bin:/Users/setrox/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+}
