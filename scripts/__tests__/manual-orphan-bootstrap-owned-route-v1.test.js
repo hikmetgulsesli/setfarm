@@ -6927,7 +6927,8 @@ function task5cAdminFixtureV1(){
     assert.deepEqual(task5cPlainV1(options),{timeout:5});
     if(f.endReject)return Promise.reject(Error('PRIVATE_ADMIN_END'));return f.endValue??Promise.resolve();});
   f.admin=vm.api.retainManualOrphanRunnerAdminV1(pool,reserved,task5cDataV1(vm,expected));
-  assert.deepEqual(Object.keys(f.admin).sort(),['close','current','onclose','query','stop']);
+  assert.deepEqual(Object.keys(f.admin).sort(),['beginCleanup','close','current','endCleanup','onclose','query','stop']);
+  assert.equal(f.admin.beginCleanup.length,0);assert.equal(f.admin.endCleanup.length,0);
   f.query=()=>f.admin.query('identity');
   f.check=()=>{assert.deepEqual(faults,[],'caught client-boundary assertions cannot masquerade as refusal');assert.equal(calls.reserve,0);
     const now=f.admin.current();assert.deepEqual(Object.keys(now).sort(),['closed','endAttempted','pair','pending','releaseAttempted','stopped','unknown']);
@@ -8510,4 +8511,290 @@ test('Task6 fix1 runner launch requires canonical Darwin metadata',()=>{
 // Break: integration launch must enforce the same exact metadata predicate.
 test('Task6 fix1 integration launch requires canonical Darwin metadata',()=>{
   task6Fix1DarwinV1('integration');
+});
+
+// Final consolidated I1 fix: 16 literal tests / 28 finite cases. Actual L only;
+// the C wiring check is explicitly structural. No successful Source/C emulator.
+function finalFixAdminV1(){
+  const vm=task5cVmV1(['retainManualOrphanRunnerAdminV1','advanceManualOrphanCleanupLedgerV1']);
+  const faults=[],trace=[],lookups=[],starts=[],outcomes=[],deferred=[];
+  const pair={pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:5,usesysid:1};
+  const expected={pair,cluster:ownedClusterData(),database:'postgres',databaseOid:5,user:'root',userOid:1};
+  const identity={...pair,datid:'5',usesysid:'1',database:'postgres',databaseOid:'5',currentUser:'root',sessionUser:'root',userOid:'1',
+    serverAddress:'127.0.0.1',serverPort:55439,systemIdentifier:'123',postmasterStartedAtUTC:'2026-10-21T00:00:00.123456Z',serverVersionNum:'170001'};
+  const installation=task5cDataV1(vm,ownedInstallationData(true));
+  const commands=['DROP DATABASE "'+installation.databaseName+'"','DROP ROLE "'+installation.runtimeRole+'"','DROP ROLE "'+installation.ownerRole+'"'];
+  const f={vm,faults,trace,lookups,starts,outcomes,installation,commands,next:null,endValue:null,lookup:null,releases:0,ends:0,releaseMicrotask:false};
+  const guard=body=>task5bGuardV1(faults,body);
+  const reserved=guard(()=>assert.fail('no callable reservation query'));
+  const unsafe=function(command,...rest){
+    try{
+    assert.equal(this,reserved,'invoke captured original method with original receiver');assert.deepEqual(rest,[]);
+    assert.equal(f.releases,0);assert.equal(f.ends,0);assert.equal(typeof command,'string');
+    const mutation=command.startsWith('DROP ');
+    if(mutation){assert.equal(command,commands[starts.filter(item=>item.mutation).length],'only next exact generated DROP');}
+    else {assert.match(command,/^SELECT\b/);assert.match(command,/pg_backend_pid\s*\(/);assert.match(command,/pg_stat_activity/);
+      assert.match(command,/backend_start/);assert.match(command,/datid/);assert.match(command,/usesysid/);
+      assert.doesNotMatch(command,/pg_authid|\b(?:DROP|CREATE|ALTER|GRANT|REVOKE|INSERT|UPDATE|DELETE)\b/i);}
+    starts.push({command,mutation,ms:vm.monotonic.state.ms});trace.push(mutation?'drop':'select');
+    const original=f.next??Promise.resolve(task5cDataV1(vm,mutation?[]:[identity]));f.next=null;
+    void original.then(()=>outcomes.push({command,state:'fulfilled'}),()=>outcomes.push({command,state:'rejected'}));return original;
+    }catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}
+  };
+  Object.defineProperty(reserved,'unsafe',{get:guard(()=>{lookups.push(vm.monotonic.state.ms);if(f.lookup)f.lookup();return unsafe;})});
+  reserved.release=guard(()=>{assert.equal(++f.releases,1);trace.push('release');queueMicrotask(()=>{f.releaseMicrotask=true;});});
+  const pool=guard(()=>assert.fail('no unreserved pool query'));
+  Object.defineProperty(pool,'reserve',{get:guard(()=>assert.fail('no reservation reacquisition'))});
+  pool.end=guard(options=>{assert.equal(++f.ends,1);assert.equal(f.releases,1);assert.equal(f.releaseMicrotask,false);
+    assert.equal(trace.at(-1),'release');trace.push('end');assert.deepEqual(task5cPlainV1(options),{timeout:5});
+    return f.endValue??Promise.resolve();});
+  const clocks=vm.monotonic.state.calls,timers=vm.timers.length;
+  f.admin=vm.api.retainManualOrphanRunnerAdminV1(pool,reserved,task5cDataV1(vm,expected));
+  assert.equal(vm.monotonic.state.calls,clocks,'retaining L does not begin cleanup');assert.equal(vm.timers.length,timers);
+  assert.deepEqual(Object.keys(f.admin).sort(),['beginCleanup','close','current','endCleanup','onclose','query','stop'],
+    'new private cleanup methods: scaffolding RED, not old C semantic execution');
+  for(const method of ['beginCleanup','endCleanup']){assert.equal(typeof f.admin[method],'function','missing private cleanup API (scaffolding RED)');assert.equal(f.admin[method].length,0);}
+  assert.equal(Object.isFrozen(f.admin),true);
+  f.at=ms=>{vm.monotonic.state.ms=ms;};
+  f.drops=()=>starts.filter(item=>item.mutation);
+  f.timer=()=>{const rows=vm.timers.filter(row=>row.delay===30000);assert.equal(rows.length,1,'one original cleanup timer');return rows[0];};
+  f.operation=object=>task5cDataV1(vm,{installation:task5cPlainV1(installation),
+    object:{kind:object,name:installation[object==='database'?'databaseName':object==='runtime'?'runtimeRole':'ownerRole'],
+      oid:installation[object==='database'?'databaseOid':object==='runtime'?'runtimeOid':'ownerOid']},
+    stage:object==='database'?'activated':object==='runtime'?'database-dropped':'runtime-dropped'});
+  f.drop=(object='database',operation=f.operation(object))=>f.admin.query('drop-'+object,operation);
+  f.read=()=>f.admin.query('identity');
+  f.defer=()=>{const d=task5bDeferredV1(),item={settled:false,promise:d.promise,
+    resolve(value){assert.equal(item.settled,false);item.settled=true;d.resolve(value);},
+    reject(error){assert.equal(item.settled,false);item.settled=true;d.reject(error);}};deferred.push(item);return item;};
+  f.check=()=>{assert.deepEqual(faults,[],'no caught finite client assertion');vm.check();
+    const current=f.admin.current();assert.deepEqual(Object.keys(current).sort(),['closed','endAttempted','pair','pending','releaseAttempted','stopped','unknown']);
+    assert.deepEqual(task5cPlainV1(current.pair),pair);assert.equal(current.releaseAttempted,f.releases===1);assert.equal(current.endAttempted,f.ends===1);
+    assert.equal(Object.isFrozen(current),true);assert.ok(f.releases<=1&&f.ends<=1);};
+  f.finish=async()=>{
+    // Only finite simulated originals; ensure failed assertions cannot leave the
+    // harness's deferred promises unjoined. This is not an acceptance outcome.
+    vm.monotonic.state.mode=null;
+    for(const d of deferred)if(!d.settled)d.resolve(task5cDataV1(vm,[identity]));
+    try{await f.admin.close();}catch(error){assert.equal(error?.message,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');}
+    await task5bPumpV1();assert.equal(f.admin.current().pending,false);assert.equal(f.releases,1);assert.equal(f.ends,1);f.check();
+  };
+  return f;
+}
+async function finalFixAckAbsenceV1(f,ledger,object){
+  await f.drop(object);assert.equal(f.outcomes.at(-1).state,'fulfilled','only original fulfillment supplies ACK');
+  const ack=task5cCleanupAdvanceV1(f.vm,ledger,object+'-ack');assert.equal(ack.state,ledger.state);
+  await f.read(); // Finite SELECT boundary, not successful catalog qualification.
+  const absent=task5cCleanupAdvanceV1(f.vm,ack,object+'-absent');assert.equal(absent.state,object+'-dropped');
+  return absent;
+}
+function finalFixTimerPushV1(f,collection,body){
+  const own=Object.getOwnPropertyDescriptor(collection,'push'),push=collection.push;
+  Object.defineProperty(collection,'push',{configurable:true,value:task5bGuardV1(f.faults,(...args)=>body(push,args))});
+  return ()=>{if(own)Object.defineProperty(collection,'push',own);else delete collection.push;};
+}
+// Break: merely retaining L must not create a cleanup lifetime or public API.
+test('Final fix I1 cleanup interval is private and inert',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('unarmed readonly client',async()=>{const f=finalFixAdminV1();try{
+    assert.equal(f.vm.monotonic.state.calls,0);assert.equal(f.vm.timers.length,0);await f.read();await f.admin.close();
+    assert.equal(f.admin.current().closed,true);assert.equal(f.admin.current().unknown,false);
+    assert.equal(f.vm.timers.filter(row=>row.delay===30000).length,0);assert.equal(f.drops().length,0);
+    assert.deepEqual(Object.keys(f.vm.fixtureExports).sort(),['runManualOrphanBootstrapIntegrationV1','runManualOrphanBootstrapRouteV1',
+      'runManualOrphanCompiledCliNegativeV1','runManualOrphanSourceContextNegativeV1']);
+  }finally{await f.finish();}});cases.done();
+});
+// Break: resetting origin per DROP or reordering ACK/absence would evade 30s.
+test('Final fix I1 healthy cleanup keeps one origin and ordered ACKs',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('one origin through all stages',async()=>{const f=finalFixAdminV1();try{
+    f.at(10);f.admin.beginCleanup();const timer=f.timer();let ledger=task5cDataV1(f.vm,task5cCleanupLedgerV1());
+    for(const [object,ms] of [['database',20],['runtime',10000],['owner',30009]]){
+      f.at(ms);ledger=await finalFixAckAbsenceV1(f,ledger,object);assert.equal(ledger.unknown,false);
+    }
+    assert.equal(ledger.state,'owner-dropped');assert.deepEqual(f.drops().map(row=>row.command),f.commands);
+    assert.deepEqual(f.drops().map(row=>row.ms),[20,10000,30009]);assert.equal(f.timer(),timer);
+    f.admin.endCleanup();assert.equal(f.vm.cleared.filter(handle=>handle===timer.handle).length,1);
+    await f.admin.close();assert.equal(f.admin.current().closed,true);assert.equal(f.admin.current().unknown,false);
+  }finally{await f.finish();}});cases.done();
+});
+// Break: >= cutoff must fail even when the timer task has never run.
+test('Final fix I1 exact cleanup cutoff refuses mutation',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('strict elapsed equality',async()=>{const f=finalFixAdminV1();try{
+    f.at(10);f.admin.beginCleanup();f.at(30009.999);assert.equal(f.admin.current().unknown,false);
+    f.at(30010);await task5cRejectedV1(f.drop());assert.equal(f.drops().length,0);assert.equal(f.admin.current().unknown,true);
+    f.at(30011);await task5cRejectedV1(f.drop());assert.equal(f.drops().length,0);f.timer();
+  }finally{await f.finish();}});cases.done();
+});
+// Break: C's current observation must see time spent after an awaited SELECT.
+test('Final fix I1 postcatalog current check catches synchronous crossing',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('actual current after finite SELECT',async()=>{const f=finalFixAdminV1();try{
+    f.admin.beginCleanup();f.at(29999);await f.read();assert.equal(f.admin.current().unknown,false);
+    f.at(30000);assert.equal(f.admin.current().unknown,true,'actual current used by C sees synchronous elapsed time');
+    await task5cRejectedV1(f.drop());assert.equal(f.drops().length,0);assert.equal(f.starts.length,1);f.timer();
+  }finally{await f.finish();}});cases.done();
+});
+// Break: a check before query cannot cover its deferred validation work.
+test('Final fix I1 deferred DROP validation rechecks cleanup time',async()=>{
+  const cases=task5bCasesV1(2);
+  for(const mode of ['deferred continuation','record getter'])await cases.wait(mode,async()=>{const f=finalFixAdminV1();try{
+    f.admin.beginCleanup();f.at(29999);assert.equal(f.admin.current().unknown,false);const operation=f.operation('database');let reads=0;
+    if(mode==='record getter'){
+      const value=operation.installation.records['activated.json'];
+      Object.defineProperty(operation.installation.records,'activated.json',{enumerable:true,get(){reads++;f.at(30000);return value;}});
+    }
+    const pending=f.drop('database',operation);if(mode==='deferred continuation')f.at(30000);
+    await task5cRejectedV1(pending);if(mode==='record getter')assert.ok(reads>0,'actual validation must reach the getter');
+    assert.equal(f.drops().length,0);assert.equal(f.admin.current().unknown,true);f.timer();
+  }finally{await f.finish();}});cases.done();
+});
+// Break: method acquisition after the last sample leaves another effect gap.
+test('Final fix I1 unsafe method lookup cannot cross cleanup cutoff',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('capture then sample then invoke',async()=>{const f=finalFixAdminV1();try{
+    f.admin.beginCleanup();f.at(29999);assert.equal(f.admin.current().unknown,false);
+    f.lookup=()=>{f.at(30000);};await task5cRejectedV1(f.drop());
+    assert.deepEqual(f.lookups,[29999]);assert.equal(f.drops().length,0);assert.equal(f.admin.current().unknown,true);f.timer();
+  }finally{await f.finish();}});cases.done();
+});
+// Break: earlier acknowledged progress must not reset or overrule expiry.
+test('Final fix I1 prior ACK never permits a later expired DROP',async()=>{
+  const cases=task5bCasesV1(2);
+  for(const count of [1,2])await cases.wait('after '+count+' acknowledged stages',async()=>{const f=finalFixAdminV1();try{
+    f.admin.beginCleanup();let ledger=task5cDataV1(f.vm,task5cCleanupLedgerV1());
+    for(const object of ['database','runtime'].slice(0,count)){f.at(100);ledger=await finalFixAckAbsenceV1(f,ledger,object);}
+    assert.equal(ledger.state,count===1?'database-dropped':'runtime-dropped');f.at(30000);
+    await task5cRejectedV1(f.drop(count===1?'runtime':'owner'));assert.equal(f.drops().length,count);
+    assert.deepEqual(f.drops().map(row=>row.command),f.commands.slice(0,count));assert.equal(f.admin.current().unknown,true);f.timer();
+  }finally{await f.finish();}});cases.done();
+});
+// Break: uncertainty must not manufacture settlement or race original close.
+test('Final fix I1 expired cleanup retains pending original outcomes',async()=>{
+  const cases=task5bCasesV1(2);
+  for(const outcome of ['fulfill after elapsed sample','reject after timer'])await cases.wait(outcome,async()=>{const f=finalFixAdminV1();try{
+    f.admin.beginCleanup();f.at(29999);const d=f.defer();f.next=d.promise;
+    const query=trackProbePromiseV1(f.drop());await task5bPumpV1();assert.equal(f.drops().length,1);assert.equal(f.outcomes.length,0);
+    f.at(30000);if(outcome==='reject after timer')f.timer().callback();
+    assert.equal(f.admin.current().unknown,true);assert.equal(f.admin.current().pending,true);assert.equal(query.outcome,null);
+    const close=trackProbePromiseV1(f.admin.close());await task5bPumpV1();
+    assert.equal(close.outcome,null);assert.equal(query.outcome,null);assert.equal(f.releases,0);assert.equal(f.ends,0);assert.equal(f.outcomes.length,0);
+    await task5cRejectedV1(f.drop('runtime'));assert.equal(f.drops().length,1);
+    if(outcome==='reject after timer')d.reject(Error('FINITE_ORIGINAL_DROP_REJECTION'));else d.resolve(task5cDataV1(f.vm,[]));
+    await assertProbeRejectedV1(query,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');await assertProbeRejectedV1(close,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.equal(f.outcomes.length,1);assert.equal(f.outcomes[0].state,outcome==='reject after timer'?'rejected':'fulfilled');
+    assert.deepEqual(f.trace,['drop','release','end']);assert.equal(f.admin.current().pending,false);
+    assert.equal(f.admin.current().closed,false);assert.equal(f.admin.current().unknown,true);
+    assert.equal(f.vm.cleared.filter(handle=>handle===f.timer().handle).length,1);
+  }finally{await f.finish();}});cases.done();
+});
+// Break: valid later readings must not revive a faulted monotonic interval.
+test('Final fix I1 cleanup clock faults remain sticky',async()=>{
+  const cases=task5bCasesV1(4);
+  for(const mode of ['positive backward','negative','invalid','throw'])await cases.wait(mode,async()=>{const f=finalFixAdminV1();try{
+    f.at(10);f.admin.beginCleanup();f.at(20);assert.equal(f.admin.current().unknown,false);
+    if(mode==='positive backward')f.at(19);else if(mode==='negative')f.at(-1);else f.vm.monotonic.state.mode=mode;
+    assert.equal(f.admin.current().unknown,true);f.vm.monotonic.state.mode=null;f.at(21);
+    task5cRefusedV1(()=>f.admin.beginCleanup(),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');await task5cRejectedV1(f.drop());
+    assert.equal(f.drops().length,0);assert.equal(f.admin.current().unknown,true);f.timer();
+  }finally{await f.finish();}});cases.done();
+});
+// Break: a partial origin/timer acquisition must not become cleanup permission.
+test('Final fix I1 partial cleanup acquisition fails closed',async()=>{
+  const cases=task5bCasesV1(4);
+  for(const mode of ['negative origin','invalid origin','throwing origin','registration throw'])await cases.wait(mode,async()=>{
+    const f=finalFixAdminV1();let restore=()=>{};try{
+      if(mode==='negative origin')f.at(-1);else if(mode==='invalid origin')f.vm.monotonic.state.mode='invalid';
+      else if(mode==='throwing origin')f.vm.monotonic.state.mode='throw';
+      else restore=finalFixTimerPushV1(f,f.vm.timers,(push,args)=>{assert.equal(args.length,1);assert.equal(args[0].delay,30000);
+        Reflect.apply(push,f.vm.timers,args);throw Error('FINITE_TIMER_REGISTER');});
+      task5cRefusedV1(()=>f.admin.beginCleanup(),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');restore();restore=()=>{};
+      f.vm.monotonic.state.mode=null;f.at(1);assert.equal(f.admin.current().unknown,true);
+      task5cRefusedV1(()=>f.admin.endCleanup(),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+      assert.equal(f.vm.cleared.length,0,'no handle returned by failed registration/origin');
+      if(mode==='registration throw'){f.timer().callback();assert.equal(f.admin.current().unknown,true);}
+      else assert.equal(f.vm.timers.length,0,'origin refusal cannot acquire timer');
+      task5cRefusedV1(()=>f.admin.beginCleanup(),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');await task5cRejectedV1(f.drop());
+      assert.equal(f.drops().length,0);assert.equal(f.starts.length,0);
+    }finally{restore();await f.finish();}
+  });cases.done();
+});
+// Break: clear failure and time consumed by clear must remain visible.
+test('Final fix I1 cleanup discharge faults remain unknown',async()=>{
+  const cases=task5bCasesV1(2);
+  for(const mode of ['clear throws','clear crosses cutoff'])await cases.wait(mode,async()=>{const f=finalFixAdminV1();let restore=()=>{};try{
+    f.admin.beginCleanup();f.at(29999);const timer=f.timer();
+    restore=finalFixTimerPushV1(f,f.vm.cleared,(push,args)=>{assert.deepEqual(args,[timer.handle]);
+      const value=Reflect.apply(push,f.vm.cleared,args);if(mode==='clear throws')throw Error('FINITE_TIMER_CLEAR');f.at(30000);return value;});
+    task5cRefusedV1(()=>f.admin.endCleanup(),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');restore();restore=()=>{};
+    assert.equal(f.vm.cleared.filter(handle=>handle===timer.handle).length,1);assert.equal(f.admin.current().unknown,true);
+    await task5cRejectedV1(f.drop());await task5cRejectedV1(f.admin.close());
+    assert.equal(f.vm.cleared.filter(handle=>handle===timer.handle).length,1);assert.equal(f.drops().length,0);
+    assert.equal(f.releases,1);assert.equal(f.ends,1);
+  }finally{restore();await f.finish();}});cases.done();
+});
+// Break: neither an active nor completed attempt may reset the single origin.
+test('Final fix I1 cleanup interval cannot be restarted',async()=>{
+  const cases=task5bCasesV1(2);
+  for(const mode of ['active','ended'])await cases.wait(mode,async()=>{const f=finalFixAdminV1();try{
+    f.at(10);f.admin.beginCleanup();const timer=f.timer();f.at(20);if(mode==='ended')f.admin.endCleanup();
+    f.at(21);task5cRefusedV1(()=>f.admin.beginCleanup(),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.equal(f.timer(),timer);await task5cRejectedV1(f.drop());assert.equal(f.drops().length,0);assert.equal(f.admin.current().unknown,true);
+  }finally{await f.finish();}});cases.done();
+});
+// Break: a completed cleanup interval must not re-expire readonly or end work.
+test('Final fix I1 ended cleanup does not expire unrelated reads or close',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('distinct later five second operations',async()=>{const f=finalFixAdminV1();try{
+    f.admin.beginCleanup();const timer=f.timer();f.at(29999);f.admin.endCleanup();f.at(30001);timer.callback();
+    assert.equal(f.admin.current().unknown,false);await f.read();const d=f.defer();f.endValue=d.promise;
+    const close=trackProbePromiseV1(f.admin.close());await task5bPumpV1();assert.equal(close.outcome,null);f.at(30002);d.resolve();
+    assert.deepEqual(await close.done,{value:undefined});assert.equal(f.admin.current().closed,true);assert.equal(f.admin.current().unknown,false);
+    assert.equal(f.vm.cleared.filter(handle=>handle===timer.handle).length,1);assert.equal(f.drops().length,0);
+  }finally{await f.finish();}});cases.done();
+});
+// Break: merely possessing L, or ending cleanup, cannot authorize a new DROP.
+test('Final fix I1 DROP requires an active cleanup interval',async()=>{
+  const cases=task5bCasesV1(2);
+  for(const mode of ['unarmed','ended'])await cases.wait(mode,async()=>{const f=finalFixAdminV1();try{
+    if(mode==='ended'){f.admin.beginCleanup();f.admin.endCleanup();}
+    await task5cRejectedV1(f.drop());assert.equal(f.drops().length,0);assert.equal(f.admin.current().unknown,true);
+    assert.equal(f.vm.timers.filter(row=>row.delay===30000).length,mode==='ended'?1:0);
+  }finally{await f.finish();}});cases.done();
+});
+// Source-only contract evidence: no C/Source owner is invoked or emulated here.
+// Break: C omits the shared lifecycle, its final current sample, or finally.
+test('Final fix I1 C uses the retained cleanup interval',()=>{
+  const cases=task5bCasesV1(1);cases.run('actual C lexical wiring only',()=>{
+    const source=readFileSync(TASK5C_FIXTURE_V1,'utf8');
+    const ast=ts.createSourceFile('manual-control-orphan-bootstrap-fixture-v1.ts',source,ts.ScriptTarget.ES2022,true,ts.ScriptKind.TS);
+    assert.deepEqual(ast.parseDiagnostics,[]);const owners=ast.statements.filter(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='openManualOrphanFixtureContextV1');
+    assert.equal(owners.length,1);const owner=owners[0],text=node=>node.getText(ast),nodes=[];
+    const visit=node=>{nodes.push(node);ts.forEachChild(node,visit);};visit(owner.body);
+    const calls=name=>nodes.filter(node=>ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text===name);
+    const begins=calls('beginCleanup'),ends=calls('endCleanup');assert.equal(begins.length,1,'missing actual C cleanup lifecycle (Source wiring RED)');assert.equal(ends.length,1);
+    assert.equal(begins[0].arguments.length,0);assert.equal(ends[0].arguments.length,0);
+    assert.equal(text(begins[0].expression.expression),'admin!');assert.equal(text(ends[0].expression.expression),'admin!');
+    const tries=nodes.filter(node=>ts.isTryStatement(node)&&node.tryBlock.pos<begins[0].pos&&node.tryBlock.end>begins[0].end);
+    tries.sort((a,b)=>(a.end-a.pos)-(b.end-b.pos));assert.ok(tries.length);const cleanup=tries[0];assert.ok(cleanup.finallyBlock);
+    assert.ok(ends[0].pos>cleanup.finallyBlock.pos&&ends[0].end<cleanup.finallyBlock.end);
+    const loop=cleanup.tryBlock.statements.find(node=>ts.isForOfStatement(node));assert.ok(loop);assert.ok(begins[0].end<loop.pos);
+    assert.match(text(loop),/await runnerCatalog\(before\);\s*check\(\);/);
+    assert.match(text(loop),/await admin!\.query\("drop-"\+object,[\s\S]*?\);\s*check\(\);/);
+    const declaration=name=>{const rows=nodes.filter(node=>ts.isVariableDeclaration(node)&&ts.isIdentifier(node.name)&&node.name.text===name);assert.equal(rows.length,1);return rows[0];};
+    const sample=declaration('sample'),check=declaration('check');
+    assert.match(text(sample),/admin\?\.current\(\)\.unknown/);
+    assert.match(text(check),/prepared\?\.assertUnchanged\(\);activation\?\.assertUnchanged\(\);sample\(\);\s*}/);
+    assert.doesNotMatch(text(owner),/\bcleanupStart\b|\bcleanupTimer\b/);
+    assert.doesNotMatch(text(cleanup),/process\.hrtime|setTimeout\(burn,30000\)/);
+    const closing=nodes.filter(node=>ts.isCallExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==='closeSql'
+      &&node.pos>cleanup.end);assert.ok(closing.length);assert.ok(closing[0].pos>cleanup.finallyBlock.end);
+    assert.match(text(cleanup.tryBlock),/runnerCatalog\("owner-dropped"\)[\s\S]*setTimeout\(yes,100\)[\s\S]*runnerCatalog\("owner-dropped"\)/);
+  });cases.done();
+});
+// Break: close must discharge an unended interval before its separate end wait.
+test('Final fix I1 close discharges an unfinished cleanup interval once',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('fallback discharge precedes end',async()=>{const f=finalFixAdminV1();try{
+    f.admin.beginCleanup();const timer=f.timer();f.at(29999);const d=f.defer();f.endValue=d.promise;
+    const close=trackProbePromiseV1(f.admin.close());await task5bPumpV1();assert.equal(close.outcome,null);
+    assert.equal(f.vm.cleared.filter(handle=>handle===timer.handle).length,1);assert.deepEqual(f.trace,['release','end']);
+    f.at(30001);d.resolve();assert.deepEqual(await close.done,{value:undefined});await f.admin.close();
+    assert.equal(f.admin.current().closed,true);assert.equal(f.admin.current().unknown,false);
+    assert.equal(f.releases,1);assert.equal(f.ends,1);assert.equal(f.vm.cleared.filter(handle=>handle===timer.handle).length,1);
+  }finally{await f.finish();}});cases.done();
 });

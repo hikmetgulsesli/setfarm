@@ -15,9 +15,9 @@ import {
   observeManualOrphanOwnedChildV1, observeManualOrphanOwnedIntegrationChildV1,
 } from "./manual-control-orphan-bootstrap-child-v1.mjs";
 
-// Component negatives only. This helper provides neither installation setup nor
-// an owned genuine-bootstrap route. In particular its tsx child cannot establish
-// original compiled launch, clean-main M, old T admission, or a fixed-I5 positive.
+// The legacy negative helpers below cannot establish original compiled launch,
+// clean-main M, old T admission, or a fixed-I5 positive. The separate owned
+// runner/integration routes require their retained ownership preconditions.
 // All IO is explicit: importing this helper starts no child and reads no record.
 const root = new URL("../../../", import.meta.url);
 const adapter = new URL("src/installation/fresh-installation-manual-control-maintenance-v1.ts", root).href;
@@ -562,9 +562,39 @@ function retainManualOrphanRunnerAdminV1(pool:ManualOrphanDataV1,reserved:Manual
   let unknown=false,stopped=false,closed=false,releaseAttempted=false,endAttempted=false;
   let pending:Promise<unknown>|null=null,closing:Promise<void>|null=null,capturedInstallation:ManualOrphanDataV1|null=null,dropStage="activated";
   const clocks:{start:bigint;last:bigint;done:boolean}[]=[];
+  let cleanupAttempted=false,cleanupEnded=false,cleanupClock:{start:bigint;last:bigint}|null=null;
+  let cleanupTimer:ReturnType<typeof setTimeout>|null=null;
   const mark=():void=>{unknown=true;closed=false;};
   const failure=():Error=>Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");
-  const sample=():void=>{if(manualOrphanFixtureOutputFaultV1)mark();for(const item of clocks)if(!item.done)try{const now=process.hrtime.bigint();if(now<item.last||now-item.start>=5000000000n)mark();item.last=now;}catch{mark();}};
+  const sample=():void=>{
+    if(manualOrphanFixtureOutputFaultV1)mark();
+    for(const item of clocks)if(!item.done)try{const now=process.hrtime.bigint();if(now<item.last||now-item.start>=5000000000n)mark();item.last=now;}catch{mark();}
+    if(cleanupAttempted&&!cleanupEnded){
+      const clock=cleanupClock;
+      if(clock===null)mark();
+      else try{const now=process.hrtime.bigint();
+        if(typeof now!=="bigint"||now<0n||now<clock.last)mark();
+        else {clock.last=now;if(now-clock.start>=30000000000n)mark();}
+      }catch{mark();}
+    }
+  };
+  const beginCleanup=():void=>{
+    if(cleanupAttempted){mark();throw failure();}cleanupAttempted=true;
+    if(unknown||stopped||closed||pending!==null){mark();throw failure();}
+    try{const now=process.hrtime.bigint();if(typeof now!=="bigint"||now<0n)throw failure();
+      cleanupClock={start:now,last:now};cleanupTimer=setTimeout(()=>{if(!cleanupEnded)mark();},30000);
+    }catch{mark();}
+    sample();if(unknown)throw failure();
+  };
+  const endCleanup=():void=>{
+    if(!cleanupAttempted||cleanupEnded){mark();throw failure();}
+    try{
+      sample();const timer=cleanupTimer;cleanupTimer=null;
+      if(timer!==null)try{clearTimeout(timer);}catch{mark();}
+      sample();
+    }finally{cleanupEnded=true;}
+    if(unknown)throw failure();
+  };
   const collect=async(start:()=>unknown):Promise<unknown>=>{
     let origin=0n;try{origin=process.hrtime.bigint();if(origin<0n)mark();}catch{mark();}
     const item={start:origin,last:origin,done:false};clocks.push(item);let timer:ReturnType<typeof setTimeout>|null=null;
@@ -615,7 +645,12 @@ function retainManualOrphanRunnerAdminV1(pool:ManualOrphanDataV1,reserved:Manual
           if(operation!==undefined)throw failure();command=kind==="identity"?identitySql:
             `SELECT ${ownSql},COALESCE((SELECT json_agg(v) FROM (${sql[kind]}) v),'[]'::json) AS rows FROM pg_catalog.pg_stat_activity a WHERE a.pid=pg_backend_pid()`;
         }
-        sample();if(unknown||stopped)throw failure();const result=await collect(()=>{if(unknown)throw failure();return reserved.unsafe(command);}) as ManualOrphanDataV1[];
+        sample();if(unknown||stopped)throw failure();const result=await collect(()=>{
+          const mutation=kind.startsWith("drop-"),method=reserved.unsafe;if(typeof method!=="function")throw failure();
+          // Method acquisition and the five-second origin precede this final shared-clock sample.
+          sample();if(unknown||stopped||mutation&&(!cleanupAttempted||cleanupEnded||cleanupClock===null))throw failure();
+          return Reflect.apply(method,reserved,[command]);
+        }) as ManualOrphanDataV1[];
         if(kind.startsWith("drop-")){dropStage=kind==="drop-database"?"database-dropped":kind==="drop-runtime"?"runtime-dropped":"owner-dropped";return undefined;}
         if(!Array.isArray(result)||result.length!==1||!samePair(result[0]))throw failure();const r=result[0];
         if(kind==="identity"){
@@ -636,6 +671,7 @@ function retainManualOrphanRunnerAdminV1(pool:ManualOrphanDataV1,reserved:Manual
     closing=(async()=>{
       if(active!==null)try{await active;}catch{mark();}
       if(active!==null)await Promise.resolve();sample();
+      if(cleanupAttempted&&!cleanupEnded)try{endCleanup();}catch{mark();}
       if(!releaseAttempted){releaseAttempted=true;try{reserved.release();}catch{mark();}}
       if(!endAttempted){endAttempted=true;
         // No await, query, shape inspection or other operation between release and end.
@@ -645,7 +681,7 @@ function retainManualOrphanRunnerAdminV1(pool:ManualOrphanDataV1,reserved:Manual
       sample();closed=!unknown;if(unknown)throw failure();
     })();return closing;
   };
-  return Object.freeze({query,stop(){stopped=true;},close,onclose(){if(!endAttempted)mark();},current(){sample();return Object.freeze({closed,endAttempted,pair,pending:pending!==null,releaseAttempted,stopped,unknown});}});
+  return Object.freeze({beginCleanup,endCleanup,query,stop(){stopped=true;},close,onclose(){if(!endAttempted)mark();},current(){sample();return Object.freeze({closed,endAttempted,pair,pending:pending!==null,releaseAttempted,stopped,unknown});}});
 }
 function advanceManualOrphanCleanupLedgerV1(ledger:ManualOrphanDataV1,event:ManualOrphanDataV1):ManualOrphanDataV1 {
   const freeze=(value:any):any=>{if(value!==null&&typeof value==="object"){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
@@ -1080,10 +1116,10 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
       // The last verifier's own finally has completed before the no-generated-session census. No further verifier is opened during cleanup.
       check();await runnerCatalog("activated");ledger=advanceManualOrphanRouteLedgerV1(ledger,phaseEvent("cases-settled",null,integration));
       let cleanup:ManualOrphanDataV1={state:"cases-settled",databaseAck:null,runtimeAck:null,ownerAck:null,unknown:false};
-      const cleanupStart=process.hrtime.bigint(),cleanupTimer=setTimeout(burn,30000);
       try{
+        admin!.beginCleanup();
         for(const [object,before,after] of [["database","activated","database-dropped"],["runtime","database-dropped","runtime-dropped"],["owner","runtime-dropped","owner-dropped"]] as const){
-          check();need(ledger.state===(object==="database"?"cases-settled":before));need(process.hrtime.bigint()-cleanupStart<30000000000n);await runnerCatalog(before);check();
+          check();need(ledger.state===(object==="database"?"cases-settled":before));await runnerCatalog(before);check();
           const i=installation!,identity={kind:object,name:i[object==="database"?"databaseName":object==="runtime"?"runtimeRole":"ownerRole"],oid:i[object==="database"?"databaseOid":object==="runtime"?"runtimeOid":"ownerOid"]};
           await admin!.query("drop-"+object,{installation:i,object:identity,stage:before});check();
           const event={type:object+"-ack",installation:i,object:identity,completion:"fulfilled",absence:{nameAbsent:true,oidAbsent:true},baseline,closures:closures()};
@@ -1092,8 +1128,7 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
           ledger=advanceManualOrphanRouteLedgerV1(ledger,phaseEvent(after,null,null,cleanup));
         }
         await runnerCatalog("owner-dropped");await new Promise<void>(yes=>setTimeout(yes,100));check();await runnerCatalog("owner-dropped");check();
-        need(process.hrtime.bigint()-cleanupStart<30000000000n);
-      }finally{clearTimeout(cleanupTimer);}
+      }finally{admin!.endCleanup();}
       await closeSql();check();const clean={databaseAbsent:true,ownerRoleAbsent:true,runtimeRoleAbsent:true,baselineRestored:true,adminClose:"fulfilled"};
       finalLedger=ledger;finalCleanup=clean;
       result={schema:"setfarm.manual-orphan-runner-result.v1",run:frame.run,frameSha256:createHash("sha256").update(encodeManualOrphanRunnerSetupFrameV1(frame)).digest("hex"),

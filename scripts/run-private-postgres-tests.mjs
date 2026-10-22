@@ -310,7 +310,8 @@ async function quiescence(admin,journal){
   }
   return true;
 }
-// Private constructor. The public dispatch below deliberately remains guarded.
+// Private constructor for the exact public route. The owner checks its required
+// preconditions before bootstrap setup.
 // These component predicates never grant ownership; the zeroarg owner below
 // obtains and retains every resource before it can issue the one setup frame.
 const manualOrphanNodeV1='/opt/homebrew/Cellar/node/26.4.0/bin/node';
