@@ -303,6 +303,7 @@ const manualOrphanRecordNamesV1=["planned.json","owner-created.json","runtime-cr
 let manualOrphanFixtureClaimedV1=false;
 let manualOrphanFixtureOutputFaultV1=false;
 let manualOrphanFixtureCompletionV1:ReturnType<typeof retainManualOrphanFixtureCompletionV1>|null=null;
+const manualOrphanCompletionChildrenV1=new WeakMap<object,Set<ReturnType<typeof retainManualOrphanOriginalChildLifetimeV1>>>();
 
 function claimManualOrphanFixtureEntryV1(kind:string,argumentCount:number):void {
   const previous=manualOrphanFixtureClaimedV1;manualOrphanFixtureClaimedV1=true;
@@ -916,6 +917,7 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
         // Keep its true projection before rejecting into the actual finally.
         obligation.closed=lifetime.current().closed;burn();throw Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");
       });
+      retainManualOrphanCompletionChildV1(completion,lifetime);
       if(witness===null||unknown)throw Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");
       const actualWitness=witness;
       const windowCheck=():void=>{const now=process.hrtime.bigint();if(now<BigInt(delivery.lastAtNs)||now-origin>=5000000000n||manualOrphanFixtureOutputFaultV1||actualWitness.snapshot().state!=="pending")throw Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");delivery.lastAtNs=String(now);};
@@ -1143,10 +1145,17 @@ function retainManualOrphanOriginalChildLifetimeV1(actualChild:ManualOrphanDataV
   return Object.freeze({settled,current});
 }
 
+function retainManualOrphanCompletionChildV1(completion:object|null,lifetime:ReturnType<typeof retainManualOrphanOriginalChildLifetimeV1>):void{
+  const retained=completion===null?undefined:manualOrphanCompletionChildrenV1.get(completion);
+  if(retained===undefined)throw Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");
+  retained.add(lifetime);
+}
+
 // One entry-owned interval includes input, C, final codec and original output.
 // Pending callbacks retain custody even after timeout; only their own callback
 // can settle an invoked write. No public options or clock/provider injection.
 function retainManualOrphanFixtureCompletionV1(kind:string){
+  const retainedChildren=new Set<ReturnType<typeof retainManualOrphanOriginalChildLifetimeV1>>();
   const limitNs=BigInt(kind==="runner"?840000:300000)*1000000n;
   let startedAtNs=0n,lastAtNs=0n,unknown=kind!=="runner"&&kind!=="integration",finished=false;
   let writeStarted=false,writePending=false,writeSettled=false,timerCleared=false;
@@ -1156,6 +1165,7 @@ function retainManualOrphanFixtureCompletionV1(kind:string){
   const fail=():void=>{unknown=true;};
   const outputFault=():void=>{manualOrphanFixtureOutputFaultV1=true;fail();};
   const sample=():void=>{
+    for(const child of retainedChildren)try{if(child.current().unknown)fail();}catch{fail();}
     try{const now=process.hrtime.bigint();if(typeof now!=="bigint"||now<0n||now<lastAtNs)fail();
       else {lastAtNs=now;if(now-startedAtNs>=limitNs)fail();}}catch{fail();}
     if(manualOrphanFixtureOutputFaultV1)fail();
@@ -1197,7 +1207,9 @@ function retainManualOrphanFixtureCompletionV1(kind:string){
     // with no asynchronous gap between this outcome and the public return.
     sample();finished=true;if(unknown)throw Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");
   };
-  return Object.freeze({check,fail,write,finish,current});
+  const completion=Object.freeze({check,fail,write,finish,current});
+  manualOrphanCompletionChildrenV1.set(completion,retainedChildren);
+  return completion;
 }
 
 export async function runManualOrphanBootstrapRouteV1():Promise<void> {

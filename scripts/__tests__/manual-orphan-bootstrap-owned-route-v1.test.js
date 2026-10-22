@@ -1458,7 +1458,7 @@ function fixedProbeVmV1(bindings={},expose=false){
   runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
   if(bindings.task5cFixture===true)task5cEvaluateFixtureV1(context,bindings,c,faults);
   assert.equal(timers.length,0,'import creates no timer');assert.equal(c.calls.forbidden,0,'import performs no IO');
-  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5cFixture===true?{fixtureExports:context.__task5cFixtureExportsV1,fixtureLexical:context.__task5cFixtureLexicalV1,fixtureFix1Lexical:context.__task5cFixtureFix1LexicalV1,...(bindings.task4cIsolatedEntry===true?{task4cEntry:task4cEvaluateIsolatedEntryV1(context,bindings,c,faults)}:{})}:{}),...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
+  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5cFixture===true?{fixtureExports:context.__task5cFixtureExportsV1,fixtureLexical:context.__task5cFixtureLexicalV1,fixtureFix1Lexical:context.__task5cFixtureFix1LexicalV1,...(bindings.task6CompletionLifetime===true?{task6CompletionChild:context.__task6CompletionChildV1}:{}),...(bindings.task4cIsolatedEntry===true?{task4cEntry:task4cEvaluateIsolatedEntryV1(context,bindings,c,faults)}:{})}:{}),...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
     assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));assert.deepEqual(faults,[],'no swallowed binding assertion');
     if(bindings.assertClean)bindings.assertClean();
   }};
@@ -6532,6 +6532,7 @@ function task5cEvaluateFixtureV1(context,bindings,c,faults){
       retainManualOrphanOriginalChildLifetimeV1:typeof retainManualOrphanOriginalChildLifetimeV1==='function'?retainManualOrphanOriginalChildLifetimeV1:null,
       retainManualOrphanFixtureCompletionV1:typeof retainManualOrphanFixtureCompletionV1==='function'?retainManualOrphanFixtureCompletionV1:null
     };
+    globalThis.__task6CompletionChildV1=typeof retainManualOrphanCompletionChildV1==='function'?retainManualOrphanCompletionChildV1:null;
   })(globalThis.__task5cFixtureExportsV1={},globalThis.__task5cFixtureRequireV1);`,context,
     {filename:url.fileURLToPath(TASK5C_FIXTURE_V1),timeout:5000});
 }
@@ -7547,4 +7548,217 @@ test('Task4C 13 repeated late reader faults never duplicate terminal output',asy
     await task4cPumpV1(f);await task4cSettledV1(f,'MANUAL_ORPHAN_FRAME_REFUSED');task4cNoOwnerV1(f);
     assert.equal(f.reader.ledger.destroys,1);assert.deepEqual(f.reader.ledger.rawCloses,[]);
   });cases.done();
+});
+
+// Task6 late-original-fault appendix: twelve literal finite component cases.
+// Retained emitters simulate events only. Actual same-realm Q/R/observers/O
+// execute; no C/E, owner, Source holder, SQL, provider or native success claim.
+function task6LateVmV1(kind='runner'){
+  assert.ok(kind===null||kind==='runner'||kind==='integration');
+  const reads=[],faults=[],writes=[],outputs={},binding={},monotonic=task3ClockV1();
+  let importing=true,callback=null;
+  const guard=fn=>task5bGuardV1(faults,fn);
+  for(const key of ['env','argv','execArgv','pid','ppid','cwd'])Object.defineProperty(binding,key,{get(){
+    reads.push(key);throw Error('TASK6_LATE_PROCESS_READ');}});
+  for(const name of ['stdout','stderr']){
+    const stream=new EventEmitter(),on=stream.on;
+    stream.on=guard((event,listener)=>{assert.equal(event,'error');assert.equal(typeof listener,'function');
+      return Reflect.apply(on,stream,[event,listener]);});
+    stream.write=guard((bytes,done)=>{
+      assert.equal(kind,'runner');assert.equal(name,'stdout');assert.equal(writes.length,0,'one original output');
+      assert.ok(Buffer.isBuffer(bytes));assert.ok(bytes.length>=1&&bytes.length<=16384);assert.equal(bytes.at(-1),10);
+      assert.equal(typeof done,'function');writes.push(Buffer.from(bytes));callback=done;return true;
+    });
+    outputs[name]=stream;Object.defineProperty(binding,name,{get(){
+      if(importing){reads.push(name);throw Error('TASK6_LATE_IMPORT_OUTPUT');}return stream;}});
+  }
+  const vm=task3VmV1({task5cFixture:true,task5cFiniteObservers:true,task6CompletionLifetime:true,
+    process:binding,monotonic});importing=false;
+  const api=vm.fixtureLexical,fix1=vm.fixtureFix1Lexical,register=vm.task6CompletionChild;
+  assert.deepEqual(Object.keys(vm.fixtureExports).sort(),[
+    'runManualOrphanBootstrapIntegrationV1','runManualOrphanBootstrapRouteV1','runManualOrphanCompiledCliNegativeV1','runManualOrphanSourceContextNegativeV1']);
+  assert.equal(vm.fixtureExports.runManualOrphanBootstrapRouteV1.length,0);
+  assert.equal(vm.fixtureExports.runManualOrphanBootstrapIntegrationV1.length,0);
+  assert.deepEqual(Object.keys(fix1).sort(),['retainManualOrphanFixtureCompletionV1','retainManualOrphanOriginalChildLifetimeV1']);
+  assert.equal(fix1.retainManualOrphanOriginalChildLifetimeV1.length,2);
+  assert.equal(fix1.retainManualOrphanFixtureCompletionV1.length,1);
+  assert.equal(typeof register,'function','missing Task6 private registrar (scaffolding only; not causal RED)');
+  assert.equal(register.length,2);assert.equal(api.finalizeManualOrphanFixtureResultV1.length,2);
+  assert.equal(vm.timers.length,0);assert.equal(monotonic.state.calls,0);assert.equal(monotonic.state.accesses,0);
+  const originals=[];
+  // Containment checks deliberately do not sample R, Q or witnesses. In the
+  // lazy cases only the specified witness observation may advance its clock.
+  const check=()=>{assert.deepEqual(reads,[]);assert.deepEqual(faults,[],'no swallowed Task6 boundary assertion');
+    vm.assertContained();for(const original of originals)original.f.assertGuarded();};
+  const completion=kind===null?null:fix1.retainManualOrphanFixtureCompletionV1(kind);
+  const timer=kind===null?null:vm.timers[0];
+  if(completion!==null){assert.equal(Object.isFrozen(completion),true);task5cFix1CompletionFactsV1(completion);
+    assert.equal(vm.timers.length,1);assert.equal(timer.delay,kind==='runner'?840000:300000);}
+  const x={...vm,api,fix1,register,kind,completion,timer,originals,writes,outputs,check,
+    callback(){assert.equal(typeof callback,'function','retain the one original callback');
+      const original=callback;callback=null;original(null);check();},
+    releaseTrace(body){const push=vm.cleared.push;Object.defineProperty(vm.cleared,'push',{
+      value:guard((...args)=>{assert.deepEqual(args,[timer.handle]);const value=Reflect.apply(push,vm.cleared,args);body();return value;}),configurable:true});},
+    closed(expectedWrites){check();assert.equal(callback,null);assert.equal(writes.length,expectedWrites);
+      assert.equal(originals.length<= (kind==='integration'?2:3),true);
+      assert.equal(vm.timers.length,originals.length+(completion===null?0:1),'one timer per real observer and one R timer');
+      assert.equal(vm.cleared.length,vm.timers.length);assert.equal(new Set(vm.cleared).size,vm.timers.length);
+      for(const scheduled of vm.timers)assert.ok(vm.cleared.includes(scheduled.handle));
+      for(const original of originals){assert.equal(original.lifetime.settled,original.settled);
+        assert.equal(original.witness.settled,original.witnessSettled);assert.notEqual(original.tracked.outcome,null);}
+      if(completion!==null){const facts=task5cFix1CompletionFactsV1(completion);
+        assert.equal(facts.finished,true);assert.equal(facts.writePending,false);}
+    },
+  };check();return x;
+}
+function task6OriginalV1(x,purpose='provision',register=true){
+  const f=task3EventFixtureV1(purpose),data=purpose==='integration'?ownedIntegrationData():ownedPhaseResultData(purpose);
+  f.child.pid=data.pid;
+  const witness=purpose==='integration'?x.actual.observeManualOrphanOwnedIntegrationChildV1(f.child):x.actual.observeManualOrphanOwnedChildV1(f.child,purpose);
+  const lifetime=x.fix1.retainManualOrphanOriginalChildLifetimeV1(f.child,witness);
+  const settled=lifetime.settled,witnessSettled=witness.settled,tracked=trackProbePromiseV1(settled);
+  const original={f,purpose,witness,lifetime,settled,witnessSettled,tracked};x.originals.push(original);
+  assert.equal(Object.isFrozen(lifetime),true);assert.deepEqual(Object.keys(lifetime).sort(),['current','settled']);
+  assert.equal(lifetime.current.length,0);
+  if(register)x.register(x.completion,lifetime); // exact original Q and exact returned R, no copied surrogate
+  // Valid transport DATA is not owner/Source evidence. The integration observer
+  // consumes the real bounded transcript scanner, not a supplied witness.
+  f.channels.stdout.emit('data',purpose==='integration'?task5aWireV1():helper.encodeManualOrphanOwnedPhaseResultV1(data));
+  x.check();return original;
+}
+async function task6ClosedOriginalV1(x,purpose='provision'){
+  const original=task6OriginalV1(x,purpose);task3CompleteV1(original.f,purpose);
+  const history=await original.witnessSettled;await original.tracked.done;x.check();
+  assert.equal(history.state,'observed');assert.deepEqual(original.tracked.outcome,{value:undefined});
+  const facts=task5cFix1LifetimeFactsV1(original.lifetime);assert.equal(facts.closed,true);assert.equal(facts.unknown,false);
+  return original;
+}
+function task6ResultDataV1(x){
+  // Explicit valid DATA input to actual O/codec; never a public success path.
+  return x.api.finalizeManualOrphanFixtureResultV1(x.kind,task5cDataV1(x,task5cFinalFactsV1(x.kind)));
+}
+function task6CaptureV1(body){
+  try{return {value:body()};}catch(error){
+    if(!(error instanceof Error)||error.message!=='MANUAL_ORPHAN_CLEANUP_UNKNOWN')throw error;
+    return {error};
+  }
+}
+function task6RefusalV1(outcome,message){
+  assert.ok(outcome.error instanceof Error,message);assert.equal(outcome.error.message,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+  assert.equal(Object.hasOwn(outcome,'value'),false);
+}
+async function task6PendingOutputV1(x){
+  const bytes=task6ResultDataV1(x);x.monotonic.state.ms=100;
+  const tracked=trackProbePromiseV1(x.completion.write(bytes));await task5bPumpV1();x.check();
+  assert.equal(tracked.outcome,null);assert.equal(x.writes.length,1);
+  assert.deepEqual(x.writes,[Buffer.from(OWN_RUNNER_WIRE)]);return tracked;
+}
+async function task6LateOutputErrorV1(target,three=false){
+  const x=task6LateVmV1(),earliest=await task6ClosedOriginalV1(x,'provision');
+  if(three){await task6ClosedOriginalV1(x,'activate');await task6ClosedOriginalV1(x,'integration');}
+  const tracked=await task6PendingOutputV1(x);
+  const original=target==='child'?earliest.f.child:earliest.f.channels[target];
+  original.emit('error',Error('TASK6_SIMULATED_LATE_ORIGINAL'));await task5bPumpV1();
+  const stillPending=tracked.outcome===null;x.callback();const outcome=await tracked.done;
+  // R outcome is captured BEFORE fresh Q/witness diagnostic reads, including RED.
+  const finish=task6CaptureV1(()=>x.completion.finish(false));
+  const facts=earliest.lifetime.current(),witness=earliest.witness.snapshot();
+  await Promise.all(x.originals.map(item=>item.tracked.done));x.closed(1);
+  assert.equal(stillPending,true,'a child fault never supplies the original output callback');
+  assert.equal(facts.unknown,true);assert.equal(witness.state,'unknown');
+  for(const item of x.originals)assert.equal((await item.witnessSettled).state,'observed','historical original witness remains joined');
+  task6RefusalV1(outcome,'current original fault must reject the actual pending output');
+  task6RefusalV1(finish,'late uncertainty remains sticky through release');
+}
+
+// Break: a valid registry/actual finalizer must not itself refuse healthy originals.
+test('Task6 late original fault runner control retains three closed originals',async()=>{
+  const x=task6LateVmV1();await task6ClosedOriginalV1(x,'provision');await task6ClosedOriginalV1(x,'activate');await task6ClosedOriginalV1(x,'integration');
+  const tracked=await task6PendingOutputV1(x);x.monotonic.state.ms=150;x.callback();const outcome=await tracked.done;
+  const finish=task6CaptureV1(()=>x.completion.finish(true));x.closed(1);
+  assert.deepEqual(outcome,{value:undefined});assert.deepEqual(finish,{value:undefined});assert.equal(x.completion.current().unknown,false);
+});
+test('Task6 late original fault integration control retains two closed originals',async()=>{
+  const x=task6LateVmV1('integration');await task6ClosedOriginalV1(x,'old_entry_positive');await task6ClosedOriginalV1(x,'new_entry_refusal');
+  const result=task6ResultDataV1(x);x.monotonic.state.ms=100;const finish=task6CaptureV1(()=>x.completion.finish(true));x.closed(0);
+  assert.deepEqual(task5cPlainV1(result),ownedIntegrationData());task5cFrozenV1(result);
+  assert.deepEqual(finish,{value:undefined});assert.equal(x.completion.current().unknown,false);
+});
+// Break: omitting fresh Q polling loses each original's late retained error.
+test('Task6 late original child error rejects pending runner output',async()=>{
+  await task6LateOutputErrorV1('child');
+});
+test('Task6 late original stdout error rejects pending runner output',async()=>{
+  await task6LateOutputErrorV1('stdout');
+});
+test('Task6 late original stderr error rejects pending runner output',async()=>{
+  await task6LateOutputErrorV1('stderr');
+});
+test('Task6 late original fd4 error rejects pending runner output',async()=>{
+  await task6LateOutputErrorV1('fd4');
+});
+// Break: event/global-output-only sampling misses a settled witness's fresh clock fault.
+test('Task6 late witness clock regression rejects otherwise timely runner output',async()=>{
+  const control=task6LateVmV1(),controlWrite=await task6PendingOutputV1(control);
+  control.monotonic.state.ms=200;control.monotonic.state.ms=150;control.callback();
+  const controlOutcome=await controlWrite.done,controlFinish=task6CaptureV1(()=>control.completion.finish(true));control.closed(1);
+  assert.deepEqual(controlOutcome,{value:undefined});assert.deepEqual(controlFinish,{value:undefined});
+  const x=task6LateVmV1(),original=await task6ClosedOriginalV1(x),tracked=await task6PendingOutputV1(x);
+  x.monotonic.state.ms=200;const prior=original.witness.snapshot(); // ONLY witness advances to 200
+  x.monotonic.state.ms=150;x.callback();const outcome=await tracked.done;
+  const finish=task6CaptureV1(()=>x.completion.finish(false));
+  const witness=original.witness.snapshot(),facts=original.lifetime.current();x.closed(1);
+  assert.equal(prior.state,'observed');assert.equal(witness.state,'unknown');assert.equal(facts.unknown,true);
+  assert.equal((await original.witnessSettled).state,'observed');assert.deepEqual(original.tracked.outcome,{value:undefined});
+  task6RefusalV1(outcome,'R 100→150 is timely; only current Q sees witness 200→150');task6RefusalV1(finish,'lazy fault stays sticky');
+});
+// Break: skipping the post-clear Q observation permits a fault during final release.
+test('Task6 late original child error during runner timer release rejects finish',async()=>{
+  const x=task6LateVmV1(),original=await task6ClosedOriginalV1(x),tracked=await task6PendingOutputV1(x);
+  x.callback();const outcome=await tracked.done;
+  x.releaseTrace(()=>original.f.child.emit('error',Error('TASK6_SIMULATED_RELEASE_ERROR')));
+  const finish=task6CaptureV1(()=>x.completion.finish(true));const facts=original.lifetime.current();x.closed(1);
+  assert.deepEqual(outcome,{value:undefined});assert.equal(facts.unknown,true);assert.equal(original.witness.snapshot().state,'unknown');
+  task6RefusalV1(finish,'post-release current original fault must reject finish');
+});
+test('Task6 late witness clock regression during integration timer release rejects finish',async()=>{
+  const x=task6LateVmV1('integration'),original=await task6ClosedOriginalV1(x,'old_entry_positive');
+  task6ResultDataV1(x);x.monotonic.state.ms=100;x.completion.check();let during=null;
+  x.releaseTrace(()=>{x.monotonic.state.ms=200;during=original.witness.snapshot();x.monotonic.state.ms=150;});
+  const finish=task6CaptureV1(()=>x.completion.finish(true));
+  const witness=original.witness.snapshot(),facts=original.lifetime.current();x.closed(0);
+  assert.equal(during.state,'observed');assert.equal(witness.state,'unknown');assert.equal(facts.unknown,true);
+  assert.equal((await original.witnessSettled).state,'observed');
+  task6RefusalV1(finish,'R 100→150 is valid; its post-clear Q poll must detect witness 200→150');
+});
+// Break: missing polling refuses neither uncertainty nor the still-owed FD4;
+// observer settlement/R refusal cannot manufacture that original's close.
+test('Task6 late fault refusal preserves pending original fd4 custody',async()=>{
+  const x=task6LateVmV1(),original=task6OriginalV1(x);
+  original.f.channels.fd4.emit('error',Error('TASK6_SIMULATED_OPEN_FD4_ERROR'));
+  for(const name of ['stdout','stderr']){original.f.channels[name].emit('end');original.f.channels[name].emit('close');}
+  original.f.child.emit('exit',1,null);original.f.child.emit('close',1,null);await task5bPumpV1();
+  const pendingBefore=original.tracked.outcome===null;
+  const refusal=task6CaptureV1(()=>x.completion.check()); // capture R while FD4 is physically open
+  const open=original.lifetime.current();await task5bPumpV1();const pendingAfter=original.tracked.outcome===null;
+  original.f.channels.fd4.emit('close');const history=await original.witnessSettled;const joined=await original.tracked.done;
+  const finish=task6CaptureV1(()=>x.completion.finish(false));x.closed(0);
+  assert.equal(pendingBefore,true);assert.equal(pendingAfter,true);assert.equal(open.fd4,'open');assert.equal(open.closed,false);
+  assert.equal(open.pending,true);assert.equal(open.unknown,true);assert.equal(history.state,'unknown');
+  assert.equal(original.lifetime.current().fd4,'closed');task6RefusalV1(joined,'Q still joins the actual FD4 close');
+  task6RefusalV1(refusal,'R must refuse original uncertainty before FD4 closure');task6RefusalV1(finish,'original uncertainty stays sticky');
+});
+// Break: retaining only the most recent Q loses the earliest original's late fault.
+test('Task6 late fault on earliest retained child rejects runner output',async()=>{
+  await task6LateOutputErrorV1('child',true);
+});
+// Break: a structural/fabricated completion key must not acquire private association.
+test('Task6 late fault private registrar refuses an unregistered completion',async()=>{
+  const x=task6LateVmV1(null),original=task6OriginalV1(x,'provision',false);
+  const refusal=task6CaptureV1(()=>x.register(Object.freeze({}),original.lifetime));
+  await task5bPumpV1();const pending=original.tracked.outcome===null;
+  task3CompleteV1(original.f,'provision');const history=await original.witnessSettled;const joined=await original.tracked.done;x.closed(0);
+  assert.equal(pending,true);assert.equal(history.state,'observed');assert.deepEqual(joined,{value:undefined});
+  assert.equal(x.outputs.stdout.listenerCount('error'),0);assert.equal(x.outputs.stderr.listenerCount('error'),0);
+  task6RefusalV1(refusal,'private registrar requires the exact R registered by its factory');
 });
