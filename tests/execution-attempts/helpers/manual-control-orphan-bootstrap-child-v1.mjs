@@ -1271,202 +1271,313 @@ export function observeManualOrphanProcessV1(pid){
 
 const PROBE_EMPTY_OUTPUT_SHA256_V1='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-export function observeManualOrphanOriginalChildV1(child){
-  let state='pending',reason=null,exit=null,close=null,exitCount=0,closeCount=0,spawned=false;
-  let timer=null,timerCleared=false,historyResolved=false,resolveHistory;
-  const settled=new Promise(resolve=>{resolveHistory=resolve;});
-  const makeOutput=()=>({bytes:0,hash:null,end:false,close:false,chunks:[],retained:0});
-  const stdout=makeOutput(),stderr=makeOutput(),fd4={finish:false,end:false,close:false};
-  const outputFact=channel=>Object.freeze({bytes:channel.bytes,
-    sha256:channel.hash?channel.hash.copy().digest('hex'):PROBE_EMPTY_OUTPUT_SHA256_V1,
-    end:channel.end,close:channel.close});
-  const snapshot=()=>Object.freeze({state,
-    exit:exit===null?null:Object.freeze({...exit}),close:close===null?null:Object.freeze({...close}),
-    stdout:outputFact(stdout),stderr:outputFact(stderr),fd4:Object.freeze({...fd4}),reason});
-  const clearOwnedTimer=()=>{
-    if(timer!==null&&!timerCleared){
-      timerCleared=true;
-      try{clearTimeout(timer);}catch{state='unknown';if(reason===null)reason='binding';}
-    }
+// Policies and clock are module-private observation DATA, never owner inputs.
+const probeChildPolicyV1=Object.freeze({owned:false,purpose:null,deadline:10000,cap:65536,fd4:true});
+const ownedChildPoliciesV1=Object.freeze(Object.fromEntries([
+  ['initdb',60000,262144,false],['server',960000,262144,false],['runner',840000,262144,true],
+  ['provision',300000,262144,true],['activate',180000,262144,true],['integration',300000,1048576,true],
+  ['old_entry_positive',120000,262144,true],['new_entry_refusal',120000,262144,true],
+].map(([purpose,deadline,cap,fd4])=>[purpose,Object.freeze({owned:true,purpose,deadline,cap,fd4})])));
+const invalidOwnedChildPolicyV1=Object.freeze({owned:true,purpose:null,deadline:10000,cap:65536,fd4:true});
+
+function manualOrphanMonotonicClockV1(duration,onFault,onDeadline){
+  let origin=null,last=null,unavailable=false;
+  const check=(deadline=true)=>{
+    if(unavailable)return false;
+    let now;
+    try{
+      now=process.hrtime.bigint();
+      if(typeof now!=='bigint'||now<0n||(last!==null&&now<last))throw Error('invalid monotonic clock');
+    }catch{unavailable=true;onFault();return false;}
+    if(origin===null)origin=now;
+    last=now;
+    if(deadline&&now-origin>=BigInt(duration)*1000000n){onDeadline();return false;}
+    return true;
   };
-  const settle=()=>{
+  return {check,remaining(){return origin===null||last===null?duration:Math.max(0,duration-Number(last-origin)/1000000);}};
+}
+
+export function observeManualOrphanOriginalChildV1(child){
+  return observeManualOrphanChildV1(child,probeChildPolicyV1);
+}
+export function observeManualOrphanOwnedChildV1(actualChild,purpose){
+  // Only literal policy values enter retained closures. Never reflect/coerce a
+  // caller's purpose object, proxy, extra argument or arguments object.
+  const policy=arguments.length===2&&typeof purpose==='string'&&Object.hasOwn(ownedChildPoliciesV1,purpose)
+    ?ownedChildPoliciesV1[purpose]:invalidOwnedChildPolicyV1;
+  return observeManualOrphanChildV1(actualChild,policy);
+}
+function observeManualOrphanChildV1(child,policy){
+  const owned=policy.owned;
+  let state=owned&&policy.purpose===null?'unknown':'pending',reason=state==='unknown'?'purpose':null;
+  let exit=null,close=null,exitCount=0,closeCount=0,spawned=false;
+  let timer=null,timerCleared=false,historyResolved=false,resolveHistory,bindingComplete=false,timelyComplete=false,clock=null;
+  const settled=new Promise(resolve=>{resolveHistory=resolve;});
+  const makeOutput=()=>({bytes:0,hash:null,hashUnavailable:false,end:false,close:false,chunks:[],retained:0});
+  const stdout=makeOutput(),stderr=makeOutput(),fd4={finish:false,end:false,close:false};
+  const markUnknown=code=>{if(state!=='unknown'){state='unknown';reason=code;}};
+  const checkClock=()=>{if(owned&&bindingComplete&&clock!==null)clock.check(!timelyComplete);};
+  const loseHash=channel=>{channel.hash=null;channel.hashUnavailable=true;markUnknown('binding');};
+  const outputFact=channel=>{
+    let sha256=PROBE_EMPTY_OUTPUT_SHA256_V1;
+    if(owned){
+      if(channel.hashUnavailable)sha256=null;
+      else if(channel.hash!==null){try{sha256=channel.hash.copy().digest('hex');}catch{loseHash(channel);sha256=null;}}
+    }else sha256=channel.hash?channel.hash.copy().digest('hex'):PROBE_EMPTY_OUTPUT_SHA256_V1;
+    return Object.freeze({bytes:channel.bytes,sha256,end:channel.end,close:channel.close});
+  };
+  const snapshotFacts=()=>{
+    // Compute both fallible digests BEFORE reading state into the frozen result.
+    // Hash loss marks uncertainty without recursively constructing a snapshot.
+    const out=outputFact(stdout),err=outputFact(stderr);
+    checkClock();
+    const facts={state,exit:exit===null?null:Object.freeze({...exit}),close:close===null?null:Object.freeze({...close}),
+      stdout:out,stderr:err,fd4:owned&&!policy.fd4?null:Object.freeze({...fd4}),reason};
+    return Object.freeze(owned?{purpose:policy.purpose,...facts}:facts);
+  };
+  const clearOwnedTimer=()=>{
+    if(timer!==null&&!timerCleared){timerCleared=true;try{clearTimeout(timer);}catch{markUnknown('binding');}}
+  };
+  const settle=(current=false)=>{
+    if(owned&&!bindingComplete)return;
+    checkClock();
     if(state==='pending'&&exitCount===1&&closeCount===1&&exit!==null&&close!==null
-      &&stdout.end&&stdout.close&&stderr.end&&stderr.close&&fd4.finish&&fd4.end&&fd4.close){
-      state='observed';
+      &&stdout.end&&stdout.close&&stderr.end&&stderr.close&&(!policy.fd4||(fd4.finish&&fd4.end&&fd4.close))){
+      state='observed';timelyComplete=true;
     }
     if(state!=='pending'&&!historyResolved){
-      historyResolved=true;clearOwnedTimer();resolveHistory(snapshot());
+      clearOwnedTimer();const facts=snapshotFacts();historyResolved=true;resolveHistory(facts);return facts;
+    }
+    if(current){
+      let facts=snapshotFacts();
+      if(state!=='pending'&&!historyResolved){
+        // A current digest/clock fault can be the first uncertainty. Finish
+        // timer cleanup and rebuild BEFORE returning/resolving immutable DATA.
+        clearOwnedTimer();facts=snapshotFacts();historyResolved=true;resolveHistory(facts);
+      }
+      return facts;
     }
   };
-  const fail=code=>{
-    if(state!=='unknown'){state='unknown';reason=code;}
-    settle();
-  };
-  const eventValue=(code,signal)=>({
-    code:typeof code==='number'&&Number.isFinite(code)?code:null,
-    signal:typeof signal==='string'?signal:null,
-  });
+  const fail=code=>{markUnknown(code);settle();};
+  const eventValue=(code,signal)=>({code:typeof code==='number'&&Number.isFinite(code)?code:null,signal:typeof signal==='string'?signal:null});
   const normalExit=(code,signal)=>Number.isSafeInteger(code)&&code>=0&&signal===null;
+  const snapshot=()=>settle(true);
   const witness=Object.freeze({settled,snapshot,output(){
-    return {stdout:Buffer.concat(stdout.chunks,stdout.retained),stderr:Buffer.concat(stderr.chunks,stderr.retained)};
+    settle();return {stdout:Buffer.concat(stdout.chunks,stdout.retained),stderr:Buffer.concat(stderr.chunks,stderr.retained)};
   }});
-
-  // Bind the given original before reading streams or creating hashes/timers.
-  try{
-    if(child===null||typeof child!=='object'||typeof child.on!=='function'){
-      fail('binding');return witness;
-    }
-    child.on('spawn',()=>{spawned=true;});
-    child.on('error',()=>{fail(spawned?'child-error':'spawn-error');});
-    child.on('exit',(code,signal)=>{
-      exitCount++;
-      if(exit===null)exit=eventValue(code,signal);
-      if(exitCount!==1||closeCount!==0||!normalExit(code,signal))fail('exit-close');
-      settle();
-    });
-    child.on('close',(code,signal)=>{
-      closeCount++;
-      if(close===null)close=eventValue(code,signal);
-      if(closeCount!==1||exitCount!==1||!normalExit(code,signal)
-        ||exit===null||exit.code!==code||exit.signal!==signal)fail('exit-close');
-      settle();
-    });
-  }catch{fail('binding');return witness;}
+  const originalBindings=[
+    ['spawn',()=>{checkClock();if(owned&&spawned)fail('binding');spawned=true;settle();}],
+    ['error',()=>{checkClock();fail(spawned?'child-error':'spawn-error');}],
+    ['exit',(code,signal)=>{
+      checkClock();exitCount++;if(exit===null)exit=eventValue(code,signal);
+      if(exitCount!==1||closeCount!==0||!normalExit(code,signal))fail('exit-close');settle();
+    }],
+    ['close',(code,signal)=>{
+      checkClock();closeCount++;if(close===null)close=eventValue(code,signal);
+      if(closeCount!==1||exitCount!==1||!normalExit(code,signal)||exit===null||exit.code!==code||exit.signal!==signal)fail('exit-close');settle();
+    }],
+  ];
+  const originalObject=child!==null&&typeof child==='object';
+  if(!originalObject)fail('binding');
+  else if(owned){
+    for(const [event,handler] of originalBindings){try{child.on(event,handler);}catch{fail('binding');}}
+  }else{
+    // Preserve legacy early-return and no-clock policy on original binding fault.
+    try{if(typeof child.on!=='function')throw Error('binding');for(const [event,handler] of originalBindings)child.on(event,handler);}
+    catch{fail('binding');return witness;}
+  }
+  if(!originalObject){bindingComplete=true;settle();return witness;}
 
   const streams={stdout:null,stderr:null,fd4:null};
-  // Each inspection is independent: a missing channel must not prevent binding
-  // and bounded draining of the other channels after UNKNOWN has been recorded.
   try{streams.stdout=child.stdout;}catch{fail('binding');}
   if(streams.stdout==null)fail('stdout');
   try{streams.stderr=child.stderr;}catch{fail('binding');}
   if(streams.stderr==null)fail('stderr');
-  try{
-    const stdio=child.stdio;
-    if(!Array.isArray(stdio))fail('binding');
-    else streams.fd4=stdio[4];
-  }catch{fail('binding');}
-  if(streams.fd4==null)fail('fd4');
+  try{const stdio=child.stdio;if(!Array.isArray(stdio))fail('binding');else streams.fd4=stdio[4];}catch{fail('binding');}
+  if(streams.fd4==null){if(policy.fd4)fail('fd4');}
+  else if(owned&&!policy.fd4)fail('binding');
 
   const present=[];
-  const attachOutput=(name,channel,stream)=>{
-    stream.on('error',()=>{fail(name);});
-    stream.on('end',()=>{
-      const invalid=channel.end||channel.close;channel.end=true;
-      if(invalid)fail(name);settle();
-    });
-    stream.on('close',()=>{
-      const invalid=channel.close||!channel.end;channel.close=true;
-      if(invalid)fail(name);settle();
-    });
-  };
+  const lifecycleBindings=(name,channel)=>name==='fd4'?[
+    ['error',()=>{checkClock();fail('fd4');}],
+    ['finish',()=>{checkClock();const invalid=fd4.finish||fd4.close;fd4.finish=true;if(invalid)fail('fd4');settle();}],
+    ['end',()=>{checkClock();const invalid=fd4.end||fd4.close;fd4.end=true;if(invalid)fail('fd4');settle();}],
+    ['close',()=>{checkClock();const invalid=fd4.close||!fd4.finish||!fd4.end;fd4.close=true;if(invalid)fail('fd4');settle();}],
+  ]:[
+    ['error',()=>{checkClock();fail(name);}],
+    ['end',()=>{checkClock();const invalid=channel.end||channel.close;channel.end=true;if(invalid)fail(name);settle();}],
+    ['close',()=>{checkClock();const invalid=channel.close||!channel.end;channel.close=true;if(invalid)fail(name);settle();}],
+  ];
   for(const name of ['stdout','stderr','fd4']){
     const stream=streams[name];if(stream==null)continue;
-    try{
-      if(typeof stream.on!=='function'||typeof stream.pause!=='function'||typeof stream.resume!=='function'){
-        fail('binding');continue;
+    const record={name,stream,errorBound:false,dataBound:false};
+    const bindings=lifecycleBindings(name,name==='stdout'?stdout:stderr);
+    if(owned){
+      // One unavailable lifecycle slot does not discard the remaining slots,
+      // pause/data attempts or safe drain of this same channel.
+      present.push(record);
+      for(const [event,handler] of bindings){
+        try{stream.on(event,handler);if(event==='error')record.errorBound=true;}catch{fail('binding');}
       }
-      if(name!=='fd4')attachOutput(name,name==='stdout'?stdout:stderr,stream);
-      else{
-        stream.on('error',()=>{fail('fd4');});
-        stream.on('finish',()=>{const invalid=fd4.finish||fd4.close;fd4.finish=true;if(invalid)fail('fd4');settle();});
-        stream.on('end',()=>{const invalid=fd4.end||fd4.close;fd4.end=true;if(invalid)fail('fd4');settle();});
-        stream.on('close',()=>{
-          const invalid=fd4.close||!fd4.finish||!fd4.end;fd4.close=true;if(invalid)fail('fd4');settle();
-        });
-      }
-      present.push({name,stream});
-    }catch{fail('binding');}
+    }else{
+      // Preserve the strict legacy grouped binding/eligibility policy.
+      try{
+        if(typeof stream.on!=='function'||typeof stream.pause!=='function'||typeof stream.resume!=='function')throw Error('binding');
+        for(const [event,handler] of bindings)stream.on(event,handler);
+        present.push(record);
+      }catch{fail('binding');}
+    }
   }
-  // Pause before adding data listeners (Readable.on('data') otherwise resumes).
-  // All channel handlers are installed before any deliberate readable resume.
   for(const {name,stream} of present){try{stream.pause();}catch{fail(name);}}
-  for(const {name,stream} of present){
+  for(const record of present){
+    const {name,stream}=record;
     try{
-      if(name==='fd4')stream.on('data',()=>{fail('fd4');});
+      if(name==='fd4')stream.on('data',()=>{checkClock();fail('fd4');});
       else{
         const channel=name==='stdout'?stdout:stderr;
         stream.on('data',chunk=>{
-          if(!Buffer.isBuffer(chunk)){fail(name);return;}
+          checkClock();if((owned&&types.isProxy(chunk))||!Buffer.isBuffer(chunk)){fail(name);return;}
           let invalid=channel.end||channel.close;
-          channel.bytes+=chunk.length;
-          try{if(channel.hash)channel.hash.update(chunk);}catch{channel.hash=null;invalid=true;}
-          const count=Math.min(65536-channel.retained,chunk.length);
-          if(count>0){channel.chunks.push(Buffer.from(chunk.subarray(0,count)));channel.retained+=count;}
-          if(invalid)fail(name);
-          if(channel.bytes>65536)fail('limit');
+          let size;
+          if(owned){
+            try{size=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),'byteLength').get.call(chunk);}
+            catch{fail(name);return;}
+          }else size=chunk.length;
+          channel.bytes+=size;
+          // Unexpected synchronous data during binding must not later acquire
+          // an empty/prefix digest from a newly initialized hash.
+          if(owned&&channel.hash===null&&!channel.hashUnavailable)loseHash(channel);
+          try{if(channel.hash)channel.hash.update(chunk);}catch{
+            if(owned)loseHash(channel);else{channel.hash=null;invalid=true;}
+          }
+          const count=Math.min(65536-channel.retained,size);
+          if(count>0){
+            if(owned){try{channel.chunks.push(Buffer.from(Buffer.prototype.subarray.call(chunk,0,count)));channel.retained+=count;}catch{markUnknown('binding');}}
+            else{channel.chunks.push(Buffer.from(chunk.subarray(0,count)));channel.retained+=count;}
+          }
+          if(invalid)fail(name);if(channel.bytes>policy.cap)fail('limit');settle();
         });
       }
+      record.dataBound=true;
     }catch{fail('binding');}
   }
-  try{stdout.hash=createHash('sha256');stderr.hash=createHash('sha256');}catch{fail('binding');}
+  bindingComplete=true;
+  if(owned){clock=manualOrphanMonotonicClockV1(policy.deadline,()=>markUnknown('binding'),()=>markUnknown('deadline'));clock.check();
+    for(const channel of [stdout,stderr]){
+      if(channel.hashUnavailable)continue;
+      try{const hash=createHash('sha256');if(!channel.hashUnavailable)channel.hash=hash;}catch{loseHash(channel);}
+    }
+  }else{try{stdout.hash=createHash('sha256');stderr.hash=createHash('sha256');}catch{fail('binding');}}
+  checkClock();
   if(state==='pending'){
-    try{timer=setTimeout(()=>{fail('deadline');},10000);}catch{fail('binding');}
+    try{timer=setTimeout(()=>{fail('deadline');},owned?clock.remaining():policy.deadline);}catch{fail('binding');}
     if(state!=='pending')clearOwnedTimer();
   }
-  for(const {name,stream} of present){try{stream.resume();}catch{fail(name);}}
+  // Every independently bindable readable resumes even after clock/hash/purpose
+  // uncertainty. Neither this witness nor its timer closes a foreign handle.
+  for(const {name,stream,errorBound,dataBound} of present){
+    // Resume needs known error/data coverage, not every terminal lifecycle slot.
+    // A wholly unbindable channel stays uncertain without unsafe unhandled IO.
+    if(owned&&(!errorBound||!dataBound))continue;
+    try{stream.resume();}catch{fail(name);}
+  }
   settle();return witness;
 }
 
+function ownedTransportUnknownV1(){return Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');}
+const probeFd4PolicyV1=Object.freeze({owned:false,unknown:probeCloseUnknownV1});
+const ownedFd4PolicyV1=Object.freeze({owned:true,unknown:ownedTransportUnknownV1});
+let ownedInherited4ClaimV1=null;
+function manualOrphanFd4ClaimV1(){
+  return {attempted:true,adopted:false,rawCloseAttempted:false,socketCloseRequested:false,actualCloseSeen:false,uncertain:false};
+}
+function reserveManualOrphanFd4V1(){
+  if(ownedInherited4ClaimV1!==null)throw ownedInherited4ClaimV1.uncertain?ownedTransportUnknownV1():probeOwnerRefusalV1();
+  ownedInherited4ClaimV1=manualOrphanFd4ClaimV1();return ownedInherited4ClaimV1;
+}
+function closeManualOrphanRaw4V1(claim){
+  if(claim.adopted||claim.rawCloseAttempted)return;
+  claim.rawCloseAttempted=true;
+  try{fs.closeSync(4);}catch{claim.uncertain=true;}
+}
+function decodeManualOrphanIntegrationInputV1(bytes){
+  const frame=decodeManualOrphanOwnedPhaseFrameV1(bytes);
+  if(frame.purpose!=='integration')throw probeFrameRefusalV1();return frame;
+}
+function decodeManualOrphanEntryInputV1(bytes){
+  try{return decodeManualOrphanProbeFrameV1(bytes);}catch{}
+  const frame=decodeManualOrphanOwnedPhaseFrameV1(bytes);
+  if(frame.purpose!=='provision'&&frame.purpose!=='activate'
+    &&frame.purpose!=='old_entry_positive'&&frame.purpose!=='new_entry_refusal')throw probeFrameRefusalV1();
+  return frame;
+}
 export function readManualOrphanProbeFd4V1(){
-  const extraArguments=arguments.length!==0;
+  return readManualOrphanFd4V1(probeFd4PolicyV1,decodeManualOrphanProbeFrameV1,manualOrphanFd4ClaimV1(),arguments.length!==0);
+}
+export async function readManualOrphanOwnedFd4V1(expectedReceiver){
+  // Reservation precedes argument rejection, clock, fstat and all adoption work.
+  // Repeats throw a fresh error before reaching any transport/clock/decoder IO.
+  const claim=reserveManualOrphanFd4V1();
+  const valid=arguments.length===1&&typeof expectedReceiver==='string'
+    &&(expectedReceiver==='runner'||expectedReceiver==='integration');
+  const decoder=valid?(expectedReceiver==='runner'?decodeManualOrphanRunnerSetupFrameV1:decodeManualOrphanIntegrationInputV1):null;
+  return readManualOrphanFd4V1(ownedFd4PolicyV1,decoder,claim,!valid);
+}
+function readManualOrphanFd4V1(policy,decoder,claim,argumentFault=false){
   return new Promise((resolve,reject)=>{
-    // Raw4 belongs here until a Socket has actually been returned. A failed
-    // constructor leaves adoption uncertain, so its result is always UNKNOWN.
-    const refuseRaw=unknown=>{
-      try{fs.closeSync(4);}catch{unknown=true;}
-      reject(unknown?probeCloseUnknownV1():probeOwnerRefusalV1());
-    };
+    const refuseRaw=error=>{closeManualOrphanRaw4V1(claim);reject(claim.uncertain?policy.unknown():error);};
+    if(policy.owned&&argumentFault){refuseRaw(probeFrameRefusalV1());return;}
+    const clock=policy.owned?manualOrphanMonotonicClockV1(5000,()=>{claim.uncertain=true;},()=>{claim.uncertain=true;}):null;
+    const checkClock=()=>clock===null||clock.check();
+    if(!checkClock()){refuseRaw(policy.unknown());return;}
     let socket;
     try{
       const stat=fs.fstatSync(4);
-      if(extraArguments||(!stat.isFIFO()&&!stat.isSocket())){refuseRaw(false);return;}
-    }catch{refuseRaw(false);return;}
-    try{socket=new net.Socket({fd:4,readable:true,writable:false});}
-    catch{refuseRaw(true);return;}
+      if(!checkClock()){refuseRaw(policy.unknown());return;}
+      if(argumentFault||(!stat.isFIFO()&&!stat.isSocket())){refuseRaw(probeOwnerRefusalV1());return;}
+    }catch{if(policy.owned)claim.uncertain=true;refuseRaw(probeOwnerRefusalV1());return;}
+    try{socket=new net.Socket({fd:4,readable:true,writable:false});claim.adopted=true;}
+    catch{claim.uncertain=true;refuseRaw(probeOwnerRefusalV1());return;}
 
-    let eof=false,closeCount=0,destroyAttempted=false,unknown=false,frameFault=false;
-    let timer=null,timerCleared=false,scheduled=false,total=0;
+    let eof=false,closeCount=0,frameFault=false,timer=null,timerCleared=false,scheduled=false,total=0;
     const chunks=[];
     const clearOwnedTimer=()=>{
-      if(timer!==null&&!timerCleared){
-        timerCleared=true;
-        try{clearTimeout(timer);}catch{unknown=true;}
-      }
+      if(timer!==null&&!timerCleared){timerCleared=true;try{clearTimeout(timer);}catch{claim.uncertain=true;}}
     };
     const requestClose=()=>{
-      if(!destroyAttempted){
-        destroyAttempted=true;
-        try{socket.destroy();}catch{unknown=true;}
-      }
+      if(!claim.socketCloseRequested){claim.socketCloseRequested=true;try{socket.destroy();}catch{claim.uncertain=true;}}
     };
-    const failUnknown=()=>{unknown=true;requestClose();};
+    const failUnknown=()=>{claim.uncertain=true;requestClose();};
     const closed=hadError=>{
-      closeCount++;
-      // An already known syntax/limit fault may refuse after our own destroy,
-      // without inventing EOF. A fault-free close without EOF is UNKNOWN.
-      if(closeCount!==1||hadError===true||(!eof&&!frameFault))unknown=true;
-      clearOwnedTimer();
+      closeCount++;claim.actualCloseSeen=true;
+      if(closeCount!==1||hadError===true||(!eof&&!frameFault))claim.uncertain=true;
+      checkClock();clearOwnedTimer();
       if(!scheduled){
         scheduled=true;
-        // A synchronous destroy->close->throw must finish recording uncertainty
-        // before a positive can resolve. No close is invented by this microtask.
+        // Only an actual Socket close can schedule terminal decoding. A
+        // synchronous destroy->close->throw records uncertainty before this job.
         queueMicrotask(()=>{
-          if(unknown){reject(probeCloseUnknownV1());return;}
-          if(frameFault){reject(probeFrameRefusalV1());return;}
-          try{resolve(decodeManualOrphanProbeFrameV1(Buffer.concat(chunks,total)));}
-          catch{reject(probeFrameRefusalV1());}
+          checkClock();
+          if(claim.uncertain){reject(policy.unknown());return;}
+          let frame=null;
+          if(!frameFault){try{frame=decoder(Buffer.concat(chunks,total));}catch{frameFault=true;}}
+          checkClock();
+          if(claim.uncertain)reject(policy.unknown());
+          else if(frameFault)reject(probeFrameRefusalV1());
+          else resolve(frame);
         });
       }
     };
     try{
-      socket.on('error',()=>{failUnknown();});
+      socket.on('error',()=>{checkClock();failUnknown();});
       socket.on('end',()=>{
-        if(eof||closeCount!==0)unknown=true;
-        eof=true;requestClose();
+        if(eof||closeCount!==0)claim.uncertain=true;
+        eof=true;checkClock();requestClose();
       });
       socket.on('close',closed);
       socket.pause();
       socket.on('data',chunk=>{
+        if(!checkClock()){requestClose();return;}
         if(eof||closeCount!==0){failUnknown();return;}
         if(types.isProxy(chunk)||!Buffer.isBuffer(chunk)){frameFault=true;requestClose();return;}
         try{
@@ -1475,7 +1586,8 @@ export function readManualOrphanProbeFd4V1(){
           if(size>0){total+=size;chunks.push(Buffer.from(chunk));}
         }catch{failUnknown();}
       });
-      timer=setTimeout(()=>{failUnknown();},5000);
+      if(checkClock())timer=setTimeout(()=>{failUnknown();},clock===null?5000:clock.remaining());
+      else requestClose();
       socket.resume();
     }catch{failUnknown();}
   });
@@ -1497,12 +1609,25 @@ function probeLaunchContextV1(){
 }
 
 function probeChildContextV1(context){
+  manualOrphanChildContextV1(context,path.dirname(context.node)+':/usr/bin:/bin');
+}
+const ownedTransportPathV1='/opt/homebrew/Cellar/node/26.4.0/bin:/Users/setrox/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+function manualOrphanEntryPolicyV1(context){
+  if(process.env.PATH===path.dirname(context.node)+':/usr/bin:/bin'){
+    probeChildContextV1(context);return probeFd4PolicyV1;
+  }
+  if(process.env.PATH!==ownedTransportPathV1)throw probeOwnerRefusalV1();
+  manualOrphanChildContextV1(context,ownedTransportPathV1);
+  if(context.node!==ownedNodeV1||userInfo().homedir!=='/Users/setrox')throw probeOwnerRefusalV1();
+  return ownedFd4PolicyV1;
+}
+function manualOrphanChildContextV1(context,expectedPath){
   if(process.execPath!==context.node||process.argv0!==context.node||!Array.isArray(process.execArgv)
     ||process.execArgv.length!==0||!Array.isArray(process.argv)||process.argv.length!==2
     ||process.argv[0]!==context.node||process.argv[1]!==context.helper||process.cwd()!==context.root){
     throw probeOwnerRefusalV1();
   }
-  const expected={PATH:path.dirname(context.node)+':/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
+  const expected={PATH:expectedPath,LANG:'C',LC_ALL:'C'};
   const metadata='__CF_USER_TEXT_ENCODING',keys=Reflect.ownKeys(process.env);
   const hasMetadata=Object.hasOwn(process.env,metadata);
   if(keys.length!==(hasMetadata?4:3)||keys.some(key=>typeof key!=='string'
@@ -1540,13 +1665,13 @@ function probeReceiptV1(digest,pid,parentPid){
     pid,parentPid,fd4Closed:true,sourcePinsClosed:true};
 }
 
-function probeChildOutputV1(){
+function probeChildOutputV1(unknownError=probeCloseUnknownV1){
   let unknownWritten=false;
   const unknown=()=>{
     process.exitCode=1;
     if(!unknownWritten){
       unknownWritten=true;
-      try{process.stderr.write('MANUAL_ORPHAN_CHILD_UNKNOWN\n');}catch{}
+      try{process.stderr.write(unknownError().message+'\n');}catch{}
     }
   };
   // Native output errors must not become an unhandled raw diagnostic. These
@@ -1559,13 +1684,36 @@ function probeChildOutputV1(){
   }};
 }
 
+function manualOrphanEntryErrorV1(error,policy){
+  if(error?.message==='MANUAL_ORPHAN_CHILD_UNKNOWN'||error?.message==='MANUAL_ORPHAN_CLEANUP_UNKNOWN')return policy.unknown();
+  if(error?.message==='MANUAL_ORPHAN_FRAME_REFUSED')return probeFrameRefusalV1();
+  if(error?.message==='MANUAL_ORPHAN_SETUP_REFUSED')return Error('MANUAL_ORPHAN_SETUP_REFUSED');
+  return probeOwnerRefusalV1();
+}
 async function runManualOrphanProbeChildV1(){
-  let source=null,readerStarted=false,receipt=null,failure=null;
-  const output=probeChildOutputV1();
+  let claim;
+  try{claim=reserveManualOrphanFd4V1();}
+  catch(error){
+    // Root's narrow terminal diagnostic exception: no output listeners, launch,
+    // clock, Source work or FD4 cleanup on a repeated private entry invocation.
+    const code=error.message==='MANUAL_ORPHAN_CLEANUP_UNKNOWN'?'MANUAL_ORPHAN_CLEANUP_UNKNOWN':'MANUAL_ORPHAN_OWNER_REFUSED';
+    try{process.exitCode=1;process.stderr.write(code+'\n');}catch{}
+    return;
+  }
+  let source=null,readerStarted=false,receipt=null,failure=null,output=null,policy=probeFd4PolicyV1;
   try{
-    const context=probeLaunchContextV1();probeChildContextV1(context);
+    output=probeChildOutputV1(()=>policy.unknown());
+    const context=probeLaunchContextV1();policy=manualOrphanEntryPolicyV1(context);
     readerStarted=true;
-    const frame=await readManualOrphanProbeFd4V1();
+    const frame=await readManualOrphanFd4V1(policy,decodeManualOrphanEntryInputV1,claim);
+    if(frame.schema!=='setfarm.manual-orphan-lifecycle-probe.v1'){
+      // Explicit unavailable capability, AFTER canonical union decoding and
+      // known inherited-input closure. No Source holder, role, server, module,
+      // SQL, release selection or provision/activation handler is reachable.
+      throw Error('MANUAL_ORPHAN_SETUP_REFUSED');
+    }
+    // Probe data keeps its strict OLD context even when admitted/read under the
+    // new transport profile. It never calls the public legacy reader again.
     probeChildContextV1(context);
     source=pinManualOrphanProbeSourcesV1();
     const parent=observeManualOrphanProcessV1(process.ppid),self=observeManualOrphanProcessV1(process.pid);
@@ -1580,15 +1728,17 @@ async function runManualOrphanProbeChildV1(){
       ||!sameProbeObservationV1(self,observeManualOrphanProcessV1(process.pid)))throw probeOwnerRefusalV1();
     probeChildContextV1(context);source.check();
     receipt=probeReceiptV1(digest,process.pid,process.ppid);
-  }catch(error){failure=probeSanitizedErrorV1(error,true);}
+  }catch(error){failure=manualOrphanEntryErrorV1(error,policy);}
   finally{
-    if(!readerStarted){
-      // A launch-guard refusal still closes only this child's inherited4 once.
-      try{fs.closeSync(4);}catch{failure=probeCloseUnknownV1();}
-    }
-    if(source){try{source.close();}catch{failure=probeCloseUnknownV1();}}
+    if(!readerStarted)closeManualOrphanRaw4V1(claim);
+    if(claim.uncertain)failure=policy.unknown();
+    if(source){try{source.close();}catch{claim.uncertain=true;failure=policy.unknown();}}
   }
-  if(failure){output.writeFailure(failure);return;}
+  if(failure){
+    if(output)output.writeFailure(failure);
+    else{try{process.exitCode=1;process.stderr.write(failure.message+'\n');}catch{}}
+    return;
+  }
   process.exitCode=0;
   try{process.stdout.write(JSON.stringify(receipt)+'\n');}catch{output.unknown();}
 }

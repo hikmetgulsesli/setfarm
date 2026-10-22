@@ -1427,14 +1427,14 @@ function fixedProbeVmV1(bindings={},expose=false){
   const c=capture(),pureUtil=createRequire(import.meta.url)('node:util'),timers=[],cleared=[],faults=[];
   const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
   const clock={setTimeout:guard((callback,delay)=>{
-    assert.ok(delay===5000||delay===10000);const handle={unref(){return this;},ref(){return this;}};
+    assert.ok([5000,10000,60000,960000,840000,300000,180000,120000].includes(delay));const handle={unref(){return this;},ref(){return this;}};
     timers.push({callback,delay,handle});return handle;
   }),clearTimeout:guard(handle=>{assert.ok(timers.some(timer=>timer.handle===handle));cleared.push(handle);})};
   const crypto={createHash,randomBytes:guard(size=>{assert.equal(size,32);return Buffer.alloc(32,0xcc);}),...bindings.crypto};
   const modules=new Map([
     ['node:fs',closedModule(c,'fixed probe fs',{constants,...bindings.fs})],
     ['node:net',closedModule(c,'fixed probe net',bindings.net??{})],
-    ['node:os',closedModule(c,'fixed probe os')],
+    ['node:os',closedModule(c,'fixed probe os',bindings.os??{})],
     ['node:child_process',closedModule(c,'fixed probe child_process',bindings.childProcess??{})],
     ['node:crypto',closedModule(c,'fixed probe crypto',crypto)],['node:path',path],['node:url',url],['node:buffer',{Buffer}],
     ['node:util',closedModule(c,'fixed probe util',{TextDecoder:pureUtil.TextDecoder,types:pureUtil.types})],
@@ -3047,4 +3047,847 @@ test('Source compiled DATA-admission simulation refuses one extra M record',()=>
 });
 test('Source compiled DATA-admission simulation refuses the T manifest crossed into M admission',()=>{
   assertCompiledDataOutcomeV1(compiledManifestCopyV1('target'),'maintenance',false);
+});
+
+// Task3 transport contracts. Every callback gates both future APIs BEFORE any
+// contained evaluation or native work. These are DATA witnesses, never owners.
+function task3ContractsV1(actual=helper){
+  assert.equal(typeof actual?.observeManualOrphanOwnedChildV1,'function','missing Task3 observeManualOrphanOwnedChildV1');
+  assert.equal(typeof actual?.readManualOrphanOwnedFd4V1,'function','missing Task3 readManualOrphanOwnedFd4V1');
+}
+const TASK3_PURPOSES_V1=[
+  ['initdb',60000,262144,false],['server',960000,262144,false],['runner',840000,262144,true],
+  ['provision',300000,262144,true],['activate',180000,262144,true],['integration',300000,1048576,true],
+  ['old_entry_positive',120000,262144,true],['new_entry_refusal',120000,262144,true],
+];
+function task3ClockV1(check=()=>{}){
+  const state={ms:0,accesses:0,calls:0,mode:null,faults:[]};
+  const access=()=>{state.accesses++;check();if(state.mode==='accessor')throw Error('PRIVATE_CLOCK_ACCESS');};
+  const read=()=>{state.calls++;check();if(state.mode==='throw')throw Error('PRIVATE_CLOCK_CALL');
+    return state.mode==='invalid'?NaN:state.ms;};
+  const hrtime={};Object.defineProperty(hrtime,'bigint',{get(){access();return ()=>{
+    const value=read();return Number.isFinite(value)?BigInt(Math.trunc(value*1000000)):undefined;
+  };}});
+  return {state,hrtime};
+}
+function task3VmV1(bindings={},check){
+  const monotonic=bindings.monotonic??task3ClockV1(check);
+  const processBinding=bindings.process??{};processBinding.hrtime=monotonic.hrtime;
+  const vm=fixedProbeVmV1({...bindings,process:processBinding},bindings.expose===true);
+  return {...vm,monotonic};
+}
+function task3EventFixtureV1(purpose='provision'){
+  const f=eventFixtureV1();if(purpose==='initdb'||purpose==='server')f.bindings.stdio[4]=null;return f;
+}
+function task3CompleteV1(f,purpose='provision',code=0){
+  for(const name of ['stdout','stderr']){f.channels[name].emit('end');f.channels[name].emit('close');}
+  if(purpose!=='initdb'&&purpose!=='server'){
+    f.channels.fd4.emit('finish');f.channels.fd4.emit('end');f.channels.fd4.emit('close');
+  }
+  f.child.emit('exit',code,null);f.child.emit('close',code,null);
+}
+function task3FrozenV1(snapshot){
+  assert.deepEqual(Object.keys(snapshot),['purpose','state','exit','close','stdout','stderr','fd4','reason']);
+  for(const value of Object.values(snapshot))if(value!==null&&typeof value==='object')assert.equal(Object.isFrozen(value),true);
+  assert.equal(Object.isFrozen(snapshot),true);
+}
+async function task3UnknownV1(w,reason){
+  const now=w.snapshot();assert.equal(now.state,'unknown');assert.equal(now.reason,reason);task3FrozenV1(now);
+  const first=await w.settled;assert.equal(first.state,'unknown');assert.equal(first.reason,reason);return first;
+}
+function task3AllBoundV1(f){
+  for(const name of ['spawn','error','exit','close'])assert.ok(f.child.listenerCount(name)>0,'original '+name);
+  for(const name of ['stdout','stderr','fd4'])if(name!=='fd4'||f.bindings.stdio[4]){
+    for(const event of name==='fd4'?['data','error','finish','end','close']:['data','error','end','close'])
+      assert.ok(f.channels[name].listenerCount(event)>0,name+'.'+event+' before clock');
+  }
+}
+async function task3EventV1(body,purpose='provision',prepare){
+  task3ContractsV1();const f=task3EventFixtureV1(purpose);if(prepare)prepare(f);
+  const vm=task3VmV1(),w=vm.actual.observeManualOrphanOwnedChildV1(f.child,purpose);
+  try{return await body(f,w,vm);}finally{
+    if(w.snapshot().state==='pending')f.child.emit('error',Error('SIMULATED_COMPONENT_END'));
+    f.assertGuarded();vm.assertContained();
+  }
+}
+const task3WireV1=purpose=>Buffer.from(OWN_CASES.find(row=>row[0]===({integration:'integration phase',provision:'provision phase',
+  activate:'activate phase',old_entry_positive:'old positive phase',new_entry_refusal:'new refusal phase'}[purpose]))[3]);
+function task3ReaderV1(options={}){
+  task3ContractsV1();const f=probeReaderFixtureV1(options),vm=task3VmV1({...f,fs:{...f.fs,
+    fstatSync:(...args)=>f.fs.fstatSync(...args),closeSync:(...args)=>f.fs.closeSync(...args)}});
+  f.task3Vm=vm;return {f,vm};
+}
+function task3FinishReadV1(f,bytes,{eof=true,hadError=false}={}){
+  if(bytes!==undefined)f.ledger.socket.emit('data',bytes);
+  if(eof)f.ledger.socket.emit('end');f.ledger.closed=true;f.ledger.socket.emit('close',hadError);
+}
+function task3IoV1(f){return {fstats:f.ledger.fstats.length,constructs:f.ledger.constructs.length,
+  closes:f.ledger.rawCloses.length,destroys:f.ledger.destroys,
+  clock:f.task3Vm?{calls:f.task3Vm.monotonic.state.calls,accesses:f.task3Vm.monotonic.state.accesses,
+    timers:f.task3Vm.timers.length,cleared:f.task3Vm.cleared.length}:null,
+  listeners:f.ledger.socket?.eventNames().map(name=>[name,f.ledger.socket.listenerCount(name)])??[]};}
+function task3FrozenDataV1(data){
+  if(data===null||typeof data!=='object')return;
+  assert.equal(Object.isFrozen(data),true);for(const child of Object.values(data))task3FrozenDataV1(child);
+}
+
+// A:4 registrations. Breaks caught: absent APIs, widened argument surfaces,
+// mutable diagnostics and module-init transport effects.
+test('Task3 A observer API exists with exact public arity',()=>{task3ContractsV1();
+  assert.equal(helper.observeManualOrphanOwnedChildV1.length,2);const vm=task3VmV1();
+  const w=vm.actual.observeManualOrphanOwnedChildV1();assert.equal(w.snapshot().purpose,null);
+  assert.equal(w.snapshot().state,'unknown');assert.equal(w.snapshot().reason,'purpose');vm.assertContained();
+});
+test('Task3 A reader API exists with exact public arity',()=>{task3ContractsV1();assert.equal(helper.readManualOrphanOwnedFd4V1.length,1);});
+test('Task3 A exact copied frozen witness surface retains no mutable output',async()=>{task3ContractsV1();
+  await task3EventV1(async(f,w,vm)=>{
+    assert.equal(Object.isFrozen(w),true);assert.deepEqual(Object.keys(w).sort(),['output','settled','snapshot']);
+    const before=w.snapshot();task3FrozenV1(before);assert.equal(before.purpose,'provision');assert.equal(before.state,'pending');
+    f.channels.stdout.emit('data',Buffer.from('bounded diagnostic'));const out=w.output();out.stdout.fill(0);
+    assert.deepEqual(w.output().stdout,Buffer.from('bounded diagnostic'));assert.equal(before.stdout.bytes,0);
+    assert.notEqual(w.snapshot(),before);task3CompleteV1(f);assert.equal((await w.settled).state,'observed');
+    assert.equal(vm.timers.length,1);
+  });
+});
+test('Task3 A actual complete helper module initialization has no clock timer or IO',()=>{task3ContractsV1();
+  const vm=task3VmV1();task3ContractsV1(vm.actual);
+  assert.equal(vm.monotonic.state.calls,0);assert.equal(vm.monotonic.state.accesses,0);assert.deepEqual(vm.timers,[]);vm.assertContained();
+});
+// B:8 literal purpose profiles; byte+deadline checks belong to each actual wrapper.
+for(const [purpose,deadline,cap,fd] of TASK3_PURPOSES_V1){
+  test('Task3 B '+purpose+' uses bounded profile and complete natural lifecycle',async()=>{task3ContractsV1();
+    await task3EventV1(async(f,w,vm)=>{
+      assert.equal(vm.timers.length,1);assert.equal(vm.timers[0].delay,deadline);
+      assert.deepEqual(observedDataV1(w.snapshot().fd4),fd?{finish:false,end:false,close:false}:null);
+      const bytes=Buffer.alloc(cap,0x61);f.channels.stdout.emit('data',bytes);
+      assert.equal(w.snapshot().state,'pending');assert.equal(w.output().stdout.length,65536);
+      task3CompleteV1(f,purpose);const first=await w.settled;task3FrozenV1(first);
+      assert.equal(first.state,'observed');assert.equal(first.stdout.bytes,cap);
+      assert.equal(first.stdout.sha256,createHash('sha256').update(bytes).digest('hex'));
+      assert.deepEqual(observedDataV1(first.fd4),fd?{finish:true,end:true,close:true}:null);
+      assert.deepEqual(vm.cleared,[vm.timers[0].handle]);
+      const overflow=task3EventFixtureV1(purpose),other=vm.actual.observeManualOrphanOwnedChildV1(overflow.child,purpose);
+      overflow.channels.stdout.emit('data',Buffer.alloc(cap+1,0x62));await task3UnknownV1(other,'limit');
+      assert.equal(other.output().stdout.length,65536);task3CompleteV1(overflow,purpose);overflow.assertGuarded();
+    },purpose);
+  });
+}
+// C:18 explicit rows: throwing access/binding and duplicate end/close each get
+// independent subrows so an earlier unrelated fault cannot mask their predicate.
+const TASK3_EVENTS_V1=[
+  ['exit only',f=>f.child.emit('exit',0,null),null],
+  ['close before exit',f=>f.child.emit('close',0,null),'exit-close'],
+  ['duplicate exit',f=>{f.child.emit('exit',0,null);f.child.emit('exit',0,null);},'exit-close'],
+  ['duplicate close',f=>{f.child.emit('exit',0,null);f.child.emit('close',0,null);f.child.emit('close',0,null);},'exit-close'],
+  ['disagreeing close',f=>{f.child.emit('exit',0,null);f.child.emit('close',1,null);},'exit-close'],
+  ['signal termination',f=>f.child.emit('exit',null,'SIGTERM'),'exit-close'],
+  ['spawn error',f=>f.child.emit('error',Error('PRIVATE_DETAIL')),'spawn-error'],
+  ['later child error',f=>{f.child.emit('spawn');f.child.emit('error',Error('PRIVATE_DETAIL'));},'child-error'],
+  ['duplicate spawn',f=>{f.child.emit('spawn');f.child.emit('spawn');},'binding'],
+  ['missing stdout',()=>{},'stdout',f=>{f.bindings.stdout=null;f.bindings.stdio[1]=null;}],
+  ['missing required4',()=>{},'fd4',f=>{f.bindings.stdio[4]=null;}],
+  ['unexpected4',()=>{},'binding',f=>{f.bindings.stdio[4]=f.channels.fd4;},'initdb'],
+  ['throwing channel binding',()=>{},'binding',f=>{f.channels.stdout.on=()=>{throw Error('PRIVATE_BINDING');};}],
+  ['throwing channel access',()=>{},'binding',f=>{f.child=new Proxy(f.child,{get(target,key,receiver){
+    if(key==='stdout'){f.inspections.push('stdout');throw Error('PRIVATE_ACCESS');}return Reflect.get(target,key,receiver);
+  }});}],
+  ['post EOF data',f=>{f.channels.stdout.emit('end');f.channels.stdout.emit('data',Buffer.from('late'));},'stdout'],
+  ['close without EOF',f=>f.channels.stderr.emit('close'),'stderr'],
+  ['output duplicate end',f=>{f.channels.stdout.emit('end');f.channels.stdout.emit('end');},'stdout'],
+  ['output duplicate close',f=>{f.channels.stderr.emit('end');f.channels.stderr.emit('close');f.channels.stderr.emit('close');},'stderr'],
+];
+for(const [label,emit,reason,prepare,purpose='provision'] of TASK3_EVENTS_V1){
+  test('Task3 C '+label+' preserves facts and drains independent channels',async()=>{task3ContractsV1();
+    await task3EventV1(async(f,w)=>{
+      emit(f);if(reason)await task3UnknownV1(w,reason);else assert.equal(w.snapshot().state,'pending');
+      assert.ok(f.channels.stderr.listenerCount('data')>0);
+      if(f.bindings.stdio[4])assert.ok(f.channels.fd4.listenerCount('error')>0);
+      f.channels.stderr.emit('data',Buffer.from('independent'));assert.equal(w.snapshot().stderr.bytes,11);
+      assert.equal(JSON.stringify(w.snapshot()).includes('PRIVATE_'),false);
+      if(reason){const first=await w.settled;f.child.emit('error',Error('later'));assert.equal(w.snapshot().reason,reason);assert.equal(await w.settled,first);}
+    },purpose,prepare);
+  });
+}
+// D:9 registrations: two omissions, two premature closes, error, inbound data,
+// and independent duplicate finish/end/close rows.
+const TASK3_FD_V1=[
+  ['missing finish',s=>{s.emit('end');},null],['missing end',s=>{s.emit('finish');},null],
+  ['close before finish',s=>{s.emit('end');s.emit('close');},'fd4'],
+  ['close before end',s=>{s.emit('finish');s.emit('close');},'fd4'],
+  ['writer error',s=>s.emit('error',Error('PRIVATE_WRITER')),'fd4'],
+  ['inbound data',s=>s.emit('data',Buffer.from('inbound')),'fd4'],
+  ['duplicate finish',s=>{s.emit('finish');s.emit('finish');},'fd4'],
+  ['duplicate end',s=>{s.emit('end');s.emit('end');},'fd4'],
+  ['duplicate close',s=>{s.emit('finish');s.emit('end');s.emit('close');s.emit('close');},'fd4'],
+];
+for(const [label,emit,reason] of TASK3_FD_V1){
+  test('Task3 D '+label+' never invents writer closure or operates foreign handles',async()=>{task3ContractsV1();
+    await task3EventV1(async(f,w)=>{
+      emit(f.channels.fd4);if(reason)await task3UnknownV1(w,reason);else{
+        for(const name of ['stdout','stderr']){f.channels[name].emit('end');f.channels[name].emit('close');}
+        f.child.emit('exit',0,null);f.child.emit('close',0,null);assert.equal(w.snapshot().state,'pending');
+        assert.equal(w.snapshot().fd4[label==='missing finish'?'finish':'end'],false);
+      }
+    });
+  });
+}
+// E:11 registrations.
+for(const [purpose,size,state] of [['provision',262144,'observed'],['provision',262145,'unknown'],
+  ['integration',1048576,'observed'],['integration',1048577,'unknown']]){
+  test('Task3 E '+purpose+' '+size+' byte boundary counts full stream with64KiB copy',async()=>{task3ContractsV1();
+    await task3EventV1(async(f,w)=>{
+      const bytes=Buffer.alloc(size,0x72);f.channels.stdout.emit('data',bytes);task3CompleteV1(f,purpose);
+      assert.equal((await w.settled).state,state);assert.equal(w.snapshot().stdout.bytes,size);
+      assert.equal(w.snapshot().stdout.sha256,createHash('sha256').update(bytes).digest('hex'));
+      assert.deepEqual(w.output().stdout,bytes.subarray(0,65536));if(state==='unknown')assert.equal(w.snapshot().reason,'limit');
+    },purpose);
+  });
+}
+test('Task3 E independent channel budgets do not combine',async()=>{task3ContractsV1();
+  await task3EventV1(async(f,w)=>{for(const name of ['stdout','stderr'])f.channels[name].emit('data',Buffer.alloc(262144,0x61));
+    task3CompleteV1(f);assert.equal((await w.settled).state,'observed');assert.equal(w.snapshot().stderr.bytes,262144);});
+});
+test('Task3 E overflow keeps draining full count digest and immutable first history',async()=>{task3ContractsV1();
+  await task3EventV1(async(f,w)=>{
+    const bytes=Buffer.alloc(262145,0x62);f.channels.stdout.emit('data',bytes);const first=await task3UnknownV1(w,'limit');
+    f.channels.stdout.emit('data',Buffer.from('tail'));assert.equal(first.stdout.bytes,262145);assert.equal(w.snapshot().stdout.bytes,262149);
+    assert.equal(w.snapshot().stdout.sha256,createHash('sha256').update(bytes).update('tail').digest('hex'));assert.equal(w.output().stdout.length,65536);
+  });
+});
+test('Task3 E complete nonzero exit is observed refusal DATA',async()=>{task3ContractsV1();
+  await task3EventV1(async(f,w)=>{task3CompleteV1(f,'provision',1);assert.equal((await w.settled).state,'observed');
+    assert.deepEqual(observedDataV1(w.snapshot().exit),{code:1,signal:null});assert.deepEqual(observedDataV1(w.snapshot().close),{code:1,signal:null});});
+});
+test('Task3 E first observed history never masks current late uncertainty',async()=>{task3ContractsV1();
+  await task3EventV1(async(f,w)=>{task3CompleteV1(f);const first=await w.settled;f.channels.stderr.emit('error',Error('late'));
+    assert.equal(first.state,'observed');assert.equal(w.snapshot().state,'unknown');assert.equal(w.snapshot().reason,'stderr');assert.equal(await w.settled,first);});
+});
+test('Task3 E timer with absent close remains unknown after natural late close',async()=>{task3ContractsV1();
+  await task3EventV1(async(f,w,vm)=>{f.child.emit('exit',0,null);vm.timers[0].callback();const first=await task3UnknownV1(w,'deadline');
+    f.child.emit('close',0,null);assert.equal(first.close,null);assert.equal(w.snapshot().reason,'deadline');assert.deepEqual(observedDataV1(w.snapshot().close),{code:0,signal:null});});
+});
+test('Task3 E elapsed overrun without timer callback is deadline uncertainty',async()=>{task3ContractsV1();
+  await task3EventV1(async(_f,w,vm)=>{vm.monotonic.state.ms=300000;await task3UnknownV1(w,'deadline');});
+});
+test('Task3 E timely completion survives later ordinary clock passage',async()=>{task3ContractsV1();
+  await task3EventV1(async(f,w,vm)=>{task3CompleteV1(f);const first=await w.settled;vm.monotonic.state.ms=600000;
+    assert.equal(w.snapshot().state,'observed');assert.equal(await w.settled,first);assert.equal(w.output().stdout.length,0);});
+});
+
+// F:10 allowlist registrations (the helper-purpose refusal category expands4).
+const TASK3_ROLES_V1=[
+  ['runner setup','runner',()=>Buffer.from(OWN_SETUP_WIRE),ownedSetupData,null],
+  ['integration phase','integration',()=>task3WireV1('integration'),()=>ownedPhaseData('integration'),null],
+  ['runner rejects integration','runner',()=>task3WireV1('integration'),null,'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['integration rejects setup','integration',()=>Buffer.from(OWN_SETUP_WIRE),null,'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ...['provision','activate','old_entry_positive','new_entry_refusal'].map(purpose=>[
+    'integration rejects '+purpose,'integration',()=>task3WireV1(purpose),null,'MANUAL_ORPHAN_FRAME_REFUSED']),
+];
+for(const [label,role,bytes,data,error] of TASK3_ROLES_V1){
+  test('Task3 F actual role decoder '+label,async()=>{task3ContractsV1();
+    const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1(role));
+    task3FinishReadV1(f,bytes());
+    if(error)await assertProbeRejectedV1(t,error);else{
+      const result=await t.done;assert.equal(result.error,undefined);assert.deepEqual(observedDataV1(result.value),data());task3FrozenDataV1(result.value);
+      assert.equal(Buffer.isBuffer(result.value),false);assert.equal(Object.hasOwn(result.value,'close'),false);
+    }
+    assert.deepEqual(f.ledger.fstats,[4]);assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+  });
+}
+test('Task3 F invalid receiver table consumes one raw claim without inspecting caller',async()=>{task3ContractsV1();
+  let traps=0;const proxy=new Proxy({},{get(){traps++;throw Error('PRIVATE_PROXY');},ownKeys(){traps++;throw Error('PRIVATE_PROXY');}});
+  for(const args of [[],['runner','extra'],[undefined],[null],[proxy],['unknown']]){
+    const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1(...args));
+    await assertProbeRejectedV1(t,'MANUAL_ORPHAN_FRAME_REFUSED');assert.deepEqual(f.ledger.rawCloses,[4]);
+    assert.deepEqual(f.ledger.constructs,[]);assert.deepEqual(f.ledger.fstats,[]);vm.assertContained();
+    const before=task3IoV1(f);
+    await assertProbeRejectedV1(trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner')),'MANUAL_ORPHAN_OWNER_REFUSED');
+    assert.deepEqual(task3IoV1(f),before);vm.assertContained();
+  }
+  assert.equal(traps,0);
+});
+test('Task3 F canonical returned data is detached and recursively frozen',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),bytes=Buffer.from(OWN_SETUP_WIRE),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  task3FinishReadV1(f,bytes);const result=await t.done;assert.equal(result.error,undefined);bytes.fill(0);
+  task3FrozenDataV1(result.value);assert.deepEqual(observedDataV1(result.value),ownedSetupData());vm.assertContained();
+});
+// G: transport is driven through the complete owned reader, never a copy of its
+// decoder/close machine. All missing-close and faulty-close tests are simulated.
+for(const kind of ['fifo','socket']){
+  test('Task3 G '+kind+' waits for actual EOF and close before canonical DATA',async()=>{task3ContractsV1();
+    const {f,vm}=task3ReaderV1({kind}),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    f.ledger.socket.emit('data',Buffer.from(OWN_SETUP_WIRE));f.ledger.socket.emit('end');await Promise.resolve();
+    assert.equal(t.outcome,null);assert.equal(f.ledger.destroys,1);assert.equal(vm.timers[0].delay,5000);
+    f.ledger.closed=true;f.ledger.socket.emit('close',false);assert.deepEqual(observedDataV1((await t.done).value),ownedSetupData());vm.assertContained();
+  });
+}
+test('Task3 G exact16KiB fragmented canonical owned frame is accepted',async()=>{task3ContractsV1();
+  const data=ownedSetupData();
+  // Only inert fixture padding: three bounded path fields, no codec algorithm.
+  for(const name of ['constructor','runner','server']){
+    const need=16384-Buffer.byteLength(JSON.stringify(data)+'\n');
+    if(need>0){
+      data[name].executable+='"'.repeat(Math.min(4096-data[name].executable.length,Math.floor(need/2)));
+      if(Buffer.byteLength(JSON.stringify(data)+'\n')<16384&&data[name].executable.length<4096)data[name].executable+='x';
+    }
+  }
+  const bytes=Buffer.from(JSON.stringify(data)+'\n');assert.equal(bytes.length,16384);
+  const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  f.ledger.socket.emit('data',bytes.subarray(0,8000));f.ledger.socket.emit('data',bytes.subarray(8000));
+  task3FinishReadV1(f);assert.deepEqual(observedDataV1((await t.done).value),data);vm.assertContained();
+});
+const TASK3_MALFORMED_V1=[
+  ['aggregate16385',()=>Buffer.alloc(16385,0x20)],['invalid UTF8',()=>Buffer.from([0xff,0x0a])],
+  ['missing LF',()=>Buffer.from(OWN_SETUP_WIRE.slice(0,-1))],['empty EOF',()=>Buffer.alloc(0)],
+  ['duplicate key',()=>Buffer.from(OWN_SETUP_WIRE.replace('{"schema":','{"run":"'+OWN_C+'","schema":'))],
+  ['noncanonical bytes',()=>Buffer.from(' '+OWN_SETUP_WIRE)],
+];
+for(const [label,bytes] of TASK3_MALFORMED_V1){
+  test('Task3 G '+label+' refuses only after actual adopted close',async()=>{task3ContractsV1();
+    const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    f.ledger.socket.emit('data',bytes());f.ledger.socket.emit('end');await Promise.resolve();assert.equal(t.outcome,null);
+    f.ledger.closed=true;f.ledger.socket.emit('close',false);await assertProbeRejectedV1(t,'MANUAL_ORPHAN_FRAME_REFUSED');
+    assert.equal(f.ledger.destroys,1);assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+  });
+}
+test('Task3 G actual close without EOF is cleanup unknown',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  task3FinishReadV1(f,Buffer.from(OWN_SETUP_WIRE),{eof:false});await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');vm.assertContained();
+});
+test('Task3 G overflow then actual close refuses FRAME without invented EOF',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  f.ledger.socket.emit('data',Buffer.alloc(16385));await Promise.resolve();assert.equal(t.outcome,null);
+  task3FinishReadV1(f,undefined,{eof:false});await assertProbeRejectedV1(t,'MANUAL_ORPHAN_FRAME_REFUSED');vm.assertContained();
+});
+for(const label of ['read error','hadError close','frame fault then read error']){
+  test('Task3 G '+label+' cleanup uncertainty dominates frame refusal',async()=>{task3ContractsV1();
+    const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    if(label==='frame fault then read error')f.ledger.socket.emit('data',Buffer.alloc(16385));
+    else f.ledger.socket.emit('data',Buffer.from(OWN_SETUP_WIRE));
+    if(label!=='hadError close')f.ledger.socket.emit('error',Error('PRIVATE_READ'));
+    await Promise.resolve();assert.equal(t.outcome,null);task3FinishReadV1(f,undefined,{hadError:label==='hadError close'});
+    await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+  });
+}
+test('Task3 G deadline requires actual close and never fabricates EOF',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  f.ledger.socket.emit('data',Buffer.from(OWN_SETUP_WIRE));assert.equal(vm.timers[0].delay,5000);vm.timers[0].callback();
+  await Promise.resolve();assert.equal(t.outcome,null);assert.equal(f.ledger.destroys,1);
+  task3FinishReadV1(f,undefined,{eof:false});await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');vm.assertContained();
+});
+test('Task3 G simulated forever missing close remains retained pending after timeout',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  f.ledger.socket.emit('data',Buffer.from(OWN_SETUP_WIRE));f.ledger.socket.emit('end');vm.timers[0].callback();
+  await Promise.resolve();await Promise.resolve();assert.equal(t.outcome,null);assert.equal(f.ledger.closed,false);
+  assert.equal(f.ledger.destroys,1);assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+});
+for(const [label,options,error] of [
+  ['wrong FD kind',{kind:'file'},'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['fstat uncertainty',{fstatError:true},'MANUAL_ORPHAN_CLEANUP_UNKNOWN'],
+  ['raw close failure',{kind:'file',rawCloseError:true},'MANUAL_ORPHAN_CLEANUP_UNKNOWN'],
+  ['constructor failure',{constructorError:true},'MANUAL_ORPHAN_CLEANUP_UNKNOWN'],
+  ['constructor and raw close failure',{constructorError:true,rawCloseError:true},'MANUAL_ORPHAN_CLEANUP_UNKNOWN'],
+]){
+  test('Task3 G '+label+' uses exactly one raw close before adoption',async()=>{task3ContractsV1();
+    const {f,vm}=task3ReaderV1(options),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    await assertProbeRejectedV1(t,error);assert.deepEqual(f.ledger.rawCloses,[4]);assert.equal(f.ledger.adopted,false);vm.assertContained();
+  });
+}
+test('Task3 G destroy throw retains adopted close obligation and unknown precedence',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1({destroyError:true}),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  f.ledger.socket.emit('data',Buffer.from(OWN_SETUP_WIRE));f.ledger.socket.emit('end');await Promise.resolve();assert.equal(t.outcome,null);
+  task3FinishReadV1(f,undefined,{eof:false});await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+  assert.equal(f.ledger.destroys,1);assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+});
+test('Task3 G synchronous destroy close then throw cannot resolve valid DATA',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  f.ledger.socket.destroy=function(){f.ledger.destroys++;f.ledger.closed=true;this.emit('close',false);throw Error('PRIVATE_AFTER_CLOSE');};
+  f.ledger.socket.emit('data',Buffer.from(OWN_SETUP_WIRE));f.ledger.socket.emit('end');
+  await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');assert.equal(f.ledger.destroys,1);assert.deepEqual(f.ledger.rawCloses,[]);vm.assertContained();
+});
+test('Task3 G elapsed deadline at actual close dominates otherwise valid canonical bytes',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),t=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  f.ledger.socket.emit('data',Buffer.from(OWN_SETUP_WIRE));f.ledger.socket.emit('end');vm.monotonic.state.ms=5000;
+  f.ledger.closed=true;f.ledger.socket.emit('close',false);await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');vm.assertContained();
+  // One bounded subcase consumes the entire interval inside fstat. A clock
+  // origin obtained after that fallible prelude must not earn canonical DATA.
+  const slow=probeReaderFixtureV1(),clock=task3ClockV1(),faults=[],stat=slow.fs.fstatSync;
+  slow.fs.fstatSync=(...args)=>{
+    try{assert.ok(clock.state.calls>0,'owned reader origin precedes fstat');}catch(error){faults.push(error.message);throw error;}
+    clock.state.ms=5000;return stat(...args);
+  };
+  const vm2=task3VmV1({...slow,monotonic:clock}),second=trackProbePromiseV1(vm2.actual.readManualOrphanOwnedFd4V1('runner'));
+  if(slow.ledger.socket)task3FinishReadV1(slow,Buffer.from(OWN_SETUP_WIRE));
+  await assertProbeRejectedV1(second,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');assert.deepEqual(faults,[]);
+  if(slow.ledger.adopted)assert.deepEqual(slow.ledger.rawCloses,[]);else assert.deepEqual(slow.ledger.rawCloses,[4]);vm2.assertContained();
+});
+
+// Addendum1–2: private inherited4 reservation, fresh contained module per
+// independent case. Repeats must neither receive first DATA nor operate fd4.
+for(const [firstRole,nextRole] of [['runner','runner'],['runner','integration'],['integration','runner']]){
+  test('Task3 R concurrent '+firstRole+' then '+nextRole+' has one claim and independent outcomes',async()=>{task3ContractsV1();
+    const {f,vm}=task3ReaderV1(),firstRaw=vm.actual.readManualOrphanOwnedFd4V1(firstRole),first=trackProbePromiseV1(firstRaw),before=task3IoV1(f);
+    const nextRaw=vm.actual.readManualOrphanOwnedFd4V1(nextRole),next=trackProbePromiseV1(nextRaw);assert.notEqual(firstRaw,nextRaw);
+    await assertProbeRejectedV1(next,'MANUAL_ORPHAN_OWNER_REFUSED');assert.deepEqual(task3IoV1(f),before);assert.equal(first.outcome,null);
+    const bytes=firstRole==='runner'?Buffer.from(OWN_SETUP_WIRE):task3WireV1('integration');
+    f.ledger.socket.emit('data',bytes);f.ledger.socket.emit('end');await Promise.resolve();assert.equal(first.outcome,null);
+    f.ledger.closed=true;f.ledger.socket.emit('close',false);assert.equal((await first.done).error,undefined);vm.assertContained();
+  });
+}
+function task3SentinelV1(f){
+  const hits=[];f.fs.fstatSync=()=>{hits.push('fstat');throw Error('REUSED4_SENTINEL');};
+  f.fs.closeSync=()=>{hits.push('close');throw Error('REUSED4_SENTINEL');};
+  f.net.Socket=class{constructor(){hits.push('adopt');throw Error('REUSED4_SENTINEL');}};
+  return hits;
+}
+test('Task3 R known successful first read never reopens a simulated replacement4',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),first=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  task3FinishReadV1(f,Buffer.from(OWN_SETUP_WIRE));const result=await first.done;assert.equal(result.error,undefined);
+  const before=task3IoV1(f),hits=task3SentinelV1(f);
+  await assertProbeRejectedV1(trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('integration')),'MANUAL_ORPHAN_OWNER_REFUSED');
+  assert.deepEqual(hits,[]);assert.deepEqual(task3IoV1(f),before);assert.deepEqual(observedDataV1(result.value),ownedSetupData());vm.assertContained();
+});
+for(const [label,options,args,error] of [
+  ['FRAME',{},['runner'],'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['definite wrong FD',{kind:'file'},['runner'],'MANUAL_ORPHAN_OWNER_REFUSED'],
+  ['invalid first role',{},['invalid'],'MANUAL_ORPHAN_FRAME_REFUSED'],
+]){
+  test('Task3 R repeat after known '+label+' cannot inspect replacement4',async()=>{task3ContractsV1();
+    const {f,vm}=task3ReaderV1(options),first=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1(...args));
+    if(label==='FRAME')task3FinishReadV1(f,Buffer.from([0xff,0x0a]));await assertProbeRejectedV1(first,error);
+    const before=task3IoV1(f),hits=task3SentinelV1(f);
+    await assertProbeRejectedV1(trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner')),'MANUAL_ORPHAN_OWNER_REFUSED');
+    assert.deepEqual(hits,[]);assert.deepEqual(task3IoV1(f),before);vm.assertContained();
+  });
+}
+for(const [label,options] of [['raw close failure',{kind:'file',rawCloseError:true}],['constructor uncertainty',{constructorError:true}],
+  ['adopted read error',{}],['deadline uncertainty',{}]]){
+  test('Task3 R repeat after '+label+' is UNKNOWN with no second cleanup',async()=>{task3ContractsV1();
+    const {f,vm}=task3ReaderV1(options),first=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    if(label==='adopted read error')f.ledger.socket.emit('error',Error('PRIVATE_READ'));
+    if(label==='deadline uncertainty')vm.timers[0].callback();
+    const before=task3IoV1(f);
+    await assertProbeRejectedV1(trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('integration')),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.deepEqual(task3IoV1(f),before);
+    if(f.ledger.adopted){assert.equal(first.outcome,null);task3FinishReadV1(f,undefined,{eof:false});}
+    await assertProbeRejectedV1(first,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');vm.assertContained();
+  });
+}
+test('Task3 R before then after uncertainty is OWNER then UNKNOWN and first stays retained',async()=>{task3ContractsV1();
+  const {f,vm}=task3ReaderV1(),first=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+  await assertProbeRejectedV1(trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner')),'MANUAL_ORPHAN_OWNER_REFUSED');
+  assert.equal(first.outcome,null);f.ledger.socket.emit('error',Error('PRIVATE_FIRST_UNKNOWN'));const before=task3IoV1(f);
+  await assertProbeRejectedV1(trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner')),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+  assert.equal(first.outcome,null,'no actual first close; simulated obligation remains pending');assert.deepEqual(task3IoV1(f),before);vm.assertContained();
+});
+for(const boundary of ['fstat','constructor']){
+  test('Task3 R reentrant '+boundary+' sees already reserved inherited4',async()=>{task3ContractsV1();
+    const f=probeReaderFixtureV1();let vm,reentered=null,count=0;
+    if(boundary==='fstat'){
+      const original=f.fs.fstatSync;f.fs.fstatSync=(...args)=>{count++;if(count===1)reentered=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('integration'));return original(...args);};
+    }else{
+      const Original=f.net.Socket;f.net.Socket=class extends Original{constructor(...args){count++;if(count===1)reentered=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('integration'));super(...args);}};
+    }
+    vm=task3VmV1(f);const first=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    assert.ok(reentered);await assertProbeRejectedV1(reentered,'MANUAL_ORPHAN_OWNER_REFUSED');assert.equal(count,1);
+    task3FinishReadV1(f,Buffer.from(OWN_SETUP_WIRE));assert.equal((await first.done).error,undefined);vm.assertContained();
+  });
+}
+test('Task3 R legacy public reader preserves arity mapping timeout and closure policy',async()=>{task3ContractsV1();
+  const f=probeReaderFixtureV1(),vm=task3VmV1(f);
+  assert.equal(vm.actual.readManualOrphanProbeFd4V1.length,0);
+  const first=trackProbePromiseV1(vm.actual.readManualOrphanProbeFd4V1());assert.equal(vm.timers[0].delay,5000);
+  task3FinishReadV1(f,Buffer.from(CODEC_EXPECTED_V1));assert.deepEqual(observedDataV1((await first.done).value),codecFrameV1());vm.assertContained();
+  assert.equal(vm.monotonic.state.calls,0);assert.equal(vm.monotonic.state.accesses,0);
+  const f2=probeReaderFixtureV1(),vm2=task3VmV1(f2),extra=trackProbePromiseV1(vm2.actual.readManualOrphanProbeFd4V1('extra'));
+  await assertProbeRejectedV1(extra,'MANUAL_ORPHAN_OWNER_REFUSED');assert.deepEqual(f2.ledger.rawCloses,[4]);vm2.assertContained();
+  // No claim is made about arbitrary mixed legacy/new invocations.
+});
+// Addendum11:7 specified invalid-purpose rows plus missing arity1; caller traps
+// are independent evidence so caught proxy access cannot earn unknown/purpose.
+const TASK3_INVALID_PURPOSE_V1=[
+  ['proxy',counter=>new Proxy({},{get(){counter.hits++;throw Error('PRIVATE_ARGUMENT');},ownKeys(){counter.hits++;throw Error('PRIVATE_ARGUMENT');},
+    getOwnPropertyDescriptor(){counter.hits++;throw Error('PRIVATE_ARGUMENT');},getPrototypeOf(){counter.hits++;throw Error('PRIVATE_ARGUMENT');}})],
+  ['accessor object',counter=>Object.defineProperty({},'purpose',{get(){counter.hits++;throw Error('PRIVATE_ARGUMENT');}})],
+  ['symbol',()=>Symbol('PRIVATE_ARGUMENT')],['null',()=>null],['undefined',()=>undefined],['unknown string',()=>'PRIVATE_ARGUMENT'],
+  ['valid plus extra',()=> 'provision','extra'],['missing purpose',()=>undefined,'missing'],
+];
+for(const [label,make,arity] of TASK3_INVALID_PURPOSE_V1){
+  test('Task3 R invalid observer '+label+' normalizes null and still binds drains',async()=>{task3ContractsV1();
+    const counter={hits:0},argument=make(counter),f=eventFixtureV1(),vm=task3VmV1();
+    const args=arity==='missing'?[f.child]:arity==='extra'?[f.child,argument,{secret:'PRIVATE_ARGUMENT'}]:[f.child,argument];
+    const w=vm.actual.observeManualOrphanOwnedChildV1(...args),first=await task3UnknownV1(w,'purpose');
+    assert.equal(first.purpose,null);assert.equal(w.snapshot().purpose,null);assert.equal(counter.hits,0);task3AllBoundV1(f);
+    f.channels.stdout.emit('data',Buffer.alloc(65537,0x6b));f.channels.stderr.emit('data',Buffer.from('still drained'));
+    assert.equal(w.snapshot().stdout.bytes,65537);assert.equal(w.output().stdout.length,65536);assert.equal(w.snapshot().stderr.bytes,13);
+    assert.equal(w.snapshot().reason,'purpose');assert.equal(JSON.stringify(first).includes('PRIVATE_ARGUMENT'),false);
+    assert.equal(vm.timers.length,0);f.assertGuarded();vm.assertContained();
+  });
+}
+// Addendum12: one failing crypto operation per fresh complete-module instance.
+for(const stage of ['createHash','update','copy','digest']){
+  test('Task3 R owned '+stage+' failure is sticky nullable digest with independent drain',async()=>{task3ContractsV1();
+    let creations=0,faultCalls=0;const f=eventFixtureV1(),bindingFaults=[];
+    const crypto={createHash(...args){
+      try{task3AllBoundV1(f);}catch(error){bindingFaults.push(error.message);throw error;}
+      const index=creations++;if(index===0&&stage==='createHash'){faultCalls++;throw Error('PRIVATE_HASH');}
+      const actual=createHash(...args);if(index!==0)return actual;
+      const wrapped={update(...values){if(stage==='update'){faultCalls++;throw Error('PRIVATE_HASH');}actual.update(...values);return wrapped;},
+        copy(){if(stage==='copy'){faultCalls++;throw Error('PRIVATE_HASH');}const copy=actual.copy();return {digest(...values){
+          if(stage==='digest'){faultCalls++;throw Error('PRIVATE_HASH');}return copy.digest(...values);
+        }};}};return wrapped;
+    }};
+    const vm=task3VmV1({crypto}),w=vm.actual.observeManualOrphanOwnedChildV1(f.child,'provision');
+    f.channels.stdout.emit('data',Buffer.from('count despite hash failure'));f.channels.stderr.emit('data',Buffer.from('other stream'));
+    let triggered;assert.doesNotThrow(()=>{triggered=w.snapshot();});assert.equal(triggered.state,'unknown');assert.equal(triggered.stdout.sha256,null);
+    await task3UnknownV1(w,'binding');const attempts=faultCalls;
+    for(let i=0;i<3;i++){assert.equal(w.snapshot().stdout.sha256,null);assert.equal(w.output().stdout.length,26);}
+    assert.equal(w.snapshot().stdout.bytes,26);assert.equal(w.snapshot().stderr.bytes,12);
+    assert.equal(w.snapshot().stderr.sha256,createHash('sha256').update('other stream').digest('hex'));
+    f.channels.stdout.emit('data',Buffer.from('tail'));assert.equal(w.snapshot().stdout.sha256,null);assert.equal(w.snapshot().stdout.bytes,30);
+    assert.equal(faultCalls,attempts,'unavailable hash is never recursively retried');assert.equal(creations,2);assert.equal(attempts,1);
+    assert.deepEqual(bindingFaults,[]);task3AllBoundV1(f);f.assertGuarded();vm.assertContained();
+  });
+}
+// Addendum13:5 clock faults. A caught fixture ordering assertion remains a
+// separately failing ledger, never a valid production unknown observation.
+for(const mode of ['accessor','first throw','invalid first result','later throw','backwards']){
+  test('Task3 R '+mode+' monotonic clock never interrupts binding or repeatedly throws',async()=>{task3ContractsV1();
+    const f=eventFixtureV1(),faults=[];
+    const monotonic=task3ClockV1(()=>{try{task3AllBoundV1(f);}catch(error){faults.push(error.message);throw error;}});
+    monotonic.state.mode=mode==='accessor'?'accessor':mode==='first throw'?'throw':mode==='invalid first result'?'invalid':null;
+    const vm=task3VmV1({monotonic});let w;
+    assert.doesNotThrow(()=>{w=vm.actual.observeManualOrphanOwnedChildV1(f.child,'provision');});
+    if(mode==='later throw')monotonic.state.mode='throw';if(mode==='backwards')monotonic.state.ms=-1;
+    let triggered;assert.doesNotThrow(()=>{triggered=w.snapshot();});assert.equal(triggered.state,'unknown');
+    await task3UnknownV1(w,'binding');const calls=monotonic.state.calls,accesses=monotonic.state.accesses;
+    for(let i=0;i<3;i++){w.snapshot();w.output();}assert.equal(monotonic.state.calls,calls);assert.equal(monotonic.state.accesses,accesses);
+    f.channels.stdout.emit('data',Buffer.from('drain'));f.channels.stderr.emit('data',Buffer.from('drain'));
+    assert.equal(w.snapshot().stdout.bytes,5);assert.equal(w.snapshot().stderr.bytes,5);assert.deepEqual(faults,[]);
+    assert.equal(monotonic.state.calls,calls);assert.equal(monotonic.state.accesses,accesses);
+    assert.deepEqual([...new Set(f.resumed)].sort(),['fd4','stderr','stdout']);f.assertGuarded();vm.assertContained();
+  });
+}
+test('Task3 R local monotonic origin follows listener binding and cannot certify pre-spawn interval',async()=>{task3ContractsV1();
+  const g=task3EventFixtureV1('initdb'),clock=task3ClockV1(),before=clock.state.ms;
+  for(const target of [g.child,g.channels.stdout,g.channels.stderr]){const on=target.on;
+    target.on=function(...args){clock.state.ms+=6000;return on.apply(this,args);};}
+  const vm2=task3VmV1({monotonic:clock}),actual=vm2.actual.observeManualOrphanOwnedChildV1(g.child,'initdb');
+  assert.ok(clock.state.ms-before>=60000);assert.equal(actual.snapshot().state,'pending','observation-local clock starts only after binding');
+  task3CompleteV1(g,'initdb');assert.equal((await actual.settled).state,'observed');g.assertGuarded();vm2.assertContained();
+});
+
+// H uses the complete private fixed-entry body via existing exact entry-line
+// lowering. Only launch/FD/native import boundaries are contained, no handlers
+// or predicate bodies are replaced. New profile models fixed Node/account.
+const TASK3_NODE_V1='/opt/homebrew/Cellar/node/26.4.0/bin/node';
+const TASK3_PATH_V1='/opt/homebrew/Cellar/node/26.4.0/bin:/Users/setrox/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+function task3EntryV1(bytes,{profile='new',auto=true,readerOptions={},configure}={}){
+  task3ContractsV1();const f=probeCompositionFixtureV1('child'),effects=[],calls=[],faults=[];
+  const reader=probeReaderFixtureV1({...readerOptions,...(auto?{autoBytes:Buffer.from(bytes)}:{})});
+  f.control.reader=reader;f.net=reader.net;
+  const fs0=f.state.fs;f.fs={...fs0,fstatSync:(...args)=>reader.fs.fstatSync(...args),closeSync:(...args)=>reader.fs.closeSync(...args)};
+  const noEffect=label=>(..._args)=>{effects.push(label);throw Error('FORBIDDEN_TASK3_EFFECT');};
+  f.fs.openSync=noEffect('source/open');f.childProcess={spawn:noEffect('spawn'),spawnSync:noEffect('process observation')};
+  const account={username:'setrox',uid:501,gid:20,shell:'/bin/zsh',homedir:'/Users/setrox'};
+  f.os={userInfo(...args){try{assert.equal(args.length,0);}catch(error){faults.push(error.message);throw error;}
+    calls.push('userInfo');return {...account};}};
+  if(profile==='new'){
+    f.state.files.set(TASK3_NODE_V1,f.state.files.get(OBS_EXE_V1));
+    f.process.execPath=TASK3_NODE_V1;f.process.argv0=TASK3_NODE_V1;f.process.argv=[TASK3_NODE_V1,OBS_HELPER_PATH_V1];
+    f.process.env={PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'};
+  }
+  if(configure)configure({f,reader,account,calls,effects});
+  const oldClean=f.assertClean;f.assertClean=()=>{oldClean();reader.assertClean();assert.deepEqual(faults,[]);
+    assert.deepEqual(effects,[],'caught Source/native/effect boundary cannot count as a refusal');assert.equal(f.state.opened.length,0);};
+  const vm=task3VmV1({...f,expose:true});
+  reader.task3Vm=vm;
+  return {f,reader,vm,account,calls,effects};
+}
+function task3EntryRefusedV1(entry,code){
+  assert.equal(entry.f.control.stdout,'');assert.equal(entry.f.control.stderr,code+'\n');assert.equal(entry.f.process.exitCode,1);
+  entry.vm.assertContained();
+}
+test('Task3 H private union preserves complete existing legacy probe positive consumer',async()=>{task3ContractsV1();
+  const f=probeCompositionFixtureV1('child'),vm=task3VmV1({...f,expose:true});await vm.childMain();
+  assert.equal(f.process.exitCode,0);assert.equal(f.control.stderr,'');assert.equal(f.control.stdout,JSON.stringify({
+    schema:'setfarm.manual-orphan-lifecycle-probe-result.v1',frameSha256:createHash('sha256').update(JSON.stringify(f.frame())+'\n').digest('hex'),
+    pid:123,parentPid:122,fd4Closed:true,sourcePinsClosed:true})+'\n');
+  assert.equal(f.control.reader.ledger.closed,true);assert.deepEqual(f.control.reader.ledger.fstats,[4]);
+  assert.equal(vm.monotonic.state.calls,0,'legacy probe does not acquire owned monotonic obligation');vm.assertContained();
+});
+const TASK3_ENV_V1=[
+  ['legacy','legacy',null,true],['new fixed baseline','new',null,true],
+  ['new allowed CF','new',({f})=>{f.process.env.__CF_USER_TEXT_ENCODING='0x1F5:0x23:0x18';},true],
+  ['new extra HOME','new',({f})=>{f.process.env.HOME='/Users/setrox';},false],
+  ['new wrong locale','new',({f})=>{f.process.env.LANG='en_US';},false],
+  ['new wrong physical Node','new',({f})=>{f.process.execPath=OBS_EXE_V1;f.process.argv0=OBS_EXE_V1;f.process.argv[0]=OBS_EXE_V1;},false],
+  ['new wrong account home','new',({account})=>{account.homedir='/other/home';},false],
+];
+for(const [label,profile,configure,admitted] of TASK3_ENV_V1){
+  test('Task3 H exact launch admission '+label,async()=>{task3ContractsV1();
+    const entry=task3EntryV1(task3WireV1('provision'),{profile,configure});await entry.vm.childMain();
+    task3EntryRefusedV1(entry,admitted?'MANUAL_ORPHAN_SETUP_REFUSED':'MANUAL_ORPHAN_OWNER_REFUSED');
+    assert.deepEqual(entry.reader.ledger.fstats,admitted?[4]:[]);
+    assert.deepEqual(entry.reader.ledger.rawCloses,admitted?[]:[4]);assert.equal(entry.reader.ledger.adopted,admitted);
+    if(admitted)assert.equal(entry.reader.ledger.closed,true);
+    if(profile==='legacy')assert.deepEqual(entry.calls,[],'legacy launch has no account-home obligation');
+  });
+}
+test('Task3 H probe under new baseline is read once then strict legacy context refuses',async()=>{task3ContractsV1();
+  const entry=task3EntryV1(Buffer.from(CODEC_EXPECTED_V1));await entry.vm.childMain();
+  task3EntryRefusedV1(entry,'MANUAL_ORPHAN_OWNER_REFUSED');assert.equal(entry.reader.ledger.closed,true);
+  assert.deepEqual(entry.reader.ledger.fstats,[4]);assert.equal(entry.reader.ledger.constructs.length,1);
+});
+for(const [label,bytes] of [['runner setup',()=>Buffer.from(OWN_SETUP_WIRE)],['integration purpose',()=>task3WireV1('integration')]]){
+  test('Task3 H helper union rejects '+label+' without Source or effect calls',async()=>{task3ContractsV1();
+    const entry=task3EntryV1(bytes());await entry.vm.childMain();task3EntryRefusedV1(entry,'MANUAL_ORPHAN_FRAME_REFUSED');
+    assert.equal(entry.reader.ledger.closed,true);assert.deepEqual(entry.reader.ledger.rawCloses,[]);
+  });
+}
+for(const purpose of ['provision','activate','old_entry_positive','new_entry_refusal']){
+  test('Task3 H canonical '+purpose+' reaches only known-close SETUP capability barrier',async()=>{task3ContractsV1();
+    const entry=task3EntryV1(task3WireV1(purpose));await entry.vm.childMain();task3EntryRefusedV1(entry,'MANUAL_ORPHAN_SETUP_REFUSED');
+    assert.deepEqual(entry.reader.ledger.fstats,[4]);assert.equal(entry.reader.ledger.constructs.length,1);
+    assert.equal(entry.reader.ledger.closed,true);assert.equal(entry.reader.ledger.destroys,1);
+  });
+}
+test('Task3 H invalid union bytes reach FRAME only after actual close',async()=>{task3ContractsV1();
+  const entry=task3EntryV1(Buffer.from([0xff,0x0a]));await entry.vm.childMain();task3EntryRefusedV1(entry,'MANUAL_ORPHAN_FRAME_REFUSED');
+  assert.equal(entry.reader.ledger.closed,true);
+});
+for(const [profile,code] of [['legacy','MANUAL_ORPHAN_CHILD_UNKNOWN'],['new','MANUAL_ORPHAN_CLEANUP_UNKNOWN']]){
+  test('Task3 H '+profile+' uncertainty dominates malformed input with profile-specific sanitized code',async()=>{task3ContractsV1();
+    const entry=task3EntryV1(Buffer.alloc(0),{profile,auto:false}),main=trackProbePromiseV1(entry.vm.childMain());
+    const socket=entry.reader.ledger.socket;assert.ok(socket);socket.emit('data',Buffer.alloc(16385));socket.emit('error',Error('PRIVATE_READ'));
+    await Promise.resolve();assert.equal(main.outcome,null);entry.reader.ledger.closed=true;socket.emit('close',true);
+    assert.equal((await main.done).error,undefined);task3EntryRefusedV1(entry,code);
+  });
+}
+for(const profile of ['legacy','new']){
+  test('Task3 H '+profile+' preprofile launch refusal raw-close uncertainty preserves legacy unknown mapping',async()=>{task3ContractsV1();
+    const entry=task3EntryV1(Buffer.alloc(0),{profile,readerOptions:{rawCloseError:true},configure({f}){f.process.execArgv=['--forbidden'];}});
+    await entry.vm.childMain();task3EntryRefusedV1(entry,'MANUAL_ORPHAN_CHILD_UNKNOWN');
+    assert.deepEqual(entry.reader.ledger.rawCloses,[4]);assert.deepEqual(entry.reader.ledger.fstats,[]);assert.equal(entry.reader.ledger.adopted,false);
+  });
+}
+// Remaining reservation cases exercise that SAME private entry composition.
+for(const order of ['owned then union','union then owned']){
+  test('Task3 R '+order+' shares one inherited4 reservation',async()=>{task3ContractsV1();
+    const entry=task3EntryV1(Buffer.alloc(0),{auto:false});let first,second;
+    if(order==='owned then union'){
+      first=trackProbePromiseV1(entry.vm.actual.readManualOrphanOwnedFd4V1('runner'));const before=task3IoV1(entry.reader);
+      second=trackProbePromiseV1(entry.vm.childMain());await second.done;assert.deepEqual(task3IoV1(entry.reader),before);
+      task3EntryRefusedV1(entry,'MANUAL_ORPHAN_OWNER_REFUSED');assert.equal(first.outcome,null);
+      task3FinishReadV1(entry.reader,Buffer.from(OWN_SETUP_WIRE));assert.equal((await first.done).error,undefined);
+    }else{
+      first=trackProbePromiseV1(entry.vm.childMain());const before=task3IoV1(entry.reader);
+      second=trackProbePromiseV1(entry.vm.actual.readManualOrphanOwnedFd4V1('runner'));
+      await assertProbeRejectedV1(second,'MANUAL_ORPHAN_OWNER_REFUSED');assert.deepEqual(task3IoV1(entry.reader),before);assert.equal(first.outcome,null);
+      task3FinishReadV1(entry.reader,task3WireV1('provision'));await first.done;task3EntryRefusedV1(entry,'MANUAL_ORPHAN_SETUP_REFUSED');
+    }
+    assert.deepEqual(entry.reader.ledger.fstats,[4]);assert.equal(entry.reader.ledger.constructs.length,1);entry.vm.assertContained();
+  });
+}
+test('Task3 R launch guard reentrant owned call sees reserved claim before fallible realpath',async()=>{task3ContractsV1();
+  let vm,reentered=null;const entry=task3EntryV1(Buffer.alloc(0),{auto:false,configure({f}){
+    const original=f.fs.realpathSync;f.fs.realpathSync=(...args)=>{
+      if(!reentered)reentered=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));return original(...args);
+    };
+  }});vm=entry.vm;const main=trackProbePromiseV1(vm.childMain());assert.ok(reentered);
+  await assertProbeRejectedV1(reentered,'MANUAL_ORPHAN_OWNER_REFUSED');assert.equal(main.outcome,null);
+  task3FinishReadV1(entry.reader,task3WireV1('provision'));await main.done;task3EntryRefusedV1(entry,'MANUAL_ORPHAN_SETUP_REFUSED');
+});
+test('Task3 R launch refusal raw closes once and reentry never touches replacement4',async()=>{task3ContractsV1();
+  const entry=task3EntryV1(Buffer.alloc(0),{configure({f}){f.process.env.EXTRA='refused';}});await entry.vm.childMain();
+  task3EntryRefusedV1(entry,'MANUAL_ORPHAN_OWNER_REFUSED');assert.deepEqual(entry.reader.ledger.rawCloses,[4]);
+  const before=task3IoV1(entry.reader),hits=task3SentinelV1(entry.reader);
+  await entry.vm.childMain();assert.deepEqual(hits,[]);assert.deepEqual(task3IoV1(entry.reader),before);entry.vm.assertContained();
+});
+test('Task3 R legacy probe private union consumes decoded frame once and never public reader again',async()=>{task3ContractsV1();
+  const f=probeCompositionFixtureV1('child'),vm=task3VmV1({...f,expose:true});await vm.childMain();
+  assert.equal(f.process.exitCode,0);assert.deepEqual(f.control.reader.ledger.fstats,[4]);assert.equal(f.control.reader.ledger.constructs.length,1);
+  assert.deepEqual(f.control.reader.ledger.rawCloses,[]);assert.equal(f.control.reader.ledger.closed,true);vm.assertContained();
+});
+
+// I:8 REAL fixed-helper negative callbacks. These are never launched at initial
+// missing-API RED. Their originals/writers/channel joins are independently owned;
+// uncertain joins stop subsequent launches and retain the original for Root.
+let task3NativeStoppedV1=false,task3NativeBusyV1=false;
+const task3RetainedNativeV1=[];
+async function task3ActualNegativeV1(bytes,expected){
+  task3ContractsV1();assert.equal(task3NativeStoppedV1,false,'prior actual uncertainty stops new native launches');
+  assert.equal(task3NativeBusyV1,false,'serialize all new actual helper originals');task3NativeBusyV1=true;
+  let original=null,witness=null,pins=null,endAttempted=false,watchdog=null,primary=null;
+  const record={original:null,witness:null,joins:null,complete:false,exit:null,close:null,channels:{},uncertain:false};
+  const endOnce=data=>{if(!endAttempted&&original){endAttempted=true;original.stdio[4].end(data);}};
+  const current=()=>{const snapshot=witness.snapshot();assert.notEqual(snapshot.state,'unknown','current original observation cannot be historical-only');return snapshot;};
+  try{
+    const native=createRequire(import.meta.url)('node:child_process'),fs=createRequire(import.meta.url)('node:fs');
+    assert.equal(process.platform,'darwin');assert.match(process.versions.node,/^26\./);
+    assert.equal(fs.realpathSync(process.execPath),TASK3_NODE_V1);assert.equal(fs.realpathSync(OBS_HELPER_PATH_V1),OBS_HELPER_PATH_V1);
+    original=native.spawn(TASK3_NODE_V1,[OBS_HELPER_PATH_V1],{cwd:path.resolve(path.dirname(OBS_TEST_PATH_V1),'../..'),
+      argv0:TASK3_NODE_V1,shell:false,detached:false,env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},
+      stdio:['ignore','pipe','pipe','ignore','pipe']});
+    record.original=original;task3RetainedNativeV1.push(record);let observationError=null;
+    try{witness=helper.observeManualOrphanOwnedChildV1(original,'new_entry_refusal');}catch(error){observationError=error;}
+    record.witness=witness;
+    // No await, hashing, pin acquisition or PID observation precedes the witness
+    // and these independent original/channel listener joins.
+    const joinExit=new Promise(resolve=>original.once('exit',(code,signal)=>{record.exit={code,signal};resolve();}));
+    const joinClose=new Promise(resolve=>original.once('close',(code,signal)=>{record.close={code,signal};resolve();}));
+    original.on('error',()=>{record.uncertain=true;task3NativeStoppedV1=true;});
+    const channelJoins=[];
+    for(const [name,stream] of [['stdout',original.stdout],['stderr',original.stderr],['fd4',original.stdio[4]]]){
+      const facts=record.channels[name]={end:false,close:false,...(name==='fd4'?{finish:false}:{})};
+      stream.on('error',()=>{record.uncertain=true;task3NativeStoppedV1=true;});
+      channelJoins.push(new Promise(resolve=>stream.once('end',()=>{facts.end=true;resolve();})));
+      channelJoins.push(new Promise(resolve=>stream.once('close',()=>{facts.close=true;resolve();})));
+      if(name==='fd4')channelJoins.push(new Promise(resolve=>stream.once('finish',()=>{facts.finish=true;resolve();})));
+    }
+    record.joins=Promise.all([joinExit,joinClose,...channelJoins]).then(()=>{record.complete=true;return true;});
+    const joined=()=>Promise.race([record.joins,new Promise(resolve=>{watchdog=setTimeout(()=>resolve(false),15000);})]);
+    if(observationError){
+      // A broken future observer must not lose a launched original. These are
+      // only the harness's own channels; bind independent joins before drain.
+      for(const stream of [original.stdout,original.stderr,original.stdio[4]])stream.resume();
+      throw observationError;
+    }
+    current();pins=helper.pinManualOrphanProbeSourcesV1();current();pins.check();current();
+    endOnce(Buffer.from(bytes));current();
+    const completed=await joined();current();clearTimeout(watchdog);watchdog=null;
+    if(!completed){record.uncertain=true;task3NativeStoppedV1=true;assert.fail('actual original/channel join unresolved; retained for Root');}
+    await witness.settled;const snapshot=current();assert.equal(snapshot.state,'observed');
+    assert.equal(record.uncertain,false,'independent original/channel error ledger stays clear');
+    assert.deepEqual(record.exit,{code:1,signal:null});assert.deepEqual(record.close,{code:1,signal:null});
+    assert.deepEqual(snapshot.exit,snapshot.close);assert.equal(snapshot.close.code,1);assert.equal(snapshot.close.signal,null);
+    for(const facts of Object.values(record.channels)){assert.equal(facts.end,true);assert.equal(facts.close,true);}
+    assert.equal(record.channels.fd4.finish,true);assert.equal(endAttempted,true);
+    assert.deepEqual(snapshot.fd4,{finish:true,end:true,close:true});
+    for(const name of ['stdout','stderr']){assert.equal(snapshot[name].end,true);assert.equal(snapshot[name].close,true);}
+    const output=witness.output();assert.equal(output.stdout.length,0,'no receipt or other stdout');
+    assert.equal(output.stderr.equals(Buffer.from(expected+'\n')),true,'exact sanitized refusal only');
+    pins.check();current();
+  }catch(error){
+    primary=error;if(original){task3NativeStoppedV1=true;record.uncertain=true;
+      try{endOnce();}catch{/* retain the original and its independent joins */}
+      if(record.joins&&!record.complete){
+        const completed=await Promise.race([record.joins,new Promise(resolve=>{
+          if(watchdog!==null)clearTimeout(watchdog);watchdog=setTimeout(()=>resolve(false),15000);
+        })]);
+        if(!completed)record.uncertain=true;
+        try{if(witness)current();}catch{record.uncertain=true;}
+      }
+    }
+  }finally{
+    if(watchdog!==null)clearTimeout(watchdog);
+    if(pins){
+      const ownedPins=pins;pins=null;
+      for(const operation of [()=>{if(witness)current();},()=>ownedPins.close(),()=>{if(witness)current();}]){
+        try{operation();}catch(error){if(!primary)primary=error;task3NativeStoppedV1=true;record.uncertain=true;}
+      }
+    }
+    task3NativeBusyV1=false;
+  }
+  if(primary)throw primary;
+}
+const TASK3_ACTUAL_NEGATIVES_V1=[
+  ['invalid UTF8',()=>Buffer.from([0xff,0x0a]),'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['empty EOF',()=>Buffer.alloc(0),'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['missing LF',()=>Buffer.from(OWN_SETUP_WIRE.slice(0,-1)),'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['duplicate key',()=>Buffer.from(OWN_SETUP_WIRE.replace('{"schema":','{"run":"'+OWN_C+'","schema":')),'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['runner setup schema',()=>Buffer.from(OWN_SETUP_WIRE),'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['forbidden helper integration',()=>task3WireV1('integration'),'MANUAL_ORPHAN_FRAME_REFUSED'],
+  ['canonical provision',()=>task3WireV1('provision'),'MANUAL_ORPHAN_SETUP_REFUSED'],
+  ['canonical mechanical refusal',()=>task3WireV1('new_entry_refusal'),'MANUAL_ORPHAN_SETUP_REFUSED'],
+];
+for(const [label,bytes,expected] of TASK3_ACTUAL_NEGATIVES_V1){
+  test('Task3 I actual physical fixed helper '+label+' has natural owned joins and no receipt',async()=>{task3ContractsV1();
+    await task3ActualNegativeV1(bytes(),expected);
+  });
+}
+
+// Task3 I1: only these two cases have one deliberately unavailable listener
+// slot. eventFixtureV1 and every preexisting strict resume expectation stay
+// unchanged. All observer callbacks below are the complete actual consumer.
+async function task3SelectiveBindingV1(target,unavailable){
+  task3ContractsV1();const f=eventFixtureV1();
+  const slots={original:['spawn','error','exit','close'],stdout:['error','end','close','data'],
+    stderr:['error','end','close','data'],fd4:['error','finish','end','close','data']};
+  const required=Object.entries(slots).flatMap(([name,events])=>events.map(event=>name+'.'+event));
+  const attempts=[],boundaries=[],resumeBoundaries=[],lateAttempts=[],pauseViolations=[],faults=[],unavailableAttempts=[],delivered={stdout:0,stderr:0,fd4:0};
+  const paused=new Set(),resumes=[];
+  const originalOn=f.child.on;
+  f.child.on=function(event,handler){
+    const slot='original.'+event;attempts.push(slot);if(boundaries.length)lateAttempts.push(slot);
+    return originalOn.call(this,event,handler);
+  };
+  for(const name of ['stdout','stderr','fd4']){
+    const stream=f.channels[name],on=stream.on,pause=stream.pause,resume=stream.resume;
+    stream.pause=function(...args){paused.add(name);return pause.apply(this,args);};
+    stream.resume=function(...args){
+      resumeBoundaries.push({name,missing:required.filter(slot=>!attempts.includes(slot))});return resume.apply(this,args);
+    };
+    stream.on=function(event,handler){
+      const slot=name+'.'+event;attempts.push(slot);if(boundaries.length)lateAttempts.push(slot);
+      if(name===target&&event===unavailable){unavailableAttempts.push(slot);throw Error('SIMULATED_ONE_UNAVAILABLE_LISTENER_SLOT');}
+      if(event==='data'){
+        if(!paused.has(name))pauseViolations.push(slot);
+        return on.call(this,event,function(...args){delivered[name]+=args[0].length;return handler.apply(this,args);});
+      }
+      return on.call(this,event,handler);
+    };
+  }
+  // Closed per-fault expectation: one unavailable slot, every other handler
+  // remains mandatory. This override applies ONLY to the faulted channel.
+  f.channels[target].resume=function(){
+    resumeBoundaries.push({name:target,missing:required.filter(slot=>!attempts.includes(slot))});
+    try{
+      assert.equal(paused.has(target),true,'faulted channel pauses before data binding/resume');
+      for(const event of slots[target]){
+        assert.equal(this.listenerCount(event)>0,event!==unavailable,target+'.'+event+' has its exact per-fault availability');
+      }
+    }catch(error){faults.push(error.message);throw error;}
+    resumes.push(target);f.resumed.push(target);return this;
+  };
+  const boundary=kind=>{
+    // Record rather than throwing inside production's catch. Missing attempts
+    // must fail the outer assertions, never manufacture acceptable UNKNOWN.
+    boundaries.push({kind,missing:required.filter(slot=>!attempts.includes(slot))});
+  };
+  const monotonic=task3ClockV1(()=>boundary('clock'));
+  const vm=task3VmV1({monotonic,crypto:{createHash(...args){boundary('hash');return createHash(...args);}}});
+  let w;
+  try{
+    w=vm.actual.observeManualOrphanOwnedChildV1(f.child,'provision');
+    assert.deepEqual([...new Set(attempts)].sort(),[...required].sort(),'selective failure cannot suppress any remaining listener attempt');
+    for(const slot of required)assert.equal(attempts.filter(attempt=>attempt===slot).length,1,'exactly one bounded attempt for '+slot);
+    assert.deepEqual(unavailableAttempts,[target+'.'+unavailable]);
+    assert.ok(boundaries.some(item=>item.kind==='clock'),'actual owned clock boundary reached');
+    assert.ok(boundaries.some(item=>item.kind==='hash'),'actual crypto boundary reached');
+    for(const item of boundaries)assert.deepEqual(item.missing,[],'every slot attempted before fallible '+item.kind);
+    assert.deepEqual(lateAttempts,[]);assert.deepEqual(pauseViolations,[]);assert.deepEqual(faults,[],'no swallowed fixture assertion may count as binding refusal');
+    assert.deepEqual([...paused].sort(),['fd4','stderr','stdout']);
+    assert.deepEqual([...new Set(f.resumed)].sort(),['fd4','stderr','stdout']);assert.deepEqual(resumes,[target]);
+    assert.equal(resumeBoundaries.length,3);for(const item of resumeBoundaries)assert.deepEqual(item.missing,[],'all binding attempts precede deliberate '+item.name+' resume');
+    const first=await w.settled;assert.equal(first.state,'unknown');assert.equal(first.reason,'binding');task3FrozenV1(first);
+    const faultBytes=Buffer.from('faulted channel still drains'),otherBytes=Buffer.from('independent stderr still drains');
+    f.channels[target].emit('data',faultBytes);f.channels.stderr.emit('data',otherBytes);
+    assert.equal(delivered[target],faultBytes.length,'real faulted-channel data callback still receives/drains its bytes');
+    assert.equal(delivered.stderr,otherBytes.length);const current=w.snapshot();task3FrozenV1(current);
+    assert.equal(current.state,'unknown');assert.equal(current.reason,'binding');assert.equal(current.stderr.bytes,otherBytes.length);
+    assert.deepEqual(w.output().stderr,otherBytes);
+    if(target==='stdout'){
+      assert.equal(current.stdout.bytes,faultBytes.length);assert.deepEqual(w.output().stdout,faultBytes);
+      assert.equal(current.stdout.end,false);
+    }else assert.equal(current.fd4.finish,false,'unavailable finish handler cannot manufacture a writer fact');
+    assert.equal(await w.settled,first);assert.equal(first.reason,'binding');
+    assert.deepEqual(faults,[]);assert.deepEqual(lateAttempts,[]);assert.deepEqual(pauseViolations,[]);
+  }finally{f.assertGuarded();vm.assertContained();}
+}
+test('Task3 I1 selective stdout.end failure still attempts binds and drains all safe channels',async()=>{task3ContractsV1();
+  await task3SelectiveBindingV1('stdout','end');
+});
+test('Task3 I1 selective fd4.finish failure still attempts binds and drains all safe channels',async()=>{task3ContractsV1();
+  await task3SelectiveBindingV1('fd4','finish');
 });
