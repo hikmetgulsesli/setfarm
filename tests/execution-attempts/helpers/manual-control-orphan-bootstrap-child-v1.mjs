@@ -262,10 +262,14 @@ function ownedGraphV1(data){
 }
 function orderedOwnedRunnerSetupV1(value){
   const data=probeOwnDataV1(value,[
-    'schema','run','constructor','runner','server','source','cluster','adminPassword',
+    'schema','run','constructor','runner','server','source','cluster','constructorAdminBackend','adminPassword',
   ]);
   ownedRequireV1(data.schema==='setfarm.manual-orphan-runner-setup.v1'&&probeHexV1(data.adminPassword));
-  ownedGraphV1(data);return data;
+  ownedGraphV1(data);
+  const backend=probeOwnDataV1(data.constructorAdminBackend,['pid','backendStartedAtUTC']);
+  ownedRequireV1(ownedIntegerV1(backend.pid,1)&&ownedMicrosecondTimestampV1(backend.backendStartedAtUTC)
+    &&backend.backendStartedAtUTC.slice(0,4)!=='0000');
+  data.constructorAdminBackend=backend;return data;
 }
 function orderedOwnedPhaseV1(value){
   const data=probeOwnDataV1(value,[
@@ -375,6 +379,93 @@ function freezeOwnedDataV1(value){
   for(const item of Object.values(value))if(item!==null&&typeof item==='object')freezeOwnedDataV1(item);
   return Object.freeze(value);
 }
+// Pure original/restored catalog DATA only; no session, Source or owner authority.
+function ownedBaselineRowsV1(value,minimum,maximum){
+  ownedRequireV1(value!==null&&typeof value==='object'&&!types.isProxy(value)
+    &&Array.isArray(value)&&Object.getPrototypeOf(value)===Array.prototype);
+  // Bound the actual own length before enumerating keys or inspecting indexes.
+  const length=Object.getOwnPropertyDescriptor(value,'length');
+  ownedRequireV1(length&&Object.hasOwn(length,'value')&&length.enumerable===false
+    &&length.configurable===false&&ownedIntegerV1(length.value,minimum,maximum));
+  ownedRequireV1(Reflect.ownKeys(value).length===length.value+1);
+  const rows=[];
+  for(let index=0;index<length.value;index++){
+    const descriptor=Object.getOwnPropertyDescriptor(value,String(index));
+    ownedRequireV1(descriptor&&descriptor.enumerable&&Object.hasOwn(descriptor,'value'));
+    rows.push(descriptor.value);
+  }
+  return rows;
+}
+function ownedBaselineNameV1(value){
+  return typeof value==='string'&&value.length>=1&&value.length<=63&&!value.includes('\0')
+    &&Buffer.byteLength(value,'utf8')<=63&&Buffer.from(value,'utf8').toString('utf8')===value;
+}
+export function canonicalizeManualOrphanClusterBaselineV1(value){
+  try{
+    ownedRequireV1(arguments.length===1);
+    const input=probeOwnDataV1(value,['databases','roles','memberships']);
+    const databases=ownedBaselineRowsV1(input.databases,3,3).map(row=>{
+      const data=probeOwnDataV1(row,['name','oid','ownerOid','allowConnections','connectionLimit']);
+      ownedRequireV1((data.name==='postgres'||data.name==='template0'||data.name==='template1')
+        &&ownedIntegerV1(data.oid,1,4294967295)&&ownedIntegerV1(data.ownerOid,1,4294967295)
+        &&typeof data.allowConnections==='boolean'&&ownedIntegerV1(data.connectionLimit,-1));
+      return data;
+    });
+    const roles=ownedBaselineRowsV1(input.roles,1,128).map(row=>{
+      const data=probeOwnDataV1(row,[
+        'name','oid','superuser','inherit','createRole','createDb','login','replication','bypassRls',
+        'connectionLimit','validUntilUTC',
+      ]);
+      ownedRequireV1(ownedBaselineNameV1(data.name)&&ownedIntegerV1(data.oid,1,4294967295)
+        &&['superuser','inherit','createRole','createDb','login','replication','bypassRls']
+          .every(key=>typeof data[key]==='boolean')
+        &&ownedIntegerV1(data.connectionLimit,-1)
+        &&(data.validUntilUTC===null||data.validUntilUTC==='infinity'||data.validUntilUTC==='-infinity'
+          ||(ownedMicrosecondTimestampV1(data.validUntilUTC)&&data.validUntilUTC.slice(0,4)!=='0000')));
+      return data;
+    });
+    const memberships=ownedBaselineRowsV1(input.memberships,0,256).map(row=>{
+      const data=probeOwnDataV1(row,['roleOid','memberOid','grantorOid','adminOption','inheritOption','setOption']);
+      ownedRequireV1(ownedIntegerV1(data.roleOid,1,4294967295)&&ownedIntegerV1(data.memberOid,1,4294967295)
+        &&ownedIntegerV1(data.grantorOid,1,4294967295)&&data.roleOid!==data.memberOid
+        &&typeof data.adminOption==='boolean'&&typeof data.inheritOption==='boolean'&&typeof data.setOption==='boolean');
+      return data;
+    });
+    const roleNames=new Set(),roleOids=new Set();
+    for(const row of roles){
+      ownedRequireV1(!roleNames.has(row.name)&&!roleOids.has(row.oid));
+      roleNames.add(row.name);roleOids.add(row.oid);
+    }
+    const databaseNames=new Set(),databaseOids=new Set();
+    for(const row of databases){
+      ownedRequireV1(!databaseNames.has(row.name)&&!databaseOids.has(row.oid)&&roleOids.has(row.ownerOid));
+      databaseNames.add(row.name);databaseOids.add(row.oid);
+    }
+    const membershipTriples=new Set();
+    for(const row of memberships){
+      const triple=row.roleOid+','+row.memberOid+','+row.grantorOid;
+      ownedRequireV1(roleOids.has(row.roleOid)&&roleOids.has(row.memberOid)&&roleOids.has(row.grantorOid)
+        &&!membershipTriples.has(triple));
+      membershipTriples.add(triple);
+    }
+    const byNameOid=(left,right)=>Buffer.compare(Buffer.from(left.name,'utf8'),Buffer.from(right.name,'utf8'))
+      ||left.oid-right.oid;
+    databases.sort(byNameOid);roles.sort(byNameOid);
+    memberships.sort((left,right)=>left.roleOid-right.roleOid||left.memberOid-right.memberOid||left.grantorOid-right.grantorOid);
+    const databaseText=JSON.stringify(databases),roleText=JSON.stringify(roles),membershipText=JSON.stringify(memberships);
+    const canonicalBytes=Buffer.byteLength(databaseText,'utf8')+Buffer.byteLength(roleText,'utf8')
+      +Buffer.byteLength(membershipText,'utf8');
+    ownedRequireV1(ownedIntegerV1(canonicalBytes,0,65536));
+    const databaseBaselineSha256=createHash('sha256').update(databaseText,'utf8').digest('hex');
+    const roleBaselineSha256=createHash('sha256').update(roleText,'utf8').digest('hex');
+    const membershipBaselineSha256=createHash('sha256').update(membershipText,'utf8').digest('hex');
+    ownedRequireV1(probeHexV1(databaseBaselineSha256)&&probeHexV1(roleBaselineSha256)&&probeHexV1(membershipBaselineSha256));
+    return freezeOwnedDataV1({
+      databases,roles,memberships,canonicalBytes,databaseBaselineSha256,roleBaselineSha256,membershipBaselineSha256,
+    });
+  }catch{throw probeFrameRefusalV1();}
+}
+
 function decodeOwnedDataV1(bytes,normalize,arity){
   try{
     ownedRequireV1(arity===1&&!types.isProxy(bytes)&&Buffer.isBuffer(bytes));

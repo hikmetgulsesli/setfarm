@@ -1955,7 +1955,8 @@ function ownedNewData(){return {state:'source-mismatch-refused',maintenance:owne
   close:'fulfilled',closedGetter:'refused'};}
 function ownedSetupData(){return {schema:'setfarm.manual-orphan-runner-setup.v1',run:OWN_C,
   constructor:ownedProcessData(101,100),runner:ownedProcessData(102,101),server:ownedProcessData(103,101),
-  source:ownedSourceData(),cluster:ownedClusterData(),adminPassword:OWN_H};}
+  source:ownedSourceData(),cluster:ownedClusterData(),
+  constructorAdminBackend:{pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'},adminPassword:OWN_H};}
 function ownedPhaseData(purpose){
   const mechanical=purpose==='old_entry_positive'||purpose==='new_entry_refusal';
   const input=purpose==='provision'?{adminPassword:OWN_H}:purpose==='activate'?
@@ -2006,8 +2007,11 @@ const OWN_OLD_WIRE='{"state":"old-entry-verified","maintenance":'+OWN_M_WIRE+',"
   +',"installationId":"'+OWN_ID+'","sameClient":true,"entryAssert":true,"databaseAssert":true,"close":"fulfilled","closedGetter":"refused"}';
 const OWN_NEW_WIRE='{"state":"source-mismatch-refused","maintenance":'+OWN_M_WIRE+',"target":'+OWN_T_WIRE
   +',"installationId":"'+OWN_ID+'","mismatch":"maintenance-sha-vs-target-origin","close":"fulfilled","closedGetter":"refused"}';
-const OWN_SETUP_WIRE='{"schema":"setfarm.manual-orphan-runner-setup.v1","run":"'+OWN_C+'","constructor":'+OWN_CON_WIRE
+const OWN_SETUP_OLD_WIRE='{"schema":"setfarm.manual-orphan-runner-setup.v1","run":"'+OWN_C+'","constructor":'+OWN_CON_WIRE
   +',"runner":'+OWN_RUN_WIRE+',"server":'+OWN_SERVER_WIRE+',"source":'+OWN_SOURCE_WIRE+',"cluster":'+OWN_CLUSTER_WIRE+',"adminPassword":"'+OWN_H+'"}\n';
+// Coordinated unavailable setup-v1 refinement; old bytes above remain a negative oracle.
+const OWN_SETUP_WIRE='{"schema":"setfarm.manual-orphan-runner-setup.v1","run":"'+OWN_C+'","constructor":'+OWN_CON_WIRE
+  +',"runner":'+OWN_RUN_WIRE+',"server":'+OWN_SERVER_WIRE+',"source":'+OWN_SOURCE_WIRE+',"cluster":'+OWN_CLUSTER_WIRE+',"constructorAdminBackend":{"pid":104,"backendStartedAtUTC":"2026-10-21T00:00:00.234567Z"},"adminPassword":"'+OWN_H+'"}\n';
 const OWN_PHASE_HEAD='{"schema":"setfarm.manual-orphan-owned-phase.v1","run":"'+OWN_C+'","constructor":'+OWN_CON_WIRE+',"runner":'+OWN_RUN_WIRE;
 const OWN_PHASE_TAIL=',"server":'+OWN_SERVER_WIRE+',"source":'+OWN_SOURCE_WIRE+',"cluster":'+OWN_CLUSTER_WIRE+',"installations":'+OWN_DIR_WIRE;
 const OWN_RESULT_HEAD='{"schema":"setfarm.manual-orphan-owned-phase-result.v1","run":"'+OWN_C+'","purpose":';
@@ -3890,4 +3894,1382 @@ test('Task3 I1 selective stdout.end failure still attempts binds and drains all 
 });
 test('Task3 I1 selective fd4.finish failure still attempts binds and drains all safe channels',async()=>{task3ContractsV1();
   await task3SelectiveBindingV1('fd4','finish');
+});
+
+// Task4A TESTS ONLY: real pure DATA namespace, no SQL/session/Source authority.
+// The first statement of every canonicalizer test checks the future export.
+function task4aCanonicalizerV1(){
+  assert.ok(helper,'real helper namespace is required');
+  assert.equal(typeof helper.canonicalizeManualOrphanClusterBaselineV1,'function',
+    'Task4A absent pure DATA API: canonicalizeManualOrphanClusterBaselineV1');
+  return helper.canonicalizeManualOrphanClusterBaselineV1;
+}
+function task4aCatalogV1(){return {
+  databases:[
+    {name:'template1',oid:1,ownerOid:3,allowConnections:true,connectionLimit:2147483647},
+    {name:'postgres',oid:5,ownerOid:1,allowConnections:true,connectionLimit:-1},
+    {name:'template0',oid:4,ownerOid:1,allowConnections:false,connectionLimit:0},
+  ],
+  roles:[
+    {name:'root',oid:1,superuser:true,inherit:false,createRole:true,createDb:false,
+      login:true,replication:false,bypassRls:true,connectionLimit:-1,validUntilUTC:null},
+    {name:'z',oid:2,superuser:false,inherit:false,createRole:false,createDb:false,
+      login:false,replication:false,bypassRls:false,connectionLimit:2147483647,validUntilUTC:'infinity'},
+    {name:'A',oid:3,superuser:false,inherit:true,createRole:false,createDb:true,
+      login:false,replication:true,bypassRls:false,connectionLimit:0,validUntilUTC:'2024-02-29T23:59:59.123456Z'},
+  ],
+  memberships:[
+    {roleOid:3,memberOid:1,grantorOid:1,adminOption:true,inheritOption:true,setOption:false},
+    {roleOid:1,memberOid:2,grantorOid:3,adminOption:true,inheritOption:false,setOption:true},
+    {roleOid:1,memberOid:2,grantorOid:1,adminOption:false,inheritOption:true,setOption:false},
+  ],
+};}
+// Literal sorted strings, byte counts and SHA256s calculated independently of
+// the helper. Delimiters/escapes count; no envelope or final LF is hashed.
+const TASK4A_DB_JSON_V1='[{"name":"postgres","oid":5,"ownerOid":1,"allowConnections":true,"connectionLimit":-1},{"name":"template0","oid":4,"ownerOid":1,"allowConnections":false,"connectionLimit":0},{"name":"template1","oid":1,"ownerOid":3,"allowConnections":true,"connectionLimit":2147483647}]';
+const TASK4A_ROLE_JSON_V1='[{"name":"A","oid":3,"superuser":false,"inherit":true,"createRole":false,"createDb":true,"login":false,"replication":true,"bypassRls":false,"connectionLimit":0,"validUntilUTC":"2024-02-29T23:59:59.123456Z"},{"name":"root","oid":1,"superuser":true,"inherit":false,"createRole":true,"createDb":false,"login":true,"replication":false,"bypassRls":true,"connectionLimit":-1,"validUntilUTC":null},{"name":"z","oid":2,"superuser":false,"inherit":false,"createRole":false,"createDb":false,"login":false,"replication":false,"bypassRls":false,"connectionLimit":2147483647,"validUntilUTC":"infinity"}]';
+const TASK4A_MEM_JSON_V1='[{"roleOid":1,"memberOid":2,"grantorOid":1,"adminOption":false,"inheritOption":true,"setOption":false},{"roleOid":1,"memberOid":2,"grantorOid":3,"adminOption":true,"inheritOption":false,"setOption":true},{"roleOid":3,"memberOid":1,"grantorOid":1,"adminOption":true,"inheritOption":true,"setOption":false}]';
+function task4aLiteralOutputV1(){return {
+  databases:JSON.parse(TASK4A_DB_JSON_V1),roles:JSON.parse(TASK4A_ROLE_JSON_V1),memberships:JSON.parse(TASK4A_MEM_JSON_V1),
+  canonicalBytes:1164,
+  databaseBaselineSha256:'bb76048d47ee235365f864509ed15cad36b1020c013aae18ef35f1fd7de32cce',
+  roleBaselineSha256:'805e3de5d7926e50e6c566e021110b654408c01aa45c8996e2eb4616b2150a3e',
+  membershipBaselineSha256:'1cd136273a1cffdab688441c0298d89f29a3d3866205c919350b8710b14156e8',
+};}
+function task4aFrozenTreeV1(value){
+  assert.equal(Object.isFrozen(value),true);
+  assert.equal(Object.getPrototypeOf(value),Array.isArray(value)?Array.prototype:Object.prototype);
+  const keys=Object.keys(value),own=Reflect.ownKeys(value);
+  assert.deepEqual(own,Array.isArray(value)?[...keys,'length']:keys,'no hidden keys symbols or methods');
+  for(const key of keys){
+    const descriptor=Object.getOwnPropertyDescriptor(value,key);
+    assert.equal(descriptor.enumerable,true);assert.equal(Object.hasOwn(descriptor,'value'),true);
+    const item=descriptor.value;if(item!==null&&typeof item==='object')task4aFrozenTreeV1(item);
+  }
+}
+function task4aReverseKeysV1(value){
+  if(Array.isArray(value))return value.map(task4aReverseKeysV1);
+  return value!==null&&typeof value==='object'?
+    Object.fromEntries(Object.entries(value).reverse().map(([key,item])=>[key,task4aReverseKeysV1(item)])):value;
+}
+function task4aTrapV1(value,hit){return new Proxy(value,{
+  get(){hit();throw Error('private get');},getPrototypeOf(){hit();throw Error('private proto');},
+  ownKeys(){hit();throw Error('private keys');},getOwnPropertyDescriptor(){hit();throw Error('private descriptor');},
+});}
+function task4aRefusedV1(normalize,value,label){
+  const first=frameRefusedV1(()=>normalize(value),label),second=frameRefusedV1(()=>normalize(value),label+' repeat');
+  assert.notEqual(first,second,'every refusal creates a fresh Error');
+  assert.equal(Object.hasOwn(first,'cause'),false,'no private cause escapes');
+  assert.deepEqual(Object.keys(first),[],'no private data is attached');
+}
+function task4aWideCatalogV1(){
+  const value=task4aCatalogV1();value.databases.forEach(row=>{row.ownerOid=1;});
+  // Explicit finite128/256 catalog fixtures; no random or Cartesian generation.
+  value.roles=Array.from({length:128},(_,index)=>({...value.roles[1],oid:index+1,
+    name:'r'+String(index).padStart(3,'0'),connectionLimit:-1,validUntilUTC:null}));
+  value.memberships=Array.from({length:256},(_,index)=>({roleOid:1,memberOid:2+index%127,
+    grantorOid:1+Math.floor(index/127),adminOption:false,inheritOption:true,setOption:false}));
+  return value;
+}
+function task4aBoundaryCatalogV1(){
+  const value=task4aWideCatalogV1();
+  // 50891 unpadded bytes +124*59*2 quote bytes +6*2+1 =65536.
+  for(let index=0;index<124;index++)value.roles[index].name+='"'.repeat(59);
+  value.roles[124].name+='"'.repeat(6)+'x';
+  return value;
+}
+
+test('Task4A canonical API is synchronous exactarity1 and checks call arity before reflecting input',()=>{
+  const normalize=task4aCanonicalizerV1();assert.equal(normalize.length,1);let hits=0;
+  const poison=task4aTrapV1({},()=>{hits++;});
+  const a=frameRefusedV1(()=>normalize(),'absent argument');
+  const b=frameRefusedV1(()=>normalize(poison,undefined),'surplus argument before reflection');
+  frameRefusedV1(()=>normalize(poison,()=>{hits++;}),'callback has no authority');
+  assert.notEqual(a,b);assert.equal(hits,0);
+  const result=normalize(task4aCatalogV1());assert.equal(typeof result.then,'undefined');
+});
+test('Task4A canonical output matches independent sorted bytes ordered keys counts and three complete digests',()=>{
+  const normalize=task4aCanonicalizerV1(),output=normalize(task4aCatalogV1());
+  assert.deepEqual(output,task4aLiteralOutputV1());
+  assert.deepEqual(Object.keys(output),['databases','roles','memberships','canonicalBytes',
+    'databaseBaselineSha256','roleBaselineSha256','membershipBaselineSha256']);
+  assert.equal(JSON.stringify(output.databases),TASK4A_DB_JSON_V1);
+  assert.equal(JSON.stringify(output.roles),TASK4A_ROLE_JSON_V1);
+  assert.equal(JSON.stringify(output.memberships),TASK4A_MEM_JSON_V1);
+  assert.deepEqual(Object.keys(output.databases[0]),['name','oid','ownerOid','allowConnections','connectionLimit']);
+  assert.deepEqual(Object.keys(output.roles[0]),['name','oid','superuser','inherit','createRole','createDb','login',
+    'replication','bypassRls','connectionLimit','validUntilUTC']);
+  assert.deepEqual(Object.keys(output.memberships[0]),['roleOid','memberOid','grantorOid','adminOption','inheritOption','setOption']);
+});
+test('Task4A canonical normalization ignores input key insertion and catalog row order',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aReverseKeysV1(task4aCatalogV1());
+  value.databases.reverse();value.roles.reverse();value.memberships.reverse();
+  assert.deepEqual(normalize(value),task4aLiteralOutputV1());
+});
+test('Task4A canonical result is detached deeply frozen new each call and leaves caller fully mutable',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1(),before=structuredClone(value);
+  const first=normalize(value),second=normalize(value);assert.deepEqual(value,before);
+  task4aFrozenTreeV1(first);task4aFrozenTreeV1(second);assert.notEqual(first,second);
+  for(const key of ['databases','roles','memberships']){
+    assert.notEqual(first[key],second[key]);assert.notEqual(first[key],value[key]);
+    assert.equal(Object.isFrozen(value[key]),false);
+    for(const row of first[key])assert.ok(!value[key].includes(row)&&!second[key].includes(row));
+    for(const row of value[key])assert.equal(Object.isFrozen(row),false);
+  }
+  assert.equal(Object.isFrozen(value),false);value.roles[0].name='changed';value.databases.reverse();
+  value.memberships[0].adminOption=false;assert.deepEqual(first,task4aLiteralOutputV1());
+  assert.throws(()=>{first.roles[0].name='changed';},TypeError);
+});
+test('Task4A canonical UTF8 sorting preserves numeric case whitespace normalization and supplementary bytes',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1();
+  const names=['\u{10000}','\ue000','é','e\u0301','a','A','10','2',' root ','\n','quote"slash\\'];
+  value.roles=names.map((name,index)=>({...value.roles[0],name,oid:index+1}));
+  const output=normalize(value);
+  assert.deepEqual(output.roles.map(row=>row.name),['\n',' root ','10','2','A','a','e\u0301','quote"slash\\','é','\ue000','\u{10000}']);
+  assert.equal(output.roles.find(row=>row.name==='e\u0301').oid,4);
+  assert.equal(output.roles.find(row=>row.name==='é').oid,3);
+  assert.equal(output.canonicalBytes,Buffer.byteLength(JSON.stringify(output.databases),'utf8')
+    +Buffer.byteLength(JSON.stringify(output.roles),'utf8')+Buffer.byteLength(JSON.stringify(output.memberships),'utf8'));
+});
+test('Task4A canonical accepts nonempty single role and empty memberships without guessed stock catalog count',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1();
+  value.roles=[value.roles[0]];value.memberships=[];value.databases.forEach(row=>{row.ownerOid=1;});
+  const output=normalize(value);assert.equal(output.roles.length,1);assert.deepEqual(output.memberships,[]);
+  assert.equal(output.membershipBaselineSha256,'4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945');
+});
+test('Task4A canonical preserves independent catalog OID namespaces and permitted grantor equalities',()=>{
+  const normalize=task4aCanonicalizerV1(),output=normalize(task4aCatalogV1());
+  assert.equal(output.databases[2].oid,output.roles[1].oid);
+  assert.equal(output.memberships[0].grantorOid,output.memberships[0].roleOid);
+  assert.equal(output.memberships[2].grantorOid,output.memberships[2].memberOid);
+  assert.equal(output.memberships.filter(row=>row.roleOid===1&&row.memberOid===2).length,2);
+});
+test('Task4A canonical accepts finite128 role256 membership ceilings with complete references',()=>{
+  const normalize=task4aCanonicalizerV1(),output=normalize(task4aWideCatalogV1());
+  assert.equal(output.roles.length,128);assert.equal(output.memberships.length,256);assert.equal(output.canonicalBytes,50891);
+});
+test('Task4A canonical accepts exactly65536 UTF8 bytes including escaped names before hashing',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aBoundaryCatalogV1();
+  assert.equal(value.roles[0].name.length,63);assert.equal(value.roles[124].name.length,11);
+  const output=normalize(value);assert.equal(output.canonicalBytes,65536);
+  assert.equal(output.roles.length,128);assert.equal(output.memberships.length,256);
+});
+test('Task4A canonical refuses65537 UTF8 bytes despite all catalog row name and count bounds',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aBoundaryCatalogV1();value.roles[125].name+='x';
+  assert.equal(value.roles.length,128);assert.equal(value.memberships.length,256);
+  task4aRefusedV1(normalize,value,'canonical byte overflow');
+});
+
+test('Task4A canonical refuses null on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=null;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog null");assert.equal(hits,0);
+});
+test('Task4A canonical refuses null prototype on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(Object.create(null),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog null prototype");assert.equal(hits,0);
+});
+test('Task4A canonical refuses class on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(new (class CatalogRecord {})(),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog class");assert.equal(hits,0);
+});
+test('Task4A canonical refuses Date on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(new Date(0),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog Date");assert.equal(hits,0);
+});
+test('Task4A canonical refuses Buffer on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(Buffer.alloc(0),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog Buffer");assert.equal(hits,0);
+});
+test('Task4A canonical refuses array on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign([],original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog array");assert.equal(hits,0);
+});
+test('Task4A canonical refuses symbol on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target[Symbol('hidden')]=1;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog symbol");assert.equal(hits,0);
+});
+test('Task4A canonical refuses nonenumerable on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,'hidden',{value:1,enumerable:false});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog nonenumerable");assert.equal(hits,0);
+});
+test('Task4A canonical refuses getter on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,key,{enumerable:true,get(){hits++;return old;}});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog getter");assert.equal(hits,0);
+});
+test('Task4A canonical refuses setter on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,key,{enumerable:true,set(){hits++;}});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog setter");assert.equal(hits,0);
+});
+test('Task4A canonical refuses proxy on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=task4aTrapV1(original,()=>{hits++;});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog proxy");assert.equal(hits,0);
+});
+test('Task4A canonical refuses missing key on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  delete target[key];
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog missing key");assert.equal(hits,0);
+});
+test('Task4A canonical refuses extra key on catalog without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=[],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target.permission=true;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"catalog extra key");assert.equal(hits,0);
+});
+test('Task4A canonical refuses null on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=null;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row null");assert.equal(hits,0);
+});
+test('Task4A canonical refuses null prototype on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(Object.create(null),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row null prototype");assert.equal(hits,0);
+});
+test('Task4A canonical refuses class on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(new (class CatalogRecord {})(),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row class");assert.equal(hits,0);
+});
+test('Task4A canonical refuses Date on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(new Date(0),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row Date");assert.equal(hits,0);
+});
+test('Task4A canonical refuses Buffer on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(Buffer.alloc(0),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row Buffer");assert.equal(hits,0);
+});
+test('Task4A canonical refuses array on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign([],original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row array");assert.equal(hits,0);
+});
+test('Task4A canonical refuses symbol on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target[Symbol('hidden')]=1;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row symbol");assert.equal(hits,0);
+});
+test('Task4A canonical refuses nonenumerable on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,'hidden',{value:1,enumerable:false});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row nonenumerable");assert.equal(hits,0);
+});
+test('Task4A canonical refuses getter on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,key,{enumerable:true,get(){hits++;return old;}});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row getter");assert.equal(hits,0);
+});
+test('Task4A canonical refuses setter on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,key,{enumerable:true,set(){hits++;}});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row setter");assert.equal(hits,0);
+});
+test('Task4A canonical refuses proxy on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=task4aTrapV1(original,()=>{hits++;});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row proxy");assert.equal(hits,0);
+});
+test('Task4A canonical refuses missing key on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  delete target[key];
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row missing key");assert.equal(hits,0);
+});
+test('Task4A canonical refuses extra key on database row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["databases",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target.permission=true;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"database row extra key");assert.equal(hits,0);
+});
+test('Task4A canonical refuses null on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=null;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row null");assert.equal(hits,0);
+});
+test('Task4A canonical refuses null prototype on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(Object.create(null),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row null prototype");assert.equal(hits,0);
+});
+test('Task4A canonical refuses class on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(new (class CatalogRecord {})(),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row class");assert.equal(hits,0);
+});
+test('Task4A canonical refuses Date on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(new Date(0),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row Date");assert.equal(hits,0);
+});
+test('Task4A canonical refuses Buffer on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(Buffer.alloc(0),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row Buffer");assert.equal(hits,0);
+});
+test('Task4A canonical refuses array on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign([],original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row array");assert.equal(hits,0);
+});
+test('Task4A canonical refuses symbol on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target[Symbol('hidden')]=1;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row symbol");assert.equal(hits,0);
+});
+test('Task4A canonical refuses nonenumerable on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,'hidden',{value:1,enumerable:false});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row nonenumerable");assert.equal(hits,0);
+});
+test('Task4A canonical refuses getter on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,key,{enumerable:true,get(){hits++;return old;}});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row getter");assert.equal(hits,0);
+});
+test('Task4A canonical refuses setter on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,key,{enumerable:true,set(){hits++;}});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row setter");assert.equal(hits,0);
+});
+test('Task4A canonical refuses proxy on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=task4aTrapV1(original,()=>{hits++;});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row proxy");assert.equal(hits,0);
+});
+test('Task4A canonical refuses missing key on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  delete target[key];
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row missing key");assert.equal(hits,0);
+});
+test('Task4A canonical refuses extra key on role row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["roles",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target.permission=true;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"role row extra key");assert.equal(hits,0);
+});
+test('Task4A canonical refuses null on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=null;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row null");assert.equal(hits,0);
+});
+test('Task4A canonical refuses null prototype on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(Object.create(null),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row null prototype");assert.equal(hits,0);
+});
+test('Task4A canonical refuses class on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(new (class CatalogRecord {})(),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row class");assert.equal(hits,0);
+});
+test('Task4A canonical refuses Date on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(new Date(0),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row Date");assert.equal(hits,0);
+});
+test('Task4A canonical refuses Buffer on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign(Buffer.alloc(0),original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row Buffer");assert.equal(hits,0);
+});
+test('Task4A canonical refuses array on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=Object.assign([],original);
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row array");assert.equal(hits,0);
+});
+test('Task4A canonical refuses symbol on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target[Symbol('hidden')]=1;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row symbol");assert.equal(hits,0);
+});
+test('Task4A canonical refuses nonenumerable on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,'hidden',{value:1,enumerable:false});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row nonenumerable");assert.equal(hits,0);
+});
+test('Task4A canonical refuses getter on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,key,{enumerable:true,get(){hits++;return old;}});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row getter");assert.equal(hits,0);
+});
+test('Task4A canonical refuses setter on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  Object.defineProperty(target,key,{enumerable:true,set(){hits++;}});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row setter");assert.equal(hits,0);
+});
+test('Task4A canonical refuses proxy on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target=task4aTrapV1(original,()=>{hits++;});
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row proxy");assert.equal(hits,0);
+});
+test('Task4A canonical refuses missing key on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  delete target[key];
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row missing key");assert.equal(hits,0);
+});
+test('Task4A canonical refuses extra key on membership row without supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),keys=["memberships",0],original=ownedAt(value,keys),key=Object.keys(original)[0];
+  let target=original,hits=0;const old=original[key];
+  target.permission=true;
+  if(keys.length)ownedSet(value,keys,target);
+  task4aRefusedV1(normalize,keys.length?value:target,"membership row extra key");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases null prototype before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  Object.setPrototypeOf(target,null);
+  value.databases=target;task4aRefusedV1(normalize,value,"databases null prototype");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases subclass before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  target=new (class CatalogRows extends Array {})(...original);
+  value.databases=target;task4aRefusedV1(normalize,value,"databases subclass");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases hole before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  delete target[0];
+  value.databases=target;task4aRefusedV1(normalize,value,"databases hole");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases nonenumerable index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  Object.defineProperty(target,'0',{value:first,enumerable:false});
+  value.databases=target;task4aRefusedV1(normalize,value,"databases nonenumerable index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases accessor index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  Object.defineProperty(target,'0',{enumerable:true,get(){hits++;return first;}});
+  value.databases=target;task4aRefusedV1(normalize,value,"databases accessor index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases extra property before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  target.permission=true;
+  value.databases=target;task4aRefusedV1(normalize,value,"databases extra property");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases symbol before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  target[Symbol('hidden')]=1;
+  value.databases=target;task4aRefusedV1(normalize,value,"databases symbol");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases proxy before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  target=task4aTrapV1(original,()=>{hits++;});
+  value.databases=target;task4aRefusedV1(normalize,value,"databases proxy");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases inherited index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  delete target[0];Object.setPrototypeOf(target,Object.assign(Object.create(Array.prototype),{0:first}));
+  value.databases=target;task4aRefusedV1(normalize,value,"databases inherited index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases iterator before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  target[Symbol.iterator]=()=>{hits++;throw Error('iterator');};
+  value.databases=target;task4aRefusedV1(normalize,value,"databases iterator");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases sort method before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  target.sort=()=>{hits++;throw Error('sort');};
+  value.databases=target;task4aRefusedV1(normalize,value,"databases sort method");assert.equal(hits,0);
+});
+test('Task4A canonical refuses databases toJSON before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.databases;let target=original,hits=0;const first=original[0];
+  target.toJSON=()=>{hits++;throw Error('toJSON');};
+  value.databases=target;task4aRefusedV1(normalize,value,"databases toJSON");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles null prototype before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  Object.setPrototypeOf(target,null);
+  value.roles=target;task4aRefusedV1(normalize,value,"roles null prototype");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles subclass before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  target=new (class CatalogRows extends Array {})(...original);
+  value.roles=target;task4aRefusedV1(normalize,value,"roles subclass");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles hole before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  delete target[0];
+  value.roles=target;task4aRefusedV1(normalize,value,"roles hole");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles nonenumerable index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  Object.defineProperty(target,'0',{value:first,enumerable:false});
+  value.roles=target;task4aRefusedV1(normalize,value,"roles nonenumerable index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles accessor index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  Object.defineProperty(target,'0',{enumerable:true,get(){hits++;return first;}});
+  value.roles=target;task4aRefusedV1(normalize,value,"roles accessor index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles extra property before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  target.permission=true;
+  value.roles=target;task4aRefusedV1(normalize,value,"roles extra property");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles symbol before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  target[Symbol('hidden')]=1;
+  value.roles=target;task4aRefusedV1(normalize,value,"roles symbol");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles proxy before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  target=task4aTrapV1(original,()=>{hits++;});
+  value.roles=target;task4aRefusedV1(normalize,value,"roles proxy");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles inherited index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  delete target[0];Object.setPrototypeOf(target,Object.assign(Object.create(Array.prototype),{0:first}));
+  value.roles=target;task4aRefusedV1(normalize,value,"roles inherited index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles iterator before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  target[Symbol.iterator]=()=>{hits++;throw Error('iterator');};
+  value.roles=target;task4aRefusedV1(normalize,value,"roles iterator");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles sort method before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  target.sort=()=>{hits++;throw Error('sort');};
+  value.roles=target;task4aRefusedV1(normalize,value,"roles sort method");assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles toJSON before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.roles;let target=original,hits=0;const first=original[0];
+  target.toJSON=()=>{hits++;throw Error('toJSON');};
+  value.roles=target;task4aRefusedV1(normalize,value,"roles toJSON");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships null prototype before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  Object.setPrototypeOf(target,null);
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships null prototype");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships subclass before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  target=new (class CatalogRows extends Array {})(...original);
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships subclass");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships hole before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  delete target[0];
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships hole");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships nonenumerable index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  Object.defineProperty(target,'0',{value:first,enumerable:false});
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships nonenumerable index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships accessor index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  Object.defineProperty(target,'0',{enumerable:true,get(){hits++;return first;}});
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships accessor index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships extra property before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  target.permission=true;
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships extra property");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships symbol before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  target[Symbol('hidden')]=1;
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships symbol");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships proxy before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  target=task4aTrapV1(original,()=>{hits++;});
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships proxy");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships inherited index before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  delete target[0];Object.setPrototypeOf(target,Object.assign(Object.create(Array.prototype),{0:first}));
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships inherited index");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships iterator before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  target[Symbol.iterator]=()=>{hits++;throw Error('iterator');};
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships iterator");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships sort method before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  target.sort=()=>{hits++;throw Error('sort');};
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships sort method");assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships toJSON before supplied behavior',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1(),original=value.memberships;let target=original,hits=0;const first=original[0];
+  target.toJSON=()=>{hits++;throw Error('toJSON');};
+  value.memberships=target;task4aRefusedV1(normalize,value,"memberships toJSON");assert.equal(hits,0);
+});
+test('Task4A canonical refuses two database rows as bounded catalog overflow or underflow',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.databases.pop();
+  task4aRefusedV1(normalize,value,"two database rows");
+});
+test('Task4A canonical refuses fourth database row as bounded catalog overflow or underflow',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.databases.push({name:'other',oid:6,ownerOid:1,allowConnections:true,connectionLimit:-1});
+  task4aRefusedV1(normalize,value,"fourth database row");
+});
+test('Task4A canonical refuses empty roles as bounded catalog overflow or underflow',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.roles=[];
+  task4aRefusedV1(normalize,value,"empty roles");
+});
+test('Task4A canonical refuses 129th role as bounded catalog overflow or underflow',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aWideCatalogV1();value.roles.push({...value.roles[0],oid:129,name:'r128'});
+  task4aRefusedV1(normalize,value,"129th role");
+});
+test('Task4A canonical refuses 257th membership as bounded catalog overflow or underflow',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aWideCatalogV1();value.memberships.push({roleOid:1,memberOid:2,grantorOid:4,adminOption:true,inheritOption:false,setOption:true});
+  task4aRefusedV1(normalize,value,"257th membership");
+});
+test('Task4A canonical refuses array length4294967295 as bounded catalog overflow or underflow',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.roles.length=4294967295;
+  task4aRefusedV1(normalize,value,"array length4294967295");
+});
+test('Task4A canonical refuses nonnumber and out of range database oid values',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,-1,-0,4294967296,1.5,NaN,Infinity,-Infinity,'1',1n,null,undefined,new Number(1)]){
+    const value=task4aCatalogV1();ownedSet(value,["databases", 0, "oid"],bad);
+    task4aRefusedV1(normalize,value,'database oid');
+  }
+});
+test('Task4A canonical refuses nonnumber and out of range database owner values',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,-1,-0,4294967296,1.5,NaN,Infinity,-Infinity,'1',1n,null,undefined,new Number(1)]){
+    const value=task4aCatalogV1();ownedSet(value,["databases", 0, "ownerOid"],bad);
+    task4aRefusedV1(normalize,value,'database owner');
+  }
+});
+test('Task4A canonical refuses nonnumber and out of range role oid values',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,-1,-0,4294967296,1.5,NaN,Infinity,-Infinity,'1',1n,null,undefined,new Number(1)]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "oid"],bad);
+    task4aRefusedV1(normalize,value,'role oid');
+  }
+});
+test('Task4A canonical refuses nonnumber and out of range membership role values',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,-1,-0,4294967296,1.5,NaN,Infinity,-Infinity,'1',1n,null,undefined,new Number(1)]){
+    const value=task4aCatalogV1();ownedSet(value,["memberships", 0, "roleOid"],bad);
+    task4aRefusedV1(normalize,value,'membership role');
+  }
+});
+test('Task4A canonical refuses nonnumber and out of range membership member values',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,-1,-0,4294967296,1.5,NaN,Infinity,-Infinity,'1',1n,null,undefined,new Number(1)]){
+    const value=task4aCatalogV1();ownedSet(value,["memberships", 0, "memberOid"],bad);
+    task4aRefusedV1(normalize,value,'membership member');
+  }
+});
+test('Task4A canonical refuses nonnumber and out of range membership grantor values',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,-1,-0,4294967296,1.5,NaN,Infinity,-Infinity,'1',1n,null,undefined,new Number(1)]){
+    const value=task4aCatalogV1();ownedSet(value,["memberships", 0, "grantorOid"],bad);
+    task4aRefusedV1(normalize,value,'membership grantor');
+  }
+});
+test('Task4A canonical refuses invalid database limit without integer coercion',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [-2,-0,2147483648,1.5,NaN,Infinity,-Infinity,'-1',null,undefined,1n]){
+    const value=task4aCatalogV1();ownedSet(value,["databases", 0, "connectionLimit"],bad);
+    task4aRefusedV1(normalize,value,'database limit');
+  }
+});
+test('Task4A canonical refuses invalid role limit without integer coercion',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [-2,-0,2147483648,1.5,NaN,Infinity,-Infinity,'-1',null,undefined,1n]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "connectionLimit"],bad);
+    task4aRefusedV1(normalize,value,'role limit');
+  }
+});
+test('Task4A canonical refuses nonboolean database allowConnections',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["databases", 0, "allowConnections"],bad);
+    task4aRefusedV1(normalize,value,'database allowConnections');
+  }
+});
+test('Task4A canonical refuses nonboolean role superuser',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "superuser"],bad);
+    task4aRefusedV1(normalize,value,'role superuser');
+  }
+});
+test('Task4A canonical refuses nonboolean role inherit',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "inherit"],bad);
+    task4aRefusedV1(normalize,value,'role inherit');
+  }
+});
+test('Task4A canonical refuses nonboolean role createRole',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "createRole"],bad);
+    task4aRefusedV1(normalize,value,'role createRole');
+  }
+});
+test('Task4A canonical refuses nonboolean role createDb',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "createDb"],bad);
+    task4aRefusedV1(normalize,value,'role createDb');
+  }
+});
+test('Task4A canonical refuses nonboolean role login',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "login"],bad);
+    task4aRefusedV1(normalize,value,'role login');
+  }
+});
+test('Task4A canonical refuses nonboolean role replication',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "replication"],bad);
+    task4aRefusedV1(normalize,value,'role replication');
+  }
+});
+test('Task4A canonical refuses nonboolean role bypassRls',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["roles", 0, "bypassRls"],bad);
+    task4aRefusedV1(normalize,value,'role bypassRls');
+  }
+});
+test('Task4A canonical refuses nonboolean membership adminOption',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["memberships", 0, "adminOption"],bad);
+    task4aRefusedV1(normalize,value,'membership adminOption');
+  }
+});
+test('Task4A canonical refuses nonboolean membership inheritOption',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["memberships", 0, "inheritOption"],bad);
+    task4aRefusedV1(normalize,value,'membership inheritOption');
+  }
+});
+test('Task4A canonical refuses nonboolean membership setOption',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const bad of [0,1,'true',null,undefined,new Boolean(false)]){
+    const value=task4aCatalogV1();ownedSet(value,["memberships", 0, "setOption"],bad);
+    task4aRefusedV1(normalize,value,'membership setOption');
+  }
+});
+test('Task4A canonical refuses duplicate database names with distinct OIDs',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.databases[0].name='postgres';
+  task4aRefusedV1(normalize,value,"duplicate database names with distinct OIDs");
+});
+test('Task4A canonical refuses duplicate database OIDs with distinct names',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.databases[0].oid=5;
+  task4aRefusedV1(normalize,value,"duplicate database OIDs with distinct names");
+});
+test('Task4A canonical refuses duplicate role names with distinct OIDs',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.roles[1].name='root';
+  task4aRefusedV1(normalize,value,"duplicate role names with distinct OIDs");
+});
+test('Task4A canonical refuses duplicate role OIDs with distinct names',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.roles[1].oid=1;
+  task4aRefusedV1(normalize,value,"duplicate role OIDs with distinct names");
+});
+test('Task4A canonical refuses duplicate membership triple despite changed flags',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.memberships.push({...value.memberships[0],adminOption:false});
+  task4aRefusedV1(normalize,value,"duplicate membership triple despite changed flags");
+});
+test('Task4A canonical refuses unknown database owner',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.databases[0].ownerOid=99;
+  task4aRefusedV1(normalize,value,"unknown database owner");
+});
+test('Task4A canonical refuses unknown membership role',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.memberships[0].roleOid=99;
+  task4aRefusedV1(normalize,value,"unknown membership role");
+});
+test('Task4A canonical refuses unknown membership member',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.memberships[0].memberOid=99;
+  task4aRefusedV1(normalize,value,"unknown membership member");
+});
+test('Task4A canonical refuses unknown membership grantor',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.memberships[0].grantorOid=99;
+  task4aRefusedV1(normalize,value,"unknown membership grantor");
+});
+test('Task4A canonical refuses self membership',()=>{
+  const normalize=task4aCanonicalizerV1();
+  const value=task4aCatalogV1();value.memberships[0].memberOid=3;
+  task4aRefusedV1(normalize,value,"self membership");
+});
+test('Task4A canonical rejects nonrecord top primitives without coercing them',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const value of [undefined,false,0,'catalog',1n,Symbol('catalog'),()=>{}])task4aRefusedV1(normalize,value,'top primitive');
+});
+test('Task4A canonical accepts OID4294967295 with complete role references',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1();value.roles[0].oid=4294967295;
+  value.databases.forEach(row=>{if(row.ownerOid===1)row.ownerOid=4294967295;});
+  for(const row of value.memberships)for(const key of ['roleOid','memberOid','grantorOid'])if(row[key]===1)row[key]=4294967295;
+  value.databases[1].oid=4294967295;const output=normalize(value);
+  assert.equal(output.roles[1].oid,4294967295);assert.equal(output.databases[0].oid,4294967295);
+  assert.equal(output.memberships.at(-1).roleOid,4294967295);
+});
+test('Task4A canonical preserves role names at1 and63 UTF8 bytes including multibyte names',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const name of ['x','x'.repeat(63),'é'.repeat(31)+'x','\u{10000}'.repeat(15)+'xyz']){
+    const value=task4aCatalogV1();value.roles[0].name=name;
+    assert.equal(normalize(value).roles.some(row=>row.name===name),true);
+  }
+});
+test('Task4A canonical refuses malformed or oversized role names before coercion',()=>{
+  const normalize=task4aCanonicalizerV1();let hits=0;
+  for(const name of ['', 'x'.repeat(64),'é'.repeat(32),'a\0b','\ud800','\udc00','x\ud800y',
+    1,1n,null,undefined,new String('root'),{toString(){hits++;throw Error('coercion');}}]){
+    const value=task4aCatalogV1();value.roles[0].name=name;task4aRefusedV1(normalize,value,'role name');
+  }
+  assert.equal(hits,0);
+});
+test('Task4A canonical refuses database names outside the exact three literals',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const name of ['POSTGRES',' postgres','postgres ','other','',1,new String('postgres')]){
+    const value=task4aCatalogV1();value.databases[1].name=name;task4aRefusedV1(normalize,value,'database name');
+  }
+});
+test('Task4A canonical preserves null infinities and all microseconds across PG year boundaries',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const expiry of [null,'infinity','-infinity','0001-01-01T00:00:00.000001Z',
+    '9999-12-31T23:59:59.999999Z','2000-02-29T12:34:56.123456Z','2026-10-21T00:00:00.000000Z']){
+    const value=task4aCatalogV1();value.roles[0].validUntilUTC=expiry;
+    assert.equal(normalize(value).roles.find(row=>row.name==='root').validUntilUTC,expiry);
+  }
+});
+test('Task4A canonical refuses expiry calendar shape precision year0000 and coercion faults',()=>{
+  const normalize=task4aCanonicalizerV1();
+  for(const expiry of ['0000-01-01T00:00:00.000000Z','1900-02-29T00:00:00.000000Z',
+    '2026-02-30T00:00:00.123456Z','2026-13-01T00:00:00.123456Z','2026-01-01T24:00:00.123456Z',
+    '2026-01-01T00:60:00.123456Z','2026-01-01T00:00:60.123456Z','2026-01-01T00:00:00.123Z',
+    '2026-01-01T00:00:00.1234567Z','2026-01-01 00:00:00.123456Z','2026-01-01T00:00:00.123456z',
+    '2026-01-01T00:00:00.123456+00:00','+010000-01-01T00:00:00.123456Z',
+    'INFINITY','Infinity','-Infinity',0,undefined,new Date(0),new String('infinity')]){
+    const value=task4aCatalogV1();value.roles[0].validUntilUTC=expiry;task4aRefusedV1(normalize,value,'expiry');
+  }
+});
+test('Task4A canonical rejects revoked proxies without reflective traps or private causes',()=>{
+  const normalize=task4aCanonicalizerV1(),revocable=Proxy.revocable({},{});revocable.revoke();
+  task4aRefusedV1(normalize,revocable.proxy,'revoked proxy');
+});
+test('Task4A canonical finite array bounds are checked before indexed getter access',()=>{
+  const normalize=task4aCanonicalizerV1();let hits=0;
+  for(const [key,length] of [['databases',4],['roles',129],['memberships',257]]){
+    const value=task4aCatalogV1();value[key].length=length;
+    Object.defineProperty(value[key],'0',{enumerable:true,get(){hits++;throw Error('index getter');}});
+    task4aRefusedV1(normalize,value,key+' bounds before index');
+  }
+  assert.equal(hits,0);
+});
+// A complete-helper VM has its own Object/Array prototypes. Copy the fixed
+// literal catalog into that realm through native constructors obtained from
+// its real legacy decoder; no callback, copied validator or Source owner fake.
+function task4aRealmCatalogV1(vm){
+  const record=vm.actual.decodeManualOrphanProbeFrameV1(CODEC_EXPECTED_V1);
+  const Plain=Object.getPrototypeOf(record).constructor;
+  const Dense=Object.getPrototypeOf(Plain.getOwnPropertyNames(record)).constructor;
+  const copy=value=>Array.isArray(value)?Dense.from(value,copy):value!==null&&typeof value==='object'?
+    Plain.fromEntries(Object.entries(value).map(([key,item])=>[key,copy(item)])):value;
+  return copy(task4aCatalogV1());
+}
+test('Task4A canonical complete helper DATA call has no IO process timer or owner acquisition',()=>{
+  task4aCanonicalizerV1();const vm=fixedProbeVmV1();
+  const output=vm.actual.canonicalizeManualOrphanClusterBaselineV1(task4aRealmCatalogV1(vm));
+  assert.deepEqual(observedDataV1(output),task4aLiteralOutputV1());
+  assert.deepEqual(vm.timers,[]);vm.assertContained();
+});
+test('Task4A canonical sanitizes actual crypto createHash failure without fallback digest',()=>{
+  task4aCanonicalizerV1();let calls=0;
+  const vm=fixedProbeVmV1({crypto:{createHash(algorithm,...args){
+    assert.equal(algorithm,'sha256');calls++;
+    throw Error('PRIVATE_HASH_FAILURE');
+  }}});
+  task4aRefusedV1(vm.actual.canonicalizeManualOrphanClusterBaselineV1,task4aRealmCatalogV1(vm),'createHash fault');
+  assert.ok(calls>=2&&calls<=6,'each refused call reaches real crypto without unbounded fallback');
+  assert.deepEqual(vm.timers,[]);vm.assertContained();
+});
+test('Task4A canonical sanitizes actual crypto update failure without fallback digest',()=>{
+  task4aCanonicalizerV1();let calls=0;
+  const vm=fixedProbeVmV1({crypto:{createHash(algorithm,...args){
+    assert.equal(algorithm,'sha256');calls++;
+    const hash=createHash(algorithm,...args);
+    hash.update=()=>{throw Error('PRIVATE_HASH_FAILURE');};return hash;
+  }}});
+  task4aRefusedV1(vm.actual.canonicalizeManualOrphanClusterBaselineV1,task4aRealmCatalogV1(vm),'update fault');
+  assert.ok(calls>=2&&calls<=6,'each refused call reaches real crypto without unbounded fallback');
+  assert.deepEqual(vm.timers,[]);vm.assertContained();
+});
+test('Task4A canonical sanitizes actual crypto digest failure without fallback digest',()=>{
+  task4aCanonicalizerV1();let calls=0;
+  const vm=fixedProbeVmV1({crypto:{createHash(algorithm,...args){
+    assert.equal(algorithm,'sha256');calls++;
+    const hash=createHash(algorithm,...args);
+    hash.digest=()=>{throw Error('PRIVATE_HASH_FAILURE');};return hash;
+  }}});
+  task4aRefusedV1(vm.actual.canonicalizeManualOrphanClusterBaselineV1,task4aRealmCatalogV1(vm),'digest fault');
+  assert.ok(calls>=2&&calls<=6,'each refused call reaches real crypto without unbounded fallback');
+  assert.deepEqual(vm.timers,[]);vm.assertContained();
+});
+
+// Setup-only coordinated field development. All phase and result schemas stay
+// unchanged; these assertions are DATA predicates and never ownership proofs.
+test('Task4A setup old independent bytes and old missing member object now refuse',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame');
+  const old=JSON.parse(OWN_SETUP_OLD_WIRE);assert.equal(Object.hasOwn(old,'constructorAdminBackend'),false);
+  frameRefusedV1(()=>encode(old),'old missing backend object');
+  frameRefusedV1(()=>decode(Buffer.from(OWN_SETUP_OLD_WIRE)),'old missing backend bytes');
+});
+test('Task4A setup new exact field and nested order are canonical with independent wire bytes',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame');
+  const value=ownedSetupData(),output=decode(Buffer.from(OWN_SETUP_WIRE));
+  assert.deepEqual(Object.keys(output),['schema','run','constructor','runner','server','source','cluster','constructorAdminBackend','adminPassword']);
+  assert.deepEqual(Object.keys(output.constructorAdminBackend),['pid','backendStartedAtUTC']);
+  assert.deepEqual(encode(value),Buffer.from(OWN_SETUP_WIRE));assert.deepEqual(output,value);
+  assert.equal(Object.isFrozen(output.constructorAdminBackend),true);
+  value.constructorAdminBackend.pid=999;assert.equal(output.constructorAdminBackend.pid,104);
+});
+test('Task4A setup carries backend DATA without invented process PID inequality',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame');
+  for(const pid of [1,101,102,103,2147483647]){
+    const value=ownedSetupData();value.constructorAdminBackend.pid=pid;
+    const want=Buffer.from(OWN_SETUP_WIRE.replace('"constructorAdminBackend":{"pid":104,',
+      '"constructorAdminBackend":{"pid":'+pid+','));
+    assert.deepEqual(encode(value),want);assert.equal(decode(want).constructorAdminBackend.pid,pid);
+  }
+});
+test('Task4A setup refuses backend PID coercions and complete unsafe integer domain',()=>{
+  for(const pid of [0,-0,-1,2147483648,1.5,NaN,Infinity,-Infinity,'104',104n,null,undefined,new Number(104)]){
+    const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData();value.constructorAdminBackend.pid=pid;
+    frameRefusedV1(()=>encode(value),'backend pid encoder');
+    if(typeof pid!=='bigint'&&!(pid instanceof Number))frameRefusedV1(()=>ownedCodec('decode','RunnerSetupFrame')(Buffer.from(JSON.stringify(value)+'\n')),'backend pid decoder');
+  }
+});
+test('Task4A setup preserves PG year1 through9999 and six backend start fractional digits',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),decode=ownedCodec('decode','RunnerSetupFrame');
+  for(const timestamp of ['0001-01-01T00:00:00.000001Z','9999-12-31T23:59:59.999999Z','2000-02-29T12:34:56.123456Z']){
+    const value=ownedSetupData();value.constructorAdminBackend.backendStartedAtUTC=timestamp;
+    const want=Buffer.from(OWN_SETUP_WIRE.replace('2026-10-21T00:00:00.234567Z',timestamp));
+    assert.deepEqual(encode(value),want);assert.equal(decode(want).constructorAdminBackend.backendStartedAtUTC,timestamp);
+  }
+});
+test('Task4A setup refuses backend calendar precision UTC year0000 and timestamp coercions',()=>{
+  for(const timestamp of ['0000-01-01T00:00:00.000000Z','1900-02-29T00:00:00.000000Z',
+    '2026-02-30T00:00:00.234567Z','2026-13-01T00:00:00.234567Z','2026-01-01T24:00:00.234567Z',
+    '2026-01-01T00:60:00.234567Z','2026-01-01T00:00:60.234567Z','2026-10-21T00:00:00.234Z',
+    '2026-10-21T00:00:00.2345670Z','2026-10-21 00:00:00.234567Z','2026-10-21T00:00:00.234567z',
+    '2026-10-21T00:00:00.234567+00:00','+010000-01-01T00:00:00.234567Z','infinity','-infinity',
+    null,undefined,0,new Date(0),new String('2026-10-21T00:00:00.234567Z')]){
+    if(timestamp instanceof String){
+      const value=ownedSetupData();value.constructorAdminBackend.backendStartedAtUTC=timestamp;
+      frameRefusedV1(()=>ownedCodec('encode','RunnerSetupFrame')(value),'boxed timestamp');
+    }else ownedRejectData('RunnerSetupFrame',ownedSetupData,value=>{value.constructorAdminBackend.backendStartedAtUTC=timestamp;},'backend timestamp');
+  }
+});
+test('Task4A setup rejects textual backend PID negative zero at decode',()=>{
+  const decode=ownedCodec('decode','RunnerSetupFrame');
+  const wire=OWN_SETUP_WIRE.replace('"constructorAdminBackend":{"pid":104,','"constructorAdminBackend":{"pid":-0,');
+  frameRefusedV1(()=>decode(Buffer.from(wire)),'backend negative zero wire');
+});
+test('Task4A setup encoder reorders backend keys but decoder rejects noncanonical nested order',()=>{
+  const value=ownedSetupData(),backend=value.constructorAdminBackend;
+  value.constructorAdminBackend={backendStartedAtUTC:backend.backendStartedAtUTC,pid:backend.pid};
+  assert.deepEqual(ownedCodec('encode','RunnerSetupFrame')(value),Buffer.from(OWN_SETUP_WIRE));
+  frameRefusedV1(()=>ownedCodec('decode','RunnerSetupFrame')(Buffer.from(JSON.stringify(value)+'\n')),'backend reversed wire');
+});
+test('Task4A setup wire hash binds backend PID and submillisecond timestamp DATA',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),original=createHash('sha256').update(OWN_SETUP_WIRE).digest('hex');
+  for(const [field,replacement,oldText,newText] of [['pid',105,'"constructorAdminBackend":{"pid":104,','"constructorAdminBackend":{"pid":105,'],
+    ['backendStartedAtUTC','2026-10-21T00:00:00.234568Z','2026-10-21T00:00:00.234567Z','2026-10-21T00:00:00.234568Z']]){
+    const value=ownedSetupData();value.constructorAdminBackend[field]=replacement;
+    const want=Buffer.from(OWN_SETUP_WIRE.replace(oldText,newText)),actual=encode(value);
+    assert.deepEqual(actual,want);const digest=createHash('sha256').update(actual).digest('hex');
+    assert.equal(digest,createHash('sha256').update(want).digest('hex'));assert.notEqual(digest,original);
+  }
+});
+test('Task4A setup rejects getter on new top member before reading supplied backend',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData();let hits=0;
+  Object.defineProperty(value,'constructorAdminBackend',{enumerable:true,get(){hits++;throw Error('private backend');}});
+  frameRefusedV1(()=>encode(value),'top backend getter');assert.equal(hits,0);
+});
+test('Task4A setup refuses null backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  backend=null;
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend null");assert.equal(hits,0);
+});
+test('Task4A setup refuses array backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  backend=Object.assign([],original);
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend array");assert.equal(hits,0);
+});
+test('Task4A setup refuses null prototype backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  backend=Object.assign(Object.create(null),original);
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend null prototype");assert.equal(hits,0);
+});
+test('Task4A setup refuses class backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  backend=Object.assign(new (class BackendData {})(),original);
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend class");assert.equal(hits,0);
+});
+test('Task4A setup refuses symbol backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  backend[Symbol('hidden')]=1;
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend symbol");assert.equal(hits,0);
+});
+test('Task4A setup refuses nonenumerable backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  Object.defineProperty(backend,'hidden',{value:1,enumerable:false});
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend nonenumerable");assert.equal(hits,0);
+});
+test('Task4A setup refuses getter backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  Object.defineProperty(backend,'pid',{enumerable:true,get(){hits++;return pid;}});
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend getter");assert.equal(hits,0);
+});
+test('Task4A setup refuses setter backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  Object.defineProperty(backend,'pid',{enumerable:true,set(){hits++;}});
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend setter");assert.equal(hits,0);
+});
+test('Task4A setup refuses proxy backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  backend=task4aTrapV1(backend,()=>{hits++;});
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend proxy");assert.equal(hits,0);
+});
+test('Task4A setup refuses missing key backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  delete backend.pid;
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend missing key");assert.equal(hits,0);
+});
+test('Task4A setup refuses extra key backend descriptor shape without supplied behavior',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame'),value=ownedSetupData(),original=value.constructorAdminBackend;
+  let backend=original,hits=0;const pid=original.pid;
+  backend.refresh=true;
+  value.constructorAdminBackend=backend;frameRefusedV1(()=>encode(value),"backend extra key");assert.equal(hits,0);
+});
+test('Task4A provision phase refuses setup-only backend on frame and shared cluster',()=>{
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('provision'),value=>{
+    value.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'phase top backend');
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('provision'),value=>{
+    value.cluster.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'shared cluster backend');
+});
+test('Task4A activate phase refuses setup-only backend on frame and shared cluster',()=>{
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('activate'),value=>{
+    value.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'phase top backend');
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('activate'),value=>{
+    value.cluster.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'shared cluster backend');
+});
+test('Task4A integration phase refuses setup-only backend on frame and shared cluster',()=>{
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('integration'),value=>{
+    value.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'phase top backend');
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('integration'),value=>{
+    value.cluster.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'shared cluster backend');
+});
+test('Task4A old_entry_positive phase refuses setup-only backend on frame and shared cluster',()=>{
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('old_entry_positive'),value=>{
+    value.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'phase top backend');
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('old_entry_positive'),value=>{
+    value.cluster.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'shared cluster backend');
+});
+test('Task4A new_entry_refusal phase refuses setup-only backend on frame and shared cluster',()=>{
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('new_entry_refusal'),value=>{
+    value.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'phase top backend');
+  ownedRejectData('OwnedPhaseFrame',()=>ownedPhaseData('new_entry_refusal'),value=>{
+    value.cluster.constructorAdminBackend={pid:104,backendStartedAtUTC:'2026-10-21T00:00:00.234567Z'};
+  },'shared cluster backend');
+});
+test('Task4A setup refuses backend start getter missing key and alias without compatibility defaults',()=>{
+  const encode=ownedCodec('encode','RunnerSetupFrame');let hits=0;
+  const getter=ownedSetupData();Object.defineProperty(getter.constructorAdminBackend,'backendStartedAtUTC',{
+    enumerable:true,get(){hits++;throw Error('private start');}});
+  frameRefusedV1(()=>encode(getter),'backend start getter');assert.equal(hits,0);
+  ownedRejectData('RunnerSetupFrame',ownedSetupData,value=>{delete value.constructorAdminBackend.backendStartedAtUTC;},'missing start');
+  ownedRejectData('RunnerSetupFrame',ownedSetupData,value=>{
+    value.constructorAdminBackend.startedAtUTC=value.constructorAdminBackend.backendStartedAtUTC;
+    delete value.constructorAdminBackend.backendStartedAtUTC;
+  },'backend start alias');
+});
+test('Task4A setup refuses backend selector or catalog arrays added to unchanged cluster schema',()=>{
+  ownedRejectData('RunnerSetupFrame',ownedSetupData,value=>{
+    value.cluster.constructorAdminBackend=value.constructorAdminBackend;
+  },'backend inside cluster');
+  ownedRejectData('RunnerSetupFrame',ownedSetupData,value=>{value.cluster.databases=[];},'catalog arrays inside cluster');
+  ownedRejectData('RunnerSetupFrame',ownedSetupData,value=>{value.cluster.canonicalBytes=1164;},'byte count inside cluster');
+});
+test('Task4A canonical sorts complete membership triples numerically at role member and grantor positions',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1();
+  value.roles.push({...value.roles[0],name:'ten',oid:10});
+  value.memberships=[[10,2,1],[1,10,3],[2,10,1],[1,2,10],[1,2,3]].map(([roleOid,memberOid,grantorOid])=>({
+    roleOid,memberOid,grantorOid,adminOption:false,inheritOption:true,setOption:false}));
+  assert.deepEqual(normalize(value).memberships.map(row=>[row.roleOid,row.memberOid,row.grantorOid]),
+    [[1,2,3],[1,2,10],[1,10,3],[2,10,1],[10,2,1]]);
+});
+test('Task4A canonical hashes actual UTF8 Unicode role bytes with independent digest and byte oracle',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1();value.roles[0].name='é';
+  const output=normalize(value);assert.deepEqual(output.roles.map(row=>row.name),['A','z','é']);
+  assert.equal(output.canonicalBytes,1162);
+  assert.equal(output.roleBaselineSha256,'8f24b84382fb68cfc6b1d77218256efb9f37d9a45751f8e85be8be81f840f54c');
+  assert.equal(output.databaseBaselineSha256,'bb76048d47ee235365f864509ed15cad36b1020c013aae18ef35f1fd7de32cce');
+  assert.equal(output.membershipBaselineSha256,'1cd136273a1cffdab688441c0298d89f29a3d3866205c919350b8710b14156e8');
+});
+test('Task4A canonical refuses databases arraylike object despite Array prototype and dense data indexes',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1(),original=value.databases;
+  const impostor=Object.assign(Object.create(Array.prototype),original);
+  Object.defineProperty(impostor,'length',{value:original.length,writable:true,enumerable:false,configurable:false});
+  value.databases=impostor;task4aRefusedV1(normalize,value,'non Array arraylike');
+});
+test('Task4A canonical refuses databases setter-only array index without invocation',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1();let hits=0;
+  Object.defineProperty(value.databases,'0',{enumerable:true,set(){hits++;}});
+  task4aRefusedV1(normalize,value,'array index setter');assert.equal(hits,0);
+});
+test('Task4A canonical refuses roles arraylike object despite Array prototype and dense data indexes',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1(),original=value.roles;
+  const impostor=Object.assign(Object.create(Array.prototype),original);
+  Object.defineProperty(impostor,'length',{value:original.length,writable:true,enumerable:false,configurable:false});
+  value.roles=impostor;task4aRefusedV1(normalize,value,'non Array arraylike');
+});
+test('Task4A canonical refuses roles setter-only array index without invocation',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1();let hits=0;
+  Object.defineProperty(value.roles,'0',{enumerable:true,set(){hits++;}});
+  task4aRefusedV1(normalize,value,'array index setter');assert.equal(hits,0);
+});
+test('Task4A canonical refuses memberships arraylike object despite Array prototype and dense data indexes',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1(),original=value.memberships;
+  const impostor=Object.assign(Object.create(Array.prototype),original);
+  Object.defineProperty(impostor,'length',{value:original.length,writable:true,enumerable:false,configurable:false});
+  value.memberships=impostor;task4aRefusedV1(normalize,value,'non Array arraylike');
+});
+test('Task4A canonical refuses memberships setter-only array index without invocation',()=>{
+  const normalize=task4aCanonicalizerV1(),value=task4aCatalogV1();let hits=0;
+  Object.defineProperty(value.memberships,'0',{enumerable:true,set(){hits++;}});
+  task4aRefusedV1(normalize,value,'array index setter');assert.equal(hits,0);
 });
