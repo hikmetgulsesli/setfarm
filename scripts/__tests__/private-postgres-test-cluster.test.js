@@ -1205,7 +1205,8 @@ async function task4bContainedConstructor(){
   let metaReplacements=0;
   const source=readFileSync(MODULE,'utf8');
   const diagnostics='\nglobalThis.__task4bPrivate={'+TASK4B_PRIVATE_NAMES.map(name=>
-    name+':typeof '+name+"==='function'?"+name+':undefined').join(',')+'};';
+    name+':typeof '+name+"==='function'?"+name+':undefined').join(',')+'};'
+    +'\nglobalThis.__task6ConstructorMainV1=main;';
   const compiled=ts.transpileModule(source+diagnostics,{
     fileName:fileURLToPath(MODULE)+'.ts',reportDiagnostics:true,
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},
@@ -1240,7 +1241,7 @@ async function task4bContainedConstructor(){
   assert.equal(timers.size,0,'module initialization cannot start an operation timer');
   assert.deepEqual(fake.eventNames(),[],'module initialization cannot install owner signal listeners');
   assert.equal(output.stdout.length+output.stderr.length,0,'module initialization remains inert');
-  return {bindings:context.__task4bPrivate,seams,fake,fault,trace,timers,output,
+  return {bindings:context.__task4bPrivate,main:context.__task6ConstructorMainV1,seams,fake,fault,trace,timers,output,
     time(value){now=value;},
     fire(ms){const found=[...timers].filter(([,item])=>item.ms===ms);
       assert.equal(found.length,1,'one fixed timer '+ms);const [id,item]=found[0];timers.delete(id);item.callback();},
@@ -1284,6 +1285,86 @@ test('Task4B private owner refuses this nonrelease physical context before Sourc
   await run();
   assert.equal(h.fake.exitCode,1);assert.equal(Buffer.concat(h.output.stdout).length,0);
   assert.equal(Buffer.concat(h.output.stderr).toString(),'MANUAL_ORPHAN_OWNER_REFUSED\n');h.clean();
+});
+
+// Complete actual main and private owner under the existing nonrelease module URL.
+// A normal return from the owner's refusal catch must still end exact dispatch.
+async function task6ConstructorExactEntryV1(){
+  const h=await task4bContainedConstructor();
+  assert.equal(typeof h.main,'function','fixed actual main exposure before behavioral credit');
+  assert.equal(h.main.length,0);
+  const mirrors=[],writes=[],identity=[],timerCalls=[],listenerCalls=[],assertions=[];
+  const checked=fn=>(...args)=>{
+    try{return fn(...args);}catch(error){
+      if(error?.code==='ERR_ASSERTION')assertions.push(error.message);
+      throw error;
+    }
+  };
+  // Keep independent ledgers: an internally caught adapter assertion, timer or
+  // listener operation cannot be mistaken for the intended physical refusal.
+  for(const operation of ['set','delete','clear']){
+    const original=h.timers[operation];
+    h.timers[operation]=(...args)=>{
+      timerCalls.push(operation);return Reflect.apply(original,h.timers,args);
+    };
+  }
+  for(const operation of ['on','once','addListener','prependListener','prependOnceListener',
+    'removeListener','off','removeAllListeners']){
+    h.fake[operation]=(..._args)=>{
+      listenerCalls.push(operation);throw Error('TASK6_UNEXPECTED_PROCESS_LISTENER');
+    };
+  }
+  h.seams.journal.createPrivateTestTerminalMirrorV1=checked((...args)=>{
+    assert.equal(args.length,2);const [stream,onFault]=args;
+    const channel=stream===h.fake.stdout?'stdout':stream===h.fake.stderr?'stderr':null;
+    assert.notEqual(channel,null);assert.equal(typeof onFault,'function');
+    const acquisition=mirrors.length;mirrors.push(channel);
+    return {write:checked(bytes=>{
+      assert.equal(Buffer.isBuffer(bytes),true);writes.push({acquisition,channel});return stream.write(bytes);
+    })};
+  });
+  h.seams.os.userInfo=checked((...args)=>{
+    assert.equal(args.length,0);identity.push('userInfo');
+    return {homedir:'/Users/setrox',uid:501,gid:20,username:'setrox',shell:'/bin/zsh'};
+  });
+  h.seams.fs.realpathSync=checked(value=>{
+    h.trace.push(['realpath',String(value)]);return String(value);
+  });
+  h.fake.argv=[TASK4B_NODE,TASK4B_M+'/scripts/run-private-postgres-tests.mjs','manual-orphan-bootstrap'];
+  const clean=()=>{
+    h.clean();assert.deepEqual(assertions,[],'no swallowed exact-entry adapter assertion');
+    assert.deepEqual(timerCalls,[],'neither main nor owner may start or clear an operation timer');
+    assert.equal(h.timers.size,0);
+    assert.deepEqual(listenerCalls,[],'physical refusal precedes owner and ordinary signal listeners');
+    assert.deepEqual(h.fake.eventNames(),[]);
+  };
+  clean();await h.main();clean();
+  return {h,mirrors,writes,identity,clean};
+}
+
+// Break: exact dispatch stops at availability or skips the actual zeroarg owner.
+test('source-contained constructor refuses the genuine mode before preconditions',async()=>{
+  const f=await task6ConstructorExactEntryV1(),{h}=f;
+  assert.equal(Buffer.concat(h.output.stderr).toString(),'MANUAL_ORPHAN_OWNER_REFUSED\n');
+  assert.equal(h.fake.exitCode,1);assert.equal(Buffer.concat(h.output.stdout).length,0);
+  assert.deepEqual(f.mirrors,['stdout','stderr','stdout','stderr'],
+    'two main mirrors precede two separately acquired private-owner mirrors');
+  assert.deepEqual(f.writes,[{acquisition:3,channel:'stderr'}],'only the owner emits one refusal');
+  assert.deepEqual(f.identity,['userInfo']);assert.deepEqual(h.trace,[],
+    'the actual nonrelease module root refuses before realpath/Source observations');f.clean();
+});
+
+// Break: a handled owner refusal returns normally and falls through into ordinary setup.
+test('source-contained enabled constructor exact route never falls through to ordinary setup',async()=>{
+  const f=await task6ConstructorExactEntryV1(),{h}=f;
+  assert.equal(Buffer.concat(h.output.stderr).toString(),'MANUAL_ORPHAN_OWNER_REFUSED\n');
+  assert.equal(h.fake.exitCode,1);assert.deepEqual(h.output.stdout,[]);
+  assert.equal(h.output.stderr.length,1,'one owner terminal write without ordinary setup output');
+  assert.deepEqual(f.mirrors,['stdout','stderr','stdout','stderr']);
+  assert.deepEqual(f.writes,[{acquisition:3,channel:'stderr'}]);
+  assert.deepEqual(f.identity,['userInfo']);assert.deepEqual(h.trace,[]);
+  assert.deepEqual(h.fault,[],'no ordinary preconditions/root/admin/spawn or other denied capability');
+  f.clean();
 });
 
 // DATA only. Physical acquisition and self-process observations remain Task7.

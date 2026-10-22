@@ -125,33 +125,24 @@ function evaluate(source,file,c,fake,extra={}){
   runInNewContext(compiled.outputText,context,{filename:url.fileURLToPath(file),timeout:5000});
   return context;
 }
-async function runConstructorSourceV1(args,removeUnavailable=false){
+async function runConstructorSourceV1(args){
   const c=capture(),fake=environment(c,CONSTRUCTOR,args);
   let source=readFileSync(CONSTRUCTOR,'utf8');
-  if(removeUnavailable){
-    const unavailable="  if(args[0]==='manual-orphan-bootstrap'){\n"
-      +"    mirrors.stderr.write(Buffer.from('MANUAL_ORPHAN_SLICE2_UNAVAILABLE\\n'));\n"
-      +'    process.exitCode=1;return;\n  }';
-    source=replaceOnce(source,unavailable,'','constructor unavailable guard-removal');
-  }
   source=replaceOnce(source,
     "if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))await main();",
     'globalThis.__main=main;','constructor direct entry');
   source=replaceOnce(source,"new URL('../',import.meta.url)",
     "new URL('../',"+JSON.stringify(CONSTRUCTOR.href)+')','constructor module URL');
-  // Apart from optional unavailable-guard removal, only the downstream binding changes.
+  // Ordinary/precondition-sentinel simulation only: the downstream binding changes.
   assert.equal(source.split('function preconditions(){').length-1,1,'one preconditions binding');
   source+='\npreconditions=()=>globalThis.__boundary("preconditions");\n';
   const context=evaluate(source,CONSTRUCTOR,c,fake);
   try{await context.__main();}catch(error){c.thrown=error.message;}
   return c;
 }
-async function runIsolatedSourceV1(vector,{ambient=false,removeUnavailable=false}={}){
+async function runIsolatedSourceV1(vector,{ambient=false}={}){
   const c=capture(),fake=environment(c,ISOLATED,['--',...vector],ambient?{SETFARM_PG_URL:'ambient-sentinel'}:{});
   let source=readFileSync(ISOLATED,'utf8');
-  if(removeUnavailable){
-    source=task4cRemoveUnavailableV1(source,'isolated unavailable guard-removal');
-  }
   // Exposed-main simulation only: admin/projection sentinels below are not full entry evidence.
   const legacyEntry='main().catch((error) => {\n'
     +'  const message = error instanceof Error ? error.message : String(error);\n'
@@ -192,15 +183,9 @@ function noEffects(c){
   assert.deepEqual(c.calls.spawn,[]);
 }
 
-test('source-contained constructor refuses the genuine mode before preconditions',async()=>{
-  const c=await runConstructorSourceV1(['manual-orphan-bootstrap']);
-  assert.equal(c.thrown,null);
-  assert.equal(c.stderr,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE\n');
-  assert.equal(c.stdout,'');assert.equal(c.exitCode,1);noEffects(c);
-});
 test('source-contained isolated runner refuses the genuine vector before Task4/admin/P3',async()=>{
-  const c=await runIsolatedSourceV1([...VECTOR]);
-  assert.equal(c.thrown,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');noEffects(c);
+  const f=task4cEntryFixtureV1({reader:{kind:'file'}});
+  await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');task4cRawRefusalV1(f);
 });
 test('source-contained wrapper refuses explicitly discovered reserved file before raw dispatch',()=>{
   const c=runWrapperSourceV1([FILE],discovery(BASENAME));
@@ -261,8 +246,8 @@ for(const mode of ['findings','all','readonly-verifiers','receipt','after-script
   });
 }
 test('source-contained isolated reserved route precedes ordinary ambient URL guard',async()=>{
-  const c=await runIsolatedSourceV1([...VECTOR],{ambient:true});
-  assert.equal(c.thrown,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');noEffects(c);
+  const f=task4cEntryFixtureV1({environment:'ambient',reader:{kind:'file'}});
+  await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');task4cRawRefusalV1(f);
 });
 for(const vector of [[],['node'],['node','--import','tsx','--test','--test-concurrency=2','unrelated.test.ts'],
   ['node','--import','tsx','--test','--test-concurrency=1','/absolute/unrelated.test.ts']]){
@@ -292,27 +277,11 @@ test('source-contained wrapper preserves unrelated UNKNOWN refusal',()=>{
 });
 
 
-// These mutations exist only in VM Source copies; no original child/PG/FD claim.
-test('source-contained guard-removal exposes constructor preconditions after exact refusal',async()=>{
-  const normal=await runConstructorSourceV1(['manual-orphan-bootstrap']);
-  assert.equal(normal.thrown,null);assert.equal(normal.stderr,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE\n');
-  assert.equal(normal.stdout,'');assert.equal(normal.exitCode,1);noEffects(normal);
-
-  const mutant=await runConstructorSourceV1(['manual-orphan-bootstrap'],true);
-  assert.equal(mutant.thrown,null);assert.equal(mutant.exitCode,1);assert.equal(mutant.stderr,'');
-  assert.equal(mutant.calls.preconditions,1);
-  assert.equal(mutant.calls.task4,0);assert.equal(mutant.calls.admin,0);
-  assert.equal(mutant.calls.projection,0);assert.equal(mutant.calls.forbidden,0);
-  assert.deepEqual(mutant.calls.spawn,[]);assert.deepEqual(mutant.forbiddenSites,[]);
-  assert.match(mutant.stdout,/"operation":"preconditions","reason":"PRIVATE_TEST_CLUSTER_REFUSED"/);
-});
-test('source-contained guard-removal exposes actual isolated fixture FD4 refusal',async()=>{
-  const normal=await runIsolatedSourceV1([...VECTOR]);
-  assert.equal(normal.thrown,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');noEffects(normal);
-
-  const mutant=task4cEntryFixtureV1({removeUnavailable:true,reader:{kind:'file'}});
-  await task4cSettledV1(mutant,'MANUAL_ORPHAN_OWNER_REFUSED');
-  task4cRawRefusalV1(mutant);
+// The complete actual entry/catch reaches the actual fixture's negative FD4 gate.
+test('source-contained enabled isolated route exposes actual fixture FD4 refusal',async()=>{
+  const f=task4cEntryFixtureV1({reader:{kind:'file'}});
+  await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');
+  task4cRawRefusalV1(f);
 });
 
 // Phase A: incremental codec contracts. Missing codec exports are absent-contract
@@ -1458,7 +1427,7 @@ function fixedProbeVmV1(bindings={},expose=false){
   runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
   if(bindings.task5cFixture===true)task5cEvaluateFixtureV1(context,bindings,c,faults);
   assert.equal(timers.length,0,'import creates no timer');assert.equal(c.calls.forbidden,0,'import performs no IO');
-  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5cFixture===true?{fixtureExports:context.__task5cFixtureExportsV1,fixtureLexical:context.__task5cFixtureLexicalV1,fixtureFix1Lexical:context.__task5cFixtureFix1LexicalV1,...(bindings.task6CompletionLifetime===true?{task6CompletionChild:context.__task6CompletionChildV1}:{}),...(bindings.task4cIsolatedEntry===true?{task4cEntry:task4cEvaluateIsolatedEntryV1(context,bindings,c,faults)}:{}),...(bindings.task6IntegrationModule===true?{task6Integration:task6EvaluateIntegrationV1(context,bindings,c,faults)}:{})}:{}),...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
+  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5cFixture===true?{fixtureExports:context.__task5cFixtureExportsV1,fixtureLexical:context.__task5cFixtureLexicalV1,fixtureFix1Lexical:context.__task5cFixtureFix1LexicalV1,...(bindings.task6CompletionLifetime===true?{task6CompletionChild:context.__task6CompletionChildV1}:{}),...(bindings.task6Fix1===true?{task6Fix1:context.__task6Fix1PrivateV1}:{}),...(bindings.task4cIsolatedEntry===true?{task4cEntry:task4cEvaluateIsolatedEntryV1(context,bindings,c,faults)}:{}),...(bindings.task6IntegrationModule===true?{task6Integration:task6EvaluateIntegrationV1(context,bindings,c,faults)}:{})}:{}),...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
     assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));assert.deepEqual(faults,[],'no swallowed binding assertion');
     if(bindings.assertClean)bindings.assertClean();
   }};
@@ -3570,9 +3539,10 @@ for(const mode of ['accessor','first throw','invalid first result','later throw'
     const f=eventFixtureV1(),faults=[];
     const monotonic=task3ClockV1(()=>{try{task3AllBoundV1(f);}catch(error){faults.push(error.message);throw error;}});
     monotonic.state.mode=mode==='accessor'?'accessor':mode==='first throw'?'throw':mode==='invalid first result'?'invalid':null;
+    if(mode==='backwards')monotonic.state.ms=10;
     const vm=task3VmV1({monotonic});let w;
     assert.doesNotThrow(()=>{w=vm.actual.observeManualOrphanOwnedChildV1(f.child,'provision');});
-    if(mode==='later throw')monotonic.state.mode='throw';if(mode==='backwards')monotonic.state.ms=-1;
+    if(mode==='later throw')monotonic.state.mode='throw';if(mode==='backwards')monotonic.state.ms=9;
     let triggered;assert.doesNotThrow(()=>{triggered=w.snapshot();});assert.equal(triggered.state,'unknown');
     await task3UnknownV1(w,'binding');const calls=monotonic.state.calls,accesses=monotonic.state.accesses;
     for(let i=0;i<3;i++){w.snapshot();w.output();}assert.equal(monotonic.state.calls,calls);assert.equal(monotonic.state.accesses,accesses);
@@ -5822,7 +5792,7 @@ function task5bProjectV1(vm,f){return vm.api.projectManualOrphanPhaseInstallatio
 test('Task5B private contracts and inert module',()=>{
   const vm=task5bGateV1(),cases=task5bCasesV1(4);
   cases.run('all13 present',()=>assert.equal(Object.keys(vm.api).length,17));
-  cases.run('public exports unchanged',()=>assert.deepEqual(Object.keys(vm.actual).sort(),[
+  cases.run('public exports match adopted fixed observation',()=>assert.deepEqual(Object.keys(vm.actual).sort(),[
     'MANUAL_ORPHAN_BASENAME_V1','MANUAL_ORPHAN_VECTOR_V1','mentionsManualOrphanFileV1','classifyManualOrphanVectorV1',
     'encodeManualOrphanProbeFrameV1','decodeManualOrphanProbeFrameV1','canonicalizeManualOrphanClusterBaselineV1',
     'encodeManualOrphanRunnerSetupFrameV1','decodeManualOrphanRunnerSetupFrameV1',
@@ -5832,7 +5802,7 @@ test('Task5B private contracts and inert module',()=>{
     'encodeManualOrphanRunnerResultV1','decodeManualOrphanRunnerResultV1','holdManualOrphanOwnedSourcesV1',
     'pinManualOrphanProbeSourcesV1','observeManualOrphanProcessV1','observeManualOrphanOriginalChildV1',
     'observeManualOrphanOwnedChildV1','observeManualOrphanOwnedIntegrationChildV1',
-    'readManualOrphanProbeFd4V1','readManualOrphanOwnedFd4V1','runManualOrphanLifecycleProbeV1',
+    'readManualOrphanProbeFd4V1','readManualOrphanOwnedFd4V1','observeManualOrphanOwnedFd4V1','runManualOrphanLifecycleProbeV1',
   ].sort()));
   cases.run('no import timer IO selection',()=>{assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);
     assert.equal(vm.monotonic.state.accesses,0);assert.deepEqual(Object.keys(vm.processBinding),['env','hrtime']);vm.assertContained();});
@@ -6484,6 +6454,7 @@ function task5cEvaluateFixtureV1(context,bindings,c,faults){
     decodeManualOrphanIntegrationResultV1:actual.decodeManualOrphanIntegrationResultV1,
     encodeManualOrphanRunnerResultV1:actual.encodeManualOrphanRunnerResultV1,
     readManualOrphanOwnedFd4V1:bindings.task4cActualFd4Negative===true?actual.readManualOrphanOwnedFd4V1:refuse('readManualOrphanOwnedFd4V1'),
+    observeManualOrphanOwnedFd4V1:actual.observeManualOrphanOwnedFd4V1,
     holdManualOrphanOwnedSourcesV1:refuse('holdManualOrphanOwnedSourcesV1'),
     observeManualOrphanProcessV1:refuse('observeManualOrphanProcessV1'),
     observeManualOrphanOwnedChildV1:bindings.task5cFiniteObservers===true?actual.observeManualOrphanOwnedChildV1:refuse('observeManualOrphanOwnedChildV1'),
@@ -6496,7 +6467,7 @@ function task5cEvaluateFixtureV1(context,bindings,c,faults){
   const modules=new Map([
     ['node:assert/strict',assert],['node:path',path],['node:url',url],
     ['node:fs',closedModule(c,'Task5C fs',{constants,...bindings.fs})],
-    ['node:os',closedModule(c,'Task5C os')],['node:child_process',closedModule(c,'Task5C child_process')],
+    ['node:os',closedModule(c,'Task5C os',bindings.task6InputNegativeV1===true?{userInfo:bindings.task6InputNegativeAccountV1}:{})],['node:child_process',closedModule(c,'Task5C child_process')],
     ['node:crypto',closedModule(c,'Task5C crypto',{createHash:boundedHash,randomBytes:refuse('randomBytes')})],
     ['./manual-control-orphan-bootstrap-child-v1.mjs',facade],
   ]);
@@ -6533,6 +6504,10 @@ function task5cEvaluateFixtureV1(context,bindings,c,faults){
       retainManualOrphanFixtureCompletionV1:typeof retainManualOrphanFixtureCompletionV1==='function'?retainManualOrphanFixtureCompletionV1:null
     };
     globalThis.__task6CompletionChildV1=typeof retainManualOrphanCompletionChildV1==='function'?retainManualOrphanCompletionChildV1:null;
+    globalThis.__task6Fix1PrivateV1={
+      holdManualOrphanRunnerInstallationsV1:typeof holdManualOrphanRunnerInstallationsV1==='function'?holdManualOrphanRunnerInstallationsV1:null,
+      projectManualOrphanInstallationsPinV1:typeof projectManualOrphanInstallationsPinV1==='function'?projectManualOrphanInstallationsPinV1:null
+    };
   })(globalThis.__task5cFixtureExportsV1={},globalThis.__task5cFixtureRequireV1);`,context,
     {filename:url.fileURLToPath(TASK5C_FIXTURE_V1),timeout:5000});
 }
@@ -7280,14 +7255,6 @@ test('Task5C integration recipient requires Node26 worker metadata',()=>{
 // Closed Task4/provider bindings are containment only, not execution evidence for
 // external packages. Earlier exposed-main/admin/projection tests are simulations.
 const TASK4C_FIXTURE_SPECIFIER_V1='../tests/execution-attempts/helpers/manual-control-orphan-bootstrap-fixture-v1.js';
-function task4cRemoveUnavailableV1(source,label){
-  const throwing='throw new Error("MANUAL_ORPHAN_SLICE2_UNAVAILABLE");';
-  const original='if (manualOrphanRoute === "exact") '+throwing;
-  const grouped='    '+throwing+'\n';
-  assert.equal(source.split(throwing).length-1,1,'one unavailable throw across the two bounded Source versions');
-  if(source.includes(original))return replaceOnce(source,original,'',label+' original whole availability if');
-  return replaceOnce(source,grouped,'',label+' grouped standalone availability throw');
-}
 function task4cEvaluateIsolatedEntryV1(context,bindings,c,faults){
   const control=bindings.task4cControl;
   assert.ok(control,'fixed Task4C entry control');
@@ -7323,7 +7290,6 @@ function task4cEvaluateIsolatedEntryV1(context,bindings,c,faults){
     +'helper.authenticateP3ProjectedReadinessTestCapabilityV1();\n`;';
   source=replaceOnce(source,preload,'const SETFARM_P3_TEST_CAPABILITY_PRELOAD_V1 = "";',
     'Task4C dormant preload text only');
-  if(control.removeUnavailable)source=task4cRemoveUnavailableV1(source,'Task4C closed negative guard copy');
   source=replaceOnce(source,'main().catch((error) => {',
     'globalThis.__task4cEntryDoneV1 = main().catch((error) => {','Task4C capture original entry and entire catch');
   source+='\n;globalThis.__task4cPrivateMapperV1 = typeof manualOrphanFailureCodeV1 === "function" ? manualOrphanFailureCodeV1 : null;\n';
@@ -7377,7 +7343,7 @@ function task4cEntryFixtureV1(options={}){
   const fs={...reader.fs,realpathSync:guard(value=>{
     assert.equal(value,root,'only legacy fixed Source realpath boundary is admitted');rootReads.push(value);return value;
   })};
-  const control={removeUnavailable:options.removeUnavailable===true,fixtureImports,beginCaller(){
+  const control={fixtureImports,beginCaller(){
     assert.equal(importing,true);assert.deepEqual(importReads,[],'complete helper/fixture imports are inert');importing=false;
   }};
   const vm=task3VmV1({task5cFixture:true,task4cIsolatedEntry:true,task4cActualFd4Negative:true,
@@ -7422,7 +7388,7 @@ function task4cKnownCloseV1(f){
   f.reader.ledger.socket.emit('close',false);f.check();
 }
 async function task4cMalformedReaderV1(){
-  const f=task4cEntryFixtureV1({removeUnavailable:true});
+  const f=task4cEntryFixtureV1({});
   task4cPendingReaderV1(f);
   f.reader.ledger.socket.emit('data',Buffer.from('{invalid JSON}\n'));f.reader.ledger.socket.emit('end');
   await task4cPumpV1(f);task4cPendingReaderV1(f);assert.equal(f.reader.ledger.destroys,1);
@@ -7436,15 +7402,15 @@ function task4cMapperV1(f){
 }
 
 // Break: a missing private manual bit/terminal branch can expose raw diagnostics.
-test('Task4C 01 complete isolated entry retains exact unavailable diagnostic',async()=>{
+test('Task4C 01 complete isolated entry reaches actual receiver refusal',async()=>{
   const cases=task5bCasesV1(1);await cases.wait('exact actual catch',async()=>{
-    const f=task4cEntryFixtureV1({environment:'ordinary'});await task4cSettledV1(f,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');task4cGuardedV1(f);
+    const f=task4cEntryFixtureV1({environment:'ordinary',reader:{kind:'file'}});await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');task4cRawRefusalV1(f);
   });cases.done();
 });
 // Break: ambient observation before route classification can leak/override the fixed refusal.
-test('Task4C 02 exact guarded entry never reads ambient environment',async()=>{
+test('Task4C 02 exact enabled entry never reads ambient environment',async()=>{
   const cases=task5bCasesV1(1);await cases.wait('throwing ambient getter',async()=>{
-    const f=task4cEntryFixtureV1();await task4cSettledV1(f,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');task4cGuardedV1(f);
+    const f=task4cEntryFixtureV1({reader:{kind:'file'}});await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');task4cRawRefusalV1(f);
   });cases.done();
 });
 // Break: any reserved near vector falling through grammar changes its public refusal.
@@ -7474,29 +7440,30 @@ test('Task4C 05 four unrelated malformed vectors retain grammar refusal',async()
       assert.deepEqual(f.reader.ledger.fstats,[]);assert.equal(f.vm.timers.length,0);
     });cases.done();
 });
-// Break: a missing/aliased static fixture import would leave the real guarded route unwired.
+// Break: a missing/aliased static fixture import would leave the real exact route unwired.
 test('Task4C 06 actual fixture import is inert and exact',async()=>{
   const cases=task5bCasesV1(1);await cases.wait('actual complete fixture namespace import',async()=>{
-    const f=task4cEntryFixtureV1({environment:'ordinary'});await task4cSettledV1(f,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');
+    const f=task4cEntryFixtureV1({environment:'ordinary',reader:{kind:'file'}});
     assert.equal(f.fixtureImports.length,1,'caller resolves the exact actual fixture import once (import scaffolding RED if absent)');
     assert.equal(f.fixtureImports[0],f.vm.fixtureExports);assert.equal(f.entry.actualFixture,f.vm.fixtureExports);
     assert.equal(typeof f.vm.fixtureExports.runManualOrphanBootstrapRouteV1,'function');
     assert.equal(typeof f.vm.fixtureExports.runManualOrphanBootstrapIntegrationV1,'function');
     assert.equal(f.vm.fixtureExports.runManualOrphanBootstrapRouteV1.length,0);
-    assert.equal(f.vm.fixtureExports.runManualOrphanBootstrapIntegrationV1.length,0);task4cGuardedV1(f);
+    assert.equal(f.vm.fixtureExports.runManualOrphanBootstrapIntegrationV1.length,0);
+    await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');task4cRawRefusalV1(f);
   });cases.done();
 });
 // Break: calling legacy grammar or an owner before the actual negative FD4 receiver.
-test('Task4C 07 guard removal reaches actual receiver before owner work',async()=>{
+test('Task4C 07 enabled exact route reaches actual receiver before owner work',async()=>{
   const cases=task5bCasesV1(1);await cases.wait('nonpipe known raw close',async()=>{
-    const f=task4cEntryFixtureV1({removeUnavailable:true,reader:{kind:'file'}});
+    const f=task4cEntryFixtureV1({reader:{kind:'file'}});
     await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');task4cRawRefusalV1(f);
   });cases.done();
 });
 // Break: uncertain raw close must dominate the receiver's ordinary owner refusal.
 test('Task4C 08 uncertain raw FD4 close reaches sole cleanup diagnostic',async()=>{
   const cases=task5bCasesV1(1);await cases.wait('one uncertain raw close',async()=>{
-    const f=task4cEntryFixtureV1({removeUnavailable:true,reader:{kind:'file',rawCloseError:true}});
+    const f=task4cEntryFixtureV1({reader:{kind:'file',rawCloseError:true}});
     await task4cSettledV1(f,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');task4cRawRefusalV1(f);
   });cases.done();
 });
@@ -7507,7 +7474,7 @@ test('Task4C 09 malformed receiver frame waits for actual known close',async()=>
 // Break: a 5000ms reader cutoff must burn uncertainty without settling pending input.
 test('Task4C 10 receiver deadline stays pending until retained close',async()=>{
   const cases=task5bCasesV1(1);await cases.wait('reader deadline before retained close',async()=>{
-    const f=task4cEntryFixtureV1({removeUnavailable:true});task4cPendingReaderV1(f);
+    const f=task4cEntryFixtureV1({});task4cPendingReaderV1(f);
     const timer=f.vm.timers.find(item=>item.delay===5000);assert.ok(timer);f.check();
     f.vm.monotonic.state.ms=5000;timer.callback();f.check();await task4cPumpV1(f);
     task4cPendingReaderV1(f);assert.equal(f.reader.ledger.destroys,1);
@@ -7520,8 +7487,8 @@ test('Task4C 11 actual private diagnostic mapper preserves seven fixed codes',as
   const cases=task5bCasesV1(7);for(const code of ['MANUAL_ORPHAN_FRAME_REFUSED','MANUAL_ORPHAN_SETUP_REFUSED',
     'MANUAL_ORPHAN_CASE_REFUSED','MANUAL_ORPHAN_OWNER_REFUSED','MANUAL_ORPHAN_CLEANUP_UNKNOWN',
     'MANUAL_ORPHAN_ROUTE_REFUSED','MANUAL_ORPHAN_SLICE2_UNAVAILABLE'])await cases.wait(code,async()=>{
-      const f=task4cEntryFixtureV1({environment:'ordinary'});await task4cSettledV1(f,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');
-      const mapper=task4cMapperV1(f);assert.equal(mapper(new Error(code)),code);task4cGuardedV1(f);
+      const f=task4cEntryFixtureV1({environment:'ordinary',reader:{kind:'file'}});await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');
+      const mapper=task4cMapperV1(f);assert.equal(mapper(new Error(code)),code);task4cRawRefusalV1(f);
     });cases.done();
 });
 // Break: raw text, broad-prefix matching, object duck typing, or hostile access can leak detail.
@@ -7535,8 +7502,8 @@ test('Task4C 12 actual diagnostic mapper rejects eight untrusted error forms',as
     ['throwing Error Proxy',()=>new Proxy(new Error('unused'),{get(){throw Error('PRIVATE_TASK4C_PROXY');},getPrototypeOf(){throw Error('PRIVATE_TASK4C_PROXY');}})],
     ['plain message object',()=>({message:'MANUAL_ORPHAN_OWNER_REFUSED'})],
   ])await cases.wait(name,async()=>{
-    const f=task4cEntryFixtureV1({environment:'ordinary'});await task4cSettledV1(f,'MANUAL_ORPHAN_SLICE2_UNAVAILABLE');
-    const mapper=task4cMapperV1(f);assert.equal(mapper(make()),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');task4cGuardedV1(f);
+    const f=task4cEntryFixtureV1({environment:'ordinary',reader:{kind:'file'}});await task4cSettledV1(f,'MANUAL_ORPHAN_OWNER_REFUSED');
+    const mapper=task4cMapperV1(f);assert.equal(mapper(make()),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');task4cRawRefusalV1(f);
   });cases.done();
 });
 // Break: retained late reader faults must not reopen catch/output after case09 settles.
@@ -8174,4 +8141,373 @@ test('Task6 marker write getter failure acquires no callback',async()=>{
     task6MarkerRejectedV1(x,outcome);assert.equal(x.writeGetterReads,1);assert.deepEqual(x.writes,[]);assert.equal(x.callback,null);
     assert.equal(x.vm.timers.length,0);
   },{getterThrow:true});
+});
+
+// Task6 complete-path fix1:17 literal registrations/67 finite component cases.
+// Missing new private/API surfaces are scaffolding, never native-path RED.
+// Actual existing C-negative/R/launch consumers remain separately exercisable.
+const TASK6_FIX1_ROOT_V1='/private/tmp/setfarm-task6a-pg.';
+function task6Fix1VmV1({fs={},observers=false}={}){
+  const reads=[],processBinding={},monotonic=task3ClockV1();
+  for(const key of ['env','argv','execArgv','pid','ppid','cwd','stdout','stderr'])
+    Object.defineProperty(processBinding,key,{get(){reads.push(key);throw Error('TASK6_FIX1_PROCESS_READ');}});
+  const vm=task3VmV1({task5cFixture:true,task6Fix1:true,task5cFiniteObservers:observers,
+    fs,process:processBinding,monotonic});
+  assert.ok(vm.task6Fix1,'separate fixed Task6 fix1 private exposure');
+  assert.deepEqual(Object.keys(vm.task6Fix1),['holdManualOrphanRunnerInstallationsV1','projectManualOrphanInstallationsPinV1']);
+  const check=()=>{assert.deepEqual(reads,[]);vm.assertContained();};check();
+  return {...vm,api:vm.fixtureLexical,check};
+}
+function task6Fix1HoldV1(vm){
+  const hold=vm.task6Fix1.holdManualOrphanRunnerInstallationsV1;
+  assert.equal(typeof hold,'function','missing actual holdManualOrphanRunnerInstallationsV1 (scaffolding only)');
+  assert.equal(hold.length,2);return hold;
+}
+function task6Fix1ProjectV1(vm){
+  const project=vm.task6Fix1.projectManualOrphanInstallationsPinV1;
+  assert.equal(typeof project,'function','missing actual projectManualOrphanInstallationsPinV1 (scaffolding only)');
+  assert.equal(project.length,2);return project;
+}
+function task6Fix1DirectoryV1({root=TASK6_FIX1_ROOT_V1+'F1',existing=null,createError=null,fault=null}={}){
+  const retained=[],calls=[],faults=[],fd=73,pathname=root+'/installations';
+  let exists=existing!==null,created=false;
+  const error=Object.assign(Error('PRIVATE_TASK6_DIRECTORY_SYSCALL'),{code:createError??'EACCES'});
+  const guard=fn=>task5bGuardV1(faults,fn);
+  const stat=()=>({dev:3n,ino:73n,uid:fault==='uid'?502n:501n,gid:fault==='gid'?21n:20n,
+    mode:fault==='mode'?0o40755n:0o40700n,nlink:2n,size:64n,birthtimeNs:1n,mtimeNs:2n,ctimeNs:3n,
+    isDirectory:()=>true,isFile:()=>false,isSymbolicLink:()=>fault==='symlink'});
+  const fs={
+    mkdirSync:guard((name,options)=>{
+      calls.push(['mkdir',name,task5cPlainV1(options)]);assert.equal(name,pathname);
+      assert.deepEqual(task5cPlainV1(options),{mode:0o700,recursive:false});
+      if(exists)throw Object.assign(Error('PRIVATE_TASK6_EXISTS'),{code:'EEXIST'});
+      if(createError!==null)throw error;exists=true;created=true;
+    }),
+    realpathSync:guard(name=>{calls.push(['realpath',name]);assert.equal(name,pathname);assert.equal(created,true);
+      return fault==='realpath'?pathname+'.changed':pathname;}),
+    lstatSync:guard((name,options)=>{calls.push(['lstat',name]);assert.equal(name,pathname);
+      assert.deepEqual(task5cPlainV1(options),{bigint:true});assert.equal(created,true);return stat();}),
+    openSync:guard((name,flags)=>{calls.push(['open',name,flags]);assert.equal(name,pathname);assert.equal(created,true);
+      assert.equal(flags,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
+      if(fault==='open')throw error;return fd;}),
+    fstatSync:guard((actualFd,options)=>{calls.push(['fstat',actualFd]);assert.equal(actualFd,fd);
+      assert.deepEqual(task5cPlainV1(options),{bigint:true});assert.equal(retained.length,1,'retain original FD before held validation');
+      assert.equal(retained[0].fd,fd);assert.equal(retained[0].path,pathname);
+      assert.equal(retained[0].mutable,true);assert.equal(retained[0].attempted,false);
+      const value=stat();if(fault==='held inode')value.ino++;return value;}),
+    readdirSync:guard((name,options)=>{calls.push(['readdir',name]);assert.equal(name,pathname);
+      assert.deepEqual(task5cPlainV1(options),{withFileTypes:true});assert.equal(retained.length,1);
+      assert.ok(calls.some(([op])=>op==='fstat'),'empty check follows actual held validation');
+      return fault==='nonempty'?[{name:'unexpected',isDirectory:()=>true,isSymbolicLink:()=>false}]:[];}),
+  };
+  const vm=task6Fix1VmV1({fs}),hold=task6Fix1HoldV1(vm);
+  const check=()=>{assert.deepEqual(faults,[],'no swallowed acquisition seam assertion');vm.check();
+    assert.ok(retained.every(row=>row.attempted===false),'component acquisition does not pretend to run C finally');};
+  const call=(value=root)=>{try{return hold(value,retained);}finally{check();}};
+  return {vm,root,pathname,fd,retained,calls,error,call,check,get created(){return created;},get exists(){return exists;}};
+}
+// Break: missing creation/pin/empty check cannot reach fresh provision.
+test('Task6 fix1 fresh runner creates pins and checks an empty installations parent',()=>{
+  const cases=task5bCasesV1(1);cases.run('canonical136-byte physical root',()=>{
+    const root=TASK6_FIX1_ROOT_V1+'A'.repeat(136-Buffer.byteLength(TASK6_FIX1_ROOT_V1)),f=task6Fix1DirectoryV1({root});
+    assert.equal(Buffer.byteLength(root),136);f.call();assert.equal(f.created,true);assert.equal(f.retained.length,1);
+    assert.equal(f.retained[0].fd,73);assert.equal(f.retained[0].path,root+'/installations');
+    assert.equal(f.retained[0].initial.dev,3n);assert.equal(f.retained[0].initial.ino,73n);
+    assert.equal(f.retained[0].initial.uid,501n);assert.equal(f.retained[0].initial.gid,20n);
+    assert.equal(f.retained[0].initial.mode,0o40700n);
+    assert.deepEqual(f.calls.filter(([op])=>op==='mkdir'),[['mkdir',f.pathname,{mode:0o700,recursive:false}]]);
+    assert.equal(f.calls.filter(([op])=>op==='open').length,1);assert.equal(f.calls.filter(([op])=>op==='readdir').length,1);
+    assert.equal(f.calls[0][0],'mkdir');assert.equal(f.calls.at(-1)[0],'readdir');f.check();
+  });cases.done();
+});
+// Break: EEXIST cannot become authority by adoption or permission repair.
+test('Task6 fix1 installations preexistence is never adopted',()=>{
+  const cases=task5bCasesV1(3);for(const existing of ['directory','file','symlink'])cases.run(existing,()=>{
+    const f=task6Fix1DirectoryV1({existing});assert.throws(f.call,error=>error?.code==='EEXIST');
+    assert.equal(f.created,false);assert.equal(f.exists,true);assert.deepEqual(f.retained,[]);
+    assert.deepEqual(f.calls,[['mkdir',f.pathname,{mode:0o700,recursive:false}]]);f.check();
+  });cases.done();
+});
+// Break: a failed mkdir cannot authorize a subsequent open/read/phase.
+test('Task6 fix1 installations creation failure stops acquisition',()=>{
+  const cases=task5bCasesV1(3);for(const createError of ['ENOENT','EACCES','EIO'])cases.run(createError,()=>{
+    const f=task6Fix1DirectoryV1({createError});assert.throws(f.call,error=>error===f.error);
+    assert.equal(f.created,false);assert.deepEqual(f.retained,[]);
+    assert.deepEqual(f.calls,[['mkdir',f.pathname,{mode:0o700,recursive:false}]]);f.check();
+  });cases.done();
+});
+// Break: post-open validation must not lose the acquired original FD.
+test('Task6 fix1 installations pin failures retain only acquired originals',()=>{
+  const cases=task5bCasesV1(8);
+  for(const [fault,held] of [['realpath',false],['symlink',false],['uid',true],['gid',true],['mode',true],
+    ['open',false],['held inode',true],['nonempty',true]])cases.run(fault,()=>{
+    const f=task6Fix1DirectoryV1({fault});assert.throws(f.call);assert.equal(f.created,true);assert.equal(f.exists,true);
+    assert.equal(f.retained.length,held?1:0);if(held){assert.equal(f.retained[0].fd,f.fd);assert.equal(f.retained[0].attempted,false);}
+    assert.equal(f.calls.filter(([op])=>op==='mkdir').length,1);
+    assert.equal(f.calls.filter(([op])=>op==='readdir').length,fault==='nonempty'?1:0);f.check();
+  });cases.done();
+});
+// Break: repeated acquisition must not create a second original or retry mkdir.
+test('Task6 fix1 installations repeat cannot acquire twice',()=>{
+  const cases=task5bCasesV1(1);cases.run('same actual retained path',()=>{
+    const f=task6Fix1DirectoryV1();f.call();const before=JSON.stringify(f.calls),original=f.retained[0];
+    assert.throws(f.call);assert.equal(JSON.stringify(f.calls),before,'duplicate retained path refuses before mkdir');
+    assert.equal(f.retained.length,1);assert.equal(f.retained[0],original);assert.equal(f.created,true);f.check();
+  });cases.done();
+});
+// Break: scalar path data cannot select an alias, traversal or over-cap parent.
+test('Task6 fix1 installations rejects noncanonical derived roots',()=>{
+  const cases=task5bCasesV1(3);for(const [name,root] of [['alias','/tmp/setfarm-task6a-pg.F1'],
+    ['traversal',TASK6_FIX1_ROOT_V1+'F1/../other'],['overcap',TASK6_FIX1_ROOT_V1+'A'.repeat(137-Buffer.byteLength(TASK6_FIX1_ROOT_V1))]])
+    cases.run(name,()=>{const f=task6Fix1DirectoryV1();task5cRefusedV1(()=>f.call(root));assert.deepEqual(f.calls,[]);assert.deepEqual(f.retained,[]);f.check();});
+  cases.done();
+});
+
+function task6Fix1InputV1(kind='runner',{negative=false}={}){
+  const reader=probeReaderFixtureV1(),faults=[],reads=[],envReads=[],accountCalls=[],inputFaults=[],writes=[],outputs={},originals=[];
+  const monotonic=task3ClockV1(),binding={};let importing=true,callback=null;
+  const guard=fn=>task5bGuardV1(faults,fn);
+  for(const key of ['argv','execArgv','pid','ppid','cwd','getuid','geteuid','getgid','getegid','platform','arch','version'])
+    Object.defineProperty(binding,key,{get(){reads.push(key);throw Error('TASK6_FIX1_INPUT_PROCESS_READ');}});
+  Object.defineProperty(binding,'env',{get(){
+    if(importing||!negative){reads.push('env');throw Error('TASK6_FIX1_INPUT_ENV_READ');}
+    envReads.push('negative context snapshot');return {};
+  }});
+  for(const name of ['stdout','stderr']){
+    const stream=new EventEmitter(),on=stream.on;
+    stream.on=guard((event,listener)=>{assert.equal(event,'error');assert.equal(typeof listener,'function');
+      assert.deepEqual(reader.ledger.fstats,[4],'actual inherited read precedes R output listeners');
+      return Reflect.apply(on,stream,[event,listener]);});
+    stream.write=guard((bytes,done)=>{
+      assert.equal(name,'stdout');assert.equal(kind,'runner');assert.equal(negative,false);
+      assert.ok(Buffer.isBuffer(bytes));assert.equal(bytes.at(-1),10);assert.equal(typeof done,'function');
+      assert.equal(writes.length,0,'one original R write');writes.push(Buffer.from(bytes));callback=done;return true;
+    });
+    outputs[name]=stream;Object.defineProperty(binding,name,{get(){
+      if(importing){reads.push(name);throw Error('TASK6_FIX1_INPUT_IMPORT_OUTPUT');}return stream;}});
+  }
+  const fault=event=>{
+    assert.equal(reader.ledger.closed,true,'late fault follows original physical close');inputFaults.push(event);
+    if(event==='error')reader.ledger.socket.emit('error',Error('PRIVATE_TASK6_INPUT_LATE'));
+    else if(event==='close')reader.ledger.socket.emit('close',false);
+    else {assert.equal(event,'data');reader.ledger.socket.emit('data',Buffer.from('late'));}
+  };
+  const account=guard((...args)=>{
+    assert.equal(negative,true);assert.equal(args.length,0);accountCalls.push('userInfo');assert.equal(accountCalls.length,1);
+    assert.deepEqual(reader.ledger.fstats,[4]);assert.equal(reader.ledger.closed,true);
+    fault('error');return {homedir:'/component/nonrelease',uid:502,gid:20};
+  });
+  const vm=task3VmV1({task5cFixture:true,task5cFiniteObservers:true,task6CompletionLifetime:true,
+    task4cActualFd4Negative:true,task6InputNegativeV1:negative,task6InputNegativeAccountV1:account,
+    fs:reader.fs,net:reader.net,assertClean:reader.assertClean,process:binding,monotonic});importing=false;reader.task3Vm=vm;
+  const fix1=vm.fixtureFix1Lexical;
+  assert.equal(typeof fix1.retainManualOrphanFixtureCompletionV1,'function');
+  assert.equal(typeof fix1.retainManualOrphanOriginalChildLifetimeV1,'function');
+  assert.equal(typeof vm.task6CompletionChild,'function');
+  const check=()=>{assert.deepEqual(reads,[]);assert.deepEqual(faults,[],'no swallowed current-input adapter assertion');
+    if(!negative){assert.deepEqual(envReads,[]);assert.deepEqual(accountCalls,[]);}
+    reader.assertClean();vm.assertContained();for(const original of originals)original.f.assertGuarded();};
+  const x={...vm,vm,reader,kind,fix1,api:vm.fixtureLexical,register:vm.task6CompletionChild,originals,
+    writes,outputs,accountCalls,envReads,inputFaults,fault,check,completion:null,
+    start(){assert.equal(x.input,undefined);x.input=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1(kind));return x.input;},
+    retain(){assert.equal(x.completion,null);x.completion=fix1.retainManualOrphanFixtureCompletionV1(kind);return x.completion;},
+    finishInput(){task3FinishReadV1(reader,kind==='runner'?Buffer.from(OWN_SETUP_WIRE):task3WireV1('integration'));},
+    callback(){assert.equal(typeof callback,'function','one actual pending output callback');const original=callback;callback=null;original(null);check();},
+    get callbackPending(){return callback!==null;},
+  };check();return x;
+}
+async function task6Fix1ReadyInputV1(kind='runner'){
+  const x=task6Fix1InputV1(kind);x.start();x.retain();x.finishInput();
+  const result=await x.input.done;assert.equal(Object.hasOwn(result,'error'),false);x.check();return x;
+}
+function task6Fix1ObservationV1(vm){
+  const observe=vm.actual.observeManualOrphanOwnedFd4V1;
+  assert.equal(typeof observe,'function','missing observeManualOrphanOwnedFd4V1 (scaffolding only)');
+  assert.equal(observe.length,0);return observe;
+}
+function task6Fix1InputFactsV1(value,expected){
+  assert.deepEqual(Object.keys(value),['claimed','adopted','closed','unknown']);assert.equal(Object.isFrozen(value),true);
+  for(const field of Object.keys(value))assert.equal(typeof value[field],'boolean');
+  assert.deepEqual(task5cPlainV1(value),expected);
+}
+// Break: observation must not reserve/mutate a claim or add any IO/clock read.
+test('Task6 fix1 inherited input observation is fixed read only boolean DATA',async()=>{
+  const cases=task5bCasesV1(5);
+  cases.run('unclaimed snapshot',()=>{
+    const {f,vm}=task3ReaderV1(),observe=task6Fix1ObservationV1(vm),before=task3IoV1(f);
+    task6Fix1InputFactsV1(observe(),{claimed:false,adopted:false,closed:false,unknown:false});
+    assert.deepEqual(task3IoV1(f),before);vm.assertContained();
+  });
+  await cases.wait('argument refusal does not reserve',async()=>{
+    const {f,vm}=task3ReaderV1(),observe=task6Fix1ObservationV1(vm),before=task3IoV1(f);let traps=0;
+    const argument=new Proxy({},{get(){traps++;throw Error('PRIVATE_TASK6_OBSERVE_ARGUMENT');}});
+    task5cRefusedV1(()=>observe(argument));assert.equal(traps,0);assert.deepEqual(task3IoV1(f),before);
+    const input=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));task3FinishReadV1(f,Buffer.from(OWN_SETUP_WIRE));
+    assert.equal((await input.done).error,undefined);assert.deepEqual(f.ledger.fstats,[4]);vm.assertContained();
+  });
+  await cases.wait('pending actual reader',async()=>{
+    const {f,vm}=task3ReaderV1(),observe=task6Fix1ObservationV1(vm),input=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    const before=task3IoV1(f),facts=observe(),after=task3IoV1(f);task3FinishReadV1(f,Buffer.from(OWN_SETUP_WIRE));await input.done;
+    task6Fix1InputFactsV1(facts,{claimed:true,adopted:true,closed:false,unknown:false});assert.deepEqual(after,before);vm.assertContained();
+  });
+  await cases.wait('settled actual reader',async()=>{
+    const {f,vm}=task3ReaderV1(),observe=task6Fix1ObservationV1(vm),input=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    task3FinishReadV1(f,Buffer.from(OWN_SETUP_WIRE));assert.equal((await input.done).error,undefined);
+    const before=task3IoV1(f);task6Fix1InputFactsV1(observe(),{claimed:true,adopted:true,closed:true,unknown:false});
+    assert.deepEqual(task3IoV1(f),before);vm.assertContained();
+  });
+  await cases.wait('detached frozen snapshots',async()=>{
+    const {f,vm}=task3ReaderV1(),observe=task6Fix1ObservationV1(vm),input=trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner'));
+    task3FinishReadV1(f,Buffer.from(OWN_SETUP_WIRE));await input.done;const first=observe(),second=observe();assert.notEqual(first,second);
+    assert.equal(Reflect.set(first,'unknown',true),false);f.ledger.socket.emit('error',Error('PRIVATE_TASK6_LATE_OBSERVATION'));
+    task6Fix1InputFactsV1(first,{claimed:true,adopted:true,closed:true,unknown:false});
+    task6Fix1InputFactsV1(observe(),{claimed:true,adopted:true,closed:true,unknown:true});
+    assert.equal(await input.done,input.outcome,'historical promise outcome remains the same object');vm.assertContained();
+  });cases.done();
+});
+// Break: read-only current facts must preserve known raw close versus uncertainty.
+test('Task6 fix1 inherited input observation preserves raw close certainty',async()=>{
+  const cases=task5bCasesV1(2);for(const rawCloseError of [false,true])await cases.wait(String(rawCloseError),async()=>{
+    const {f,vm}=task3ReaderV1({kind:'file',rawCloseError}),observe=task6Fix1ObservationV1(vm);
+    await assertProbeRejectedV1(trackProbePromiseV1(vm.actual.readManualOrphanOwnedFd4V1('runner')),
+      rawCloseError?'MANUAL_ORPHAN_CLEANUP_UNKNOWN':'MANUAL_ORPHAN_OWNER_REFUSED');
+    const before=task3IoV1(f);task6Fix1InputFactsV1(observe(),{claimed:true,adopted:false,closed:!rawCloseError,unknown:rawCloseError});
+    assert.deepEqual(task3IoV1(f),before);assert.deepEqual(f.ledger.rawCloses,[4]);assert.deepEqual(f.ledger.constructs,[]);vm.assertContained();
+  });cases.done();
+});
+// Break: a current observation cannot reexpire a timely completed five-second read.
+test('Task6 fix1 timely inherited input does not reexpire during owner work',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('timely read then6000ms owner work',async()=>{
+    const x=task6Fix1InputV1(),observe=task6Fix1ObservationV1(x);x.start();x.retain();x.finishInput();await x.input.done;
+    x.monotonic.state.ms=6000;const before=task3IoV1(x.reader);
+    task6Fix1InputFactsV1(observe(),{claimed:true,adopted:true,closed:true,unknown:false});assert.deepEqual(task3IoV1(x.reader),before);
+    x.completion.check();assert.equal(x.completion.current().unknown,false);x.completion.finish(false);
+    assert.equal(x.completion.current().finished,true);assert.equal(x.writes.length,0);x.check();
+  });cases.done();
+});
+// Break: fulfilled input promise cannot hide a retained error during real C refusal.
+test('Task6 fix1 retained input fault dominates actual TS context refusal',async()=>{
+  const cases=task5bCasesV1(2);for(const kind of ['runner','integration'])await cases.wait(kind,async()=>{
+    const x=task6Fix1InputV1(kind,{negative:true});
+    const run=kind==='runner'?x.fixtureExports.runManualOrphanBootstrapRouteV1:x.fixtureExports.runManualOrphanBootstrapIntegrationV1;
+    assert.equal(typeof run,'function');assert.equal(run.length,0);
+    const tracked=trackProbePromiseV1(run());x.finishInput();const result=await tracked.done;x.check();
+    assert.deepEqual(x.accountCalls,['userInfo']);assert.deepEqual(x.envReads,['negative context snapshot']);
+    assert.deepEqual(x.inputFaults,['error']);assert.deepEqual(x.writes,[]);assert.equal(x.callbackPending,false);
+    assert.deepEqual(x.reader.ledger.fstats,[4]);assert.deepEqual(x.reader.ledger.rawCloses,[]);
+    assert.equal(x.reader.ledger.constructs.length,1);assert.equal(x.reader.ledger.destroys,1);
+    assert.deepEqual(x.timers.map(timer=>timer.delay),[5000,kind==='runner'?840000:300000]);
+    assert.equal(x.cleared.length,2);assert.ok(x.timers.every(timer=>x.cleared.includes(timer.handle)));
+    task6RefusalV1(result,'late inherited uncertainty dominates actual conservative context refusal');
+  });cases.done();
+});
+// Break: input uncertainty burns R but must still sample every retained actual Q.
+test('Task6 fix1 current input faults stop actual completion work',async()=>{
+  const cases=task5bCasesV1(3);for(const event of ['error','close','data'])await cases.wait(event,async()=>{
+    const x=await task6Fix1ReadyInputV1();await task6ClosedOriginalV1(x);await task6ClosedOriginalV1(x,'activate');
+    x.fault(event);const before=x.monotonic.state.calls,facts=x.completion.current(),sampleCalls=x.monotonic.state.calls-before;
+    assert.ok(sampleCalls>=3,'both actual Q witnesses and R clock are sampled despite input uncertainty');
+    assert.equal(facts.unknown,true);task5cRefusedV1(()=>x.completion.check(),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    await assertProbeRejectedV1(trackProbePromiseV1(x.completion.write(Buffer.from(OWN_RUNNER_WIRE))),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.deepEqual(x.writes,[]);task5cRefusedV1(()=>x.completion.finish(false),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');x.check();
+  });cases.done();
+});
+// Break: unknown input cannot settle an already-invoked original write callback.
+test('Task6 fix1 late input fault joins pending original output callback',async()=>{
+  const cases=task5bCasesV1(1);await cases.wait('late error while original callback pending',async()=>{
+    const x=await task6Fix1ReadyInputV1(),tracked=trackProbePromiseV1(x.completion.write(Buffer.from(OWN_RUNNER_WIRE)));
+    await task5bPumpV1();assert.equal(x.callbackPending,true);x.fault('error');await task5bPumpV1();
+    const before=x.completion.current(),pending=tracked.outcome===null;
+    x.callback();const outcome=await tracked.done;const finish=task6CaptureV1(()=>x.completion.finish(false));x.check();
+    assert.equal(pending,true);assert.equal(before.writePending,true);assert.equal(before.unknown,true);
+    task6RefusalV1(outcome,'actual original callback settles UNKNOWN');task6RefusalV1(finish);
+    assert.equal(x.writes.length,1);assert.equal(x.callbackPending,false);assert.equal(x.completion.current().writeSettled,true);
+  });cases.done();
+});
+// Break: the final pre/post-release sample must include the actual inherited claim.
+test('Task6 fix1 inherited input remains current through final finish sample',async()=>{
+  const cases=task5bCasesV1(2);
+  await cases.wait('integration before finish',async()=>{
+    const x=await task6Fix1ReadyInputV1('integration');x.fault('error');
+    const outcome=task6CaptureV1(()=>x.completion.finish(true));x.check();task6RefusalV1(outcome);
+    assert.equal(x.completion.current().finished,true);assert.deepEqual(x.writes,[]);
+  });
+  await cases.wait('runner fault during final timer release',async()=>{
+    const x=await task6Fix1ReadyInputV1(),tracked=trackProbePromiseV1(x.completion.write(Buffer.from(OWN_RUNNER_WIRE)));
+    x.callback();assert.deepEqual(await tracked.done,{value:undefined});
+    const timer=x.timers.find(item=>item.delay===840000),push=x.cleared.push,faults=[];assert.ok(timer);
+    Object.defineProperty(x.cleared,'push',{value:task5bGuardV1(faults,(...args)=>{
+      assert.deepEqual(args,[timer.handle]);const result=Reflect.apply(push,x.cleared,args);x.fault('error');return result;
+    }),configurable:true});
+    const outcome=task6CaptureV1(()=>x.completion.finish(true));assert.deepEqual(faults,[]);x.check();task6RefusalV1(outcome);
+    assert.equal(x.completion.current().finished,true);assert.equal(x.writes.length,1);assert.equal(x.callbackPending,false);
+  });cases.done();
+});
+
+// Break: phase identity must come from the actual held pre-spawn mutable row.
+test('Task6 fix1 phase installations identity comes from the retained mutable pin',()=>{
+  const cases=task5bCasesV1(5);for(const stage of ['provision','activate','integration','old_entry_positive','new_entry_refusal'])
+    cases.run(stage,()=>{
+      const f=task5cPinFixtureV1(stage),vm=task6Fix1VmV1(),project=task6Fix1ProjectV1(vm);
+      const directory=task5bDerivedV1().installationsDirectory,row=f.pins.mutable.find(item=>item.path===directory);
+      assert.ok(row);const before=JSON.stringify(f.pins),clock=vm.monotonic.state.calls;
+      const value=project(f.pins,directory);assert.equal(Object.isFrozen(value),true);
+      assert.deepEqual(Object.keys(value),['dev','ino','uid','gid','mode']);
+      assert.deepEqual(task5cPlainV1(value),{dev:'1',ino:row.identity.ino,uid:501,gid:20,mode:0o700});
+      assert.equal(JSON.stringify(f.pins),before);assert.equal(vm.monotonic.state.calls,clock);
+      assert.deepEqual(f.calls,[]);f.check();vm.check();
+    });cases.done();
+});
+// Break: held projection cannot add a post-ps filesystem read or third G pass.
+test('Task6 fix1 held installations projection preserves exact delivery passes',async()=>{
+  const cases=task5bCasesV1(5);
+  await cases.wait('projection then actual two-pass G',async()=>{
+    const vm=task6Fix1VmV1(),project=task6Fix1ProjectV1(vm),f=task5cWriterV1();
+    try{
+      const directory=task5bDerivedV1().installationsDirectory;
+      f.frame.installations=project(f.pins.pins,directory);assert.deepEqual(f.pins.calls,[]);
+      f.call();assert.equal(f.calls.length,1);assert.equal(f.pins.calls.length,4*(25+3));
+      for(const row of [...f.pins.pins.source,...f.pins.pins.mutable]){
+        assert.equal(f.pins.calls.filter(([op,value])=>op==='lstat'&&value===row.path).length,2);
+        assert.equal(f.pins.calls.filter(([op,value])=>op==='fstat'&&value===row.fd).length,2);
+      }
+      assert.deepEqual(task5cPlainV1(vm.actual.decodeManualOrphanOwnedPhaseFrameV1(f.calls[0])).installations,
+        task5cPlainV1(f.frame.installations));f.check();vm.check();
+    }finally{await f.finish();}
+  });
+  for(const [name,mutate] of [
+    ['missing row',(pins,row)=>{pins.mutable.splice(pins.mutable.indexOf(row),1);}],
+    ['duplicate row',(pins,row)=>{pins.mutable.push({...row});}],
+    ['wrong policy/kind',(_pins,row)=>{row.kind='file';row.policy='immutable-file';}],
+    ['malformed identity',(_pins,row)=>{row.identity.dev='not-decimal';}],
+  ])cases.run(name,()=>{
+    const f=task5cPinFixtureV1('provision'),vm=task6Fix1VmV1(),project=task6Fix1ProjectV1(vm);
+    const directory=task5bDerivedV1().installationsDirectory,row=f.pins.mutable.find(item=>item.path===directory);
+    assert.ok(row);mutate(f.pins,row);task5cRefusedV1(()=>project(f.pins,directory));
+    assert.deepEqual(f.calls,[]);f.check();vm.check();
+  });cases.done();
+});
+
+function task6Fix1DarwinV1(kind){
+  const vm=task5cVmV1(['qualifyManualOrphanFixtureLaunchV1']),cases=task5bCasesV1(11);
+  const call=value=>{
+    const f=task5cLaunchV1(kind);f.actual.env.__CF_USER_TEXT_ENCODING=value;
+    return vm.api.qualifyManualOrphanFixtureLaunchV1(kind,task5cDataV1(vm,f.actual),task5cDataV1(vm,f.frame));
+  };
+  for(const value of ['0x1F5:0x0:0x0','0x1F5:0xFFFFFFFF:0xFFFFFFFF','0x1F5:0x23:0x18'])
+    cases.run('accept '+value,()=>{const result=call(value);task5cFrozenV1(result);assert.equal(result.maintenanceRoot,SOURCE_M_V1);vm.check();});
+  for(const [name,value] of [['padding','0x1F5:0x00:0x0'],['lowercase suffix','0x1F5:0x0:0xabc'],
+    ['middle overflow','0x1F5:0x100000000:0x0'],['last overflow','0x1F5:0x0:0x100000000'],
+    ['lowercase uid','0x1f5:0x0:0x0'],['wrong uid','0x1F4:0x0:0x0'],
+    ['terminal LF','0x1F5:0x0:0x0\n'],['nonstring',123]])
+    cases.run(name,()=>{task5cRefusedV1(()=>call(value));vm.check();});
+  cases.done();vm.check();
+}
+// Break: runner launch accepts padded/lowercase/overflow Darwin fields.
+test('Task6 fix1 runner launch requires canonical Darwin metadata',()=>{
+  task6Fix1DarwinV1('runner');
+});
+// Break: integration launch must enforce the same exact metadata predicate.
+test('Task6 fix1 integration launch requires canonical Darwin metadata',()=>{
+  task6Fix1DarwinV1('integration');
 });

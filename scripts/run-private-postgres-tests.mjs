@@ -1177,8 +1177,8 @@ async function main(){
     mirrors.stderr.write(Buffer.from('PRIVATE_TEST_CLUSTER_MODE_INVALID\n'));process.exitCode=1;return;
   }
   if(args[0]==='manual-orphan-bootstrap'){
-    mirrors.stderr.write(Buffer.from('MANUAL_ORPHAN_SLICE2_UNAVAILABLE\n'));
-    process.exitCode=1;return;
+    await runManualOrphanConstructorV1();
+    return;
   }
   let stage='preconditions',root=null,directoryFd=null,init=null,server=null,testChild=null,admin=null;
   let testsStarted=false,mayStopServer=true,resultCode=1;

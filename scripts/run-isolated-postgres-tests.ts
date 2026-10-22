@@ -718,7 +718,6 @@ async function main(): Promise<void> {
   if (manualOrphanRoute === "near" || manualOrphanRoute === "exact") manualOrphanInvocationV1 = true;
   if (manualOrphanRoute === "near") throw new Error("MANUAL_ORPHAN_ROUTE_REFUSED");
   if (manualOrphanRoute === "exact") {
-    throw new Error("MANUAL_ORPHAN_SLICE2_UNAVAILABLE");
     await runManualOrphanBootstrapRouteV1();
     return;
   }

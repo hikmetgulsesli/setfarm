@@ -11,7 +11,7 @@ import {
   encodeManualOrphanOwnedPhaseFrameV1, decodeManualOrphanOwnedPhaseResultV1,
   canonicalizeManualOrphanClusterBaselineV1, encodeManualOrphanIntegrationResultV1,
   decodeManualOrphanIntegrationResultV1, encodeManualOrphanRunnerResultV1,
-  readManualOrphanOwnedFd4V1, holdManualOrphanOwnedSourcesV1, observeManualOrphanProcessV1,
+  readManualOrphanOwnedFd4V1, observeManualOrphanOwnedFd4V1, holdManualOrphanOwnedSourcesV1, observeManualOrphanProcessV1,
   observeManualOrphanOwnedChildV1, observeManualOrphanOwnedIntegrationChildV1,
 } from "./manual-control-orphan-bootstrap-child-v1.mjs";
 
@@ -334,7 +334,11 @@ function qualifyManualOrphanFixtureLaunchV1(kind:string,actual:ManualOrphanDataV
       ["--import","tsx","--test","--test-isolation=none"]:["--import","tsx"]));
     need(actual.env.PATH===manualOrphanPathV1&&actual.env.LANG==="C"&&actual.env.LC_ALL==="C");
     need(Object.keys(actual.env).every(key=>["PATH","LANG","LC_ALL","__CF_USER_TEXT_ENCODING"].includes(key)));
-    if(Object.hasOwn(actual.env,"__CF_USER_TEXT_ENCODING"))need(/^0x1F5:0x[0-9A-Fa-f]+:0x[0-9A-Fa-f]+$/.test(actual.env.__CF_USER_TEXT_ENCODING));
+    if(Object.hasOwn(actual.env,"__CF_USER_TEXT_ENCODING")){
+      const value=actual.env.__CF_USER_TEXT_ENCODING;need(typeof value==="string");
+      const fields=value.split(":");need(fields.length===3&&fields[0]==="0x1F5"
+        &&fields.every((field:string)=>/^0x(?:0|[1-9A-F][0-9A-F]{0,7})$/.exec(field)?.[0]===field));
+    }
     need(integration?actual.worker!==null&&Object.keys(actual.worker).length===1&&Object.hasOwn(actual.worker,"NODE_TEST_WORKER_ID")&&actual.worker.NODE_TEST_WORKER_ID==="1":actual.worker===null);
     return Object.freeze({node:manualOrphanNodeV1,maintenanceRoot:m,targetRoot:t,workspace:manualOrphanWorkspaceV1,
       helper:m+"/"+manualOrphanHelperV1,integration:m+"/"+manualOrphanFileV1});
@@ -758,11 +762,46 @@ function openManualOrphanDeliveryPinsV1(context:ManualOrphanDataV1,stage:string)
     checkManualOrphanDeliveryMetadataV1(pins);context.check();return owner;
   }catch(error){try{close();}catch{context.burn();throw Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");}throw error;}
 }
+function holdManualOrphanRunnerInstallationsV1(physicalRoot:string,
+  longPins:{path:string;fd:number;initial:orphanFs.BigIntStats;mutable:boolean;attempted:boolean}[]):void {
+  const need=(ok:unknown):void=>{if(!ok)throw Error("MANUAL_ORPHAN_OWNER_REFUSED");};
+  need(typeof physicalRoot==="string"&&Buffer.byteLength(physicalRoot)<=136
+    &&/^\/private\/tmp\/setfarm-task6a-pg\.[A-Za-z0-9]+$/.exec(physicalRoot)?.[0]===physicalRoot);
+  const path=physicalRoot+"/installations";
+  need(Array.isArray(longPins)&&!longPins.some(pin=>pin.path===path));
+  orphanFs.mkdirSync(path,{mode:0o700,recursive:false});
+  const before=orphanFs.lstatSync(path,{bigint:true});
+  need(!before.isSymbolicLink()&&before.isDirectory()&&orphanFs.realpathSync(path)===path);
+  const fd=orphanFs.openSync(path,orphanFs.constants.O_RDONLY|orphanFs.constants.O_DIRECTORY|orphanFs.constants.O_NOFOLLOW);
+  // The outer C finally owns this original even if held/private validation fails.
+  longPins.push({path,fd,initial:before,mutable:true,attempted:false});
+  const held=orphanFs.fstatSync(fd,{bigint:true});
+  need((["dev","ino","uid","gid","mode","birthtimeNs","nlink","size","mtimeNs","ctimeNs"] as (keyof orphanFs.BigIntStats)[])
+    .every(key=>before[key]===held[key]));
+  need(held.uid===501n&&held.gid===20n&&(held.mode&0o7777n)===0o700n);
+  need(orphanFs.readdirSync(path,{withFileTypes:true}).length===0);
+}
+function projectManualOrphanInstallationsPinV1(pins:ManualOrphanPinsV1,installationsDirectory:string):Readonly<ManualOrphanDataV1> {
+  try{
+    const need=(ok:unknown):void=>{if(!ok)throw Error();};
+    need(typeof installationsDirectory==="string"&&Array.isArray(pins.mutable));
+    const rows=pins.mutable.filter(row=>row.path===installationsDirectory);need(rows.length===1);
+    const row=rows[0];need(row.kind==="directory"&&row.policy==="mutable-directory"
+      &&Number.isSafeInteger(row.fd)&&row.fd>=0&&!Object.is(row.fd,-0));
+    const {dev,ino,uid,gid,mode}=row.identity;
+    const decimal=(value:unknown):boolean=>typeof value==="string"&&value.length<=20
+      &&/^(0|[1-9][0-9]*)$/.exec(value)?.[0]===value&&(value.length<20||value<="18446744073709551615");
+    need(decimal(dev)&&decimal(ino)&&uid===501&&gid===20
+      &&Number.isSafeInteger(mode)&&mode>=0&&mode<=0o177777&&(mode&0o7777)===0o700);
+    return Object.freeze({dev,ino,uid,gid,mode:mode&0o7777});
+  }catch{throw Error("MANUAL_ORPHAN_OWNER_REFUSED");}
+}
 async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDataV1):Promise<unknown> {
   const completion=manualOrphanFixtureCompletionV1;
   let unknown=false,holder:ManualOrphanDataV1|null=null,admin:ManualOrphanDataV1|null=null;
   let pool:ManualOrphanDataV1|null=null,reservation:ManualOrphanDataV1|null=null,initialPending:Promise<unknown>|null=null;
   let fallbackRelease=false,fallbackEnd=false,handedOff=false,sourceClosed=false,sqlClosed=false;
+  let installationsCreationAttempted=false;
   let paths:ManualOrphanDataV1,physicalRoot="",installationsDirectory="",directory="",installation:ManualOrphanDataV1|null=null;
   let prepared:ManualOrphanDataV1|null=null,activation:ManualOrphanDataV1|null=null,baseline:ManualOrphanDataV1|null=null;
   let records:ManualOrphanDataV1,migrations:ManualOrphanDataV1[],driver:ManualOrphanDataV1,runtime:ManualOrphanDataV1,activationApi:ManualOrphanDataV1;
@@ -885,7 +924,8 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
     sqlClosed=!unknown;if(unknown)throw Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");
   };
   const closures=():ManualOrphanDataV1=>{
-    sample();const state=admin?.current();need(initialPending===null&&children.every(child=>child.closed));
+    sample();const input=observeManualOrphanOwnedFd4V1();need(input.claimed&&input.adopted&&input.closed&&!input.unknown);
+    const state=admin?.current();need(initialPending===null&&children.every(child=>child.closed));
     need(sqlClosed||state!==undefined&&!state.pending&&!state.unknown&&!state.closed);
     if(!sourceClosed){need(holder!==null);check();}
     return {input:"fulfilled",source:sourceClosed?"fulfilled":"retained",admin:sqlClosed?"fulfilled":"retained",
@@ -905,6 +945,7 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
     const obligation:ManualOrphanDataV1={child:null,witness:null,lifetime:null,join:null,delivery,closed:false};children.push(obligation);
     let child:ReturnType<typeof spawn>|null=null;
     try{
+      const installations=projectManualOrphanInstallationsPinV1(pins.pins,installationsDirectory);
       // The SINGLE origin is captured before spawn. No full-check operation is
       // legal until G returns after end and its immediate clock observation.
       const origin=process.hrtime.bigint();need(origin>=0n);delivery.startedAtNs=String(origin);delivery.lastAtNs=String(origin);
@@ -930,7 +971,7 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
       delivery.postspawn=[self,server,observedChild];delivery.retainedGraph={...retainedGraph,child:observedChild};
       const phase={schema:"setfarm.manual-orphan-owned-phase.v1",run:frame.run,constructor:frame.constructor,runner:frame.runner,
         parent:own.pin,child:observedChild.pin,server:frame.server,source:frame.source,cluster:frame.cluster,
-        installations:directoryData(orphanFs.lstatSync(installationsDirectory,{bigint:true})),purpose,
+        installations,purpose,
         input:purpose==="provision"?{adminPassword:frame.adminPassword}:purpose==="activate"?{adminPassword:frame.adminPassword,installation}:{installation}};
       const issued=deliverManualOrphanOwnedFrameV1(child as unknown as ManualOrphanDataV1,witness,phase,delivery);
       await obligation.join;await witness.settled;check();
@@ -984,7 +1025,8 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
     const binaryPin=longPins.at(-1)!,hash=createHash("sha256"),chunk=Buffer.alloc(65536);let offset=0;
     while(offset<Number(binary.size)){const n=orphanFs.readSync(binaryPin.fd,chunk,0,Math.min(chunk.length,Number(binary.size)-offset),offset);need(n>0);hash.update(chunk.subarray(0,n));offset+=n;}
     need(hash.digest("hex")===originalGraph.server.pin.executableSha256&&originalGraph.server.pin.executable===executable);
-    privateDirectory(physicalRoot,frame.cluster.root);privateDirectory(physicalRoot+"/data",frame.cluster.data);privateDirectory(installationsDirectory,kind==="integration"?frame.installations:null);
+    privateDirectory(physicalRoot,frame.cluster.root);privateDirectory(physicalRoot+"/data",frame.cluster.data);
+    if(kind==="integration")privateDirectory(installationsDirectory,frame.installations);
     const socket=physicalRoot+"/.s.PGSQL."+frame.cluster.port,socketStat=orphanFs.lstatSync(socket,{bigint:true});
     need(socketStat.isSocket()&&!socketStat.isSymbolicLink()&&socketStat.uid===501n&&socketStat.gid===20n&&(socketStat.mode&0o7777n)===0o700n);socketPin={path:socket,initial:socketStat};
     const capacity=orphanFs.statfsSync(physicalRoot,{bigint:true});need(capacity.bavail*capacity.bsize>=8n*1024n**3n+64n*1024n**2n);check();
@@ -1015,7 +1057,9 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
     const pair=Object.freeze({pid:r.pid,backendStartedAtUTC:r.backendStartedAtUTC,datid:Number(r.datid),usesysid:Number(r.usesysid)});
     admin=retainManualOrphanRunnerAdminV1(pool!,reservation!,{pair,cluster:frame.cluster,database,databaseOid:pair.datid,user,userOid:pair.usesysid});handedOff=true;check();
     if(kind==="runner"){
-      await runnerCatalog("initial");need(orphanFs.readdirSync(installationsDirectory,{withFileTypes:true}).length===0);check();let ledger:ManualOrphanDataV1={state:"empty",installation:null,oldEntry:null,newEntry:null,unknown:false};
+      await runnerCatalog("initial");check();installationsCreationAttempted=true;
+      holdManualOrphanRunnerInstallationsV1(physicalRoot,longPins);check();
+      let ledger:ManualOrphanDataV1={state:"empty",installation:null,oldEntry:null,newEntry:null,unknown:false};
       const provision=await runChild("provision");installation=provision.result.installation;const committedDirectory=readInstallation(installation!,false);
       const verified=await stock(()=>runtime.verifyFreshInstallationSchemaV1(directory));need(verified.state==="committed"&&JSON.stringify(verified.origin)===JSON.stringify(prepared!.origin)&&verified.catalogHash===installation!.schemaCatalogHash);
       const absent=records.captureFreshInstallationActivationAbsenceV1(directory);absent();
@@ -1066,6 +1110,14 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
   }catch(error){failure=error;if(admin!==null&&!sqlClosed)burn();
     // Bounded metadata-only diagnostics cannot create ownership or cleanup rights.
     if(installationsDirectory!=="")try{
+      let absentBeforeCreation=false;
+      if(kind==="runner"&&!installationsCreationAttempted){
+        try{orphanFs.lstatSync(installationsDirectory,{bigint:true});}
+        catch(error){const code=error instanceof Error?Object.getOwnPropertyDescriptor(error,"code"):undefined;
+          if(code!==undefined&&Object.hasOwn(code,"value")&&code.value==="ENOENT")absentBeforeCreation=true;else throw error;}
+        need(absentBeforeCreation);
+      }
+      if(!absentBeforeCreation){
       const names=orphanFs.readdirSync(installationsDirectory,{withFileTypes:true});need(names.length<=1);
       const diagnostic:ManualOrphanDataV1[]=[];for(const entry of names){need(entry.isDirectory()&&!entry.isSymbolicLink());const path=installationsDirectory+"/"+entry.name;
         const children=orphanFs.readdirSync(path,{withFileTypes:true});need(children.length<=18);const list:ManualOrphanDataV1[]=[];
@@ -1078,6 +1130,7 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
           }else{need(stat.isFile());list.push({name:child.name,kind:"file",bytes:Number(stat.size)});}}
         diagnostic.push({name:entry.name,kind:"directory",entries:list});}
       inspectManualOrphanPartialInstallationV1(diagnostic,kind==="runner"?"provision":"integration");
+      }
     }catch{burn();}
   }finally{
     if(initialPending!==null)try{await initialPending;}catch{burn();}
@@ -1165,6 +1218,7 @@ function retainManualOrphanFixtureCompletionV1(kind:string){
   const fail=():void=>{unknown=true;};
   const outputFault=():void=>{manualOrphanFixtureOutputFaultV1=true;fail();};
   const sample=():void=>{
+    try{if(observeManualOrphanOwnedFd4V1().unknown)fail();}catch{fail();}
     for(const child of retainedChildren)try{if(child.current().unknown)fail();}catch{fail();}
     try{const now=process.hrtime.bigint();if(typeof now!=="bigint"||now<0n||now<lastAtNs)fail();
       else {lastAtNs=now;if(now-startedAtNs>=limitNs)fail();}}catch{fail();}

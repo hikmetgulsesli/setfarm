@@ -1738,6 +1738,13 @@ function ownedTransportUnknownV1(){return Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN')
 const probeFd4PolicyV1=Object.freeze({owned:false,unknown:probeCloseUnknownV1});
 const ownedFd4PolicyV1=Object.freeze({owned:true,unknown:ownedTransportUnknownV1});
 let ownedInherited4ClaimV1=null;
+export function observeManualOrphanOwnedFd4V1(){
+  if(arguments.length!==0)throw probeOwnerRefusalV1();
+  const claim=ownedInherited4ClaimV1;
+  return Object.freeze({claimed:claim!==null,adopted:claim!==null&&claim.adopted,
+    closed:claim!==null&&(claim.actualCloseSeen||!claim.adopted&&claim.rawCloseAttempted&&!claim.uncertain),
+    unknown:claim!==null&&(claim.uncertain||claim.outputUncertain)});
+}
 function manualOrphanFd4ClaimV1(){
   return {attempted:true,adopted:false,rawCloseAttempted:false,socketCloseRequested:false,actualCloseSeen:false,
     uncertain:false,outputUncertain:false};
