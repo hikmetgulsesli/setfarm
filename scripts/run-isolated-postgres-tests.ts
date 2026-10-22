@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import postgres from "postgres";
 import { classifyManualOrphanVectorV1 } from "../tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs";
+import { runManualOrphanBootstrapRouteV1 } from "../tests/execution-attempts/helpers/manual-control-orphan-bootstrap-fixture-v1.js";
 import { isTask4CommandV1, readTask4Fd4V1, prepareTask4ContextV1, observeTask4OriginalChildV1,
   observeTask4ProcessV1, task4CanonicalV1, pinTask4DirectoryV1, readTask4ProofV1, publishTask4ProofV1,
   validateTask4ParentEnvelopeV1, validateTask4RunnerEnvelopeV1 } from "../tests/fixtures/mission-control-render-smoke-owned-v1.js";
@@ -40,7 +41,7 @@ type P3ProjectionMarkerV1 = Readonly<{
 
 type P3CapabilityRoleV1 = "setup" | "test";
 
-const SOURCE_ROOT = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
+let SOURCE_ROOT: string;
 const P3_RECOVERY_LIFECYCLE_TEST_FILE_V1 = "tests/findings/v3-recovery-lifecycle-reconciler.test.ts";
 const P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1 = Object.freeze(["0/3", "1/3", "2/3"] as const);
 const P3_TRACKED_SCOPE = new Set([
@@ -688,13 +689,41 @@ async function verifyPrimaryCloneV1(
 }
 
 let task4InvocationV1 = false;
+let manualOrphanInvocationV1 = false;
+function manualOrphanFailureCodeV1(error: unknown): string {
+  try {
+    if (error instanceof Error && Object.prototype.hasOwnProperty.call(error, "message")) {
+      const message: unknown = error.message;
+      if (typeof message === "string") {
+        switch (message) {
+          case "MANUAL_ORPHAN_FRAME_REFUSED":
+          case "MANUAL_ORPHAN_SETUP_REFUSED":
+          case "MANUAL_ORPHAN_CASE_REFUSED":
+          case "MANUAL_ORPHAN_OWNER_REFUSED":
+          case "MANUAL_ORPHAN_CLEANUP_UNKNOWN":
+          case "MANUAL_ORPHAN_ROUTE_REFUSED":
+          case "MANUAL_ORPHAN_SLICE2_UNAVAILABLE":
+            return message;
+        }
+      }
+    }
+  } catch {
+    // Hostile Error/Proxy access never contributes text to the terminal code.
+  }
+  return "MANUAL_ORPHAN_CLEANUP_UNKNOWN";
+}
 async function main(): Promise<void> {
-  if (process.env.SETFARM_PG_URL !== undefined) throw new Error("ISOLATED_TEST_AMBIENT_PG_URL_FORBIDDEN");
   const separator = process.argv.indexOf("--");
   const manualOrphanRoute = classifyManualOrphanVectorV1(separator >= 0 ? process.argv.slice(separator + 1) : []);
+  if (manualOrphanRoute === "near" || manualOrphanRoute === "exact") manualOrphanInvocationV1 = true;
   if (manualOrphanRoute === "near") throw new Error("MANUAL_ORPHAN_ROUTE_REFUSED");
+  if (manualOrphanRoute === "exact") {
+    await runManualOrphanBootstrapRouteV1();
+    return;
+  }
+  if (process.env.SETFARM_PG_URL !== undefined) throw new Error("ISOLATED_TEST_AMBIENT_PG_URL_FORBIDDEN");
+  SOURCE_ROOT = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
   const command = commandArguments();
-  if (manualOrphanRoute === "exact") throw new Error("MANUAL_ORPHAN_SLICE2_UNAVAILABLE");
   task4InvocationV1 = isTask4CommandV1(command);
   const task4Setup = task4InvocationV1 ? await readTask4Fd4V1("setup") : undefined;
   const adminUrl = normalizedAdminUrlV1();
@@ -877,6 +906,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  if (manualOrphanInvocationV1) {
+    process.stderr.write(`${manualOrphanFailureCodeV1(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${task4InvocationV1 ? (/^TASK4_[A-Z_]+$/.test(message) ? message : "TASK4_CLEANUP_UNKNOWN") : message}\n`);
   process.exitCode = 1;
