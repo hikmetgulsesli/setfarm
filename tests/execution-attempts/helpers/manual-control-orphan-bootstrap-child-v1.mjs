@@ -1371,6 +1371,124 @@ const ownedChildPoliciesV1=Object.freeze(Object.fromEntries([
 ].map(([purpose,deadline,cap,fd4])=>[purpose,Object.freeze({owned:true,purpose,deadline,cap,fd4})])));
 const invalidOwnedChildPolicyV1=Object.freeze({owned:true,purpose:null,deadline:10000,cap:65536,fd4:true});
 
+// Private bounded DATA consumer. It owns no child, handle, callback or effect
+// authority. Construction is deliberately deferred until the engine has bound
+// lifecycle/error slots and attempted pause on every obtainable channel.
+function manualOrphanIntegrationScannerV1(){
+  const stem='MANUAL_ORPHAN_INTEGRATION_RESULT',header=stem+' ',family='MANUAL_ORPHAN_';
+  const passPrefix='✔ manual orphan bootstrap v1 preserves old entry and refuses maintenance source (';
+  const labels=['tests','suites','pass','fail','cancelled','skipped','todo'];
+  const counts=[1,0,1,0,0,0,0];
+  const reserved=['TAP version','Bail out!','# Subtest:','# tests','# suites','# pass','# fail',
+    '# cancelled','# skipped','# todo','# duration_ms'];
+  const glyphs=[[226,156,148],[226,156,150],[226,156,147],[226,156,151],[226,132,185],[226,150,182],[226,150,186]];
+  const decimal=/^(0|[1-9][0-9]{0,11})(\.[0-9]{1,12})?$/;
+  const candidate=Buffer.alloc(16384),prefix=Buffer.alloc(256);
+  const decoder=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true});
+  let refused=false,finished=false,step=0,marker=null,summary={};
+  let lineBytes=0,prefixBytes=0,leading=true,indented=false,candidateActive=false;
+  let familyMatch=0,stemPossible=true,stemBytes=0,digitPlan=0;
+  let utfNeed=0,utfMin=128,utfMax=191,utfValue=0;
+  const refuse=()=>{refused=true;};
+  const starts=text=>{
+    if(prefixBytes<text.length)return false;
+    for(let index=0;index<text.length;index++)if(prefix[index]!==text.charCodeAt(index))return false;
+    return true;
+  };
+  const reservedPreamble=()=>{
+    if(prefixBytes===0)return false;
+    if(prefix[0]===45)return true;
+    for(const glyph of glyphs)if(prefixBytes>=3&&prefix[0]===glyph[0]&&prefix[1]===glyph[1]&&prefix[2]===glyph[2])return true;
+    for(const text of reserved)if(starts(text))return true;
+    for(const text of ['ok','not ok'])if(starts(text)&&(prefixBytes===text.length||prefix[text.length]===32))return true;
+    return false;
+  };
+  const resetLine=()=>{
+    lineBytes=0;prefixBytes=0;leading=true;indented=false;candidateActive=false;
+    familyMatch=0;stemPossible=true;stemBytes=0;digitPlan=0;
+  };
+  const finishLine=()=>{
+    if(candidateActive){
+      if(lineBytes<header.length||lineBytes+1>16384){refuse();return;}
+      candidate[lineBytes]=10;
+      // The whole-line bound is stricter than the shared codec's own bound.
+      // ANY thrown actual decoder call propagates to the engine UNKNOWN guard;
+      // its catch-all deliberately gives us no invalid/internal distinction.
+      marker=decodeManualOrphanIntegrationResultV1(Buffer.from(Buffer.prototype.subarray.call(candidate,header.length,lineBytes+1)));
+      step=1;
+    }else if(stemPossible&&stemBytes>0&&stemBytes<stem.length){refuse();return;}
+    else if(step===0){if(reservedPreamble())refuse();}
+    else{
+      if(indented||lineBytes>256){refuse();return;}
+      const text=decoder.decode(Buffer.prototype.subarray.call(prefix,0,prefixBytes));
+      if(step===1){
+        if(!text.startsWith(passPrefix)||!text.endsWith('ms)')||!decimal.test(text.slice(passPrefix.length,-3))){refuse();return;}
+        step=2;
+      }else if(step>=2&&step<=8){
+        const index=step-2,label='ℹ '+labels[index]+' ';
+        if(text!==label+counts[index]){refuse();return;}
+        summary[labels[index]]=Number(text.slice(label.length));step++;
+      }else if(step===9){
+        const label='ℹ duration_ms ';
+        if(!text.startsWith(label)||!decimal.test(text.slice(label.length))){refuse();return;}
+        summary=Object.freeze(summary);step=10;
+      }else{refuse();return;}
+    }
+    resetLine();
+  };
+  const utf8=byte=>{
+    if(utfNeed!==0){
+      if(byte<utfMin||byte>utfMax){refuse();return;}
+      utfValue=utfValue*64+(byte&63);utfNeed--;utfMin=128;utfMax=191;
+      if(utfNeed===0&&utfValue===0xfeff)refuse();
+    }else if(byte<128){if((byte<32&&byte!==10)||byte===127)refuse();}
+    else if(byte>=194&&byte<=223){utfNeed=1;utfValue=byte&31;utfMin=128;utfMax=191;}
+    else if(byte>=224&&byte<=239){
+      utfNeed=2;utfValue=byte&15;utfMin=byte===224?160:128;utfMax=byte===237?159:191;
+    }else if(byte>=240&&byte<=244){
+      utfNeed=3;utfValue=byte&7;utfMin=byte===240?144:128;utfMax=byte===244?143:191;
+    }else refuse();
+  };
+  const consume=(bytes,size)=>{
+    // size is the engine's intrinsic typed-array byteLength, never .length or
+    // a caller-overridable iterator/method. No incoming buffer/view is retained.
+    for(let index=0;index<size&&!refused;index++){
+      if(finished||step===10){refuse();break;}
+      const byte=bytes[index];utf8(byte);if(refused)break;
+      if(byte===10){finishLine();continue;}
+      const column=lineBytes;lineBytes=Math.min(16385,lineBytes+1);
+      if(leading&&byte===32)indented=true;
+      else{
+        if(leading){leading=false;digitPlan=byte>=48&&byte<=57?1:-1;}
+        else if(digitPlan===1){if(byte===46)digitPlan=2;else if(byte<48||byte>57)digitPlan=-1;}
+        else if(digitPlan===2){if(byte===46)refuse();digitPlan=-1;}
+        if(prefixBytes<256)prefix[prefixBytes++]=byte;
+      }
+      if(stemPossible&&!(stemBytes===0&&byte===32)){
+        if(stemBytes<stem.length&&byte===stem.charCodeAt(stemBytes))stemBytes++;
+        else stemPossible=false;
+      }
+      if(byte===family.charCodeAt(familyMatch))familyMatch++;
+      else familyMatch=byte===family.charCodeAt(0)?1:0;
+      if(familyMatch===family.length){
+        if(column+1!==family.length||step!==0)refuse();
+        familyMatch=0;
+      }
+      if(column===0&&step===0&&byte===header.charCodeAt(0))candidateActive=true;
+      if(candidateActive){
+        if(column<header.length&&byte!==header.charCodeAt(column)){
+          candidateActive=false;if(column>=family.length)refuse();
+        }else if(column>=16384)refuse();
+        else candidate[column]=byte;
+      }
+    }
+  };
+  return {consume,refuse,finish(){
+    if(finished){refuse();return;}
+    finished=true;if(utfNeed!==0||lineBytes!==0||step!==10)refuse();
+  },facts(){return {refused,complete:finished&&!refused&&step===10,marker,summary};}};
+}
+
 function manualOrphanMonotonicClockV1(duration,onFault,onDeadline){
   let origin=null,last=null,unavailable=false;
   const check=(deadline=true)=>{
@@ -1398,15 +1516,24 @@ export function observeManualOrphanOwnedChildV1(actualChild,purpose){
     ?ownedChildPoliciesV1[purpose]:invalidOwnedChildPolicyV1;
   return observeManualOrphanChildV1(actualChild,policy);
 }
-function observeManualOrphanChildV1(child,policy){
+export function observeManualOrphanOwnedIntegrationChildV1(actualChild){
+  return observeManualOrphanChildV1(actualChild,ownedChildPoliciesV1.integration,true,arguments.length!==1);
+}
+function observeManualOrphanChildV1(child,policy,collectIntegration=false,invalidIntegrationArity=false){
   const owned=policy.owned;
-  let state=owned&&policy.purpose===null?'unknown':'pending',reason=state==='unknown'?'purpose':null;
+  let state=owned&&(policy.purpose===null||invalidIntegrationArity)?'unknown':'pending',reason=state==='unknown'?'purpose':null;
+  let integrationScanner=null,integrationFault=false;
   let exit=null,close=null,exitCount=0,closeCount=0,spawned=false;
   let timer=null,timerCleared=false,historyResolved=false,resolveHistory,bindingComplete=false,timelyComplete=false,clock=null;
   const settled=new Promise(resolve=>{resolveHistory=resolve;});
   const makeOutput=()=>({bytes:0,hash:null,hashUnavailable:false,end:false,close:false,chunks:[],retained:0});
   const stdout=makeOutput(),stderr=makeOutput(),fd4={finish:false,end:false,close:false};
   const markUnknown=code=>{if(state!=='unknown'){state='unknown';reason=code;}};
+  const loseIntegration=()=>{integrationFault=true;integrationScanner=null;markUnknown('binding');};
+  const finishIntegration=()=>{
+    if(!collectIntegration)return;
+    try{if(integrationScanner===null)loseIntegration();else integrationScanner.finish();}catch{loseIntegration();}
+  };
   const checkClock=()=>{if(owned&&bindingComplete&&clock!==null)clock.check(!timelyComplete);};
   const loseHash=channel=>{channel.hash=null;channel.hashUnavailable=true;markUnknown('binding');};
   const outputFact=channel=>{
@@ -1454,7 +1581,31 @@ function observeManualOrphanChildV1(child,policy){
   const normalExit=(code,signal)=>Number.isSafeInteger(code)&&code>=0&&signal===null;
   const snapshot=()=>settle(true);
   const witness=Object.freeze({settled,snapshot,output(){
-    settle();return {stdout:Buffer.concat(stdout.chunks,stdout.retained),stderr:Buffer.concat(stderr.chunks,stderr.retained)};
+    if(!collectIntegration){
+      settle();return {stdout:Buffer.concat(stdout.chunks,stdout.retained),stderr:Buffer.concat(stderr.chunks,stderr.retained)};
+    }
+    try{
+      // Copies may fail. Qualify CURRENT digests/clock/lifecycle only AFTER both
+      // copies, and never publish a historical settled/accepted observation.
+      const out=Buffer.concat(stdout.chunks,stdout.retained),err=Buffer.concat(stderr.chunks,stderr.retained);
+      const current=snapshot(),data=integrationScanner===null?null:integrationScanner.facts();
+      let integrationState='pending';
+      if(current.state==='unknown'||integrationFault||data===null||data.refused
+        ||(current.exit!==null&&current.exit.code!==0)||(current.close!==null&&current.close.code!==0))integrationState='refused';
+      else if(current.state==='observed'){
+        integrationState=data.complete&&current.exit?.code===0&&current.exit.signal===null
+          &&current.close?.code===0&&current.close.signal===null&&current.stdout.end&&current.stdout.close
+          &&current.stderr.end&&current.stderr.close&&current.stderr.bytes===0
+          &&current.stdout.bytes<=1048576&&current.stderr.bytes<=1048576
+          &&current.fd4?.finish&&current.fd4.end&&current.fd4.close?'observed':'refused';
+      }
+      const integration=Object.freeze({state:integrationState,marker:integrationState==='observed'?data.marker:null,
+        summary:integrationState==='observed'?data.summary:null});
+      return Object.freeze({stdout:out,stderr:err,integration});
+    }catch{
+      loseIntegration();try{settle();}catch{markUnknown('binding');}
+      throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    }
   }});
   const originalBindings=[
     ['spawn',()=>{checkClock();if(owned&&spawned)fail('binding');spawned=true;settle();}],
@@ -1496,7 +1647,7 @@ function observeManualOrphanChildV1(child,policy){
     ['close',()=>{checkClock();const invalid=fd4.close||!fd4.finish||!fd4.end;fd4.close=true;if(invalid)fail('fd4');settle();}],
   ]:[
     ['error',()=>{checkClock();fail(name);}],
-    ['end',()=>{checkClock();const invalid=channel.end||channel.close;channel.end=true;if(invalid)fail(name);settle();}],
+    ['end',()=>{checkClock();const invalid=channel.end||channel.close;if(name==='stdout')finishIntegration();channel.end=true;if(invalid)fail(name);settle();}],
     ['close',()=>{checkClock();const invalid=channel.close||!channel.end;channel.close=true;if(invalid)fail(name);settle();}],
   ];
   for(const name of ['stdout','stderr','fd4']){
@@ -1520,6 +1671,10 @@ function observeManualOrphanChildV1(child,policy){
     }
   }
   for(const {name,stream} of present){try{stream.pause();}catch{fail(name);}}
+  if(collectIntegration){
+    try{integrationScanner=manualOrphanIntegrationScannerV1();if(invalidIntegrationArity)integrationScanner.refuse();}
+    catch{loseIntegration();}
+  }
   for(const record of present){
     const {name,stream}=record;
     try{
@@ -1545,6 +1700,10 @@ function observeManualOrphanChildV1(child,policy){
           if(count>0){
             if(owned){try{channel.chunks.push(Buffer.from(Buffer.prototype.subarray.call(chunk,0,count)));channel.retained+=count;}catch{markUnknown('binding');}}
             else{channel.chunks.push(Buffer.from(chunk.subarray(0,count)));channel.retained+=count;}
+          }
+          if(collectIntegration&&integrationScanner!==null){
+            try{if(name==='stdout')integrationScanner.consume(chunk,size);else if(size>0)integrationScanner.refuse();}
+            catch{loseIntegration();}
           }
           if(invalid)fail(name);if(channel.bytes>policy.cap)fail('limit');settle();
         });

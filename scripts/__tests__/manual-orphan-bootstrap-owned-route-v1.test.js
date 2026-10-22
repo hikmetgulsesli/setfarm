@@ -5273,3 +5273,383 @@ test('Task4A canonical refuses memberships setter-only array index without invoc
   Object.defineProperty(value.memberships,'0',{enumerable:true,set(){hits++;}});
   task4aRefusedV1(normalize,value,'array index setter');assert.equal(hits,0);
 });
+
+// Task5A collector component regressions. These literal registrations exercise
+// the complete actual shared engine, never a Source holder, runner or owner.
+// Each callback gates the real future export before any VM/fixture work.
+function task5aCollectorGateV1(actual=helper){
+  assert.equal(typeof actual?.observeManualOrphanOwnedIntegrationChildV1,'function',
+    'missing Task5A observeManualOrphanOwnedIntegrationChildV1 (collector scaffolding RED)');
+}
+const TASK5A_MARKER_PREFIX_V1='MANUAL_ORPHAN_INTEGRATION_RESULT ';
+const TASK5A_PASS_NAME_V1='manual orphan bootstrap v1 preserves old entry and refuses maintenance source';
+const TASK5A_SUMMARY_LINES_V1=['ℹ tests 1','ℹ suites 0','ℹ pass 1','ℹ fail 0','ℹ cancelled 0','ℹ skipped 0','ℹ todo 0'];
+function task5aReportV1(passDuration='2.674667',summaryDuration='58.297125'){
+  return ['✔ '+TASK5A_PASS_NAME_V1+' ('+passDuration+'ms)',...TASK5A_SUMMARY_LINES_V1,
+    'ℹ duration_ms '+summaryDuration].join('\n')+'\n';
+}
+function task5aWireV1(){
+  const bytes=helper.encodeManualOrphanIntegrationResultV1(ownedIntegrationData());
+  assert.deepEqual(bytes,Buffer.from(OWN_INTEGRATION_WIRE),'real codec agrees with independent existing literal');
+  return Buffer.concat([Buffer.from(TASK5A_MARKER_PREFIX_V1),bytes,Buffer.from(task5aReportV1())]);
+}
+function task5aMarkerV1(payload=OWN_INTEGRATION_WIRE){return TASK5A_MARKER_PREFIX_V1+payload;}
+function task5aIntegrationV1(w,state){
+  const output=w.output();
+  assert.equal(output.integration.state,state);
+  if(state!=='observed')assert.deepEqual(observedDataV1(output.integration),{state,marker:null,summary:null});
+  return output;
+}
+function task5aAcceptedV1(w){
+  assert.equal(w.snapshot().state,'observed');const output=task5aIntegrationV1(w,'observed');
+  assert.deepEqual(observedDataV1(output.integration.marker),ownedIntegrationData());
+  assert.deepEqual(observedDataV1(output.integration.summary),{tests:1,suites:0,pass:1,fail:0,cancelled:0,skipped:0,todo:0});
+  return output;
+}
+function task5aAllBytesV1(w,stdout,stderr=Buffer.alloc(0)){
+  const now=w.snapshot();
+  for(const [name,bytes] of [['stdout',stdout],['stderr',stderr]]){
+    assert.equal(now[name].bytes,bytes.length,name+' full byte count');
+    assert.equal(now[name].sha256,createHash('sha256').update(bytes).digest('hex'),name+' full digest');
+  }
+}
+async function task5aTranscriptV1(vm,bytes,{chunks,stderr,code=0,configure,afterData}={}){
+  task5aCollectorGateV1(vm.actual);const f=task3EventFixtureV1('integration');if(configure)configure(f);
+  const w=vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child);
+  try{
+    for(const chunk of chunks??[bytes])f.channels.stdout.emit('data',chunk);
+    if(stderr)f.channels.stderr.emit('data',stderr);
+    if(afterData)afterData(f,w);
+    task3CompleteV1(f,'integration',code);await w.settled;
+    return {f,w};
+  }finally{
+    if(w.snapshot().state==='pending')f.child.emit('error',Error('COMPONENT_END'));
+    f.assertGuarded();vm.assertContained();
+  }
+}
+async function task5aRefusedTranscriptV1(vm,bytes,{unknown=false,...options}={}){
+  const {w}=await task5aTranscriptV1(vm,bytes,options);task5aIntegrationV1(w,'refused');
+  if(unknown)assert.equal(w.snapshot().state,'unknown');
+  else assert.equal(w.snapshot().state,'observed','deterministic content refusal preserves actual transport facts');
+  task5aAllBytesV1(w,bytes,options.stderr);return w;
+}
+
+// Break: marker/report credit must wait for every actual terminal observation.
+test('Task5A 01 calibrated collector publishes only after complete original lifecycle',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1();task5aCollectorGateV1(vm.actual);
+  const f=task3EventFixtureV1('integration'),w=vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child),bytes=task5aWireV1();
+  try{
+    assert.equal(helper.observeManualOrphanOwnedIntegrationChildV1.length,1);
+    assert.equal(vm.actual.observeManualOrphanOwnedIntegrationChildV1.length,1);
+    assert.equal(Object.isFrozen(w),true);assert.deepEqual(Object.keys(w),['settled','snapshot','output']);
+    task5aIntegrationV1(w,'pending');f.child.emit('spawn');f.channels.stdout.emit('data',bytes);
+    task5aIntegrationV1(w,'pending');
+    for(const name of ['stdout','stderr']){f.channels[name].emit('end');f.channels[name].emit('close');task5aIntegrationV1(w,'pending');}
+    f.channels.fd4.emit('finish');f.channels.fd4.emit('end');f.child.emit('exit',0,null);f.child.emit('close',0,null);
+    assert.equal(w.snapshot().state,'pending');task5aIntegrationV1(w,'pending');
+    f.channels.fd4.emit('close');assert.equal((await w.settled).state,'observed');task5aAcceptedV1(w);task5aAllBytesV1(w,bytes);
+    assert.equal(vm.timers.length,1);assert.equal(vm.timers[0].delay,300000);assert.deepEqual(vm.cleared,[vm.timers[0].handle]);
+    task3FrozenV1(w.snapshot());
+  }finally{if(w.snapshot().state==='pending')f.child.emit('error',Error('COMPONENT_END'));f.assertGuarded();vm.assertContained();}
+});
+
+// Break: scanning the retained diagnostic prefix loses a later real marker.
+test('Task5A 02 collector scans beyond diagnostic prefix and long neutral lines',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),tail=task5aWireV1();
+  for(const preamble of ['neutral\n'.repeat(8193),'n'.repeat(70000)+'\n']){
+    const bytes=Buffer.concat([Buffer.from(preamble),tail]),{w}=await task5aTranscriptV1(vm,bytes);
+    const out=task5aAcceptedV1(w);assert.equal(out.stdout.length,65536);assert.deepEqual(out.stdout,bytes.subarray(0,65536));
+    assert.equal(out.stdout.includes(Buffer.from(TASK5A_MARKER_PREFIX_V1)),false);task5aAllBytesV1(w,bytes);
+  }
+});
+
+// Break: chunk boundaries cannot reset UTF8, marker, decimal or line state.
+test('Task5A 03 every finite transcript byte split has identical collector data',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),bytes=task5aWireV1();
+  for(let split=1;split<bytes.length;split++){
+    const {w}=await task5aTranscriptV1(vm,bytes,{chunks:[bytes.subarray(0,split),bytes.subarray(split)]});
+    task5aAcceptedV1(w);task5aAllBytesV1(w,bytes);
+  }
+  for(const chunks of [[bytes],Array.from(bytes,byte=>Buffer.from([byte]))]){
+    const {w}=await task5aTranscriptV1(vm,bytes,{chunks});task5aAcceptedV1(w);task5aAllBytesV1(w,bytes);
+  }
+  vm.assertContained();
+});
+
+// Break: a marker alone, report alone or nonzero exit is never integration success.
+test('Task5A 04 marker and exact report are jointly necessary for success',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),marker=task5aMarkerV1(),report=task5aReportV1();
+  for(const text of [marker,report,report+marker,marker+report.replace(TASK5A_PASS_NAME_V1,'another test')])
+    await task5aRefusedTranscriptV1(vm,Buffer.from(text));
+  await task5aRefusedTranscriptV1(vm,task5aWireV1(),{code:1});
+});
+
+// Break: reserved-family output cannot hide in preamble, indentation or a long line.
+test('Task5A 05 reserved marker family rejects duplicates partials and embedded bytes',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),marker=task5aMarkerV1(),report=task5aReportV1();
+  const rows=[
+    ['duplicate before PASS',marker+marker+report],
+    ['duplicate after PASS',marker+report.split('\n')[0]+'\n'+marker+report.split('\n').slice(1).join('\n')],
+    ['malformed family','MANUAL_ORPHAN_UNSUPPORTED\n'+marker+report],
+    ['embedded','neutral '+marker+report],['indented',' '+marker+report],
+    ['partial LF','MANUAL_ORPHAN_INTEGRATION_RESUL\n'+marker+report],
+    ['partial EOF','MANUAL_ORPHAN_INTEGRATION_RESUL'],
+    ['family LF','MANUAL_ORPHAN_\n'+marker+report],['family EOF','MANUAL_ORPHAN_'],
+    ['spaced partial','   MANUAL_ORPHAN_INTEGRATION\n'+marker+report],
+    ['missing separator','MANUAL_ORPHAN_INTEGRATION_RESULT'+OWN_INTEGRATION_WIRE+report],
+    ['overflow line',TASK5A_MARKER_PREFIX_V1+'x'.repeat(16351)+'\n'+report],
+    ['deep embedded','n'.repeat(70000)+marker+report],
+    ['second family in preamble','MANUAL_ORPHAN_INTEGRATION_RESULTx MANUAL_ORPHAN_\n'+marker+report],
+  ];
+  for(const [label,text] of rows){
+    const bytes=Buffer.from(text);const w=await task5aRefusedTranscriptV1(vm,bytes);
+    assert.equal(w.snapshot().stdout.bytes,bytes.length,label);
+  }
+  const bytes=Buffer.from('n'.repeat(65535)+'\n'+marker+report);
+  const {w}=await task5aTranscriptV1(vm,bytes,{chunks:[bytes.subarray(0,65536+17),bytes.subarray(65536+17)]});
+  task5aAcceptedV1(w);task5aAllBytesV1(w,bytes);
+});
+
+// Break: JSON permissiveness must not bypass the existing canonical codec;
+// its indistinguishable thrown failures conservatively burn engine certainty.
+test('Task5A 06 actual strict codec exceptions differ from scanner content refusal',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),report=task5aReportV1();
+  const codecRows=[
+    ['duplicate key',OWN_INTEGRATION_WIRE.replace('{','{"schema":"setfarm.manual-orphan-integration-result.v1",')],
+    ['reordered keys',OWN_INTEGRATION_WIRE.replace('"pid":104,"parentPid":102','"parentPid":102,"pid":104')],
+    ['wrong schema',OWN_INTEGRATION_WIRE.replace('integration-result.v1','integration-result.v2')],
+    ['wrong type',OWN_INTEGRATION_WIRE.replace('"pid":104','"pid":"104"')],
+    ['extra field',OWN_INTEGRATION_WIRE.replace('"sourcePinsClosed":true','"sourcePinsClosed":true,"extra":0')],
+    ['whitespace',' '+OWN_INTEGRATION_WIRE],
+    ['suffix',OWN_INTEGRATION_WIRE.replace('}\n','}suffix\n')],
+    ['empty payload','\n'],
+    ['line exactly16384',OWN_INTEGRATION_WIRE.slice(0,-1)+' '.repeat(16351-Buffer.byteLength(OWN_INTEGRATION_WIRE))+'\n'],
+  ];
+  for(const [label,payload] of codecRows){
+    const bytes=Buffer.from(task5aMarkerV1(payload)+report);
+    const w=await task5aRefusedTranscriptV1(vm,bytes,{unknown:true});assert.equal(w.snapshot().reason,'binding',label);
+  }
+  const invalidUtf8=Buffer.concat([Buffer.from(TASK5A_MARKER_PREFIX_V1+'{"schema":"'),Buffer.from([255]),Buffer.from('"}\n'+report)]);
+  for(const bytes of [invalidUtf8,Buffer.from(TASK5A_MARKER_PREFIX_V1+'x'.repeat(16351)+'\n'+report),
+    Buffer.from(TASK5A_MARKER_PREFIX_V1+'x'.repeat(16383)+'\n'+report),
+    Buffer.from(task5aMarkerV1(OWN_INTEGRATION_WIRE.slice(0,-1)))]){
+    await task5aRefusedTranscriptV1(vm,bytes);
+  }
+});
+
+// Break: neither marker presence nor familiar counters may supply missing PASS/count credit.
+test('Task5A 07 report requires one PASS and every ordered exact summary count',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),marker=task5aMarkerV1(),lines=task5aReportV1().trimEnd().split('\n');
+  const reports=[
+    [lines[0],...lines].join('\n')+'\n',lines.join('\n').replace('✔','✖')+'\n',
+    lines.join('\n').replace(TASK5A_PASS_NAME_V1,'unexpected test')+'\n',
+    [lines[0],lines[0].replace(TASK5A_PASS_NAME_V1,'second test'),...lines.slice(1)].join('\n')+'\n',
+    [lines[0],'▶ extra suite',...lines.slice(1)].join('\n')+'\n',
+    [lines[0],lines[1],...lines.slice(1)].join('\n')+'\n',lines.slice(1).join('\n')+'\n',
+    lines.slice(0,-1).join('\n')+'\n',lines.join('\n').replace('ℹ tests 1','ℹ tests 01')+'\n',
+    lines.join('\n').replace('ℹ fail 0','ℹ fail -1')+'\n',lines.join('\n').replace('ℹ tests 1','ℹ tests 1.0')+'\n',
+    lines.join('\n').replace('ℹ tests 1','ℹ tests 9007199254740993')+'\n',lines.join('\n').replace('ℹ tests 1','ℹ Tests 1')+'\n',
+  ];
+  for(let index=1;index<=7;index++){
+    reports.push(lines.filter((_,at)=>at!==index).join('\n')+'\n');
+    const changed=[...lines];changed[index]=changed[index].slice(0,-1)+(index===1||index===3?'2':'1');reports.push(changed.join('\n')+'\n');
+  }
+  for(let first=1;first<=7;first++)for(let second=first+1;second<=7;second++){
+    const swapped=[...lines];[swapped[first],swapped[second]]=[swapped[second],swapped[first]];reports.push(swapped.join('\n')+'\n');
+  }
+  assert.equal(reports.length,48);
+  for(const report of reports)await task5aRefusedTranscriptV1(vm,Buffer.from(marker+report));
+});
+
+// Break: unsupported reporter families may not pass as neutral preamble/noise.
+test('Task5A 08 unsupported TAP status families and interleaved noise refuse',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),marker=task5aMarkerV1(),report=task5aReportV1();
+  const tap='TAP version 13\n# Subtest: '+TASK5A_PASS_NAME_V1+'\nok 1 - '+TASK5A_PASS_NAME_V1+'\n1..1\n# tests 1\n# pass 1\n';
+  const preambles=['✔ other','✖ other','✓ other','✗ other','ℹ unknown 0','▶ suite','► suite','- skipped',
+    'TAP version 13','ok','ok 1','not ok','not ok 1','Bail out!','# Subtest: other','# tests 1','# suites 0','# pass 1',
+    '# fail 0','# cancelled 0','# skipped 0','# todo 0','# duration_ms 1','1..1','999999999999999999999999999999999999..1',
+    ...TASK5A_SUMMARY_LINES_V1];
+  for(const prefix of preambles)for(const indent of ['','   '])
+    await task5aRefusedTranscriptV1(vm,Buffer.from(indent+prefix+'\n'+marker+report));
+  for(const text of [tap,tap+marker+report,marker+'neutral interleaved\n'+report,
+    marker+report.replace('ℹ suites 0','ℹ unknown 0'),marker+report.replace('ℹ pass 1','neutral\nℹ pass 1')])
+    await task5aRefusedTranscriptV1(vm,Buffer.from(text));
+  const {w}=await task5aTranscriptV1(vm,Buffer.from('Mango\nMANUAL_OTHER\nneutral UTF8 café\n'+marker+report));task5aAcceptedV1(w);
+});
+
+// Break: decimal spellings, controls, malformed UTF8 and trailing bytes are never normalized.
+test('Task5A 09 strict decimals UTF8 controls and natural final LF are enforced',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),marker=task5aMarkerV1();
+  const accepted=['0','1','1.0','999999999999','999999999999.999999999999','0.000000000001','2.674667','58.297125'];
+  const refused=['','00','01','-1','+1','1e1','NaN','Infinity','.1','1.','1.0000000000000','1000000000000',' 1','1 '];
+  for(const token of accepted)for(const where of ['pass','summary']){
+    const report=where==='pass'?task5aReportV1(token):task5aReportV1('2.674667',token);
+    const {w}=await task5aTranscriptV1(vm,Buffer.from(marker+report));task5aAcceptedV1(w);
+  }
+  for(const token of refused)for(const where of ['pass','summary'])
+    await task5aRefusedTranscriptV1(vm,Buffer.from(marker+(where==='pass'?task5aReportV1(token):task5aReportV1('2.674667',token))));
+  const good=task5aWireV1(),report=task5aReportV1();
+  const bytesRows=[Buffer.from((marker+report).replaceAll('\n','\r\n')),Buffer.from('\x1b[32mneutral\n'+marker+report),
+    Buffer.from('neutral\x00\n'+marker+report),Buffer.from('neutral\t\n'+marker+report),Buffer.from('neutral\x7f\n'+marker+report),
+    Buffer.concat([Buffer.from([239,187,191]),good]),Buffer.concat([Buffer.from([192,175,10]),good]),
+    Buffer.concat([Buffer.from([237,160,128,10]),good]),Buffer.concat([Buffer.from([244,144,128,128,10]),good]),
+    Buffer.concat([Buffer.from([255,10]),good]),Buffer.concat([good,Buffer.from([226,132])]),
+    Buffer.concat([Buffer.from([226,132])]),Buffer.concat([good,Buffer.from('trailing\n')]),
+    Buffer.concat([good,Buffer.from('\n')]),Buffer.concat([good,Buffer.from('x')]),good.subarray(0,good.length-1),
+    Buffer.from('unfinished ordinary line')];
+  for(const bytes of bytesRows)await task5aRefusedTranscriptV1(vm,bytes);
+});
+
+// Break: all-byte channel caps remain independent of parser and copied-prefix limits.
+test('Task5A 10 full channel limits count hash drain and dominate content refusal',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),tail=task5aWireV1();
+  for(const total of [1048575,1048576,1048577]){
+    const bytes=Buffer.concat([Buffer.alloc(total-tail.length-1,0x6e),Buffer.from('\n'),tail]);
+    assert.equal(bytes.length,total);const {w}=await task5aTranscriptV1(vm,bytes);
+    if(total<=1048576)task5aAcceptedV1(w);else{task5aIntegrationV1(w,'refused');assert.equal(w.snapshot().state,'unknown');assert.equal(w.snapshot().reason,'limit');}
+    task5aAllBytesV1(w,bytes);assert.equal(w.output().stdout.length,65536);
+  }
+  for(const total of [1,1048576,1048577]){
+    const stderr=Buffer.alloc(total,0x65),{w}=await task5aTranscriptV1(vm,tail,{stderr});
+    task5aIntegrationV1(w,'refused');assert.equal(w.snapshot().state,total>1048576?'unknown':'observed');
+    if(total>1048576)assert.equal(w.snapshot().reason,'limit');task5aAllBytesV1(w,tail,stderr);
+  }
+  const bytes=Buffer.concat([Buffer.alloc(1048576-tail.length-1,0x6e),Buffer.from('\n'),tail]),stderr=Buffer.alloc(1048576,0x65);
+  const {w}=await task5aTranscriptV1(vm,bytes,{stderr});assert.equal(w.snapshot().state,'observed');task5aIntegrationV1(w,'refused');task5aAllBytesV1(w,bytes,stderr);
+});
+
+// Break: parsed report cannot invent any absent natural stream/FD4/original join.
+test('Task5A 11 absent required lifecycle facts stay pending then deadline unknown',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),bytes=task5aWireV1();
+  const events=[['stdout','end'],['stdout','close'],['stderr','end'],['stderr','close'],
+    ['fd4','finish'],['fd4','end'],['fd4','close'],['child','exit'],['child','close']];
+  const omissions=[['stdout.end','stdout.close'],['stdout.close'],['stderr.end','stderr.close'],
+    ['fd4.finish','fd4.close'],['fd4.end','fd4.close'],['fd4.close'],['child.close']];
+  for(const omitted of omissions){
+    const f=task3EventFixtureV1('integration'),w=vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child);
+    try{
+      f.channels.stdout.emit('data',bytes);
+      for(const [name,event] of events)if(!omitted.includes(name+'.'+event))
+        (name==='child'?f.child:f.channels[name]).emit(event,...(name==='child'?[0,null]:[]));
+      assert.equal(w.snapshot().state,'pending',omitted.join(','));task5aIntegrationV1(w,'pending');
+      vm.timers.at(-1).callback();assert.equal((await w.settled).state,'unknown');assert.equal(w.snapshot().reason,'deadline');task5aIntegrationV1(w,'refused');
+      for(const [name,event] of events)if(omitted.includes(name+'.'+event))
+        (name==='child'?f.child:f.channels[name]).emit(event,...(name==='child'?[0,null]:[]));
+      assert.equal(w.snapshot().state,'unknown');task5aIntegrationV1(w,'refused');task5aAllBytesV1(w,bytes);
+    }finally{f.assertGuarded();vm.assertContained();}
+  }
+});
+
+// Break: invalid arity may neither inspect extra arguments nor abandon bindable drains.
+test('Task5A 12 invalid arity refuses without inspecting hostile extra arguments',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1();task5aCollectorGateV1(vm.actual);
+  const empty=vm.actual.observeManualOrphanOwnedIntegrationChildV1();await task3UnknownV1(empty,'purpose');task5aIntegrationV1(empty,'refused');
+  let hits=0;const trap=()=>{hits++;throw Error('PRIVATE_EXTRA_ARGUMENT');};
+  const extra=new Proxy({},{get:trap,ownKeys:trap,getOwnPropertyDescriptor:trap,getPrototypeOf:trap,has:trap});
+  const f=task3EventFixtureV1('integration'),forbiddenCalls=[];
+  for(const [target,names] of [[f.child,['close','destroy','unref']],
+    ...Object.values(f.channels).map(stream=>[stream,['close','unref']])])for(const name of names)
+    target[name]=()=>{forbiddenCalls.push(name);throw Error('FORBIDDEN_FOREIGN_EFFECT');};
+  const w=vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child,extra);
+  try{
+    await task3UnknownV1(w,'purpose');task3AllBoundV1(f);assert.deepEqual([...new Set(f.resumed)].sort(),['fd4','stderr','stdout']);
+    const bytes=Buffer.alloc(1048576,0x61),stderr=Buffer.from('drained');
+    f.channels.stdout.emit('data',bytes);f.channels.stderr.emit('data',stderr);task3CompleteV1(f,'integration');
+    assert.equal(hits,0);assert.equal(w.snapshot().reason,'purpose');task5aIntegrationV1(w,'refused');task5aAllBytesV1(w,bytes,stderr);
+    assert.equal(w.output().stdout.length,65536);assert.equal(JSON.stringify(w.snapshot()).includes('PRIVATE_EXTRA_ARGUMENT'),false);
+  }finally{assert.deepEqual(forbiddenCalls,[]);f.assertGuarded();vm.assertContained();}
+});
+
+// Break: scanner binds before resume; incomplete binding must not fabricate digest evidence.
+test('Task5A 13 synchronous data and failed binding preserve current drain uncertainty',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),bytes=task5aWireV1();
+  const resumed=await task5aTranscriptV1(vm,Buffer.alloc(0),{configure(f){
+    const resume=f.channels.stdout.resume;f.channels.stdout.resume=function(){resume.call(this);this.emit('data',bytes);return this;};
+  }});task5aAcceptedV1(resumed.w);task5aAllBytesV1(resumed.w,bytes);
+  const during=await task5aTranscriptV1(vm,Buffer.alloc(0),{configure(f){
+    const on=f.channels.stdout.on;f.channels.stdout.on=function(event,callback){
+      const result=on.call(this,event,callback);if(event==='data')this.emit('data',bytes);return result;
+    };
+  }});
+  assert.equal(during.w.snapshot().state,'unknown');assert.equal(during.w.snapshot().reason,'binding');
+  assert.equal(during.w.snapshot().stdout.bytes,bytes.length);assert.equal(during.w.snapshot().stdout.sha256,null);task5aIntegrationV1(during.w,'refused');
+  for(const missing of ['end','error']){
+    task5aCollectorGateV1(vm.actual);const f=task3EventFixtureV1('integration');let attempts=0,drains=0;
+    const on=f.channels.stdout.on;f.channels.stdout.on=function(event,callback){
+      if(event===missing){attempts++;throw Error('PRIVATE_BINDING_SLOT');}return on.call(this,event,callback);
+    };
+    f.channels.stdout.resume=function(){
+      assert.ok(this.listenerCount('error')>0);assert.ok(this.listenerCount('data')>0);drains++;return this;
+    };
+    const w=vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child);
+    try{
+      assert.equal(attempts,1);assert.equal(drains,missing==='error'?0:1);
+      assert.ok(f.resumed.includes('stderr'));assert.ok(f.resumed.includes('fd4'));assert.ok(f.channels.stdout.listenerCount('data')>0);
+      f.channels.stdout.emit('data',bytes);f.channels.stderr.emit('data',Buffer.from('drain'));
+      await task3UnknownV1(w,'binding');task5aIntegrationV1(w,'refused');assert.equal(w.snapshot().stdout.bytes,bytes.length);assert.equal(w.snapshot().stderr.bytes,5);
+    }finally{f.assertGuarded();vm.assertContained();}
+  }
+});
+
+// Break: historical settled/accepted DATA cannot conceal a current late fault.
+test('Task5A 14 late lifecycle hash and clock faults revoke current publication',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),bytes=task5aWireV1();
+  const events=[['child error',(f)=>f.child.emit('error',Error('PRIVATE_LATE'))],
+    ['stdout error',f=>f.channels.stdout.emit('error',Error('PRIVATE_LATE'))],
+    ['stderr error',f=>f.channels.stderr.emit('error',Error('PRIVATE_LATE'))],
+    ['fd4 error',f=>f.channels.fd4.emit('error',Error('PRIVATE_LATE'))],
+    ['duplicate original close',f=>f.child.emit('close',0,null)],
+    ['duplicate stdout end',f=>f.channels.stdout.emit('end')],
+    ['duplicate stderr close',f=>f.channels.stderr.emit('close')],
+    ['duplicate fd4 finish',f=>f.channels.fd4.emit('finish')],
+    ['stdout data after EOF',f=>f.channels.stdout.emit('data',Buffer.from('late'))],
+    ['fd4 inbound data',f=>f.channels.fd4.emit('data',Buffer.from('late'))]];
+  async function revoke(actualVm,emit){
+    const {f,w}=await task5aTranscriptV1(actualVm,bytes),history=await w.settled,old=task5aAcceptedV1(w);
+    emit(f);assert.equal(w.snapshot().state,'unknown');task5aIntegrationV1(w,'refused');
+    assert.equal(await w.settled,history);assert.equal(history.state,'observed');assert.equal(old.integration.state,'observed');
+    task3FrozenDataV1(old.integration);f.child.emit('close',0,null);task5aIntegrationV1(w,'refused');
+    assert.equal(actualVm.timers.filter(timer=>!actualVm.cleared.includes(timer.handle)).length,0,'late fault does not rearm deadline');
+    f.assertGuarded();actualVm.assertContained();
+  }
+  for(const [,emit] of events)await revoke(vm,emit);
+  let copyFault=false;const hashVm=task3VmV1({crypto:{createHash(...args){
+    const actual=createHash(...args);return {update(...values){actual.update(...values);return this;},copy(){
+      if(copyFault)throw Error('PRIVATE_LATE_HASH');return actual.copy();
+    }};
+  }}});await revoke(hashVm,()=>{copyFault=true;});
+  for(const mode of ['throw','backwards']){
+    const clock=task3ClockV1();clock.state.ms=10;const clockVm=task3VmV1({monotonic:clock});
+    await revoke(clockVm,()=>{if(mode==='throw')clock.state.mode='throw';else clock.state.ms=9;});
+  }
+});
+
+// Break: output aliases, widened surfaces or attacker Buffer access can corrupt current evidence.
+test('Task5A 15 detached exact output preserves old facades and intrinsic Buffer reads',async()=>{
+  task5aCollectorGateV1();const vm=task3VmV1(),bytes=task5aWireV1();
+  const {w}=await task5aTranscriptV1(vm,bytes),out=task5aAcceptedV1(w);
+  assert.equal(Object.isFrozen(out),true);assert.deepEqual(Object.keys(out),['stdout','stderr','integration']);
+  assert.deepEqual(Object.keys(out.integration),['state','marker','summary']);
+  assert.deepEqual(Object.keys(out.integration.marker),['schema','run','frameSha256','pid','parentPid','oldEntry','newEntry','sourcePinsClosed']);
+  assert.deepEqual(Object.keys(out.integration.summary),['tests','suites','pass','fail','cancelled','skipped','todo']);
+  task3FrozenDataV1(out.integration);out.stdout.fill(0);out.stderr.fill(0);assert.deepEqual(w.output().stdout,bytes);
+  for(const api of ['observeManualOrphanOwnedChildV1','observeManualOrphanOriginalChildV1']){
+    const f=task3EventFixtureV1('integration'),old=api==='observeManualOrphanOwnedChildV1'?vm.actual[api](f.child,'integration'):vm.actual[api](f.child);
+    f.channels.stdout.emit('data',Buffer.from('ordinary legacy diagnostic\n'));task3CompleteV1(f,'integration');
+    assert.equal((await old.settled).state,'observed');assert.deepEqual(Object.keys(old.output()),['stdout','stderr']);
+    assert.deepEqual(old.output().stdout,Buffer.from('ordinary legacy diagnostic\n'));f.assertGuarded();
+  }
+  let methodHits=0;const hostile=Buffer.from(bytes);
+  for(const key of ['toString','values','entries',Symbol.iterator])Object.defineProperty(hostile,key,{value(){methodHits++;throw Error('PRIVATE_BUFFER_METHOD');}});
+  const trusted=await task5aTranscriptV1(vm,hostile);task5aAcceptedV1(trusted.w);assert.equal(methodHits,0);task5aAllBytesV1(trusted.w,bytes);
+  let lengthHits=0;const hostileLength=Buffer.from(bytes);
+  Object.defineProperty(hostileLength,'length',{get(){lengthHits++;throw Error('PRIVATE_BUFFER_LENGTH');}});
+  task5aCollectorGateV1(vm.actual);const f=task3EventFixtureV1('integration'),intrinsic=vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child);
+  try{
+    assert.doesNotThrow(()=>f.channels.stdout.emit('data',hostileLength));assert.equal(lengthHits,0,'intrinsic Buffer reads ignore own length getter');
+    task3CompleteV1(f,'integration');assert.equal((await intrinsic.settled).state,'observed');task5aAcceptedV1(intrinsic);
+    assert.equal(intrinsic.snapshot().stdout.bytes,bytes.length);assert.equal(intrinsic.snapshot().stdout.sha256,createHash('sha256').update(bytes).digest('hex'));
+    assert.deepEqual(intrinsic.output().stdout,bytes);assert.equal(lengthHits,0);assert.equal(f.resumed.includes('stdout'),true);
+    assert.equal(f.resumed.includes('stderr'),true);assert.equal(f.resumed.includes('fd4'),true);
+  }finally{f.assertGuarded();vm.assertContained();}
+});
