@@ -8884,3 +8884,427 @@ test('PR305 explicit mixed selection preserves raw-first ordering and owner vect
       '--test-concurrency=1','tests/execution-attempts/v3-stage-input-unresolved.integration.test.ts'],env:{...ENV}},
   ]);
 });
+
+// Task7D: actual private pins/resources, with a closed finite filesystem seam.
+// This is NOT a successful Source/stock-owner emulator. Raw stock recheck is a
+// dependency boundary; only the separate actual call-site slice binds its
+// retained identity. Missing handoffTargetOutput is scaffolding RED, not proof
+// that the later semantic assertions ran. No production export/test hook added.
+function task7dSourceV1(){
+  const text=readFileSync(HELPER,'utf8');
+  const ast=ts.createSourceFile('actual-H.mjs',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+  assert.deepEqual(ast.parseDiagnostics,[],'actual helper parses before private extraction');
+  const declaration=name=>{
+    const matches=ast.statements.filter(node=>ts.isFunctionDeclaration(node)?node.name?.text===name:
+      ts.isVariableStatement(node)&&node.declarationList.declarations.some(item=>item.name.getText(ast)===name));
+    assert.equal(matches.length,1,'one actual private declaration: '+name);
+    return matches[0].getText(ast);
+  };
+  return {text,ast,declaration};
+}
+function task7dPrivateVmV1(fs){
+  const source=task7dSourceV1(),c=capture();
+  const names=['ownedTargetShaV1','ownedMetadataV1','ownedSourceCleanupUncertainV1',
+    'ownedSourceRefusalV1','ownedSourceRequireV1','ownedSourceHashV1','ownedSourceLocatorV1',
+    'ownedSourceSameV1','ownedSourceKeysV1','ownedGitShaV1','probeHexV1',
+    'ownedSourceBuildDataV1','ownedSourceEqualBuildV1','ownedSourceResourcesV1','ownedSourcePinsV1'];
+  const context={Buffer,path,createHash,fs:closedModule(c,'Task7D finite fs',fs)};
+  runInNewContext(names.map(source.declaration).join('\n')+
+    '\n;globalThis.unit={resources:ownedSourceResourcesV1,pins:ownedSourcePinsV1};',context,
+    {filename:'actual-H-private-pins-resources',timeout:5000});
+  return {...context.unit,contained(){assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));}};
+}
+const TASK7D_METADATA_V1=Object.freeze(['BUILD_INFO.json','PLATFORM_BUILD_OUTPUT_TREE.json','PLATFORM_RELEASE_MANIFEST.json']);
+function task7dPinsV1(){
+  const root=SOURCE_T_V1,files=new Map(),dirs=new Map(),handles=new Map(),opened=[],events=[],faults=[];
+  let inode=100,next=1000,temporary=false,live=true,ownerFault=false,checks=0,activeTemporary=0,maxTemporary=0;
+  const controls={read:null,close:null,held:null,named:null,afterRead:null,afterCheck:null,recycle:false};
+  const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){
+    if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;
+  }};
+  const add=(locator,text)=>{
+    const bytes=Buffer.from(text),stat={...observationStatV1('file',inode++,bytes.length),birthtimeNs:1n};
+    files.set(locator,{bytes,stat});
+    for(let at=path.dirname(locator);;at=path.dirname(at)){
+      if(!dirs.has(at))dirs.set(at,{...observationStatV1('directory',inode++),birthtimeNs:1n});
+      if(at==='/')break;
+    }
+  };
+  const output=new Map(),sha='9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0';
+  // Independent literal SHA256("aaa"); 911 ordinary + 3 metadata, exact scope.
+  for(let i=0;i<911;i++){
+    const locator='dist/unit-'+String(i).padStart(4,'0')+'.js';add(root+'/'+locator,'aaa');
+    output.set(locator,{locator,mode:0o644,byteLength:3,sha256:sha});
+  }
+  for(const name of TASK7D_METADATA_V1){const locator=root+'/dist/'+name;add(locator,'aaa');files.get(locator).stat.mode=0o100444n;}
+  const keep=root+'/scripts/build-generation-retention.mjs';add(keep,'keep');
+  const paths=[...output.keys()].map(locator=>root+'/'+locator).concat(TASK7D_METADATA_V1.map(name=>root+'/dist/'+name));
+  const entry=locator=>{
+    assert.equal(typeof locator,'string');const item=files.get(locator)??dirs.get(locator);
+    if(!item){const error=Error('finite absent');error.code='ENOENT';throw error;}return item;
+  };
+  const stat=value=>({...value,isFile:()=>value.kind==='file',isDirectory:()=>value.kind==='directory',isSymbolicLink:()=>false});
+  const descriptor=fd=>{
+    const h=handles.get(fd);assert.ok(h,'only owned fixture descriptors');
+    assert.equal(h.closed,false,'no read/stat of burned descriptor');assert.equal(h.foreign,false,'never touch recycled foreign descriptor');return h;
+  };
+  const fs={constants,
+    realpathSync:guard(locator=>{entry(locator);return locator;}),
+    lstatSync:guard((locator,options)=>{
+      assert.equal(options?.bigint,true);events.push(['named',locator]);const item=entry(locator);
+      const value=files.has(locator)?item.stat:item;
+      return stat(controls.named===locator?{...value,ino:value.ino+1n}:value);
+    }),
+    readdirSync:guard(locator=>{
+      assert.ok(dirs.has(locator));events.push(['members',locator]);
+      return [...new Set([...files.keys(),...dirs.keys()].filter(p=>p!==locator&&path.dirname(p)===locator).map(p=>path.basename(p)))];
+    }),
+    openSync:guard((locator,flags)=>{
+      const item=entry(locator),isFile=files.has(locator);
+      assert.equal(flags,isFile?constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK:
+        constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW,'exact readonly nofollow/nonblock file flags');
+      const h={fd:next++,path:locator,item,closed:false,foreign:false,temporary:temporary&&isFile};
+      handles.set(h.fd,h);opened.push(h);events.push(['open',h.fd,locator]);
+      if(h.temporary){activeTemporary++;maxTemporary=Math.max(maxTemporary,activeTemporary);assert.equal(activeTemporary,1,'one bounded temporary at a time');}
+      return h.fd;
+    }),
+    fstatSync:guard((fd,options)=>{
+      assert.equal(options?.bigint,true);const h=descriptor(fd);events.push(['held',fd]);
+      const value=files.has(h.path)?h.item.stat:h.item;
+      return stat(controls.held===h.path?{...value,ino:value.ino+1n}:value);
+    }),
+    readSync:guard((fd,buffer,offset,length,position)=>{
+      const h=descriptor(fd);assert.ok(files.has(h.path));assert.ok(Buffer.isBuffer(buffer));
+      for(const value of [offset,length,position])assert.ok(Number.isSafeInteger(value)&&value>=0);
+      assert.equal(offset,buffer.length===1?0:position,'exact explicit data/EOF offset');assert.ok(length<=65536);assert.ok(offset+length<=buffer.length);
+      events.push(['read',fd,position,length]);
+      if(h.temporary&&controls.read==='short'&&position===0)return 0;
+      if(h.temporary&&controls.read==='overlong'&&position===0)return length+1;
+      if(h.temporary&&controls.read==='extra-eof'&&position===3)return 1;
+      const data=h.temporary&&controls.read==='hash'?Buffer.from('bbb'):h.item.bytes;
+      const n=Math.max(0,Math.min(length,data.length-position));data.copy(buffer,offset,position,position+n);
+      if(h.temporary&&controls.afterRead)controls.afterRead(h,position);
+      return n;
+    }),
+    closeSync:guard(fd=>{
+      const h=descriptor(fd);events.push(['close',fd,h.path]);h.closed=true;
+      if(h.temporary)activeTemporary--;
+      const fail=controls.close==='temporary'?h.temporary:controls.close===h.path;
+      if(fail){
+        if(controls.recycle)handles.set(fd,{fd,path:'FOREIGN_REUSED_FD',closed:false,foreign:true});
+        throw Error('FINITE_CLOSE_AFTER_RELEASE');
+      }
+    }),
+  };
+  const vm=task7dPrivateVmV1(fs),resources=vm.resources(),pins=vm.pins(resources,SOURCE_HOME_V1);
+  // The seam creates no stock descriptors. The recheck boundary intentionally
+  // represents the retained full check, not a fabricated passing Source owner.
+  const owner={expected:ownedReleaseData(OWN_T),check:guard(()=>{
+    checks++;events.push(['stock-check']);if(!live||ownerFault)throw Error('FINITE_STOCK_UNAVAILABLE');
+    if(controls.afterCheck)controls.afterCheck(checks);
+  })};
+  for(const locator of paths)pins.file(locator);
+  pins.file(keep);pins.directory(root+'/dist',true);pins.absent(root+'/dist/absent.js');
+  const original=opened.filter(h=>files.has(h.path)),originalTargets=original.filter(h=>paths.includes(h.path));
+  assert.equal(originalTargets.length,914);assert.equal(original.length,915);
+  const originalCount=opened.length;
+  const contained=()=>{assert.deepEqual(faults,[],'no swallowed finite FS/assertion fault');vm.contained();};
+  const api=()=>assert.equal(typeof pins.handoffTargetOutput,'function',
+    'Task7D scaffolding RED: missing private pins.handoffTargetOutput; semantic assertions not yet reached');
+  const handoff=(candidate=owner,inventory=output,location=root)=>{api();return pins.handoffTargetOutput(location,inventory,candidate);};
+  const finish=(unknown=false)=>{
+    if(unknown)assert.throws(()=>resources.close(),/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);else resources.close();
+    const before=events.length;
+    if(unknown)assert.throws(()=>resources.close(),/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);else resources.close();
+    assert.equal(events.length,before,'second cleanup never retries a numeric descriptor');
+    for(const h of opened){assert.equal(h.closed,true,'all known H acquisitions attempted');
+      assert.equal(events.filter(e=>e[0]==='close'&&e[1]===h.fd).length,1,'one attempt per acquired fd');}
+    assert.equal(activeTemporary,0);contained();
+  };
+  return {root,output,paths,keep,files,dirs,handles,opened,events,controls,pins,resources,owner,originalTargets,originalCount,
+    api,handoff,finish,contained,checks:()=>checks,maxTemporary:()=>maxTemporary,
+    delegate(){handoff();temporary=true;},startTemporary(){temporary=true;},stockClosed(){live=false;},stockFault(){ownerFault=true;},
+    reads(){return events.filter(e=>e[0]==='read');},closes(){return events.filter(e=>e[0]==='close');}};
+}
+function task7dRefusedV1(fn,unknown=false){
+  assert.throws(fn,error=>error?.message===(unknown?'MANUAL_ORPHAN_CLEANUP_UNKNOWN':'MANUAL_ORPHAN_OWNER_REFUSED'));
+}
+
+test('Task7D private custody validates every original member before closing exactly914 duplicate pins',()=>{
+  // Catches close-as-you-validate and retirement of non-output/directory pins.
+  const f=task7dPinsV1();f.api();f.events.length=0;f.handoff();
+  const first=f.events.findIndex(e=>e[0]==='close');assert.ok(first>0);
+  for(const h of f.originalTargets){
+    assert.ok(f.events.slice(0,first).some(e=>e[0]==='held'&&e[1]===h.fd));
+    assert.ok(f.events.slice(0,first).some(e=>e[0]==='named'&&e[1]===h.path));
+    assert.ok(f.events.slice(0,first).some(e=>e[0]==='read'&&e[1]===h.fd&&e[2]===3),'exact EOF checked before any retirement');
+  }
+  assert.equal(f.closes().length,914);assert.ok(f.closes().every(e=>f.paths.includes(e[2])));
+  assert.equal(f.opened.slice(0,f.originalCount).filter(h=>!h.closed).length,f.originalCount-914);
+  assert.equal(f.checks(),2,'one same-stock check before and one after batch retirement');f.finish();
+});
+for(const kind of ['absent','null','malformed','wrong-sha','wrong-root','missing-member','extra-member','closed']){
+  test('Task7D private custody refuses '+kind+' before retiring an H descriptor',()=>{
+    // Catches handoff without a usable fixed-T owner or exact admitted members.
+    const f=task7dPinsV1();f.api();let owner=f.owner,output=f.output,root=f.root;
+    if(kind==='absent')owner=undefined;if(kind==='null')owner=null;if(kind==='malformed')owner={expected:f.owner.expected};
+    if(kind==='wrong-sha')owner={...f.owner,expected:ownedReleaseData(SOURCE_M_SHA_V1)};
+    if(kind==='wrong-root')root=SOURCE_M_V1;
+    if(kind==='missing-member'){output=new Map(output);output.delete('dist/unit-0910.js');}
+    if(kind==='extra-member'){output=new Map(output);output.set('scripts/build-generation-retention.mjs',{locator:'scripts/build-generation-retention.mjs'});}
+    if(kind==='closed')f.stockClosed();
+    task7dRefusedV1(()=>kind==='absent'?f.pins.handoffTargetOutput(root,output):f.handoff(owner,output,root),kind==='closed');assert.equal(f.closes().length,0);f.finish(kind==='closed');
+  });
+}
+for(const drift of ['named-inode','held-inode','metadata','content','membership']){
+  test('Task7D private custody original '+drift+' drift refuses the whole batch before first close',()=>{
+    // Catches replacing original expectations or checking only named metadata.
+    const f=task7dPinsV1();f.api();const last=f.paths.at(-1);
+    if(drift==='named-inode')f.controls.named=last;if(drift==='held-inode')f.controls.held=last;
+    if(drift==='metadata')f.files.get(last).stat={...f.files.get(last).stat,mtimeNs:1000000001n};
+    if(drift==='content')f.files.get(last).bytes=Buffer.from('bbb');
+    if(drift==='membership')f.files.set(f.root+'/dist/intruder.js',f.files.get(last));
+    task7dRefusedV1(()=>f.handoff());assert.equal(f.closes().length,0);f.finish();
+  });
+}
+test('Task7D private custody partial handoff burns a close before throw and never closes its recycled fd',()=>{
+  // Catches a distinct cleanup callback that retries an attempted duplicate.
+  const f=task7dPinsV1();f.api();f.controls.close=f.paths[1];f.controls.recycle=true;
+  task7dRefusedV1(()=>f.handoff(),true);
+  assert.equal(f.closes().length,2,'first duplicate released, second attempted, remaining batch still owned');
+  const recycled=f.originalTargets[1].fd;assert.equal(f.handles.get(recycled).foreign,true);
+  const before=f.reads().length;task7dRefusedV1(()=>f.pins.file(f.paths[0]),true);assert.equal(f.reads().length,before);
+  f.finish(true);assert.equal(f.handles.get(recycled).foreign,true);
+});
+test('Task7D private custody failed post-handoff stock check stays UNKNOWN and unwinds every other resource',()=>{
+  // Catches permitting delegated use after the overlap owner loses its proof.
+  const f=task7dPinsV1();f.api();f.controls.afterCheck=n=>{if(n===2)throw Error('FINITE_POST_HANDOFF');};
+  task7dRefusedV1(()=>f.handoff(),true);assert.equal(f.closes().length,914);
+  const before=f.opened.length;task7dRefusedV1(()=>f.pins.file(f.paths[0]),true);assert.equal(f.opened.length,before);f.finish(true);
+});
+test('Task7D private custody delegated file uses one fresh descriptor and closes it before returning original bytes',()=>{
+  // Catches silent permanent re-pinning, borrowed reads, or returning before close.
+  const f=task7dPinsV1();f.delegate();const before=f.opened.length;
+  const got=f.pins.file(f.paths[0]);assert.equal(got.bytes.toString(),'aaa');
+  assert.equal(got.sha256,'9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0');
+  assert.equal(f.opened.length,before+1);assert.equal(f.opened.at(-1).closed,true);assert.equal(f.maxTemporary(),1);
+  const again=f.pins.file(f.paths[0]);assert.equal(again.bytes.toString(),'aaa');assert.equal(f.opened.length,before+2);
+  f.finish();
+});
+test('Task7D private custody check joins the same stock owner once and all914 original file proofs',()=>{
+  // Catches cached owner observations, per-file full stock checks, or lstat-only proof.
+  const f=task7dPinsV1();f.delegate();const checks=f.checks(),before=f.opened.length;f.pins.check();
+  assert.equal(f.checks()-checks,1);assert.equal(f.opened.length-before,914);assert.equal(f.maxTemporary(),1);
+  for(const locator of f.paths){const h=f.opened.slice(before).find(item=>item.path===locator);assert.ok(h);assert.equal(h.closed,true);
+    assert.ok(f.events.some(e=>e[0]==='held'&&e[1]===h.fd));assert.ok(f.events.some(e=>e[0]==='read'&&e[1]===h.fd&&e[2]===3));}
+  f.finish();
+});
+for(const fault of ['short','overlong','extra-eof','hash','named-inode','held-inode','after-read-metadata','after-read-named','after-read-held','temporary-close']){
+  test('Task7D private custody delegated '+fault+' refuses and closes its temporary exactly once',()=>{
+    // Catches incomplete reads, refreshed digest/stat expectations, or lost temp cleanup.
+    const f=task7dPinsV1();f.delegate();const locator=f.paths[0],before=f.opened.length;
+    if(['short','overlong','extra-eof','hash'].includes(fault))f.controls.read=fault;
+    if(fault==='named-inode')f.controls.named=locator;if(fault==='held-inode')f.controls.held=locator;
+    if(fault==='after-read-metadata')f.controls.afterRead=()=>{f.files.get(locator).stat={...f.files.get(locator).stat,ctimeNs:1000000001n};};
+    if(fault==='after-read-named')f.controls.afterRead=(_h,position)=>{if(position===3)f.controls.named=locator;};
+    if(fault==='after-read-held')f.controls.afterRead=(_h,position)=>{if(position===3)f.controls.held=locator;};
+    if(fault==='temporary-close'){f.controls.close='temporary';f.controls.recycle=true;}
+    task7dRefusedV1(()=>f.pins.file(locator),fault==='temporary-close');
+    // Named pre-open refusal may avoid acquisition; every actually returned FD is closed.
+    assert.ok(f.opened.length-before<=1);for(const h of f.opened.slice(before))assert.equal(h.closed,true);
+    if(fault!=='named-inode')assert.equal(f.opened.length,before+1);
+    f.finish(fault==='temporary-close');
+  });
+}
+test('Task7D private custody temporary close UNKNOWN dominates a simultaneous short read refusal',()=>{
+  // Catches a finally-close error being discarded behind the content refusal.
+  const f=task7dPinsV1();f.delegate();f.controls.read='short';f.controls.close='temporary';f.controls.recycle=true;
+  task7dRefusedV1(()=>f.pins.file(f.paths[0]),true);
+  const before=f.opened.length;task7dRefusedV1(()=>f.pins.check(),true);assert.equal(f.opened.length,before);f.finish(true);
+});
+for(const state of ['closed-stock','failed-stock','cleanup-started']){
+  test('Task7D private custody '+state+' cannot start a delegated read or reopen a pin',()=>{
+    // Catches using a dead/unknown owner or reading after reverse cleanup starts.
+    const f=task7dPinsV1();f.delegate();
+    if(state==='closed-stock')f.stockClosed();if(state==='failed-stock')f.stockFault();
+    if(state==='cleanup-started')f.resources.close();const before=f.opened.length;
+    task7dRefusedV1(()=>f.pins.file(f.paths[0]),state!=='cleanup-started');assert.equal(f.opened.length,before);
+    f.finish(state!=='cleanup-started');
+  });
+}
+test('Task7D private custody check after known close performs no descriptor IO',()=>{
+  // Catches the closed owner attempting stats/reads on numeric FDs now reusable.
+  const f=task7dPinsV1();f.delegate();f.resources.close();const before=f.events.length;
+  task7dRefusedV1(()=>f.pins.check());assert.equal(f.events.length,before);f.finish();
+});
+test('Task7D private custody failed remaining resource close does not stop reverse unwind',()=>{
+  // Catches UNKNOWN resetting or an unrelated closer aborting the resource stack.
+  const f=task7dPinsV1();f.delegate();f.controls.close=f.keep;f.controls.recycle=true;
+  f.finish(true);assert.ok(f.events.findIndex(e=>e[0]==='close'&&e[2]===f.keep)<f.events.length-1);
+});
+
+// Actual acquisition ORDER slice only. All selected statements/function bodies
+// are copied verbatim from H. The dependency boundaries below cannot authorize
+// an actual release, complete Source holder, compiled import or stock proof.
+// The slice stops BEFORE the inventory loop and always exits by refusal. Its
+// assertions prove ordering/identity/cleanup, independently of pins semantics.
+function task7dOrderV1(mode='boundary'){
+  const source=task7dSourceV1(),holder=source.ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='holdManualOrphanOwnedSourcesV1');
+  assert.ok(holder?.body);const top=[...holder.body.statements];
+  const outer=top.find(ts.isTryStatement);assert.ok(outer?.catchClause);
+  const inner=[...outer.tryBlock.statements],decl=(node,name)=>ts.isVariableStatement(node)
+    &&node.declarationList.declarations.some(item=>item.name.getText(source.ast)===name);
+  const acquisition=inner.find(node=>decl(node,'acquireBuild'));assert.ok(acquisition);
+  const start=inner.findIndex(node=>decl(node,'targetOutput'));
+  const stop=inner.findIndex(node=>ts.isForOfStatement(node)&&node.initializer.getText(source.ast).includes('root,output,groups,roots,count,sites'));
+  assert.ok(start>=0&&stop>start,'bounded actual early-T through pre-inventory interval');
+  const prefix=top.slice(0,top.indexOf(outer)).map(node=>node.getText(source.ast)).join('\n');
+  const slice=inner.slice(start,stop).map(node=>node.getText(source.ast)).join('\n');
+  const events=[],faults=[],c=capture();let currentRaw,handed,lateTarget;
+  const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
+  const expected=ownedReleaseData(OWN_T),output=new Map(),lock=Buffer.from('lock'),pkg=Buffer.from('package');
+  const profile={target:{sourceTreeHash:expected.treeHash,lockSha256:'f'.repeat(64)},
+    targetResolution:Array.from({length:11},()=>({row:['x','dist/x.js','x'],members:[]}))};
+  const pins={
+    check:guard(()=>{events.push('pins-check');}),
+    directory:guard(()=>{events.push('early-directory');return {dev:1n};}),
+    file:guard((locator)=>{
+      events.push('file:'+path.basename(locator));
+      if(mode==='early-output-actual')return {stat:{mode:0o100644n},bytes:Buffer.from('{}'),sha256:'f'.repeat(64)};
+      assert.ok([SOURCE_T_V1+'/package.json',SOURCE_T_V1+'/package-lock.json'].includes(locator));
+      const isLock=locator.endsWith('package-lock.json');
+      return {bytes:isLock?lock:pkg,sha256:mode==='lock-hash'&&isLock?'0'.repeat(64):'f'.repeat(64)};
+    }),
+    handoffTargetOutput:guard((root,actualOutput,retained)=>{
+      events.push('handoff');assert.equal(root,SOURCE_T_V1);assert.equal(actualOutput,output);
+      assert.ok(retained&&retained!==currentRaw,'same private retained wrapper, not raw replacement/caller data');
+      handed=retained;
+    }),
+  };
+  const raw=()=>{
+    events.push('acquire-raw');if(mode==='unreturned')throw Error('FINITE_UNRETURNED');
+    if(mode==='null-raw')return null;
+    const build={...expected};if(mode==='wrong-sha')build.sha=SOURCE_M_SHA_V1;
+    if(mode==='wrong-tree')build.treeHash='0'.repeat(40);
+    let alive=true;
+    const value={observation:{buildSource:build,checkoutSource:{branch:'main',clean:true,
+      sha:build.sha,treeHash:build.treeHash,originMainSha:build.sha}},
+      recheck(){assert.equal(this,value);events.push('raw-recheck');
+        if(!alive||mode==='closed-raw'||mode==='stock-check')throw Error('FINITE_STOCK_RECHECK');},
+      close(){assert.equal(this,value);events.push('raw-close');assert.equal(alive,true);alive=false;}};
+    if(mode==='shape-getter')Object.defineProperty(value,'recheck',{get(){events.push('shape-getter');throw Error('FINITE_SHAPE_GETTER');}});
+    if(mode==='wrong-observation')value.observation.checkoutSource.clean=false;
+    currentRaw=Object.freeze(value);return currentRaw;
+  };
+  const context={Buffer,path,createHash,Error,finitePins:pins,profile,targetRoot:SOURCE_T_V1,
+    maintenanceRoot:SOURCE_M_V1,maintenanceCommon:'/finite/M.git',targetCommon:'/finite/T.git',device:1n,
+    setupFiles:['dist/order-only.js'],output,
+    importBoundary:guard(specifier=>{
+      events.push('import-retention');assert.equal(specifier,url.pathToFileURL(SOURCE_T_V1+'/'+SOURCE_SCRIPT_V1).href);
+      if(mode==='import-refusal')throw Error('FINITE_IMPORT');return {holdCurrentFinalizedSetfarmSourceBuildV1:raw};
+    }),
+    pathToFileURL:url.pathToFileURL,
+    ownedSourceOutputV1:guard((actualPins,root,_expected,full,actualProfile)=>{
+      events.push('early-output');assert.equal(actualPins,pins);assert.equal(root,SOURCE_T_V1);assert.equal(full,true);assert.equal(actualProfile,profile);return output;
+    }),
+    git:guard(args=>{
+      const cells=Array.from(args);assert.equal(cells[0],'-C');assert.equal(cells[1],SOURCE_T_V1);assert.equal(cells[2],'show');
+      const locator=cells[3].split(':')[1];events.push('git:'+locator);
+      if(mode==='package-equality'&&locator==='package.json')return Buffer.from('changed');return locator==='package.json'?pkg:lock;
+    }),
+    authenticateRetention:guard((root,sha)=>{
+      events.push('authenticate-retention');assert.equal(root,SOURCE_T_V1);assert.equal(sha,OWN_T);
+      if(mode==='retention-auth')throw Error('FINITE_AUTH');
+    }),
+    compiled:guard((root,actualOutput,locator)=>{
+      events.push('compiled-read');assert.equal(root,SOURCE_T_V1);assert.equal(actualOutput,output);assert.equal(locator,'dist/order-only.js');return Buffer.from('audit-only');
+    }),
+    ownedSourceAuditedCompiledV1:guard((manifest,kind)=>{
+      events.push('compiled-audit');assert.equal(kind,'target');assert.equal(manifest.length,1);
+      if(mode==='compiled-audit')throw Error('FINITE_COMPILED_AUDIT');
+    }),
+    common:guard(root=>root===SOURCE_M_V1?'/finite/M.git':'/finite/T.git'),
+    captureTarget:guard(target=>{lateTarget=target;events.push('pre-inventory-stop');}),
+    exerciseClose:mode==='normal-close',
+  };
+  const privateNames=['ownedTargetShaV1','ownedRetentionV1','ownedMetadataV1','ownedSourceCleanupUncertainV1',
+    'ownedSourceRefusalV1','ownedSourceRequireV1','ownedSourceHashV1','ownedSourceSameV1','ownedSourceKeysV1',
+    'ownedGitShaV1','probeHexV1','ownedSourceBuildDataV1','ownedSourceEqualBuildV1','ownedSourceResourcesV1'];
+  // The early-output case additionally executes the real full-output function;
+  // wrong metadata mode terminates it before any profile/hash/inventory seam.
+  const early=mode==='early-output-actual'?source.declaration('ownedSourceOutputV1')+'\n':'';
+  const program=privateNames.map(source.declaration).join('\n')+'\n'+early+
+    '\nglobalThis.run=async function(){\n'+prefix+'\npins=finitePins;\n'+acquisition.getText(source.ast)+
+    '\ntry{\n'+slice+'\ncaptureTarget(target);if(exerciseClose)close();throw Error("FINITE_PRE_INVENTORY_STOP");\n}'+
+    outer.catchClause.getText(source.ast)+'\n};';
+  const transpiled=ts.transpileModule(program,{fileName:'actual-H-order-slice.ts',
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},reportDiagnostics:true});
+  assert.deepEqual((transpiled.diagnostics??[]).filter(d=>d.category===ts.DiagnosticCategory.Error),[]);
+  context.require=guard(specifier=>context.importBoundary(specifier));context.exports={};
+  context.process=closedModule(c,'Task7D order process');context.fs=closedModule(c,'Task7D order filesystem');
+  runInNewContext(transpiled.outputText,context,{filename:'actual-H-order-slice',timeout:5000});
+  return {events,run:context.run,handed:()=>handed,target:()=>lateTarget,contained(){
+    assert.deepEqual(faults,[],'no swallowed ordering boundary assertions');assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));}};
+}
+test('Task7D acquisition ORDER only binds handoff to the actual retained T after early audits and before inventories',async()=>{
+  // Catches an absent/early handoff, wrong retained wrapper or advanced import.
+  const f=task7dOrderV1();await assert.rejects(()=>f.run(),/MANUAL_ORPHAN_OWNER_REFUSED/);f.contained();
+  assert.ok(f.events.includes('handoff'),'Task7D structural RED: actual H acquisition has no handoff call; no custody claim');
+  assert.equal(f.handed(),f.target(),'handoff receives the SAME acquireBuild retained return');
+  const at=name=>{const index=f.events.indexOf(name);assert.ok(index>=0,'reached '+name);return index;};
+  assert.ok(at('early-output')<at('file:package-lock.json'));
+  assert.ok(at('git:package-lock.json')<at('authenticate-retention'));
+  assert.ok(at('authenticate-retention')<at('import-retention'));assert.ok(at('import-retention')<at('acquire-raw'));
+  assert.ok(at('acquire-raw')<at('raw-recheck'));assert.ok(at('raw-recheck')<at('compiled-audit'));
+  assert.ok(at('compiled-audit')<at('handoff'));assert.ok(at('handoff')<at('pre-inventory-stop'));
+  assert.equal(f.events.filter(e=>e==='import-retention').length,1);assert.equal(f.events.filter(e=>e==='raw-close').length,1);
+});
+for(const mode of ['early-output-actual','lock-hash','package-equality','retention-auth','import-refusal',
+  'unreturned','null-raw','shape-getter','wrong-sha','wrong-tree','wrong-observation','closed-raw','stock-check','compiled-audit']){
+  test('Task7D acquisition ORDER only '+mode+' cannot advance to custody handoff',async()=>{
+    // Catches moving retirement before the original independent gate; this is
+    // NOT semantic proof of a passing compiled audit or stock Source owner.
+    const f=task7dOrderV1(mode),unknown=['unreturned','null-raw','closed-raw','stock-check'].includes(mode);
+    await assert.rejects(()=>f.run(),error=>error?.message===(unknown?'MANUAL_ORPHAN_CLEANUP_UNKNOWN':'MANUAL_ORPHAN_OWNER_REFUSED'));
+    assert.equal(f.events.includes('handoff'),false);assert.equal(f.events.includes('pre-inventory-stop'),false);
+    if(['shape-getter','wrong-sha','wrong-tree','wrong-observation','closed-raw','stock-check','compiled-audit'].includes(mode))
+      assert.equal(f.events.filter(e=>e==='raw-close').length,1,'returned raw retained before any failing property or observation access');
+    if(mode==='shape-getter')assert.ok(f.events.indexOf('shape-getter')<f.events.indexOf('raw-close'));
+    if(mode==='early-output-actual'){
+      assert.ok(f.events.includes('file:BUILD_INFO.json'),'actual output metadata predicate reached');
+      assert.equal(f.events.includes('file:package-lock.json'),false);
+    }
+    f.contained();
+  });
+}
+test('Task7D acquisition ORDER only normal close checks the retained stock while live before reverse cleanup',async()=>{
+  // Catches closing the stock owner before the original H final check.
+  const f=task7dOrderV1('normal-close');await assert.rejects(()=>f.run(),/MANUAL_ORPHAN_OWNER_REFUSED/);
+  const stop=f.events.indexOf('pre-inventory-stop'),close=f.events.indexOf('raw-close');
+  assert.ok(stop>=0&&close>stop);assert.ok(f.events.slice(stop+1,close).includes('raw-recheck'));
+  assert.equal(f.events.filter(e=>e==='raw-close').length,1);f.contained();
+});
+test('Task7D acquisition ORDER only caller arguments refuse before acquisition IO',async()=>{
+  // Catches moving the actual zero-argument refusal below resource acquisition.
+  const f=task7dOrderV1();assert.equal(f.run.length,0);
+  await assert.rejects(()=>f.run(undefined),/MANUAL_ORPHAN_OWNER_REFUSED/);assert.deepEqual(f.events,[]);f.contained();
+});
+for(const replacement of [false,true]){
+  test('Task7D private custody refuses a second handoff with '+(replacement?'a replacement':'the same')+' retained owner',()=>{
+    // Catches replacing the established stock proof or retiring a numeric FD twice.
+    const f=task7dPinsV1();f.delegate();let replacementChecks=0;
+    const candidate=replacement?{expected:{...f.owner.expected},check(){replacementChecks++;}}:f.owner;
+    const before=f.closes().length;task7dRefusedV1(()=>f.handoff(candidate));
+    assert.equal(f.closes().length,before);assert.equal(replacementChecks,0);f.finish();
+  });
+}
+test('Task7D private custody retains full directory membership checks after successful delegation',()=>{
+  // Catches discarding H directory membership proof alongside duplicate file FDs.
+  const f=task7dPinsV1();f.delegate();f.files.set(f.root+'/dist/late-intruder.js',f.files.get(f.paths[0]));
+  task7dRefusedV1(()=>f.pins.check());f.finish();
+});
+test('Task7D private custody failed stock batch recheck precedes every temporary file acquisition',()=>{
+  // Catches doing delegated reads before the complete same-owner stock proof.
+  const f=task7dPinsV1();f.delegate();f.stockFault();const before=f.opened.length;
+  task7dRefusedV1(()=>f.pins.check(),true);assert.equal(f.opened.length,before);f.finish(true);
+});

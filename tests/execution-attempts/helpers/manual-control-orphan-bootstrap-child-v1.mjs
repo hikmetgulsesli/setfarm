@@ -626,6 +626,23 @@ function ownedSourceResourcesV1(){
 }
 function ownedSourcePinsV1(resources,home){
   const directories=new Map(),files=new Map(),absences=new Set();
+  let custody=null,handoffStarted=false,invalid=false,reading=false;
+  const guard=()=>{resources.guard();ownedSourceRequireV1(!invalid);};
+  // The handoff and reverse cleanup share this exact one-attempt closer.
+  // Burn before the syscall: a thrown close may already have recycled the FD.
+  const closer=fd=>{
+    let attempted=false;
+    return ()=>{
+      if(attempted)return;attempted=true;
+      try{fs.closeSync(fd);}catch{ownedSourceCleanupUncertainV1=true;throw ownedSourceRefusalV1();}
+    };
+  };
+  const stockCheck=()=>{
+    guard();ownedSourceRequireV1(custody&&(custody.state==='OVERLAP'||custody.state==='STOCK_HELD'));
+    try{Reflect.apply(custody.check,custody.owner,[]);}catch{
+      custody.state='UNKNOWN';ownedSourceCleanupUncertainV1=true;throw ownedSourceRefusalV1();
+    }
+  };
   const physical=locator=>ownedSourceRequireV1(fs.realpathSync(locator)===locator);
   const checkDirectory=pin=>{
     physical(pin.path);
@@ -635,7 +652,7 @@ function ownedSourcePinsV1(resources,home){
     if(pin.members)ownedSourceRequireV1(JSON.stringify(fs.readdirSync(pin.path).sort())===JSON.stringify(pin.members));
   };
   const directory=(locator,tree=false)=>{
-    resources.guard();ownedSourceRequireV1(path.isAbsolute(locator)&&path.normalize(locator)===locator);
+    guard();ownedSourceRequireV1(path.isAbsolute(locator)&&path.normalize(locator)===locator);
     const cells=locator.split(path.sep).filter(Boolean);ownedSourceRequireV1(cells.length<=128);
     for(let index=0;index<=cells.length;index++){
       const current=path.join(path.parse(locator).root,...cells.slice(0,index));let pin=directories.get(current);
@@ -654,26 +671,42 @@ function ownedSourcePinsV1(resources,home){
     }
     return directories.get(locator).stat;
   };
-  const bytes=pin=>{
-    resources.guard();physical(pin.path);
+  const read=(pin,fd)=>{
+    guard();physical(pin.path);
     const metadata=()=>{
-      const named=fs.lstatSync(pin.path,{bigint:true}),held=fs.fstatSync(pin.fd,{bigint:true});
+      const named=fs.lstatSync(pin.path,{bigint:true}),held=fs.fstatSync(fd,{bigint:true});
       ownedSourceRequireV1(named.isFile()&&!named.isSymbolicLink()&&held.isFile()&&!held.isSymbolicLink()
         &&ownedSourceSameV1(pin.stat,named,true)&&ownedSourceSameV1(pin.stat,held,true));
     };
     metadata();const result=Buffer.alloc(Number(pin.stat.size));let offset=0;
     while(offset<result.length){
-      const wanted=Math.min(65536,result.length-offset),n=fs.readSync(pin.fd,result,offset,wanted,offset);
+      const wanted=Math.min(65536,result.length-offset),n=fs.readSync(fd,result,offset,wanted,offset);
       ownedSourceRequireV1(Number.isSafeInteger(n)&&n>0&&n<=wanted);offset+=n;
     }
-    ownedSourceRequireV1(fs.readSync(pin.fd,Buffer.alloc(1),0,1,offset)===0);metadata();
+    ownedSourceRequireV1(fs.readSync(fd,Buffer.alloc(1),0,1,offset)===0);metadata();
     const digest=ownedSourceHashV1(result);
     if(pin.sha256!==undefined)ownedSourceRequireV1(digest===pin.sha256);
     else pin.sha256=digest;
     return result;
   };
+  const bytes=(pin,stockChecked=false)=>{
+    guard();
+    if(pin.state==='H_HELD')return read(pin,pin.fd);
+    ownedSourceRequireV1(pin.state==='STOCK_HELD'&&custody?.state==='STOCK_HELD'&&pin.sha256!==undefined);
+    if(!stockChecked)stockCheck();
+    ownedSourceRequireV1(!reading);reading=true;
+    try{
+      physical(pin.path);
+      const fd=fs.openSync(pin.path,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+      const close=closer(fd);
+      try{return read(pin,fd);}finally{close();}
+    }catch{
+      invalid=true;if(ownedSourceCleanupUncertainV1)custody.state='UNKNOWN';
+      throw ownedSourceRefusalV1();
+    }finally{reading=false;}
+  };
   const file=(locator,cap=16777216,device,system=false)=>{
-    resources.guard();directory(path.dirname(locator));physical(locator);
+    guard();directory(path.dirname(locator));physical(locator);
     let pin=files.get(locator);
     if(!pin){
       const stat=fs.lstatSync(locator,{bigint:true}),systemGit=system&&locator==='/usr/bin/git';
@@ -687,13 +720,14 @@ function ownedSourcePinsV1(resources,home){
         }
       }
       const fd=fs.openSync(locator,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
-      resources.add(()=>fs.closeSync(fd));pin={path:locator,fd,stat,sha256:undefined};files.set(locator,pin);
+      const close=closer(fd);resources.add(close);
+      pin={path:locator,fd,stat,sha256:undefined,close,state:'H_HELD'};files.set(locator,pin);
     }
     ownedSourceRequireV1(pin.stat.size<=BigInt(cap)&&(device===undefined||pin.stat.dev===device));
     return {bytes:bytes(pin),stat:pin.stat,sha256:pin.sha256};
   };
   const absent=locator=>{
-    resources.guard();ownedSourceRequireV1(path.isAbsolute(locator)&&path.normalize(locator)===locator);
+    guard();ownedSourceRequireV1(path.isAbsolute(locator)&&path.normalize(locator)===locator);
     const cells=locator.split(path.sep).filter(Boolean);ownedSourceRequireV1(cells.length<=128);let parent=path.parse(locator).root;
     directory(parent);
     for(let index=0;index<cells.length;index++){
@@ -708,14 +742,65 @@ function ownedSourcePinsV1(resources,home){
     }
     throw ownedSourceRefusalV1();
   };
-  return {directory,file,absent,check(){
-    resources.guard();for(const pin of directories.values())checkDirectory(pin);
-    for(const pin of files.values())bytes(pin);
+  const topology=()=>{
+    for(const pin of directories.values())checkDirectory(pin);
     for(const locator of absences){
       try{fs.lstatSync(locator,{bigint:true});}catch(error){if(error?.code==='ENOENT')continue;throw error;}
       throw ownedSourceRefusalV1();
     }
-  }};
+  };
+  const check=()=>{
+    try{
+      guard();if(custody?.state==='STOCK_HELD')stockCheck();
+      topology();for(const pin of files.values())bytes(pin,true);
+    }catch{invalid=true;throw ownedSourceRefusalV1();}
+  };
+  const handoffTargetOutput=(root,outputMap,retainedTarget)=>{
+    guard();ownedSourceRequireV1(!handoffStarted);handoffStarted=true;let attempted=false;
+    try{
+      ownedSourceRequireV1(root===path.join(home,'ai','setrox','releases','setfarm-161297ff')
+        &&retainedTarget!==null&&typeof retainedTarget==='object'&&typeof retainedTarget.check==='function'
+        &&ownedSourceBuildDataV1(retainedTarget.expected).sha===ownedTargetShaV1);
+      // Call the Map intrinsic: the only caller passes the already-audited
+      // targetOutput; no caller-selected iterable can expand this batch.
+      const entries=[...Map.prototype.entries.call(outputMap)],batch=[],selected=new Set();
+      ownedSourceRequireV1(entries.length===911);
+      for(const [locator,entry] of entries){
+        ownedSourceKeysV1(entry,['locator','mode','byteLength','sha256']);
+        ownedSourceRequireV1(ownedSourceLocatorV1(locator)&&locator.startsWith('dist/')&&entry.locator===locator);
+        const absolute=path.join(root,locator),pin=files.get(absolute);
+        ownedSourceRequireV1(pin&&pin.state==='H_HELD'&&pin.sha256!==undefined&&!selected.has(absolute)
+          &&entry.byteLength===Number(pin.stat.size)&&entry.mode===Number(pin.stat.mode&0o7777n)&&entry.sha256===pin.sha256);
+        selected.add(absolute);batch.push(pin);
+      }
+      for(const name of ownedMetadataV1){
+        const absolute=path.join(root,'dist',name),pin=files.get(absolute);
+        ownedSourceRequireV1(pin&&pin.state==='H_HELD'&&pin.sha256!==undefined&&!selected.has(absolute)
+          &&(pin.stat.mode&0o7777n)===0o444n);
+        selected.add(absolute);batch.push(pin);
+      }
+      ownedSourceRequireV1(batch.length===914);
+      for(const locator of files.keys())if(locator.startsWith(root+'/dist/'))ownedSourceRequireV1(selected.has(locator));
+      // Bind the SAME private retained wrapper and its complete stock recheck,
+      // never a cached observation, replacement instance or borrowed descriptor.
+      custody={owner:retainedTarget,check:retainedTarget.check,state:'OVERLAP'};
+      stockCheck();check(); // Complete held/named/content/topology batch BEFORE any close.
+      for(const pin of batch){
+        attempted=true;pin.state='HANDOFF_ATTEMPTED';
+        try{pin.close();}catch{pin.state='UNKNOWN';custody.state='UNKNOWN';throw ownedSourceRefusalV1();}
+        pin.state='STOCK_HELD';
+      }
+      custody.state='STOCK_HELD';stockCheck();
+      topology();for(const pin of files.values())if(pin.state==='H_HELD')bytes(pin);
+    }catch{
+      invalid=true;
+      // Failure after any retirement attempt leaves the custody transition unknown.
+      if(attempted)ownedSourceCleanupUncertainV1=true;
+      if(custody)custody.state=ownedSourceCleanupUncertainV1?'UNKNOWN':'INVALID';
+      throw ownedSourceRefusalV1();
+    }
+  };
+  return {directory,file,absent,check,handoffTargetOutput};
 }
 
 // Read static edges as DATA. Mask strings/comments/regex first, so embedded
@@ -1152,6 +1237,7 @@ export async function holdManualOrphanOwnedSourcesV1(){
     ownedSourceAuditedCompiledV1([...setupFiles]
       .sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)))
       .map(locator=>({locator,sha256:ownedSourceHashV1(compiled(targetRoot,targetOutput,locator))})),'target');
+    pins.handoffTargetOutput(targetRoot,targetOutput,target);check();
     identityCheck=()=>{
       ownedSourceRequireV1(common(maintenanceRoot)===maintenanceCommon&&common(targetRoot)===targetCommon);
     };
