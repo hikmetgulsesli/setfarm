@@ -316,7 +316,9 @@ async function quiescence(admin,journal){
 // obtains and retains every resource before it can issue the one setup frame.
 const manualOrphanNodeV1='/opt/homebrew/Cellar/node/26.4.0/bin/node';
 const manualOrphanNodeHashV1='59cd4fb59cf5bc239f43d5db8c0cd8c23c22db79419612b92da3b7cf34de8553';
-const manualOrphanPathV1='/opt/homebrew/Cellar/node/26.4.0/bin:/Users/setrox/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+const manualOrphanHostPolicyLocatorV1='src/installation/manual-orphan-fixed-host-policy-v1.json';
+const manualOrphanHostPolicyBytesV1=318;
+const manualOrphanHostPolicyHashV1='4b7ed03bf755ec453e0c7a79d3fcf4f4f4fee387dc9bf551d55e41e7b2281dc5';
 const manualOrphanTargetShaV1='161297ffca6adf2851918a93d492e1c9a77ce59d';
 const manualOrphanDeliveryNsV1=5000000000n;
 const manualOrphanComparisonV1=Object.freeze([
@@ -334,9 +336,38 @@ function manualOrphanUnknownV1(){return Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');}
 function manualOrphanRequireV1(value,code='MANUAL_ORPHAN_SETUP_REFUSED'){
   if(!value)throw Error(code);
 }
-function manualOrphanEnvironmentV1(){return {PATH:manualOrphanPathV1,LANG:'C',LC_ALL:'C'};}
-function assertManualOrphanConstructorEnvironmentV1(env,uid,platform){
-  const expected=manualOrphanEnvironmentV1(),metadata='__CF_USER_TEXT_ENCODING',keys=Reflect.ownKeys(env);
+function readManualOrphanHostPolicyV1(){
+  const descriptors=manualOrphanDescriptorListV1();let policy,refused=false;
+  try{
+    manualOrphanRequireV1(arguments.length===0,'MANUAL_ORPHAN_OWNER_REFUSED');
+    const pin=manualOrphanOpenFileV1(path.join(ROOT,manualOrphanHostPolicyLocatorV1),descriptors);
+    manualOrphanRequireV1(pin.stat.size===BigInt(manualOrphanHostPolicyBytesV1),'MANUAL_ORPHAN_OWNER_REFUSED');
+    const bytes=Buffer.alloc(manualOrphanHostPolicyBytesV1);let offset=0;
+    while(offset<bytes.length){
+      const wanted=bytes.length-offset,count=readSync(pin.fd,bytes,offset,wanted,offset);
+      manualOrphanRequireV1(Number.isInteger(count)&&count>0&&count<=wanted,'MANUAL_ORPHAN_OWNER_REFUSED');
+      offset+=count;
+    }
+    manualOrphanRequireV1(readSync(pin.fd,Buffer.alloc(1),0,1,offset)===0,'MANUAL_ORPHAN_OWNER_REFUSED');
+    manualOrphanPinMetadataV1(pin,true);
+    // Authenticate the same retained bytes before parsing or using any roots.
+    manualOrphanRequireV1(createHash('sha256').update(bytes).digest('hex')===manualOrphanHostPolicyHashV1,
+      'MANUAL_ORPHAN_OWNER_REFUSED');
+    const parsed=JSON.parse(bytes.toString('utf8'));
+    manualOrphanRequireV1(parsed!==null&&typeof parsed==='object'&&!Array.isArray(parsed)
+      &&JSON.stringify(Object.keys(parsed))===JSON.stringify(['schema','home','workspace','releases','path'])
+      &&Object.values(parsed).every(value=>typeof value==='string')
+      &&parsed.schema==='setfarm.manual-orphan-fixed-host-policy.v1','MANUAL_ORPHAN_OWNER_REFUSED');
+    policy=Object.freeze(parsed);
+  }catch{refused=true;}
+  // Burn each local FD once; uncertain close outranks any read/parse refusal.
+  try{descriptors.close();}catch{throw manualOrphanUnknownV1();}
+  if(refused)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');
+  return policy;
+}
+function manualOrphanEnvironmentV1(hostPolicy){return {PATH:hostPolicy.path,LANG:'C',LC_ALL:'C'};}
+function assertManualOrphanConstructorEnvironmentV1(env,uid,platform,hostPolicy){
+  const expected=manualOrphanEnvironmentV1(hostPolicy),metadata='__CF_USER_TEXT_ENCODING',keys=Reflect.ownKeys(env);
   const hasMetadata=Object.hasOwn(env,metadata);
   manualOrphanRequireV1(keys.length===(hasMetadata?4:3)&&keys.every(key=>typeof key==='string'
     &&(key===metadata||(Object.hasOwn(expected,key)&&env[key]===expected[key]))),'MANUAL_ORPHAN_OWNER_REFUSED');
@@ -359,13 +390,17 @@ function assertManualOrphanConstructorLaunchV1(f){
 }
 function assertManualOrphanConstructorContextV1(){
   const root=path.resolve(ROOT),script=path.join(root,'scripts/run-private-postgres-tests.mjs'),account=userInfo();
-  manualOrphanRequireV1(account.homedir==='/Users/setrox'&&account.uid===501&&account.gid===20
+  manualOrphanRequireV1(typeof account.homedir==='string'&&account.uid===501&&account.gid===20
     &&path.dirname(root)===path.join(account.homedir,'ai/setrox/releases')
     &&/^setfarm-[a-f0-9]{8}$/.test(path.basename(root))
     &&path.basename(root)!=='setfarm-161297ff','MANUAL_ORPHAN_OWNER_REFUSED');
+  const hostPolicy=readManualOrphanHostPolicyV1();
+  manualOrphanRequireV1(account.homedir===hostPolicy.home&&path.dirname(root)===hostPolicy.releases
+    &&hostPolicy.workspace===path.join(hostPolicy.home,'ai','setrox')
+    &&hostPolicy.releases===path.join(hostPolicy.workspace,'releases'),'MANUAL_ORPHAN_OWNER_REFUSED');
   manualOrphanRequireV1(realpathSync(root)===root&&realpathSync(script)===script
     &&realpathSync(account.homedir)===account.homedir,'MANUAL_ORPHAN_OWNER_REFUSED');
-  assertManualOrphanConstructorEnvironmentV1(process.env,process.getuid(),process.platform);
+  assertManualOrphanConstructorEnvironmentV1(process.env,process.getuid(),process.platform,hostPolicy);
   const observation=observeManualOrphanProcessV1(process.pid);
   assertManualOrphanConstructorLaunchV1({node:manualOrphanNodeV1,root,script,argv:process.argv,
     argv0:process.argv0,execPath:process.execPath,execArgv:process.execArgv,cwd:process.cwd(),
@@ -374,7 +409,7 @@ function assertManualOrphanConstructorContextV1(){
   manualOrphanRequireV1(observation.pin.pid===process.pid&&observation.pin.ppid===process.ppid
     &&observation.pin.uid===501&&observation.pin.executable===manualOrphanNodeV1
     &&observation.pin.executableSha256===manualOrphanNodeHashV1,'MANUAL_ORPHAN_OWNER_REFUSED');
-  return {root,script,self:observation};
+  return {root,script,self:observation,hostPolicy};
 }
 function requireManualOrphanConstructorSpaceV1(){
   const space=statfsSync('/tmp',{bigint:true});
@@ -408,18 +443,18 @@ function createManualOrphanConstructorClockV1(){
     return Number((limitNs-(last-start)+999999n)/1000000n);
   }});
 }
-function spawnManualOrphanConstructorChildV1(purpose,args,cwd,env){
+function spawnManualOrphanConstructorChildV1(purpose,args,cwd,env,hostPolicy){
   const clock=createManualOrphanConstructorClockV1();
   if(!clock.check())throw manualOrphanUnknownV1();
   manualOrphanRequireV1(['initdb','server','runner'].includes(purpose)&&Array.isArray(args)
     &&args.every(arg=>typeof arg==='string')&&typeof cwd==='string');
-  assertManualOrphanConstructorEnvironmentV1(env,501,'darwin');
+  assertManualOrphanConstructorEnvironmentV1(env,501,'darwin',hostPolicy);
   const milliseconds={initdb:60000,server:960000,runner:840000}[purpose];
   const tool=purpose==='runner'?manualOrphanNodeV1:PG+(purpose==='initdb'?'initdb':'postgres');
   const purposeLimitNs=BigInt(milliseconds)*1000000n;
   let child=null,writer=null,witness=null,serverWitness=null,unknown=false,purposeComplete=false;
   // Retain original and then its writer before any observer or clock read.
-  child=spawn(tool,args,{cwd,env:manualOrphanEnvironmentV1(),argv0:tool,shell:false,detached:false,
+  child=spawn(tool,args,{cwd,env:manualOrphanEnvironmentV1(hostPolicy),argv0:tool,shell:false,detached:false,
     stdio:purpose==='runner'?['ignore','pipe','pipe','ignore','pipe']:['ignore','pipe','pipe']});
   try{if(purpose==='runner')writer=child.stdio[4];}catch{unknown=true;}
   try{witness=observeManualOrphanOwnedChildV1(child,purpose);}catch{unknown=true;}
@@ -933,13 +968,13 @@ async function runManualOrphanConstructorV1(){
     return actual;
   }
   function holdDeliveryPins(){
-    const root=context.root,source=sourceHolder.source;
+    const root=context.root,source=sourceHolder.source,hostPolicy=context.hostPolicy;
     const descriptors=manualOrphanDescriptorListV1(),pins={directories:[],files:[]};
-    const directories=['/','/Users','/Users/setrox','/Users/setrox/ai','/Users/setrox/ai/setrox',
-      '/Users/setrox/ai/setrox/releases',root,root+'/scripts',root+'/scripts/__tests__',root+'/tests',
+    const directories=['/',path.dirname(hostPolicy.home),hostPolicy.home,path.dirname(hostPolicy.workspace),hostPolicy.workspace,
+      hostPolicy.releases,root,root+'/scripts',root+'/scripts/__tests__',root+'/tests',
       root+'/tests/execution-attempts',root+'/tests/execution-attempts/helpers',root+'/src',root+'/src/installation'];
     try{
-      manualOrphanRequireV1(path.dirname(root)==='/Users/setrox/ai/setrox/releases'
+      manualOrphanRequireV1(path.dirname(root)===hostPolicy.releases
         &&/^setfarm-[a-f0-9]{8}$/.test(path.basename(root))&&new Set(directories).size===14
         &&JSON.stringify(Object.keys(source.files))===JSON.stringify(manualOrphanComparisonV1.map(([key])=>key)));
       for(const locator of directories)pins.directories.push(manualOrphanOpenDirectoryV1(locator,descriptors,
@@ -1004,7 +1039,8 @@ async function runManualOrphanConstructorV1(){
     fullCheck();control('private-root-retained',{root,port});
     const plan=planPrivatePostgresTestsV1({root,port,mode:'manual-orphan-bootstrap'});
     control('initdb');fullCheck();
-    const initdb=spawnManualOrphanConstructorChildV1('initdb',plan.initdb,context.root,manualOrphanEnvironmentV1());
+    const initdb=spawnManualOrphanConstructorChildV1('initdb',plan.initdb,context.root,
+      manualOrphanEnvironmentV1(context.hostPolicy),context.hostPolicy);
     const initTap=ownChild(initdb,'initdb');initTap.flush();fullCheck();
     await waitManualOrphanConstructorChildV1(initdb);fullCheck();
     requireManualOrphanConstructorChildSuccessV1(initdb.witness,'initdb');
@@ -1013,7 +1049,8 @@ async function runManualOrphanConstructorV1(){
     dataPin=manualOrphanOpenDirectoryV1(physicalRoot+'/data',dataDescriptors,false,true);
     retain(()=>{dataPin.closed=true;});fullCheck();
     control('server-start');fullCheck();
-    server=spawnManualOrphanConstructorChildV1('server',plan.server,context.root,manualOrphanEnvironmentV1());
+    server=spawnManualOrphanConstructorChildV1('server',plan.server,context.root,
+      manualOrphanEnvironmentV1(context.hostPolicy),context.hostPolicy);
     const serverTap=ownChild(server,'server');serverTap.flush();fullCheck();observeServer();
     control('identity');
     // Readiness output permits only attempting the sole connection; actual
@@ -1079,7 +1116,8 @@ async function runManualOrphanConstructorV1(){
     }
     control('test-graph');testsStarted=true;
     for(const tap of taps)tap.stage();
-    runner=spawnManualOrphanConstructorChildV1('runner',plan.test,context.root,manualOrphanEnvironmentV1());
+    runner=spawnManualOrphanConstructorChildV1('runner',plan.test,context.root,
+      manualOrphanEnvironmentV1(context.hostPolicy),context.hostPolicy);
     input=createManualOrphanConstructorInputV1(runner.writer,runner.clock);
     ownChild(runner,'test');
     try{issueRunnerSetup();}
