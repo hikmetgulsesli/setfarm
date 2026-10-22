@@ -1428,7 +1428,7 @@ function fixedProbeVmV1(bindings={},expose=false){
   const c=capture(),pureUtil=createRequire(import.meta.url)('node:util'),timers=[],cleared=[],faults=[];
   const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
   const clock={setTimeout:guard((callback,delay)=>{
-    assert.ok([5000,10000,60000,960000,840000,300000,180000,120000].includes(delay));const handle={unref(){return this;},ref(){return this;}};
+    assert.ok([5000,10000,60000,960000,840000,300000,180000,120000].includes(delay)||(bindings.task5cFixture===true&&[100,30000].includes(delay)));const handle={unref(){return this;},ref(){return this;}};
     timers.push({callback,delay,handle});return handle;
   }),clearTimeout:guard(handle=>{assert.ok(timers.some(timer=>timer.handle===handle));cleared.push(handle);})};
   const crypto={createHash,randomBytes:guard(size=>{assert.equal(size,32);return Buffer.alloc(32,0xcc);}),...bindings.crypto};
@@ -1448,8 +1448,9 @@ function fixedProbeVmV1(bindings={},expose=false){
     process:closedModule(c,'fixed probe process',bindings.process??{}),console:closedModule(c,'fixed probe console'),...clock,
     require(specifier){if(bindings.task5bPrivate===true&&!modules.has(specifier))faults.push('unexpected Task5B deferred import');assert.ok(modules.has(specifier),'unlisted fixed probe import '+specifier);return modules.get(specifier);}};
   runInNewContext(compiled.outputText,context,{filename:OBS_HELPER_PATH_V1,timeout:5000});
+  if(bindings.task5cFixture===true)task5cEvaluateFixtureV1(context,bindings,c,faults);
   assert.equal(timers.length,0,'import creates no timer');assert.equal(c.calls.forbidden,0,'import performs no IO');
-  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
+  return {actual:context.exports,childMain:context.__fixedProbeChildMain,timers,cleared,...(bindings.task5cFixture===true?{fixtureExports:context.__task5cFixtureExportsV1,fixtureLexical:context.__task5cFixtureLexicalV1,fixtureFix1Lexical:context.__task5cFixtureFix1LexicalV1}:{}),...(bindings.task5bPrivate===true?{task5bPrivate:context.__task5bPrivateV1}:{}),assertContained(){
     assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));assert.deepEqual(faults,[],'no swallowed binding assertion');
     if(bindings.assertClean)bindings.assertClean();
   }};
@@ -6451,4 +6452,816 @@ test('Task5B fix1 stderr fault after input close remains absorbing',async()=>{
   const cases=task5bCasesV1(1);
   await cases.wait('stderr error synchronously after actual close',()=>task5bFix1OutputCaseV1('stderr','after-close'));
   cases.done();
+});
+
+// Task5C Phase A. Preserve the entire reviewed Task5B prefix except the three
+// explicitly reversible opt-in hooks in fixedProbeVmV1. No genuine owner is
+// exposed here: only fourteen natural consumers and same-realm JSON DATA.
+const TASK5C_FIXTURE_V1=new URL('../../tests/execution-attempts/helpers/manual-control-orphan-bootstrap-fixture-v1.ts',import.meta.url);
+function task5cEvaluateFixtureV1(context,bindings,c,faults){
+  const original=readFileSync(TASK5C_FIXTURE_V1,'utf8');
+  const rootSite='const root = new URL("../../../", import.meta.url);';
+  const resolverSite='["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", program]';
+  let source=replaceOnce(original,rootSite,'const root = new URL("../../../", '+JSON.stringify(TASK5C_FIXTURE_V1.href)+');','Task5C active root URL');
+  source=replaceOnce(source,resolverSite,'["--import", __task5cForbiddenResolveV1("tsx"), "--input-type=module", "-e", program]','Task5C dormant active resolver');
+  const refuse=label=>(..._args)=>{faults.push('Task5C forbidden '+label);throw Error('TASK5C_CONTAINMENT');};
+  const guarded=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
+  const actual=context.exports;
+  const facade=Object.freeze({
+    MANUAL_ORPHAN_VECTOR_V1:actual.MANUAL_ORPHAN_VECTOR_V1,
+    encodeManualOrphanOwnedPhaseFrameV1:actual.encodeManualOrphanOwnedPhaseFrameV1,
+    decodeManualOrphanOwnedPhaseResultV1:actual.decodeManualOrphanOwnedPhaseResultV1,
+    canonicalizeManualOrphanClusterBaselineV1:actual.canonicalizeManualOrphanClusterBaselineV1,
+    encodeManualOrphanIntegrationResultV1:actual.encodeManualOrphanIntegrationResultV1,
+    decodeManualOrphanIntegrationResultV1:actual.decodeManualOrphanIntegrationResultV1,
+    encodeManualOrphanRunnerResultV1:actual.encodeManualOrphanRunnerResultV1,
+    readManualOrphanOwnedFd4V1:refuse('readManualOrphanOwnedFd4V1'),
+    holdManualOrphanOwnedSourcesV1:refuse('holdManualOrphanOwnedSourcesV1'),
+    observeManualOrphanProcessV1:refuse('observeManualOrphanProcessV1'),
+    observeManualOrphanOwnedChildV1:bindings.task5cFiniteObservers===true?actual.observeManualOrphanOwnedChildV1:refuse('observeManualOrphanOwnedChildV1'),
+    observeManualOrphanOwnedIntegrationChildV1:bindings.task5cFiniteObservers===true?actual.observeManualOrphanOwnedIntegrationChildV1:refuse('observeManualOrphanOwnedIntegrationChildV1'),
+  });
+  const boundedHash=guarded(algorithm=>{assert.equal(algorithm,'sha256');let bytes=0;const hash=createHash(algorithm);
+    const result={update:guarded((value,encoding)=>{assert.ok(typeof value==='string'||Buffer.isBuffer(value));
+      bytes+=Buffer.byteLength(value,encoding);assert.ok(bytes<=65536,'Task5C hashes bounded DATA only');hash.update(value,encoding);return result;}),
+      digest:guarded(encoding=>{assert.equal(encoding,'hex');return hash.digest(encoding);})};return result;});
+  const modules=new Map([
+    ['node:assert/strict',assert],['node:path',path],['node:url',url],
+    ['node:fs',closedModule(c,'Task5C fs',{constants,...bindings.fs})],
+    ['node:os',closedModule(c,'Task5C os')],['node:child_process',closedModule(c,'Task5C child_process')],
+    ['node:crypto',closedModule(c,'Task5C crypto',{createHash:boundedHash,randomBytes:refuse('randomBytes')})],
+    ['./manual-control-orphan-bootstrap-child-v1.mjs',facade],
+  ]);
+  context.__task5cFixtureRequireV1=specifier=>{
+    if(!modules.has(specifier)){faults.push('Task5C unexpected import '+String(specifier));throw Error('TASK5C_UNLISTED_IMPORT');}
+    return modules.get(specifier);
+  };
+  context.__task5cForbiddenResolveV1=refuse('legacy tsx resolution');
+  const compiled=ts.transpileModule(source,{fileName:url.fileURLToPath(TASK5C_FIXTURE_V1),
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},reportDiagnostics:true});
+  assert.deepEqual((compiled.diagnostics??[]).filter(item=>item.category===ts.DiagnosticCategory.Error),[]);
+  // Complete TS output in a fresh lexical scope in the ALREADY contextified
+  // helper realm. Literal guarded names make preimplementation RED causal.
+  runInNewContext('(function(exports,require){\n'+compiled.outputText+`\n;
+    globalThis.__task5cFixtureLexicalV1={
+      claimManualOrphanFixtureEntryV1:typeof claimManualOrphanFixtureEntryV1==='function'?claimManualOrphanFixtureEntryV1:null,
+      qualifyManualOrphanFixtureLaunchV1:typeof qualifyManualOrphanFixtureLaunchV1==='function'?qualifyManualOrphanFixtureLaunchV1:null,
+      joinManualOrphanInstallationFactsV1:typeof joinManualOrphanInstallationFactsV1==='function'?joinManualOrphanInstallationFactsV1:null,
+      checkManualOrphanDeliveryMetadataV1:typeof checkManualOrphanDeliveryMetadataV1==='function'?checkManualOrphanDeliveryMetadataV1:null,
+      deliverManualOrphanOwnedFrameV1:typeof deliverManualOrphanOwnedFrameV1==='function'?deliverManualOrphanOwnedFrameV1:null,
+      correlateManualOrphanPhaseResultV1:typeof correlateManualOrphanPhaseResultV1==='function'?correlateManualOrphanPhaseResultV1:null,
+      correlateManualOrphanIntegrationResultV1:typeof correlateManualOrphanIntegrationResultV1==='function'?correlateManualOrphanIntegrationResultV1:null,
+      advanceManualOrphanRouteLedgerV1:typeof advanceManualOrphanRouteLedgerV1==='function'?advanceManualOrphanRouteLedgerV1:null,
+      qualifyManualOrphanRunnerCatalogV1:typeof qualifyManualOrphanRunnerCatalogV1==='function'?qualifyManualOrphanRunnerCatalogV1:null,
+      retainManualOrphanRunnerAdminV1:typeof retainManualOrphanRunnerAdminV1==='function'?retainManualOrphanRunnerAdminV1:null,
+      advanceManualOrphanCleanupLedgerV1:typeof advanceManualOrphanCleanupLedgerV1==='function'?advanceManualOrphanCleanupLedgerV1:null,
+      inspectManualOrphanPartialInstallationV1:typeof inspectManualOrphanPartialInstallationV1==='function'?inspectManualOrphanPartialInstallationV1:null,
+      finalizeManualOrphanFixtureResultV1:typeof finalizeManualOrphanFixtureResultV1==='function'?finalizeManualOrphanFixtureResultV1:null,
+      planManualOrphanFixtureChildV1:typeof planManualOrphanFixtureChildV1==='function'?planManualOrphanFixtureChildV1:null,
+      dataFromJson(text){return JSON.parse(text);}
+    };
+    globalThis.__task5cFixtureFix1LexicalV1={
+      retainManualOrphanOriginalChildLifetimeV1:typeof retainManualOrphanOriginalChildLifetimeV1==='function'?retainManualOrphanOriginalChildLifetimeV1:null,
+      retainManualOrphanFixtureCompletionV1:typeof retainManualOrphanFixtureCompletionV1==='function'?retainManualOrphanFixtureCompletionV1:null
+    };
+  })(globalThis.__task5cFixtureExportsV1={},globalThis.__task5cFixtureRequireV1);`,context,
+    {filename:url.fileURLToPath(TASK5C_FIXTURE_V1),timeout:5000});
+}
+function task5cVmV1(required=[],options={}){
+  const reads=[],monotonic=task3ClockV1(),binding={};let importing=true;
+  for(const key of ['env','argv','execArgv','pid','ppid','cwd'])Object.defineProperty(binding,key,{get(){
+    reads.push(key);throw Error('TASK5C_PROCESS_READ');}});
+  const vm=task3VmV1({task5cFixture:true,task5cFiniteObservers:options.observers===true,
+    process:binding,monotonic,fs:options.fs??{}});importing=false;
+  const api=vm.fixtureLexical;assert.ok(api,'Task5C fixture lexical wrapper');
+  for(const name of required)assert.equal(typeof api[name],'function','missing Task5C private consumer '+name+' (scaffolding RED)');
+  const check=()=>{assert.equal(importing,false);assert.deepEqual(reads,[],'no swallowed process access');vm.assertContained();};
+  check();return {...vm,api,check};
+}
+const task5cDataV1=(vm,value)=>vm.api.dataFromJson(JSON.stringify(value));
+const task5cPlainV1=value=>JSON.parse(JSON.stringify(value));
+const task5cCasesV1=task5bCasesV1;
+function task5cRefusedV1(body,code='MANUAL_ORPHAN_OWNER_REFUSED'){
+  let caught;assert.throws(body,error=>{caught=error;return error?.message===code;});return caught;
+}
+async function task5cRejectedV1(promise,code='MANUAL_ORPHAN_CLEANUP_UNKNOWN'){
+  let caught;await assert.rejects(promise,error=>{caught=error;return error?.message===code;});return caught;
+}
+function task5cFrozenV1(value){
+  assert.equal(Object.isFrozen(value),true);for(const child of Object.values(value))if(child!==null&&typeof child==='object')task5cFrozenV1(child);
+}
+function task5cIssuedV1(purpose='integration'){
+  const result=purpose==='integration'?ownedIntegrationData():ownedPhaseResultData(purpose);
+  return {purpose,run:result.run,frameSha256:result.frameSha256,pid:result.pid,parentPid:result.parentPid,
+    installation:purpose==='provision'?null:ownedInstallationData(purpose!=='activate')};
+}
+
+// 1 / 4. Missing exports fail before fixtures or boundary calls.
+test('Task5C fixture exports stay inert and exact',()=>{
+  const vm=task5cVmV1();
+  assert.equal(typeof vm.fixtureExports.runManualOrphanBootstrapRouteV1,'function','missing Task5C runner export (scaffolding RED)');
+  assert.equal(typeof vm.fixtureExports.runManualOrphanBootstrapIntegrationV1,'function','missing Task5C integration export (scaffolding RED)');
+  const cases=task5cCasesV1(4);
+  cases.run('zero module counters',()=>{assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);assert.equal(vm.monotonic.state.accesses,0);});
+  cases.run('four exports',()=>assert.deepEqual(Object.keys(vm.fixtureExports).sort(),[
+    'runManualOrphanBootstrapIntegrationV1','runManualOrphanBootstrapRouteV1','runManualOrphanCompiledCliNegativeV1','runManualOrphanSourceContextNegativeV1']));
+  cases.run('zero argument exports and exact private arities',()=>{
+    assert.equal(vm.fixtureExports.runManualOrphanBootstrapRouteV1.length,0);assert.equal(vm.fixtureExports.runManualOrphanBootstrapIntegrationV1.length,0);
+    const expected={claimManualOrphanFixtureEntryV1:2,qualifyManualOrphanFixtureLaunchV1:3,joinManualOrphanInstallationFactsV1:4,
+      checkManualOrphanDeliveryMetadataV1:1,deliverManualOrphanOwnedFrameV1:4,correlateManualOrphanPhaseResultV1:3,
+      correlateManualOrphanIntegrationResultV1:3,advanceManualOrphanRouteLedgerV1:2,qualifyManualOrphanRunnerCatalogV1:5,
+      retainManualOrphanRunnerAdminV1:3,advanceManualOrphanCleanupLedgerV1:2,inspectManualOrphanPartialInstallationV1:2,
+      finalizeManualOrphanFixtureResultV1:2,planManualOrphanFixtureChildV1:2,dataFromJson:1};
+    assert.deepEqual(Object.keys(vm.api).sort(),Object.keys(expected).sort());
+    for(const [name,arity] of Object.entries(expected)){assert.equal(typeof vm.api[name],'function',name);assert.equal(vm.api[name].length,arity,name);}
+  });
+  cases.run('dormant resolver and imports remain unreachable',()=>vm.check());cases.done();vm.check();
+});
+// 2 / 6. Entry claim only: never enter the FD4 reader or an owner.
+test('Task5C fixture entry claim is single attempt',async()=>{
+  const first=task5cVmV1(['claimManualOrphanFixtureEntryV1']),cases=task5cCasesV1(6);
+  assert.equal(typeof first.fixtureExports.runManualOrphanBootstrapRouteV1,'function');
+  assert.equal(typeof first.fixtureExports.runManualOrphanBootstrapIntegrationV1,'function');
+  for(const [name,kind,count,next] of [
+    ['wrong route arity','runner',1,'runner'],['wrong integration arity','integration',1,'integration'],
+    ['repeat route','runner',0,'runner'],['repeat integration','integration',0,'integration'],
+    ['route then integration','runner',0,'integration'],['integration then route','integration',0,'runner'],
+  ])await cases.wait(name,async()=>{
+    const vm=task5cVmV1(['claimManualOrphanFixtureEntryV1']);const fn=vm.api.claimManualOrphanFixtureEntryV1;
+    if(count)task5cRefusedV1(()=>fn(kind,count));else assert.equal(fn(kind,count),undefined);
+    const a=task5cRefusedV1(()=>fn(next,0)),b=task5cRefusedV1(()=>fn(next,0));assert.notEqual(a,b);
+    if(count){
+      const exported=task5cVmV1();let accesses=0;const hostile={};
+      Object.defineProperty(hostile,'value',{get(){accesses++;throw Error('ARGUMENT_VALUE_READ');}});
+      const firstCall=kind==='runner'?exported.fixtureExports.runManualOrphanBootstrapRouteV1:exported.fixtureExports.runManualOrphanBootstrapIntegrationV1;
+      const otherCall=kind==='runner'?exported.fixtureExports.runManualOrphanBootstrapIntegrationV1:exported.fixtureExports.runManualOrphanBootstrapRouteV1;
+      assert.equal(typeof firstCall,'function');assert.equal(typeof otherCall,'function');
+      const one=await task5cRejectedV1(firstCall(hostile),'MANUAL_ORPHAN_OWNER_REFUSED');
+      const two=await task5cRejectedV1(otherCall(),'MANUAL_ORPHAN_OWNER_REFUSED');
+      assert.notEqual(one,two);assert.equal(accesses,0);exported.check();
+    }
+    assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
+  });cases.done();first.check();
+});
+function task5cLaunchV1(kind){
+  const graph=task5bGraphV1(),m=SOURCE_M_V1;
+  const frame=kind==='runner'?ownedSetupData():ownedPhaseData('integration');
+  if(kind==='runner')frame.constructor=task5cPlainV1(graph.frame.constructor);
+  else frame.runner=task5cPlainV1(graph.frame.runner);
+  const self=kind==='runner'?frame.runner:frame.child,parent=kind==='runner'?frame.constructor:frame.runner;
+  const args=kind==='runner'?['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',...VECTOR]:['--import','tsx','--test','--test-isolation=none',FILE];
+  const rawCommand=TASK3_NODE_V1+' '+args.join(' ');
+  self.executable=TASK3_NODE_V1;self.executableSha256=SOURCE_NODE_HASH_V1;self.commandSha256=createHash('sha256').update(rawCommand).digest('hex');
+  const actual={node:TASK3_NODE_V1,maintenanceRoot:m,targetRoot:SOURCE_T_V1,workspace:SOURCE_WORKSPACE_V1,
+    cwd:m,execPath:TASK3_NODE_V1,argv0:TASK3_NODE_V1,argv:[TASK3_NODE_V1,m+'/'+(kind==='runner'?'scripts/run-isolated-postgres-tests.ts':FILE),...(kind==='runner'?['--',...VECTOR]:[])],
+    execArgv:kind==='runner'?['--import','tsx']:['--import','tsx','--test','--test-isolation=none'],
+    env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},worker:kind==='integration'?{NODE_TEST_WORKER_ID:'1'}:null,
+    self:{pin:task5cPlainV1(self),rawCommand},parent:{pin:task5cPlainV1(parent),rawCommand:kind==='runner'?graph.observations.constructor.rawCommand:graph.observations.runner.rawCommand},
+    maintenance:ownedReleaseData(OWN_M),target:ownedReleaseData(OWN_T)};
+  return {kind,actual,frame};
+}
+// 3 / 8. Independently observed launch DATA, never acquired authority.
+test('Task5C launch comparison rejects mismatched originals',()=>{
+  const vm=task5cVmV1(['qualifyManualOrphanFixtureLaunchV1']),cases=task5cCasesV1(8);
+  const call=f=>vm.api.qualifyManualOrphanFixtureLaunchV1(f.kind,task5cDataV1(vm,f.actual),task5cDataV1(vm,f.frame));
+  for(const kind of ['runner','integration'])cases.run('exact '+kind,()=>{const result=call(task5cLaunchV1(kind));task5cFrozenV1(result);
+    assert.deepEqual(task5cPlainV1(result),{node:TASK3_NODE_V1,maintenanceRoot:SOURCE_M_V1,targetRoot:SOURCE_T_V1,
+      workspace:SOURCE_WORKSPACE_V1,helper:SOURCE_M_V1+SOURCE_SUFFIX_V1,integration:SOURCE_M_V1+'/'+FILE});});
+  for(const [name,mutate] of [
+    ['parent mismatch',f=>{f.actual.parent.pin.pid++;}],['raw absolute spelling',f=>{f.actual.self.rawCommand=f.actual.self.rawCommand.replace('scripts/run-isolated',SOURCE_M_V1+'/scripts/run-isolated');}],
+    ['extra loader',f=>{f.actual.execArgv.push('--loader','unapproved');}],['selected environment',f=>{f.actual.env.SETFARM_INSTALLATION_ID=OWN_ID;}],
+    ['worker forwarded',f=>{f.actual.env.NODE_TEST_CONTEXT='child-v8';}],['workspace masquerades maintenance',f=>{f.actual.maintenanceRoot=SOURCE_WORKSPACE_V1;}],
+  ])cases.run(name,()=>{const f=task5cLaunchV1('runner');mutate(f);task5cRefusedV1(()=>call(f));});cases.done();vm.check();
+});
+function task5cInstallationV1(activated=false){
+  const projection=task5bProjectionV1(activated),purpose=activated?'activate':'provision';
+  const baseline=task4aLiteralOutputV1();
+  for(const key of ['databaseBaselineSha256','roleBaselineSha256','membershipBaselineSha256'])projection.expected.cluster[key]=baseline[key];
+  return {stage:activated?'activated':'committed',receipt:ownedPhaseResultData(purpose),records:projection.recordView,
+    catalogs:{expected:projection.expected,rows:task5bBaselineV1(activated?'activated':'committed').rows,
+      schemaCatalogHash:OWN_H,activationCatalogHash:activated?OWN_B:null}};
+}
+// 4 / 8. Actual receipt codec and stock-shaped detached observations only.
+test('Task5C installation facts join real stage projections',()=>{
+  const vm=task5cVmV1(['joinManualOrphanInstallationFactsV1']),cases=task5cCasesV1(8);
+  const call=f=>vm.api.joinManualOrphanInstallationFactsV1(f.stage,task5cDataV1(vm,f.receipt),task5cDataV1(vm,f.records),task5cDataV1(vm,f.catalogs));
+  cases.run('prepared join',()=>assert.deepEqual(task5cPlainV1(call(task5cInstallationV1())),ownedInstallationData()));
+  cases.run('activated join',()=>assert.deepEqual(task5cPlainV1(call(task5cInstallationV1(true))),ownedInstallationData(true)));
+  for(const [name,mutate] of [
+    ['origin change',f=>{f.records.prepared.origin.sourceSha=OWN_M;}],['database OID',f=>{f.catalogs.rows.databases.at(-1).oid=9;}],
+    ['equal role OIDs',f=>{f.receipt.result.installation.runtimeOid=7;}],['base pin changed',f=>{f.records.prepared.baseRecordPins['planned.json'].sha256=OWN_C;}],
+    ['missing activation pin',f=>{delete f.records.activation.activatedPin;}],['stage catalog',f=>{f.catalogs.activationCatalogHash=OWN_C;}],
+  ])cases.run(name,()=>{const f=task5cInstallationV1(true);mutate(f);task5cRefusedV1(()=>call(f));});cases.done();vm.check();
+});
+const TASK5C_LEAVES_V1=[
+  'scripts/run-private-postgres-tests.mjs','scripts/__tests__/private-postgres-test-cluster.test.js',
+  'scripts/run-execution-attempt-tests.ts','scripts/run-isolated-postgres-tests.ts',
+  'tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs',
+  'scripts/__tests__/manual-orphan-bootstrap-owned-route-v1.test.js',
+  'tests/execution-attempts/helpers/manual-control-orphan-bootstrap-fixture-v1.ts',FILE,
+  'scripts/private-postgres-test-journal-v1.mjs','scripts/finding-test-preflight.mjs',
+  'src/installation/manual-orphan-target-dependencies-v1.json',
+];
+const TASK5C_ANCESTORS_V1=['/','/Users','/Users/setrox','/Users/setrox/ai','/Users/setrox/ai/setrox',
+  '/Users/setrox/ai/setrox/releases',SOURCE_M_V1,SOURCE_M_V1+'/scripts',SOURCE_M_V1+'/scripts/__tests__',
+  SOURCE_M_V1+'/tests',SOURCE_M_V1+'/tests/execution-attempts',SOURCE_M_V1+'/tests/execution-attempts/helpers',
+  SOURCE_M_V1+'/src',SOURCE_M_V1+'/src/installation'];
+function task5cPinFixtureV1(stage='integration'){
+  const calls=[],faults=[],named=new Map(),held=new Map();let nextFd=40;
+  const row=(name,kind,policy,bytes=0)=>{
+    const fd=nextFd++,identity={dev:'1',ino:String(fd),uid:501,gid:20,mode:kind==='file'?33152:16832,
+      nlink:kind==='file'?1:2,size:String(bytes),mtimeNs:'3000000',ctimeNs:'4000000',birthtimeNs:'2000000'};
+    const stat=()=>({...identity,dev:BigInt(identity.dev),ino:BigInt(identity.ino),size:BigInt(identity.size),
+      uid:BigInt(identity.uid),gid:BigInt(identity.gid),mode:BigInt(identity.mode),nlink:BigInt(identity.nlink),
+      mtimeNs:BigInt(identity.mtimeNs),ctimeNs:BigInt(identity.ctimeNs),birthtimeNs:BigInt(identity.birthtimeNs),
+      isFile:()=>kind==='file',isDirectory:()=>kind==='directory',isSymbolicLink:()=>false});
+    named.set(name,stat());held.set(fd,stat());return {path:name,fd,kind,policy,identity};
+  };
+  const source=[...TASK5C_LEAVES_V1.map(name=>row(SOURCE_M_V1+'/'+name,'file','immutable-file',1)),
+    ...TASK5C_ANCESTORS_V1.map((name,index)=>row(name,'directory',index<6?'shared-ancestor':'immutable-directory'))];
+  const installation=ownedInstallationData(stage!=='activate'),directory=task5bDerivedV1().installationsDirectory+'/'+OWN_ID;
+  const records=stage==='provision'?[]:Object.entries(installation.records).map(([name,pin])=>row(directory+'/'+name,'file','immutable-file',pin.bytes));
+  const d=task5bDerivedV1(),mutablePaths=[d.physicalRoot,d.physicalRoot+'/data',d.installationsDirectory];
+  if(stage!=='provision')mutablePaths.push(directory);
+  const mutable=mutablePaths.map(name=>row(name,'directory','mutable-directory'));
+  const guard=fn=>task5bGuardV1(faults,fn);
+  const fs={lstatSync:guard((name,options)=>{assert.deepEqual(task5cPlainV1(options),{bigint:true});assert.ok(named.has(name),'named metadata only');calls.push(['lstat',name]);return named.get(name);}),
+    fstatSync:guard((fd,options)=>{assert.deepEqual(task5cPlainV1(options),{bigint:true});assert.ok(held.has(fd),'retained FD metadata only');calls.push(['fstat',fd]);return held.get(fd);})};
+  return {pins:{stage,maintenanceRoot:SOURCE_M_V1,source,records,mutable},fs,calls,named,held,faults,
+    check(){assert.deepEqual(faults,[],'no swallowed metadata binding assertion');}};
+}
+// 5 / 4. Metadata validates the fixed independent FD scope; E is unexposed.
+test('Task5C delivery pin scope is fixed by stage',()=>{
+  const gate=task5cVmV1(['checkManualOrphanDeliveryMetadataV1']),cases=task5cCasesV1(4);
+  for(const [stage,count] of [['provision',0],['activate',7],['integration',9],['old_entry_positive',9]])cases.run(stage,()=>{
+    const f=task5cPinFixtureV1(stage),vm=task5cVmV1(['checkManualOrphanDeliveryMetadataV1'],{fs:f.fs});
+    assert.equal(vm.api.checkManualOrphanDeliveryMetadataV1(task5cDataV1(vm,f.pins)),true);
+    assert.equal(f.pins.source.length,25);assert.equal(f.pins.records.length,count);
+    const mutableCount=stage==='provision'?3:4;
+    assert.equal(f.calls.length,2*(25+count+mutableCount));assert.equal(new Set(f.calls.filter(c=>c[0]==='fstat').map(c=>c[1])).size,25+count+mutableCount);
+    f.check();vm.check();
+  });cases.done();gate.check();
+});
+// 6 / 10. Immutable timestamps and mutable identity are different policies.
+test('Task5C delivery metadata rejects current drift',()=>{
+  const gate=task5cVmV1(['checkManualOrphanDeliveryMetadataV1']),cases=task5cCasesV1(10);
+  for(const [name,mutate,accepted] of [
+    ['named held identity',(f,row)=>{f.held.get(row.fd).ino++;},false],
+    ['symlink type',(f,row)=>{f.named.get(row.path).isSymbolicLink=()=>true;},false],
+    ['uid',(f,row)=>{f.named.get(row.path).uid=502n;},false],['mode',(f,row)=>{f.held.get(row.fd).mode=33206n;},false],
+    ['nlink',(f,row)=>{f.named.get(row.path).nlink=2n;},false],['size',(f,row)=>{f.held.get(row.fd).size++;},false],
+    ['mtime',(f,row)=>{f.named.get(row.path).mtimeNs++;},false],['ctime',(f,row)=>{f.held.get(row.fd).ctimeNs++;},false],
+    ['legitimate mutable mtime',f=>{const row=f.pins.mutable.at(-1);f.named.get(row.path).mtimeNs++;f.held.get(row.fd).mtimeNs++;},true],
+    ['mutable inode change',f=>{f.held.get(f.pins.mutable.at(-1).fd).ino++;},false],
+  ])cases.run(name,()=>{
+    const f=task5cPinFixtureV1(),vm=task5cVmV1(['checkManualOrphanDeliveryMetadataV1'],{fs:f.fs});mutate(f,f.pins.source[0]);
+    const call=()=>vm.api.checkManualOrphanDeliveryMetadataV1(task5cDataV1(vm,f.pins));
+    if(accepted)assert.equal(call(),true);else task5cRefusedV1(call);
+    assert.ok(f.calls.length<=2*(25+9+4));f.check();vm.check();
+  });cases.done();gate.check();
+});
+function task5cWriterV1(){
+  const pins=task5cPinFixtureV1('provision'),vm=task5cVmV1(['deliverManualOrphanOwnedFrameV1'],{fs:pins.fs,observers:true});
+  const f=task3EventFixtureV1('provision'),graph=task5bGraphV1(),frame=graph.frame,calls=[],faults=[];
+  f.child.pid=frame.child.pid;
+  const witness=vm.actual.observeManualOrphanOwnedChildV1(f.child,'provision');
+  const state={endThrows:false,lateEnd:false};
+  f.channels.fd4.end=task5bGuardV1(faults,bytes=>{
+    assert.equal(calls.length,0,'one retained writer end');assert.ok(Buffer.isBuffer(bytes));
+    assert.ok(vm.monotonic.state.ms<5000,'never begin a valid end at deadline');
+    assert.equal(pins.calls.length,4*(25+3),'both metadata passes precede valid end');
+    assert.equal(delivery.ended,true,'burn writer before invoking fallible end');
+    assert.equal(delivery.issued.frameSha256,createHash('sha256').update(bytes).digest('hex'),'retain issued DATA before end');
+    calls.push(Buffer.from(bytes));if(state.endThrows)throw Error('PRIVATE_END_THROW');
+    if(state.lateEnd)vm.monotonic.state.ms=5000;return f.channels.fd4;
+  });
+  // Root refinement: C obtains these fixed-order postspawn DATA observations.
+  // This fixture does not claim C's process observation/retention proof.
+  const delivery=task5cDataV1(vm,{purpose:'provision',startedAtNs:'0',lastAtNs:'0',pins:pins.pins,
+    retainedGraph:graph.observations,postspawn:[graph.observations.parent,graph.observations.server,graph.observations.child],
+    ended:false,issued:null,unknown:false});
+  const call=()=>vm.api.deliverManualOrphanOwnedFrameV1(f.child,witness,task5cDataV1(vm,frame),delivery);
+  const check=()=>{assert.deepEqual(faults,[],'no swallowed writer assertion');pins.check();f.assertGuarded();vm.check();};
+  const finish=async()=>{task3CompleteV1(f);await witness.settled;check();};
+  return {vm,f,pins,witness,frame,delivery,state,calls,call,check,finish};
+}
+// 7 / 8. Retained original writer/observer and same interval, no C/E owner.
+test('Task5C delivery cutoff never accepts a late writer end',async()=>{
+  const gate=task5cVmV1(['deliverManualOrphanOwnedFrameV1']),cases=task5cCasesV1(8);
+  await cases.wait('just under five seconds',async()=>{const f=task5cWriterV1();f.vm.monotonic.state.ms=4999.999;
+    const issued=f.call();assert.equal(f.calls.length,1);assert.equal(issued.frameSha256,createHash('sha256').update(f.calls[0]).digest('hex'));
+    assert.deepEqual(task5cPlainV1(issued),{purpose:'provision',run:f.frame.run,frameSha256:createHash('sha256').update(f.calls[0]).digest('hex'),
+      pid:f.frame.child.pid,parentPid:f.frame.parent.pid,installation:null});task5cFrozenV1(issued);await f.finish();});
+  for(const [name,configure] of [
+    ['exact five seconds',f=>{f.vm.monotonic.state.ms=5000;}],['over five seconds',f=>{f.vm.monotonic.state.ms=5001;}],
+    ['initial clock fault',f=>{f.vm.monotonic.state.mode='throw';}],['backward clock',f=>{f.delivery.lastAtNs='2000000';f.vm.monotonic.state.ms=1;}],
+  ])await cases.wait(name,async()=>{const f=task5cWriterV1();configure(f);task5cRefusedV1(f.call,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.equal(f.calls.length,0);assert.equal(f.delivery.unknown,true);await f.finish();});
+  await cases.wait('end throws',async()=>{const f=task5cWriterV1();f.state.endThrows=true;task5cRefusedV1(f.call,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.equal(f.calls.length,1);assert.equal(f.delivery.unknown,true);await f.finish();});
+  await cases.wait('late end return burns validity',async()=>{const f=task5cWriterV1();f.state.lateEnd=true;task5cRefusedV1(f.call,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.equal(f.calls.length,1);assert.equal(f.delivery.unknown,true);await f.finish();});
+  await cases.wait('repeat never duplicates',async()=>{const f=task5cWriterV1();f.call();task5cRefusedV1(f.call,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.equal(f.calls.length,1);await f.finish();});cases.done();gate.check();
+});
+async function task5cObservedV1(vm,purpose='integration',wire=null){
+  const f=task3EventFixtureV1(purpose),data=purpose==='integration'?ownedIntegrationData():ownedPhaseResultData(purpose);f.child.pid=data.pid;
+  const witness=purpose==='integration'?vm.actual.observeManualOrphanOwnedIntegrationChildV1(f.child):vm.actual.observeManualOrphanOwnedChildV1(f.child,purpose);
+  f.channels.stdout.emit('data',wire??(purpose==='integration'?task5aWireV1():helper.encodeManualOrphanOwnedPhaseResultV1(data)));
+  task3CompleteV1(f,purpose);await witness.settled;
+  return {f,witness,issued:task5cDataV1(vm,task5cIssuedV1(purpose)),check(){f.assertGuarded();vm.check();}};
+}
+// 8 / 10. Original transport first; each mutation changes a separate fact.
+test('Task5C phase result correlates issued facts and closure',async()=>{
+  const vm=task5cVmV1(['correlateManualOrphanPhaseResultV1'],{observers:true}),cases=task5cCasesV1(10);
+  await cases.wait('exact phase result',async()=>{const f=await task5cObservedV1(vm,'old_entry_positive');
+    const result=vm.api.correlateManualOrphanPhaseResultV1(f.issued,f.witness.snapshot(),f.witness.output());
+    assert.deepEqual(task5cPlainV1(result),ownedPhaseResultData('old_entry_positive'));task5cFrozenV1(result);f.check();});
+  for(const [name,change] of [
+    ['wrong run',f=>{f.issued.run=OWN_H;}],['purpose',f=>{f.issued.purpose='new_entry_refusal';}],
+    ['digest',f=>{f.issued.frameSha256=OWN_C;}],['pid',f=>{f.issued.pid++;}],['parent',f=>{f.issued.parentPid++;}],
+    ['installation',f=>{f.issued.installation.installationId=OWN_OP;}],
+    ['stderr',f=>{f.f.channels.stderr.emit('data',Buffer.from('private detail'));}],
+    ['missing FD4 close',f=>{f.snapshot=task5cDataV1(vm,f.witness.snapshot());f.snapshot.fd4.close=false;}],
+    ['late unknown',f=>{f.f.channels.stdout.emit('error',Error('late'));}],
+  ])await cases.wait(name,async()=>{const f=await task5cObservedV1(vm,'old_entry_positive');change(f);
+    task5cRefusedV1(()=>vm.api.correlateManualOrphanPhaseResultV1(f.issued,f.snapshot??f.witness.snapshot(),f.witness.output()));f.check();});cases.done();vm.check();
+});
+// 9 / 9. Collector state is never inferred by reparsing a copied prefix.
+test('Task5C integration result requires collector and issued facts',async()=>{
+  const vm=task5cVmV1(['correlateManualOrphanIntegrationResultV1'],{observers:true}),cases=task5cCasesV1(9);
+  await cases.wait('exact marker and counts',async()=>{const f=await task5cObservedV1(vm);
+    const result=vm.api.correlateManualOrphanIntegrationResultV1(f.issued,f.witness.snapshot(),f.witness.output());
+    assert.deepEqual(task5cPlainV1(result),ownedIntegrationData());task5cFrozenV1(result);f.check();});
+  for(const [name,change] of [
+    ['pending collector',(f,out)=>{out.integration=task5cDataV1(vm,{state:'pending',marker:null,summary:null});}],
+    ['refused collector observed transport',(f,out)=>{out.integration=task5cDataV1(vm,{state:'refused',marker:null,summary:null});}],
+    ['observed collector unknown transport',f=>{f.f.channels.stderr.emit('error',Error('late'));}],
+    ['wrong run',f=>{f.issued.run=OWN_H;}],['digest',f=>{f.issued.frameSha256=OWN_C;}],
+    ['child parent pair',f=>{f.issued.pid++;f.issued.parentPid++;}],
+    ['mechanical pair',(f,out)=>{out.integration.marker.newEntry.installationId=OWN_OP;}],
+    ['counts',(f,out)=>{out.integration.summary.pass=2;}],
+  ])await cases.wait(name,async()=>{const f=await task5cObservedV1(vm),original=f.witness.output();
+    const output=task5cDataV1(vm,{integration:original.integration});output.stdout=original.stdout;output.stderr=original.stderr;
+    change(f,output);task5cRefusedV1(()=>vm.api.correlateManualOrphanIntegrationResultV1(f.issued,f.witness.snapshot(),output));f.check();});cases.done();vm.check();
+});
+function task5cRouteLedgerV1(state='empty'){
+  return {state,installation:state==='empty'?null:ownedInstallationData(state!=='schema-verified'),
+    oldEntry:['cases-settled','database-dropped','runtime-dropped','owner-dropped','clean'].includes(state)?ownedOldData():null,
+    newEntry:['cases-settled','database-dropped','runtime-dropped','owner-dropped','clean'].includes(state)?ownedNewData():null,unknown:false};
+}
+function task5cClosureFactsV1(){return {input:'fulfilled',source:'fulfilled',admin:'fulfilled',
+  children:'fulfilled',queries:'settled',pending:0,fault:null};}
+function task5cRouteEventV1(type){
+  return {type,phase:type==='schema-verified'?ownedPhaseResultData('provision'):
+    type==='activation-verified'?ownedPhaseResultData('activate'):null,
+    integration:type==='cases-settled'?ownedIntegrationData():null,
+    installation:ownedInstallationData(type!=='schema-verified'),baseline:task4aLiteralOutputV1(),
+    source:ownedSourceData(),closures:task5cClosureFactsV1(),cleanup:type==='clean'?ownedRunnerData().cleanup:null};
+}
+// 10 / 8. The finite private ledger consumes structured joins, not verified:true.
+test('Task5C route ledger cannot skip admitted stages',()=>{
+  const vm=task5cVmV1(['advanceManualOrphanRouteLedgerV1']),cases=task5cCasesV1(8);
+  const call=(ledger,event)=>vm.api.advanceManualOrphanRouteLedgerV1(task5cDataV1(vm,ledger),task5cDataV1(vm,event));
+  for(const [from,to] of [['empty','schema-verified'],['schema-verified','activation-verified'],['activation-verified','cases-settled'],['owner-dropped','clean']])cases.run(from+' to '+to,()=>{
+    const result=call(task5cRouteLedgerV1(from),task5cRouteEventV1(to));assert.deepEqual(task5cPlainV1(result),task5cRouteLedgerV1(to));task5cFrozenV1(result);});
+  for(const [name,from,to] of [['skip activation','empty','activation-verified'],['cases before activation','schema-verified','cases-settled'],['duplicate','schema-verified','schema-verified']])cases.run(name,()=>{
+    task5cRefusedV1(()=>call(task5cRouteLedgerV1(from),task5cRouteEventV1(to)));});
+  cases.run('unknown absorbing',()=>{const ledger=task5cRouteLedgerV1('activation-verified');ledger.unknown=true;
+    const result=call(ledger,task5cRouteEventV1('cases-settled'));assert.equal(result.unknown,true);assert.notEqual(result.state,'cases-settled');});cases.done();vm.check();
+});
+function task5cCatalogV1(stage='initial'){
+  const baseline=task4aLiteralOutputV1(),f=task5bBaselineV1(stage),pair={pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:5,usesysid:1};
+  const constructor={pid:701,backendStartedAtUTC:'2026-10-21T00:00:01.345678Z',datid:5,usesysid:1};
+  const row=p=>({...p,database:'postgres',user:'root',backendType:'client backend',clientAddress:'127.0.0.1'});
+  return {stage,baseline,generated:f.installation,rows:f.rows,sessions:{own:pair,constructor,database:'postgres',user:'root',rows:[row(pair),row(constructor)]}};
+}
+function task5cCatalogCallV1(vm,f){return vm.api.qualifyManualOrphanRunnerCatalogV1(f.stage,
+  task5cDataV1(vm,f.baseline),task5cDataV1(vm,f.generated),task5cDataV1(vm,f.rows),task5cDataV1(vm,f.sessions));}
+// 11 / 9. OS PIDs/application_name never replace either backend pair.
+test('Task5C admin census preserves actual backend pairs',()=>{
+  const vm=task5cVmV1(['qualifyManualOrphanRunnerCatalogV1']),cases=task5cCasesV1(9);
+  cases.run('exact two',()=>{const result=task5cCatalogCallV1(vm,task5cCatalogV1());assert.deepEqual(task5cPlainV1(result),task4aLiteralOutputV1());task5cFrozenV1(result);});
+  for(const [name,mutate] of [
+    ['missing constructor',f=>{f.sessions.rows.pop();}],['constructor start',f=>{f.sessions.rows[1].backendStartedAtUTC=f.sessions.rows[0].backendStartedAtUTC;}],
+    ['own start',f=>{f.sessions.rows[0].backendStartedAtUTC=f.sessions.rows[1].backendStartedAtUTC;}],['same pid',f=>{f.sessions.constructor.pid=700;f.sessions.rows[1].pid=700;}],
+    ['wrong datid usesysid',f=>{f.sessions.rows[0].datid=7;f.sessions.rows[0].usesysid=8;}],
+    ['unknown client',f=>{f.sessions.rows.push({...f.sessions.rows[0],pid:702});}],
+    ['generated database client',f=>{f.sessions.rows.push({...f.sessions.rows[0],pid:702,database:ownedInstallationData().databaseName,datid:7});}],
+  ])cases.run(name,()=>{const f=task5cCatalogV1();mutate(f);task5cRefusedV1(()=>task5cCatalogCallV1(vm,f));});
+  cases.run('allowed background extras',()=>{const f=task5cCatalogV1();
+    f.sessions.rows.push({pid:702,backendStartedAtUTC:'2026-10-21T00:00:01.456789Z',datid:null,usesysid:null,database:null,user:null,backendType:'checkpointer',clientAddress:null},
+      {pid:703,backendStartedAtUTC:'2026-10-21T00:00:01.567890Z',datid:null,usesysid:null,database:null,user:null,backendType:'walwriter',clientAddress:null});
+    assert.deepEqual(task5cPlainV1(task5cCatalogCallV1(vm,f)),task4aLiteralOutputV1());});cases.done();vm.check();
+});
+// 12 / 8. Residual baseline is the complete actual canonicalizer output.
+test('Task5C catalog residuals preserve the complete baseline',()=>{
+  const vm=task5cVmV1(['qualifyManualOrphanRunnerCatalogV1']),cases=task5cCasesV1(8);
+  for(const stage of ['initial','activated'])cases.run(stage,()=>{
+    assert.deepEqual(task5cPlainV1(task5cCatalogCallV1(vm,task5cCatalogV1(stage))),task4aLiteralOutputV1());});
+  for(const [name,mutate] of [
+    ['extra database',f=>{f.rows.databases.push({...f.rows.databases[0],name:'unrelated',oid:9});}],
+    ['OID name substitution',f=>{f.rows.databases.at(-1).name='setfarm_install_not_owned';}],
+    ['flags and connection limit',f=>{f.rows.roles.at(-1).superuser=true;f.rows.roles.at(-1).connectionLimit=1;}],
+    ['generated membership',f=>{f.rows.memberships.push({roleOid:7,memberOid:8,grantorOid:1,adminOption:false,inheritOption:true,setOption:true});}],
+    ['overflow',f=>{f.rows.roles=Array.from({length:131},(_,index)=>({...f.rows.roles[0],name:'r'+index,oid:100+index}));}],
+    ['baseline digest',f=>{f.baseline.membershipBaselineSha256=OWN_H;}],
+  ])cases.run(name,()=>{const f=task5cCatalogV1('activated');mutate(f);task5cRefusedV1(()=>task5cCatalogCallV1(vm,f));});cases.done();vm.check();
+});
+function task5cCleanupLedgerV1(){return {state:'cases-settled',databaseAck:null,runtimeAck:null,ownerAck:null,unknown:false};}
+function task5cCleanupEventV1(type){
+  const installation=ownedInstallationData(true),object=type.startsWith('database')?{kind:'database',name:installation.databaseName,oid:7}:
+    type.startsWith('runtime')?{kind:'runtime',name:installation.runtimeRole,oid:8}:{kind:'owner',name:installation.ownerRole,oid:7};
+  return {type,installation,object,completion:'fulfilled',absence:{nameAbsent:true,oidAbsent:true},
+    baseline:task4aLiteralOutputV1(),closures:task5cClosureFactsV1()};
+}
+function task5cCleanupAdvanceV1(vm,ledger,type){return vm.api.advanceManualOrphanCleanupLedgerV1(ledger,task5cDataV1(vm,task5cCleanupEventV1(type)));}
+function task5cCleanupAtV1(vm,state){
+  let ledger=task5cDataV1(vm,task5cCleanupLedgerV1());
+  if(state==='cases-settled')return ledger;
+  ledger=task5cCleanupAdvanceV1(vm,ledger,'database-ack');ledger=task5cCleanupAdvanceV1(vm,ledger,'database-absent');
+  if(state==='database-dropped')return ledger;
+  ledger=task5cCleanupAdvanceV1(vm,ledger,'runtime-ack');ledger=task5cCleanupAdvanceV1(vm,ledger,'runtime-absent');return ledger;
+}
+// 13 / 9. ACKs come from fulfilled effects; this DATA consumer issues no DROP.
+test('Task5C cleanup ledger requires each DROP acknowledgment',()=>{
+  const vm=task5cVmV1(['advanceManualOrphanCleanupLedgerV1']),cases=task5cCasesV1(9);
+  for(const [name,from,object,to] of [['database ACK absence','cases-settled','database','database-dropped'],
+    ['runtime ACK absence','database-dropped','runtime','runtime-dropped'],['owner ACK absence','runtime-dropped','owner','owner-dropped']])cases.run(name,()=>{
+    const start=task5cCleanupAtV1(vm,from),ack=task5cCleanupAdvanceV1(vm,start,object+'-ack');assert.equal(ack.state,from);
+    assert.deepEqual(task5cPlainV1(ack[object+'Ack']),{object:task5cCleanupEventV1(object+'-ack').object,installation:ownedInstallationData(true)});
+    const result=task5cCleanupAdvanceV1(vm,ack,object+'-absent');assert.equal(result.state,to);assert.equal(result.unknown,false);task5cFrozenV1(result);});
+  for(const [name,state,type] of [['lost database ACK','cases-settled','database-absent'],['lost runtime ACK','database-dropped','runtime-absent'],['lost owner ACK','runtime-dropped','owner-absent']])cases.run(name,()=>{
+    task5cRefusedV1(()=>task5cCleanupAdvanceV1(vm,task5cCleanupAtV1(vm,state),type));});
+  cases.run('absence before any ACK',()=>task5cRefusedV1(()=>task5cCleanupAdvanceV1(vm,task5cDataV1(vm,task5cCleanupLedgerV1()),'owner-absent')));
+  cases.run('repeated ACK',()=>{const ack=task5cCleanupAdvanceV1(vm,task5cCleanupAtV1(vm,'cases-settled'),'database-ack');
+    task5cRefusedV1(()=>task5cCleanupAdvanceV1(vm,ack,'database-ack'));});
+  cases.run('wrong object OID',()=>{const ack=task5cCleanupAdvanceV1(vm,task5cCleanupAtV1(vm,'cases-settled'),'database-ack'),event=task5cCleanupEventV1('database-absent');
+    event.object.oid=9;task5cRefusedV1(()=>vm.api.advanceManualOrphanCleanupLedgerV1(ack,task5cDataV1(vm,event)));});cases.done();vm.check();
+});
+// 14 / 7. Each uncertainty permanently denies a later permitted mutation.
+test('Task5C cleanup uncertainty is absorbing',()=>{
+  const vm=task5cVmV1(['advanceManualOrphanCleanupLedgerV1']),cases=task5cCasesV1(7);
+  for(const [name,change] of [
+    ['pending query',event=>{event.closures.pending=1;}],['query rejection',event=>{event.completion='rejected';}],
+    ['Source fault',event=>{event.closures.source='rejected';}],['clock fault',event=>{event.closures.fault='clock';}],
+    ['premature onclose',event=>{event.closures.fault='onclose';}],['case failure missing closure',event=>{event.closures.children='pending';}],
+    ['late completion after unknown',event=>{event.closures.fault='late-completion';}],
+  ])cases.run(name,()=>{const event=task5cCleanupEventV1('database-ack'),ledger=task5cCleanupLedgerV1();change(event);
+    if(name==='late completion after unknown'){ledger.unknown=true;event.closures.fault=null;}
+    const lost=vm.api.advanceManualOrphanCleanupLedgerV1(task5cDataV1(vm,ledger),task5cDataV1(vm,event));
+    assert.equal(lost.unknown,true);const later=task5cCleanupAdvanceV1(vm,lost,'database-ack');
+    assert.equal(later.unknown,true);assert.equal(later.databaseAck,null);assert.equal(later.state,'cases-settled');});cases.done();vm.check();
+});
+function task5cAdminFixtureV1(){
+  const vm=task5cVmV1(['retainManualOrphanRunnerAdminV1']),faults=[],calls={queries:[],order:[],reserve:0,releases:0,ends:0};
+  const pair={pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:5,usesysid:1};
+  const expected={pair,cluster:ownedClusterData(),database:'postgres',databaseOid:5,user:'root',userOid:1};
+  const identity={...pair,datid:'5',usesysid:'1',database:'postgres',databaseOid:'5',
+    currentUser:'root',sessionUser:'root',userOid:'1',serverAddress:'127.0.0.1',serverPort:55439,
+    systemIdentifier:'123',postmasterStartedAtUTC:'2026-10-21T00:00:00.123456Z',serverVersionNum:'170001'};
+  const f={vm,faults,calls,expected,identity,next:null,row:null,queryReject:false,releaseThrows:false,endReject:false,endValue:null,releaseMicrotask:false};
+  const guard=fn=>task5bGuardV1(faults,fn);
+  const reserved=guard(()=>assert.fail('only finite unsafe operations on original reservation'));
+  reserved.unsafe=guard((sql,...rest)=>{
+    assert.equal(typeof sql,'string');assert.deepEqual(rest,[]);assert.equal(calls.releases,0);assert.equal(calls.ends,0);
+    assert.match(sql,/^\s*(?:SELECT|WITH)\b/i);assert.match(sql,/pg_backend_pid\s*\(/i);
+    assert.match(sql,/pg_stat_activity/);assert.match(sql,/backend_start/);assert.match(sql,/datid/);assert.match(sql,/usesysid/);
+    assert.doesNotMatch(sql,/pg_authid|\b(?:DROP|CREATE|ALTER|GRANT|REVOKE|INSERT|UPDATE|DELETE)\b/i);
+    calls.queries.push(sql);calls.order.push('query');
+    if(f.queryReject)return Promise.reject(Error('PRIVATE_ADMIN_QUERY'));
+    if(f.next!==null){const result=f.next;f.next=null;return result;}
+    const rows=task5cDataV1(vm,f.row??[identity]);
+    rows.count=rows.length;rows.command='SELECT';return Promise.resolve(rows);
+  });
+  reserved.release=guard(()=>{calls.releases++;calls.order.push('release');assert.equal(calls.releases,1);
+    queueMicrotask(()=>{f.releaseMicrotask=true;});if(f.releaseThrows)throw Error('PRIVATE_ADMIN_RELEASE');});
+  const pool=guard(()=>assert.fail('no unreserved pool query'));
+  Object.defineProperty(pool,'reserve',{get:guard(()=>{calls.reserve++;assert.fail('never inspect or reacquire a reservation');})});
+  pool.end=guard(options=>{calls.ends++;calls.order.push('end');assert.equal(calls.ends,1);
+    assert.equal(f.releaseMicrotask,false,'end immediately follows release in the same turn');
+    assert.deepEqual(task5cPlainV1(options),{timeout:5});
+    if(f.endReject)return Promise.reject(Error('PRIVATE_ADMIN_END'));return f.endValue??Promise.resolve();});
+  f.admin=vm.api.retainManualOrphanRunnerAdminV1(pool,reserved,task5cDataV1(vm,expected));
+  assert.deepEqual(Object.keys(f.admin).sort(),['close','current','onclose','query','stop']);
+  f.query=()=>f.admin.query('identity');
+  f.check=()=>{assert.deepEqual(faults,[],'caught client-boundary assertions cannot masquerade as refusal');assert.equal(calls.reserve,0);
+    const now=f.admin.current();assert.deepEqual(Object.keys(now).sort(),['closed','endAttempted','pair','pending','releaseAttempted','stopped','unknown']);
+    assert.deepEqual(task5cPlainV1(now.pair),pair);assert.equal(now.releaseAttempted,calls.releases===1);assert.equal(now.endAttempted,calls.ends===1);
+    task5cFrozenV1(now);vm.check();};
+  f.check();return f;
+}
+// 15 / 8. This is an already retained client; no postgres/factory success bind.
+test('Task5C retained admin consumer serializes actual promises',async()=>{
+  const gate=task5cVmV1(['retainManualOrphanRunnerAdminV1']),cases=task5cCasesV1(8);
+  await cases.wait('resolved identity query',async()=>{const f=task5cAdminFixtureV1();
+    assert.deepEqual(task5cPlainV1(await f.query()),f.expected.pair);assert.equal(f.calls.queries.length,1);
+    await f.admin.close();assert.equal(f.admin.current().closed,true);f.check();});
+  await cases.wait('pending blocks second',async()=>{const f=task5cAdminFixtureV1(),d=task5bDeferredV1();f.next=d.promise;
+    const first=f.query(),settled=first.catch(error=>error);await task5bPumpV1();await task5cRejectedV1(f.query());
+    assert.equal(f.calls.queries.length,1);assert.equal(f.admin.current().unknown,true);d.resolve(task5cDataV1(f.vm,[]));await settled;f.check();});
+  await cases.wait('rejection sticky',async()=>{const f=task5cAdminFixtureV1();f.queryReject=true;
+    await task5cRejectedV1(f.query());f.queryReject=false;await task5cRejectedV1(f.query());assert.equal(f.calls.queries.length,1);f.check();});
+  await cases.wait('pair drift',async()=>{const f=task5cAdminFixtureV1();f.row=[{...f.identity,pid:701}];
+    await task5cRejectedV1(f.query());assert.equal(f.admin.current().unknown,true);f.check();});
+  await cases.wait('timeout keeps pending original',async()=>{const f=task5cAdminFixtureV1(),d=task5bDeferredV1();f.next=d.promise;
+    const query=trackProbePromiseV1(f.query());await task5bPumpV1();f.check();task5bDeadlineV1(f.vm);await task5bPumpV1();
+    assert.equal(query.outcome,null,'deadline cannot settle a query while its original is pending');
+    assert.equal(f.admin.current().pending,true);assert.equal(f.admin.current().unknown,true);assert.equal(f.admin.current().closed,false);
+    const close=trackProbePromiseV1(f.admin.close());await task5bPumpV1();
+    assert.equal(close.outcome,null,'close must join the pending query before release/end');assert.equal(query.outcome,null);
+    assert.equal(f.calls.releases,0);assert.equal(f.calls.ends,0);f.check();
+    d.resolve(task5cDataV1(f.vm,[f.identity]));await Promise.all([query.done,close.done]);
+    await assertProbeRejectedV1(query,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');await assertProbeRejectedV1(close,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.deepEqual(f.calls.order,['query','release','end']);assert.equal(f.calls.releases,1);assert.equal(f.calls.ends,1);
+    assert.equal(f.admin.current().pending,false);assert.equal(f.admin.current().closed,false);assert.equal(f.admin.current().unknown,true);f.check();});
+  await cases.wait('premature onclose',async()=>{const f=task5cAdminFixtureV1();f.admin.onclose();await task5cRejectedV1(f.query());
+    assert.equal(f.calls.queries.length,0);assert.equal(f.admin.current().unknown,true);f.check();});
+  await cases.wait('re-reserve forbidden',async()=>{const f=task5cAdminFixtureV1();await f.query();await f.query();
+    assert.equal(f.calls.queries.length,2);assert.equal(f.calls.reserve,0);await f.admin.close();await task5cRejectedV1(f.query());f.check();});
+  await cases.wait('late fulfillment never restores',async()=>{const f=task5cAdminFixtureV1(),d=task5bDeferredV1();f.next=d.promise;
+    const pending=f.query();await task5bPumpV1();f.admin.onclose();const refused=task5cRejectedV1(pending);
+    d.resolve(task5cDataV1(f.vm,[f.identity]));await refused;await task5bPumpV1();assert.equal(f.admin.current().unknown,true);
+    await task5cRejectedV1(f.query());assert.equal(f.calls.queries.length,1);f.check();});cases.done();gate.check();
+});
+// 16 / 6. Fulfilled promises, not signal requests or timeout, prove closure.
+test('Task5C admin release and end are terminal and ordered',async()=>{
+  const gate=task5cVmV1(['retainManualOrphanRunnerAdminV1']),cases=task5cCasesV1(6);
+  await cases.wait('release once immediate end once',async()=>{const f=task5cAdminFixtureV1();await f.query();
+    await f.admin.close();assert.deepEqual(f.calls.order,['query','release','end']);assert.equal(f.admin.current().closed,true);
+    assert.equal(f.admin.current().unknown,false);f.admin.onclose();assert.equal(f.admin.current().unknown,false);f.check();});
+  await cases.wait('release failure retained',async()=>{const f=task5cAdminFixtureV1();f.releaseThrows=true;
+    await task5cRejectedV1(f.admin.close());assert.equal(f.calls.releases,1);assert.equal(f.calls.ends,1);assert.equal(f.admin.current().closed,false);f.check();});
+  await cases.wait('end rejection retained',async()=>{const f=task5cAdminFixtureV1();f.endReject=true;
+    await task5cRejectedV1(f.admin.close());assert.equal(f.calls.ends,1);assert.equal(f.admin.current().closed,false);f.check();});
+  await cases.wait('end pending timeout',async()=>{const f=task5cAdminFixtureV1(),d=task5bDeferredV1();f.endValue=d.promise;
+    const close=trackProbePromiseV1(f.admin.close());await task5bPumpV1();f.check();task5bDeadlineV1(f.vm);await task5bPumpV1();
+    assert.equal(close.outcome,null,'deadline cannot settle close while actual end is pending');
+    assert.equal(f.admin.current().closed,false);assert.equal(f.admin.current().pending,true);assert.equal(f.admin.current().unknown,true);
+    assert.equal(f.calls.releases,1);assert.equal(f.calls.ends,1);f.check();
+    d.resolve();await assertProbeRejectedV1(close,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.deepEqual(f.calls.order,['release','end']);assert.equal(f.calls.releases,1);assert.equal(f.calls.ends,1);
+    assert.equal(f.admin.current().pending,false);assert.equal(f.admin.current().unknown,true);assert.equal(f.admin.current().closed,false);f.check();});
+  await cases.wait('query after stop',async()=>{const f=task5cAdminFixtureV1();f.admin.stop();await task5cRejectedV1(f.query());
+    assert.equal(f.calls.queries.length,0);assert.equal(f.admin.current().stopped,true);f.check();});
+  await cases.wait('repeat close joins same outcome',async()=>{const f=task5cAdminFixtureV1();await f.admin.close();await f.admin.close();
+    assert.equal(f.calls.releases,1);assert.equal(f.calls.ends,1);assert.equal(f.admin.current().closed,true);f.check();});cases.done();gate.check();
+});
+function task5cPartialV1(){return [{name:OWN_ID,kind:'directory',entries:[
+  {name:'planned.json',kind:'file',bytes:1},{name:'runtime',kind:'directory',files:2048,bytes:8388608,
+    artifactSubtree:{path:'product-compiler/artifacts/sha256',files:3,bytes:128}},
+]}];}
+// 17 / 6. Names/types/counts only; no contents or ownership inference.
+test('Task5C partial installation diagnostics never grant cleanup',()=>{
+  const vm=task5cVmV1(['inspectManualOrphanPartialInstallationV1']),cases=task5cCasesV1(6);
+  const call=entries=>vm.api.inspectManualOrphanPartialInstallationV1(task5cDataV1(vm,entries),'provision');
+  cases.run('zero entries',()=>assert.deepEqual(task5cPlainV1(call([])),{installationId:null,partial:false,cleanupEligible:false}));
+  cases.run('canonical unrecorded UUID',()=>assert.deepEqual(task5cPlainV1(call([{name:OWN_ID,kind:'directory',entries:[]}])),
+    {installationId:OWN_ID,partial:true,cleanupEligible:false}));
+  cases.run('two UUIDs',()=>task5cRefusedV1(()=>call([{name:OWN_ID,kind:'directory',entries:[]},{name:OWN_OP,kind:'directory',entries:[]}])));
+  cases.run('unknown symlink',()=>task5cRefusedV1(()=>call([{name:'unknown',kind:'symlink',entries:[]}])));
+  cases.run('ninth failure file',()=>{const entries=task5cPartialV1();entries[0].entries=Array.from({length:9},(_,index)=>({
+    name:'failure-12345678-1234-4234-8234-123456789ab'+index+'.json',kind:'file',bytes:1}));task5cRefusedV1(()=>call(entries));});
+  cases.run('stock runtime allowed',()=>{const result=call(task5cPartialV1());assert.equal(result.installationId,OWN_ID);
+    assert.equal(result.partial,true);assert.equal(result.cleanupEligible,false);task5cFrozenV1(result);});cases.done();vm.check();
+});
+function task5cFinalFactsV1(kind){return {result:kind==='runner'?ownedRunnerData():ownedIntegrationData(),
+  closures:task5cClosureFactsV1(),currentSource:ownedSourceData(),unknown:false};}
+// 18 / 6. Closure observations precede codec construction and are not receipts.
+test('Task5C final results require all owned closures',()=>{
+  const vm=task5cVmV1(['finalizeManualOrphanFixtureResultV1']),cases=task5cCasesV1(6);
+  const call=(kind,facts)=>vm.api.finalizeManualOrphanFixtureResultV1(kind,task5cDataV1(vm,facts));
+  cases.run('exact integration DATA',()=>{const result=call('integration',task5cFinalFactsV1('integration'));
+    assert.deepEqual(task5cPlainV1(result),ownedIntegrationData());task5cFrozenV1(result);});
+  cases.run('exact runner bytes',()=>assert.deepEqual(call('runner',task5cFinalFactsV1('runner')),Buffer.from(OWN_RUNNER_WIRE)));
+  for(const [name,mutate] of [
+    ['missing Source close',facts=>{facts.closures.source='pending';}],['pending admin close',facts=>{facts.closures.admin='pending';}],
+    ['incomplete cleanup',facts=>{facts.result.cleanup.baselineRestored=false;}],['late fault after valid DATA',facts=>{facts.closures.fault='late-stream';}],
+  ])cases.run(name,()=>{const facts=task5cFinalFactsV1('runner');mutate(facts);task5cRefusedV1(()=>call('runner',facts),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');});cases.done();vm.check();
+});
+function task5cChildPathsV1(){return {node:TASK3_NODE_V1,maintenanceRoot:SOURCE_M_V1,targetRoot:SOURCE_T_V1,
+  helper:SOURCE_M_V1+SOURCE_SUFFIX_V1,integration:SOURCE_M_V1+'/'+FILE,
+  env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'}};}
+// 19 / 6. Launch DATA is secret free; actual spawn remains in private C.
+test('Task5C child plans use exact fixed vectors',()=>{
+  const vm=task5cVmV1(['planManualOrphanFixtureChildV1']),cases=task5cCasesV1(6);
+  for(const purpose of ['provision','activate','integration','old_entry_positive','new_entry_refusal'])cases.run(purpose,()=>{
+    const plan=vm.api.planManualOrphanFixtureChildV1(purpose,task5cDataV1(vm,task5cChildPathsV1()));
+    assert.deepEqual(task5cPlainV1(plan),{executable:TASK3_NODE_V1,args:purpose==='integration'?
+      ['--import','tsx','--test','--test-isolation=none',FILE]:[SOURCE_M_V1+SOURCE_SUFFIX_V1],options:{
+      cwd:SOURCE_M_V1,argv0:TASK3_NODE_V1,shell:false,detached:false,env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},
+      stdio:['ignore','pipe','pipe','ignore','pipe']}});task5cFrozenV1(plan);
+    assert.equal(JSON.stringify(plan).includes(OWN_H),false);assert.equal(JSON.stringify(plan).includes('NODE_TEST_CONTEXT'),false);
+  });cases.run('unsupported purpose',()=>task5cRefusedV1(()=>vm.api.planManualOrphanFixtureChildV1('initdb',task5cDataV1(vm,task5cChildPathsV1()))));
+  cases.done();assert.equal(vm.timers.length,0);vm.check();
+});
+// 20 / 4. Actual 5A collector and original events, never a copied grammar.
+test('Task5C correlation consumes actual collector current faults',async()=>{
+  const vm=task5cVmV1(['correlateManualOrphanIntegrationResultV1'],{observers:true}),cases=task5cCasesV1(4);
+  const call=f=>vm.api.correlateManualOrphanIntegrationResultV1(f.issued,f.witness.snapshot(),f.witness.output());
+  await cases.wait('actual calibrated transcript',async()=>{const f=await task5cObservedV1(vm);task5aAcceptedV1(f.witness);
+    assert.deepEqual(task5cPlainV1(call(f)),ownedIntegrationData());f.check();});
+  await cases.wait('marker after 64KiB ordinary lines',async()=>{const prefix=Buffer.from(('ordinary diagnostic\n').repeat(4000)),wire=Buffer.concat([prefix,task5aWireV1()]);
+    assert.ok(prefix.length>65536);const f=await task5cObservedV1(vm,'integration',wire);assert.equal(f.witness.output().stdout.length,65536);
+    assert.equal(f.witness.output().stdout.includes(Buffer.from(TASK5A_MARKER_PREFIX_V1)),false);
+    assert.deepEqual(task5cPlainV1(call(f)),ownedIntegrationData());f.check();});
+  await cases.wait('valid then late stream fault',async()=>{const f=await task5cObservedV1(vm);call(f);
+    f.f.channels.stdout.emit('error',Error('late original stream error'));assert.equal(f.witness.snapshot().state,'unknown');
+    task5cRefusedV1(()=>call(f));f.check();});
+  await cases.wait('semantic refusal observed transport',async()=>{const wire=Buffer.from(task5aWireV1().toString('utf8').replace('ℹ pass 1','ℹ pass 2'));
+    const f=await task5cObservedV1(vm,'integration',wire);assert.equal(f.witness.snapshot().state,'observed');assert.equal(f.witness.output().integration.state,'refused');
+    task5cRefusedV1(()=>call(f));f.check();});cases.done();vm.check();
+});
+
+
+// Task5C fix round1: narrow original-lifetime/completion consumers only.
+// Complete modules remain in the same realm. C/E, Source/factory/SQL success
+// are never supplied. Corrected recipient DATA above needs its own causal RED.
+function task5cFix1VmV1(mode){
+  assert.ok(['lifetime','runner','integration'].includes(mode));
+  const reads=[],faults=[],writes=[],monotonic=task3ClockV1();let importing=true,callback=null;
+  const guard=fn=>task5bGuardV1(faults,fn),binding={};
+  for(const key of ['env','argv','execArgv','pid','ppid','cwd'])Object.defineProperty(binding,key,{get(){
+    reads.push(key);throw Error('TASK5C_FIX1_PROCESS_READ');}});
+  const outputs={};
+  if(mode!=='lifetime')for(const name of ['stdout','stderr']){
+    const channel=new EventEmitter(),on=channel.on;
+    channel.on=guard((event,listener)=>{assert.equal(event,'error');assert.equal(typeof listener,'function');
+      return Reflect.apply(on,channel,[event,listener]);});
+    channel.write=guard((bytes,done)=>{
+      assert.equal(name,'stdout','no diagnostic output inside the completion consumer');
+      assert.equal(mode,'runner');assert.ok(Buffer.isBuffer(bytes));assert.ok(bytes.length>=1&&bytes.length<=16384);
+      assert.equal(bytes.at(-1),10);assert.equal(typeof done,'function');assert.equal(writes.length,0,'one original write');
+      writes.push(Buffer.from(bytes));callback=done;return true;
+    });
+    outputs[name]=channel;Object.defineProperty(binding,name,{get(){
+      if(importing){reads.push(name);throw Error('TASK5C_FIX1_IMPORT_OUTPUT');}return channel;}});
+  }
+  const vm=task3VmV1({task5cFixture:true,task5cFiniteObservers:mode==='lifetime',process:binding,monotonic});importing=false;
+  const fix1=vm.fixtureFix1Lexical;assert.ok(fix1,'Task5C fix1 separate lexical wrapper');
+  assert.deepEqual(Object.keys(fix1).sort(),['retainManualOrphanFixtureCompletionV1','retainManualOrphanOriginalChildLifetimeV1']);
+  const required=mode==='lifetime'?'retainManualOrphanOriginalChildLifetimeV1':'retainManualOrphanFixtureCompletionV1';
+  assert.equal(typeof fix1[required],'function','missing Task5C fix1 private consumer '+required+' (scaffolding RED)');
+  assert.equal(fix1[required].length,mode==='lifetime'?2:1);
+  const check=()=>{assert.deepEqual(reads,[],'no swallowed process/import observation');
+    assert.deepEqual(faults,[],'no swallowed completion boundary assertion');vm.assertContained();};
+  check();return {...vm,api:vm.fixtureLexical,fix1,outputs,writes,check,
+    callback(error=null){assert.equal(typeof callback,'function','original callback was retained');const original=callback;callback=null;original(error);check();}};
+}
+function task5cFix1LifetimeFactsV1(lifetime){
+  assert.deepEqual(Object.keys(lifetime).sort(),['current','settled']);assert.equal(typeof lifetime.current,'function');assert.equal(lifetime.current.length,0);
+  const facts=lifetime.current();assert.deepEqual(Object.keys(facts).sort(),['childClosed','closed','fd4','pending','stderr','stdout','unknown']);
+  task5cFrozenV1(facts);for(const key of ['closed','pending','unknown','childClosed'])assert.equal(typeof facts[key],'boolean');
+  for(const key of ['stdout','stderr','fd4'])assert.ok(['unacquired','open','closed','unobserved'].includes(facts[key]));
+  assert.equal(facts.pending,!facts.closed);return facts;
+}
+function task5cFix1LifetimeV1(missing=false){
+  const vm=task5cFix1VmV1('lifetime'),f=task3EventFixtureV1('provision'),intentional=[];
+  if(missing){
+    f.bindings.stdout=null;f.bindings.stderr=null;f.bindings.stdio[1]=null;f.bindings.stdio[2]=null;f.bindings.stdio[4]=null;f.child.pid=undefined;
+    const on=f.child.on;
+    // Real observer receives a one-time binding exception after the actual
+    // listener is attached; the fixture's independent inspection guards stay on.
+    f.child.on=function(event,listener){const result=Reflect.apply(on,this,[event,listener]);
+      if(event==='spawn'&&intentional.length===0){intentional.push('observer-bind');throw Error('EXPECTED_FIX1_BIND_REFUSAL');}return result;};
+  }
+  const witness=vm.actual.observeManualOrphanOwnedChildV1(f.child,'provision');
+  const lifetime=vm.fix1.retainManualOrphanOriginalChildLifetimeV1(f.child,witness),tracked=trackProbePromiseV1(lifetime.settled);
+  const admin=task5cAdminFixtureV1();let laterPhases=0;
+  // Narrow actual Q→L composition on retained emitter/client originals only.
+  // This is NOT C, a fake Source/FD owner, or proof of C's actual finally.
+  const unwound=tracked.done.then(async outcome=>{
+    if(!Object.hasOwn(outcome,'error')){laterPhases++;assert.fail('failure cannot authorize the next phase or DROP');}
+    assert.equal(outcome.error.message,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    admin.admin.stop();await admin.admin.close();return outcome.error;
+  });
+  const check=()=>{vm.check();f.assertGuarded();admin.check();assert.equal(laterPhases,0);
+    assert.deepEqual(admin.calls.queries,[],'no later SQL or DROP');assert.deepEqual(intentional,missing?['observer-bind']:[]);};
+  const pending=async()=>{await task5bPumpV1();check();assert.equal(tracked.outcome,null,'physical original is still owed');
+    const facts=task5cFix1LifetimeFactsV1(lifetime);assert.equal(facts.closed,false);assert.equal(facts.pending,true);
+    assert.equal(admin.calls.releases,0);assert.equal(admin.calls.ends,0);return facts;};
+  const done=async()=>{const error=await assertProbeRejectedV1(tracked,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');await unwound;check();
+    const facts=task5cFix1LifetimeFactsV1(lifetime);assert.equal(facts.closed,true);assert.equal(facts.pending,false);assert.equal(facts.unknown,true);assert.equal(facts.childClosed,true);
+    assert.equal(witness.snapshot().state,'unknown');await witness.settled;
+    assert.equal(admin.calls.releases,1);assert.equal(admin.calls.ends,1);assert.deepEqual(admin.calls.order,['release','end']);
+    assert.equal(admin.admin.current().closed,true);check();return {facts,error};};
+  return {vm,f,witness,lifetime,tracked,admin,pending,done,check};
+}
+// 21 / 4. Failed success transport can still have actual physical closure.
+test('Task5C failure lifetime joins acquired originals',async()=>{
+  const gate=task5cFix1VmV1('lifetime'),cases=task5cCasesV1(4);
+  await cases.wait('FD4 error close without finish or end',async()=>{
+    const x=task5cFix1LifetimeV1();x.f.channels.fd4.emit('error',Error('FD4_ABORTED'));
+    for(const name of ['stdout','stderr']){x.f.channels[name].emit('end');x.f.channels[name].emit('close');}
+    x.f.child.emit('exit',1,null);x.f.child.emit('close',1,null);await x.pending();
+    x.f.channels.fd4.emit('close');const {facts}=await x.done();assert.equal(facts.fd4,'closed');
+    assert.equal(x.witness.snapshot().fd4.finish,false);assert.equal(x.witness.snapshot().fd4.end,false);x.check();
+  });
+  await cases.wait('readable close without end',async()=>{
+    const x=task5cFix1LifetimeV1();x.f.channels.stdout.emit('close');
+    x.f.channels.stderr.emit('end');x.f.channels.stderr.emit('close');
+    x.f.channels.fd4.emit('finish');x.f.channels.fd4.emit('end');x.f.channels.fd4.emit('close');
+    x.f.child.emit('exit',1,null);await x.pending();x.f.child.emit('close',1,null);const {facts}=await x.done();
+    assert.equal(facts.stdout,'closed');assert.equal(x.witness.snapshot().stdout.end,false);x.check();
+  });
+  await cases.wait('failed spawn missing channels and observer binding refusal',async()=>{
+    const x=task5cFix1LifetimeV1(true);x.f.child.emit('error',Error('SPAWN_FAILED'));const before=await x.pending();
+    for(const key of ['stdout','stderr','fd4'])assert.equal(before[key],'unacquired');
+    x.f.child.emit('close',-2,null);const {facts}=await x.done();
+    for(const key of ['stdout','stderr','fd4'])assert.equal(facts[key],'unacquired','absence is never a fictitious acquired close');x.check();
+  });
+  await cases.wait('still open original survives observer cutoff',async()=>{
+    const x=task5cFix1LifetimeV1();
+    for(const name of ['stdout','stderr']){x.f.channels[name].emit('end');x.f.channels[name].emit('close');}
+    x.f.child.emit('exit',1,null);x.f.child.emit('close',1,null);
+    x.vm.monotonic.state.ms=300000;assert.equal(x.vm.timers.length,1);x.vm.timers[0].callback();
+    const before=await x.pending();assert.equal(before.unknown,true);assert.equal(before.fd4,'open');
+    x.f.channels.fd4.emit('close');await x.done();x.check();
+  });cases.done();gate.check();
+});
+function task5cFix1CompletionFactsV1(completion){
+  assert.deepEqual(Object.keys(completion).sort(),['check','current','fail','finish','write']);
+  for(const [name,arity] of [['check',0],['current',0],['fail',0],['finish',1],['write',1]]){
+    assert.equal(typeof completion[name],'function');assert.equal(completion[name].length,arity);}
+  const facts=completion.current();assert.deepEqual(Object.keys(facts).sort(),[
+    'finished','kind','lastAtNs','limitNs','startedAtNs','unknown','writePending','writeSettled','writeStarted']);
+  task5cFrozenV1(facts);for(const key of ['finished','unknown','writePending','writeSettled','writeStarted'])assert.equal(typeof facts[key],'boolean');
+  for(const key of ['startedAtNs','lastAtNs','limitNs'])assert.match(facts[key],/^(0|[1-9][0-9]*)$/);
+  assert.equal(facts.startedAtNs,'0','one original origin');assert.equal(facts.limitNs,facts.kind==='runner'?'840000000000':'300000000000');return facts;
+}
+function task5cFix1CompletionV1(kind='runner'){
+  const vm=task5cFix1VmV1(kind),completion=vm.fix1.retainManualOrphanFixtureCompletionV1(kind);
+  assert.equal(vm.timers.length,1);const timer=vm.timers[0];assert.equal(timer.delay,kind==='runner'?840000:300000);
+  assert.ok(vm.outputs.stdout.listenerCount('error')>0);assert.ok(vm.outputs.stderr.listenerCount('error')>0);
+  completion.check();const result=vm.api.finalizeManualOrphanFixtureResultV1(kind,task5cDataV1(vm,task5cFinalFactsV1(kind)));
+  if(kind==='runner')assert.deepEqual(result,Buffer.from(OWN_RUNNER_WIRE));else task5cFrozenV1(result);
+  const check=()=>{vm.check();assert.equal(vm.timers.length,1);task5cFix1CompletionFactsV1(completion);};
+  const closed=()=>{check();assert.deepEqual(vm.cleared,[timer.handle]);assert.equal(completion.current().finished,true);};
+  check();return {vm,completion,result,timer,check,closed};
+}
+// 22 / 5. Actual R output callback/clock; no public owner or injected finalizer.
+test('Task5C completion deadline covers final output',async()=>{
+  const gate=task5cFix1VmV1('runner'),cases=task5cCasesV1(5);
+  await cases.wait('write pending at cutoff retains original',async()=>{
+    const x=task5cFix1CompletionV1(),t=trackProbePromiseV1(x.completion.write(x.result));
+    await task5bPumpV1();x.check();assert.equal(t.outcome,null);assert.equal(x.vm.writes.length,1);
+    x.vm.monotonic.state.ms=840000;x.timer.callback();await task5bPumpV1();x.check();
+    let facts=x.completion.current();assert.equal(facts.unknown,true);assert.equal(facts.writePending,true);assert.equal(facts.finished,false);
+    assert.equal(t.outcome,null,'timeout does not settle the actual pending callback');assert.deepEqual(x.vm.cleared,[]);
+    task5cRefusedV1(()=>x.completion.finish(true),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');assert.deepEqual(x.vm.cleared,[]);
+    assert.equal(t.outcome,null);x.vm.callback();await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    facts=x.completion.current();assert.equal(facts.writePending,false);assert.equal(facts.writeSettled,true);assert.equal(facts.unknown,true);
+    task5cRefusedV1(()=>x.completion.finish(false),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');x.closed();assert.equal(x.vm.writes.length,1);
+  });
+  await cases.wait('success callback after cutoff rejects',async()=>{
+    const x=task5cFix1CompletionV1(),t=trackProbePromiseV1(x.completion.write(x.result));await task5bPumpV1();x.check();
+    assert.equal(t.outcome,null);x.vm.monotonic.state.ms=840001;x.vm.callback();
+    await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');assert.equal(x.completion.current().unknown,true);
+    task5cRefusedV1(()=>x.completion.finish(false),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');x.closed();assert.equal(x.vm.writes.length,1);
+  });
+  await cases.wait('timely callback completes inside same owner deadline',async()=>{
+    const x=task5cFix1CompletionV1(),t=trackProbePromiseV1(x.completion.write(x.result));await task5bPumpV1();x.check();
+    assert.equal(t.outcome,null);x.vm.monotonic.state.ms=839999;x.vm.callback();await t.done;
+    assert.deepEqual(t.outcome,{value:undefined});assert.deepEqual(x.vm.writes,[Buffer.from(OWN_RUNNER_WIRE)]);
+    const before=x.completion.current();assert.equal(before.unknown,false);assert.equal(before.finished,false);assert.equal(before.writePending,false);assert.equal(before.writeSettled,true);
+    assert.deepEqual(x.vm.cleared,[],'resource/write closure alone does not end the owner interval');
+    x.vm.monotonic.state.ms=839999.5;assert.equal(x.completion.finish(true),undefined);x.closed();assert.equal(x.completion.current().unknown,false);
+  });
+  await cases.wait('callback error stays fixed and never retries',async()=>{
+    const x=task5cFix1CompletionV1(),t=trackProbePromiseV1(x.completion.write(x.result));await task5bPumpV1();x.check();
+    assert.equal(t.outcome,null);x.vm.callback(Error('PRIVATE_OUTPUT_CALLBACK_ERROR'));
+    const first=await assertProbeRejectedV1(t,'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    const second=task5cRefusedV1(()=>x.completion.check(),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');assert.notEqual(first,second);
+    assert.equal(x.completion.current().writePending,false);assert.equal(x.completion.current().unknown,true);
+    task5cRefusedV1(()=>x.completion.finish(false),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');x.closed();assert.equal(x.vm.writes.length,1);
+  });
+  await cases.wait('integration finalization overrun includes timer release',async()=>{
+    const x=task5cFix1CompletionV1('integration'),faults=[],push=x.vm.cleared.push;
+    assert.deepEqual(task5cPlainV1(x.result),ownedIntegrationData());assert.equal(x.vm.writes.length,0);
+    x.vm.monotonic.state.ms=299999;
+    // This is the existing finite clearTimeout trace, not an injected Source
+    // callback. Its fallible release crosses the same finalization deadline.
+    Object.defineProperty(x.vm.cleared,'push',{value:task5bGuardV1(faults,function(...args){
+      assert.deepEqual(args,[x.timer.handle]);const result=Reflect.apply(push,x.vm.cleared,args);x.vm.monotonic.state.ms=300000;return result;
+    }),configurable:true});
+    task5cRefusedV1(()=>x.completion.finish(true),'MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    assert.deepEqual(faults,[],'no swallowed timer-release assertion');assert.equal(x.completion.current().unknown,true);
+    x.closed();assert.equal(x.vm.writes.length,0);assert.equal(x.completion.current().writeStarted,false);assert.deepEqual(faults,[]);
+  });cases.done();gate.check();
+});
+// 23 / 7. Recipient-only Node26 DATA; no worker key may enter base/child env.
+test('Task5C integration recipient requires Node26 worker metadata',()=>{
+  const vm=task5cVmV1(['qualifyManualOrphanFixtureLaunchV1','planManualOrphanFixtureChildV1']),cases=task5cCasesV1(7);
+  const launch=f=>vm.api.qualifyManualOrphanFixtureLaunchV1(f.kind,task5cDataV1(vm,f.actual),task5cDataV1(vm,f.frame));
+  for(const [name,kind,change] of [
+    ['missing worker ID','integration',f=>{f.actual.worker={};}],
+    ['wrong worker ID','integration',f=>{f.actual.worker.NODE_TEST_WORKER_ID='2';}],
+    ['recipient child-v8 context is absent','integration',f=>{f.actual.env.NODE_TEST_CONTEXT='child-v8';}],
+    ['worker ID leaked into runner base','runner',f=>{f.actual.env.NODE_TEST_WORKER_ID='1';}],
+    ['context leaked into runner base','runner',f=>{f.actual.env.NODE_TEST_CONTEXT='child-v8';}],
+  ])cases.run(name,()=>{const f=task5cLaunchV1(kind);change(f);task5cRefusedV1(()=>launch(f));vm.check();});
+  for(const [key,value] of [['NODE_TEST_WORKER_ID','1'],['NODE_TEST_CONTEXT','child-v8']])cases.run(key+' forwarded into child plan',()=>{
+    const paths=task5cChildPathsV1();paths.env[key]=value;
+    task5cRefusedV1(()=>vm.api.planManualOrphanFixtureChildV1('old_entry_positive',task5cDataV1(vm,paths)));vm.check();
+  });cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
 });
