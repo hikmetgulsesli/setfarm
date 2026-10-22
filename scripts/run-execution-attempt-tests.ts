@@ -74,9 +74,6 @@ if (mentionsManualOrphanFileV1(args)) throw new Error("MANUAL_ORPHAN_CONSTRUCTOR
 const files = readdirSync(TEST_ROOT, { withFileTypes: true })
   .filter((entry) => entry.isFile())
   .map((entry) => entry.name);
-if (args.length === 0 && mentionsManualOrphanFileV1(files)) {
-  throw new Error("MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED");
-}
 const discovered = files.filter((file) => file.endsWith(".test.ts")).sort();
 for (const file of OWNER_BACKED_TESTS) {
   if (!discovered.includes(file)) throw new Error(`EXECUTION_ATTEMPT_OWNER_TEST_MISSING:${file}`);
@@ -87,7 +84,10 @@ const requested = args.map((locator) => {
   if (!discovered.includes(normalized)) throw new Error(`EXECUTION_ATTEMPT_TEST_UNKNOWN:${locator}`);
   return normalized;
 });
-const selected = requested.length === 0 ? discovered : [...new Set(requested)].sort();
+// The manual orphan integration is constructor-only, so default discovery never dispatches it.
+const selected = requested.length === 0
+  ? discovered.filter((file) => file !== "manual-control-orphan-bootstrap-v1.integration.test.ts")
+  : [...new Set(requested)].sort();
 const raw = selected.filter((file) => !OWNER_BACKED_TESTS.has(file));
 const ownerBacked = selected.filter((file) => OWNER_BACKED_TESTS.has(file));
 

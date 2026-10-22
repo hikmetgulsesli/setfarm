@@ -199,9 +199,12 @@ test('source-contained wrapper refuses the bare reserved basename before dispatc
   const c=runWrapperSourceV1([BASENAME],discovery(BASENAME));
   assert.equal(c.thrown,'MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED');noEffects(c);
 });
-test('source-contained wrapper refuses no-args reserved discovery before unrelated raw dispatch',()=>{
-  const c=runWrapperSourceV1([],discovery('aaa-unrelated.test.ts',BASENAME));
-  assert.equal(c.thrown,'MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED');noEffects(c);
+test('source-contained wrapper defaults to unrelated raw and all ordinary owners without the reserved integration',()=>{
+  const c=runWrapperSourceV1([],[...TASK6_EXPECTED_OWNER_FILES_V1,'aaa-unrelated.test.ts']);
+  pr305AssertDispatchV1(c,[
+    {args:['--import','tsx','--test','tests/execution-attempts/aaa-unrelated.test.ts'],env:{...ENV}},
+    ...pr305OrdinaryOwnerSpawnsV1(),
+  ]);
 });
 
 const NEAR=[
@@ -8001,14 +8004,14 @@ test('Task6 owner registry adds the reserved integration without raw admission',
     assert.equal(c.thrown,'MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED');noEffects(c);assert.equal(c.stdout,'');assert.equal(c.stderr,'');
   });cases.done();
 });
-// Break: no-args discovery dispatches the reserved integration. Existing behavior
-// can already pass this case; the tests-first phase must not manufacture RED.
-test('Task6 owner discovery still refuses the reserved integration',()=>{
-  const cases=task5bCasesV1(1);cases.run('actual no-args reserved discovery refusal',()=>{
+// Break: default selection must retain every ordinary owner without dispatching the constructor-only integration.
+test('Task6 owner discovery defaults to all ordinary owners without the reserved integration',()=>{
+  const cases=task5bCasesV1(1);cases.run('actual no-args complete ordinary owner dispatch',()=>{
     const c=runWrapperSourceV1([],[...TASK6_EXPECTED_OWNER_FILES_V1]);
-    assert.equal(c.thrown,'MANUAL_ORPHAN_CONSTRUCTOR_REQUIRED');noEffects(c);assert.equal(c.stdout,'');assert.equal(c.stderr,'');
+    pr305AssertDispatchV1(c,pr305OrdinaryOwnerSpawnsV1());
   });cases.done();
 });
+
 // Break: producer bytes diverge from codec, or collector credits missing closes.
 test('Task6 marker DATA matches the actual codec and integration collector',async()=>{
   await task6MarkerCaseV1('producer and observer DATA simulation with actual original joins',async x=>{
@@ -8797,4 +8800,80 @@ test('Final fix I1 close discharges an unfinished cleanup interval once',async()
     assert.equal(f.admin.current().closed,true);assert.equal(f.admin.current().unknown,false);
     assert.equal(f.releases,1);assert.equal(f.ends,1);assert.equal(f.vm.cleared.filter(handle=>handle===timer.handle).length,1);
   }finally{await f.finish();}});cases.done();
+});
+
+// PR305 default-discovery compatibility
+function pr305OrdinaryOwnerSpawnsV1(){
+  const files=TASK6_EXPECTED_OWNER_FILES_V1.filter(file=>file!=='manual-control-orphan-bootstrap-v1.integration.test.ts');
+  assert.equal(files.length,43);assert.equal(new Set(files).size,43);
+  return [...files].sort().map(file=>({
+    args:['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+      'node','--import','tsx','--test','--test-concurrency=1','tests/execution-attempts/'+file],
+    env:{...ENV},
+  }));
+}
+function pr305AssertDispatchV1(c,expected){
+  assert.equal(c.thrown,null);assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));
+  assert.equal(c.calls.preconditions,0);assert.equal(c.calls.admin,0);
+  assert.equal(c.calls.task4,0);assert.equal(c.calls.projection,0);
+  assert.equal(c.exitCode,undefined);assert.equal(c.stdout,'');assert.equal(c.stderr,'');
+  assert.deepEqual(c.calls.spawn,expected);
+  assert.deepEqual(c.environment,{...ENV,SETFARM_PG_URL:'must-be-removed'});
+}
+
+test('PR305 default discovery preserves sorted raw batch and all ordinary owners excluding only the genuine basename',()=>{
+  const c=runWrapperSourceV1([],[...TASK6_EXPECTED_OWNER_FILES_V1].reverse().concat([
+    'zzz-ordinary.test.ts','aaa-ordinary.test.ts',
+    'manual-control-orphan-bootstrap-v1.integration.test.ts.bak.test.ts','discovery-notes.txt',
+  ]));
+  pr305AssertDispatchV1(c,[
+    {args:['--import','tsx','--test','tests/execution-attempts/aaa-ordinary.test.ts',
+      'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts.bak.test.ts',
+      'tests/execution-attempts/zzz-ordinary.test.ts'],env:{...ENV}},
+    ...pr305OrdinaryOwnerSpawnsV1(),
+  ]);
+});
+test('PR305 default discovery refuses a missing ordinary required owner before any dispatch',()=>{
+  const files=TASK6_EXPECTED_OWNER_FILES_V1.filter(file=>file!=='attempt-reconciler.test.ts');
+  const c=runWrapperSourceV1([],files.concat('aaa-unrelated.test.ts'));
+  assert.equal(c.thrown,'EXECUTION_ATTEMPT_OWNER_TEST_MISSING:attempt-reconciler.test.ts');
+  noEffects(c);assert.equal(c.stdout,'');assert.equal(c.stderr,'');
+});
+test('PR305 default discovery refuses a missing genuine required owner before any dispatch',()=>{
+  const files=TASK6_EXPECTED_OWNER_FILES_V1.filter(file=>file!=='manual-control-orphan-bootstrap-v1.integration.test.ts');
+  const c=runWrapperSourceV1([],files.concat('aaa-unrelated.test.ts'));
+  assert.equal(c.thrown,'EXECUTION_ATTEMPT_OWNER_TEST_MISSING:manual-control-orphan-bootstrap-v1.integration.test.ts');
+  noEffects(c);assert.equal(c.stdout,'');assert.equal(c.stderr,'');
+});
+test('PR305 explicit raw selection remains sorted and deduplicated with the genuine file discovered',()=>{
+  const c=runWrapperSourceV1(['tests/execution-attempts/zzz-ordinary.test.ts','aaa-ordinary.test.ts','zzz-ordinary.test.ts'],
+    [...TASK6_EXPECTED_OWNER_FILES_V1,'zzz-ordinary.test.ts','aaa-ordinary.test.ts']);
+  pr305AssertDispatchV1(c,[
+    {args:['--import','tsx','--test','tests/execution-attempts/aaa-ordinary.test.ts',
+      'tests/execution-attempts/zzz-ordinary.test.ts'],env:{...ENV}},
+  ]);
+});
+test('PR305 explicit owner selection remains sorted and deduplicated with the genuine file discovered',()=>{
+  const c=runWrapperSourceV1(['tests/execution-attempts/v3-stage-input-unresolved.integration.test.ts',
+    'attempt-reconciler.test.ts','tests/execution-attempts/attempt-reconciler.test.ts'],[...TASK6_EXPECTED_OWNER_FILES_V1]);
+  pr305AssertDispatchV1(c,[
+    {args:['--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node','--import','tsx','--test',
+      '--test-concurrency=1','tests/execution-attempts/attempt-reconciler.test.ts'],env:{...ENV}},
+    {args:['--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node','--import','tsx','--test',
+      '--test-concurrency=1','tests/execution-attempts/v3-stage-input-unresolved.integration.test.ts'],env:{...ENV}},
+  ]);
+});
+test('PR305 explicit mixed selection preserves raw-first ordering and owner vectors with the genuine file discovered',()=>{
+  const c=runWrapperSourceV1(['v3-stage-input-unresolved.integration.test.ts','zzz-ordinary.test.ts',
+    'attempt-reconciler.test.ts','tests/execution-attempts/aaa-ordinary.test.ts','aaa-ordinary.test.ts',
+    'tests/execution-attempts/attempt-reconciler.test.ts'],
+    [...TASK6_EXPECTED_OWNER_FILES_V1,'zzz-ordinary.test.ts','aaa-ordinary.test.ts']);
+  pr305AssertDispatchV1(c,[
+    {args:['--import','tsx','--test','tests/execution-attempts/aaa-ordinary.test.ts',
+      'tests/execution-attempts/zzz-ordinary.test.ts'],env:{...ENV}},
+    {args:['--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node','--import','tsx','--test',
+      '--test-concurrency=1','tests/execution-attempts/attempt-reconciler.test.ts'],env:{...ENV}},
+    {args:['--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node','--import','tsx','--test',
+      '--test-concurrency=1','tests/execution-attempts/v3-stage-input-unresolved.integration.test.ts'],env:{...ENV}},
+  ]);
 });
