@@ -6013,7 +6013,7 @@ function task5bDeadlineV1(vm){
 function task5bGuardV1(faults,fn){return (...args)=>{try{return fn(...args);}catch(error){
   if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;
 }};}
-function task5bSqlFixtureV1(vm){
+function task5bSqlFixtureV1(vm,{catalogRows=null}={}){
   const faults=[],calls={log:[],reserves:0,releases:0,ends:0,queries:[]};
   const f={vm,faults,calls,reserveValue:null,reserveThrows:false,queryThrows:false,queryRejects:false,
     nextValue:null,nextRows:null,releaseThrows:false,endThrows:false,endRejects:false,endValue:null,
@@ -6039,7 +6039,7 @@ function task5bSqlFixtureV1(vm){
     if(f.queryRejects)return Promise.reject(Error('PRIVATE_QUERY_REJECT'));
     if(f.nextValue!==null){const value=f.nextValue;f.nextValue=null;return value;}
     const own={pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:'7',usesysid:'8'};
-    const raw=f.nextRows??(kind==='identity'?task5bIdentityV1().rows:[{...own,rows:task4aCatalogV1()[kind]}]);f.nextRows=null;
+    const raw=f.nextRows??(kind==='identity'?task5bIdentityV1().rows:[{...own,rows:(catalogRows??task4aCatalogV1())[kind]}]);f.nextRows=null;
     // Driver-owned array metadata is deliberately present; it is not baseline
     // DATA and must be removed by the real consumer's explicit projection.
     const rows=task5bDataV1(vm,raw);rows.count=rows.length;rows.command='SELECT';return Promise.resolve(rows);
@@ -6609,7 +6609,7 @@ function task5cLaunchV1(kind){
   const actual={node:TASK3_NODE_V1,maintenanceRoot:m,targetRoot:SOURCE_T_V1,workspace:SOURCE_WORKSPACE_V1,
     cwd:m,execPath:TASK3_NODE_V1,argv0:TASK3_NODE_V1,argv:[TASK3_NODE_V1,m+'/'+(kind==='runner'?'scripts/run-isolated-postgres-tests.ts':FILE),...(kind==='runner'?['--',...VECTOR]:[])],
     execArgv:kind==='runner'?['--import','tsx']:['--import','tsx','--test','--test-isolation=none'],
-    env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},worker:kind==='integration'?{NODE_TEST_WORKER_ID:'1'}:null,
+    env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C',TSX_DISABLE_CACHE:'1'},worker:kind==='integration'?{NODE_TEST_WORKER_ID:'1'}:null,
     self:{pin:task5cPlainV1(self),rawCommand},parent:{pin:task5cPlainV1(parent),rawCommand:kind==='runner'?graph.observations.constructor.rawCommand:graph.observations.runner.rawCommand},
     maintenance:ownedReleaseData(OWN_M),target:ownedReleaseData(OWN_T)};
   return {kind,actual,frame};
@@ -7044,7 +7044,8 @@ test('Task5C child plans use exact fixed vectors',()=>{
     const plan=vm.api.planManualOrphanFixtureChildV1(purpose,task5cDataV1(vm,task5cChildPathsV1()));
     assert.deepEqual(task5cPlainV1(plan),{executable:TASK3_NODE_V1,args:purpose==='integration'?
       ['--import','tsx','--test','--test-isolation=none',FILE]:[SOURCE_M_V1+SOURCE_SUFFIX_V1],options:{
-      cwd:SOURCE_M_V1,argv0:TASK3_NODE_V1,shell:false,detached:false,env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},
+      cwd:SOURCE_M_V1,argv0:TASK3_NODE_V1,shell:false,detached:false,env:purpose==='integration'?
+        {PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C',TSX_DISABLE_CACHE:'1'}:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},
       stdio:['ignore','pipe','pipe','ignore','pipe']}});task5cFrozenV1(plan);
     assert.equal(JSON.stringify(plan).includes(OWN_H),false);assert.equal(JSON.stringify(plan).includes('NODE_TEST_CONTEXT'),false);
   });cases.run('unsupported purpose',()=>task5cRefusedV1(()=>vm.api.planManualOrphanFixtureChildV1('initdb',task5cDataV1(vm,task5cChildPathsV1()))));
@@ -8784,17 +8785,19 @@ test('Final fix I1 C uses the retained cleanup interval',()=>{
     tries.sort((a,b)=>(a.end-a.pos)-(b.end-b.pos));assert.ok(tries.length);const cleanup=tries[0];assert.ok(cleanup.finallyBlock);
     assert.ok(ends[0].pos>cleanup.finallyBlock.pos&&ends[0].end<cleanup.finallyBlock.end);
     const loop=cleanup.tryBlock.statements.find(node=>ts.isForOfStatement(node));assert.ok(loop);assert.ok(begins[0].end<loop.pos);
-    assert.match(text(loop),/await runnerCatalog\(before\);\s*check\(\);/);
-    assert.match(text(loop),/await admin!\.query\("drop-"\+object,[\s\S]*?\);\s*check\(\);/);
+    assert.match(text(loop),/await readRunnerCatalogFactsLocal\(before\);\s*check\(\);/);
+    assert.match(text(loop),/await admin!\.query\("drop-"\+object,[\s\S]*?\);\s*localCheck\(\);/);
+    assert.match(text(loop),/await readRunnerCatalogFactsLocal\(after\);\s*check\(\);[\s\S]*advanceManualOrphanCleanupLedgerV1/);
     const declaration=name=>{const rows=nodes.filter(node=>ts.isVariableDeclaration(node)&&ts.isIdentifier(node.name)&&node.name.text===name);assert.equal(rows.length,1);return rows[0];};
-    const sample=declaration('sample'),check=declaration('check');
+    const sample=declaration('sample'),check=declaration('check'),localCheck=declaration('localCheck');
     assert.match(text(sample),/admin\?\.current\(\)\.unknown/);
-    assert.match(text(check),/prepared\?\.assertUnchanged\(\);activation\?\.assertUnchanged\(\);sample\(\);\s*}/);
+    assert.match(text(localCheck),/prepared\?\.assertUnchanged\(\);activation\?\.assertUnchanged\(\);sample\(\);\s*}/);
+    assert.match(text(check),/localCheck\(\);\s*holder\?\.check\(\);\s*localCheck\(\);/);
     assert.doesNotMatch(text(owner),/\bcleanupStart\b|\bcleanupTimer\b/);
     assert.doesNotMatch(text(cleanup),/process\.hrtime|setTimeout\(burn,30000\)/);
     const closing=nodes.filter(node=>ts.isCallExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==='closeSql'
       &&node.pos>cleanup.end);assert.ok(closing.length);assert.ok(closing[0].pos>cleanup.finallyBlock.end);
-    assert.match(text(cleanup.tryBlock),/runnerCatalog\("owner-dropped"\)[\s\S]*setTimeout\(yes,100\)[\s\S]*runnerCatalog\("owner-dropped"\)/);
+    assert.match(text(cleanup.tryBlock),/readRunnerCatalogFactsLocal\("owner-dropped"\)[\s\S]*setTimeout\(yes,100\)[\s\S]*readRunnerCatalogFactsLocal\("owner-dropped"\)/);
   });cases.done();
 });
 // Break: close must discharge an unended interval before its separate end wait.
@@ -8902,20 +8905,22 @@ function task7dSourceV1(){
   };
   return {text,ast,declaration};
 }
-function task7dPrivateVmV1(fs){
+function task7dPrivateVmV1(fs,scope={}){
   const source=task7dSourceV1(),c=capture();
   const names=['ownedTargetShaV1','ownedMetadataV1','ownedSourceCleanupUncertainV1',
     'ownedSourceRefusalV1','ownedSourceRequireV1','ownedSourceHashV1','ownedSourceLocatorV1',
     'ownedSourceSameV1','ownedSourceKeysV1','ownedGitShaV1','probeHexV1',
-    'ownedSourceBuildDataV1','ownedSourceEqualBuildV1','ownedSourceResourcesV1','ownedSourcePinsV1'];
-  const context={Buffer,path,createHash,fs:closedModule(c,'Task7D finite fs',fs)};
+    'ownedSourceBuildDataV1','ownedSourceEqualBuildV1','ownedSourceResourcesV1','ownedSourcePinsV1',
+    'ownedObserverV1','ownedOrdinaryRootsV1','ownedSetupRootsV1','ownedGraphBuiltinsV1',
+    'ownedSourceImportsV1','ownedSourceSetEqualV1','ownedSourceGraphV1'];
+  const context={Buffer,TextDecoder,path,createHash,fs:closedModule(c,'Task7D finite fs',fs),...scope};
   runInNewContext(names.map(source.declaration).join('\n')+
     '\n;globalThis.unit={resources:ownedSourceResourcesV1,pins:ownedSourcePinsV1};',context,
     {filename:'actual-H-private-pins-resources',timeout:5000});
   return {...context.unit,contained(){assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));}};
 }
 const TASK7D_METADATA_V1=Object.freeze(['BUILD_INFO.json','PLATFORM_BUILD_OUTPUT_TREE.json','PLATFORM_RELEASE_MANIFEST.json']);
-function task7dPinsV1(){
+function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext}={}){
   const root=SOURCE_T_V1,files=new Map(),dirs=new Map(),handles=new Map(),opened=[],events=[],faults=[];
   let inode=100,next=1000,temporary=false,live=true,ownerFault=false,checks=0,activeTemporary=0,maxTemporary=0;
   const controls={read:null,close:null,held:null,named:null,afterRead:null,afterCheck:null,recycle:false};
@@ -8932,12 +8937,16 @@ function task7dPinsV1(){
   };
   const output=new Map(),sha='9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0';
   // Independent literal SHA256("aaa"); 911 ordinary + 3 metadata, exact scope.
+  const graphData=fixedGraph?task7eGraphDataV1():null;
   for(let i=0;i<911;i++){
-    const locator='dist/unit-'+String(i).padStart(4,'0')+'.js';add(root+'/'+locator,'aaa');
-    output.set(locator,{locator,mode:0o644,byteLength:3,sha256:sha});
+    const locator=graphData?.names[i]??'dist/unit-'+String(i).padStart(4,'0')+'.js';
+    const text=graphData?.text.get(locator)??'aaa';add(root+'/'+locator,text);
+    output.set(locator,{locator,mode:0o644,byteLength:Buffer.byteLength(text),
+      sha256:graphData?createHash('sha256').update(text).digest('hex'):sha});
   }
   for(const name of TASK7D_METADATA_V1){const locator=root+'/dist/'+name;add(locator,'aaa');files.get(locator).stat.mode=0o100444n;}
   const keep=root+'/scripts/build-generation-retention.mjs';add(keep,'keep');
+  for(const [locator,text] of extraFiles)add(locator,text);
   const paths=[...output.keys()].map(locator=>root+'/'+locator).concat(TASK7D_METADATA_V1.map(name=>root+'/dist/'+name));
   const entry=locator=>{
     assert.equal(typeof locator,'string');const item=files.get(locator)??dirs.get(locator);
@@ -8980,7 +8989,7 @@ function task7dPinsV1(){
       events.push(['read',fd,position,length]);
       if(h.temporary&&controls.read==='short'&&position===0)return 0;
       if(h.temporary&&controls.read==='overlong'&&position===0)return length+1;
-      if(h.temporary&&controls.read==='extra-eof'&&position===3)return 1;
+      if(h.temporary&&controls.read==='extra-eof'&&position===h.item.bytes.length)return 1;
       const data=h.temporary&&controls.read==='hash'?Buffer.from('bbb'):h.item.bytes;
       const n=Math.max(0,Math.min(length,data.length-position));data.copy(buffer,offset,position,position+n);
       if(h.temporary&&controls.afterRead)controls.afterRead(h,position);
@@ -8996,7 +9005,8 @@ function task7dPinsV1(){
       }
     }),
   };
-  const vm=task7dPrivateVmV1(fs),resources=vm.resources(),pins=vm.pins(resources,SOURCE_HOME_V1);
+  const vm=task7dPrivateVmV1(fs,scope),resources=vm.resources();
+  const pins=sourceContext===undefined?vm.pins(resources,SOURCE_HOME_V1):vm.pins(resources,SOURCE_HOME_V1,sourceContext);
   // The seam creates no stock descriptors. The recheck boundary intentionally
   // represents the retained full check, not a fabricated passing Source owner.
   const owner={expected:ownedReleaseData(OWN_T),check:guard(()=>{
@@ -9004,9 +9014,9 @@ function task7dPinsV1(){
     if(controls.afterCheck)controls.afterCheck(checks);
   })};
   for(const locator of paths)pins.file(locator);
-  pins.file(keep);pins.directory(root+'/dist',true);pins.absent(root+'/dist/absent.js');
+  pins.file(keep);for(const [locator] of extraFiles)pins.file(locator);pins.directory(root+'/dist',true);pins.absent(root+'/dist/absent.js');
   const original=opened.filter(h=>files.has(h.path)),originalTargets=original.filter(h=>paths.includes(h.path));
-  assert.equal(originalTargets.length,914);assert.equal(original.length,915);
+  assert.equal(originalTargets.length,914);assert.equal(original.length,915+extraFiles.length);
   const originalCount=opened.length;
   const contained=()=>{assert.deepEqual(faults,[],'no swallowed finite FS/assertion fault');vm.contained();};
   const api=()=>assert.equal(typeof pins.handoffTargetOutput,'function',
@@ -9021,7 +9031,7 @@ function task7dPinsV1(){
       assert.equal(events.filter(e=>e[0]==='close'&&e[1]===h.fd).length,1,'one attempt per acquired fd');}
     assert.equal(activeTemporary,0);contained();
   };
-  return {root,output,paths,keep,files,dirs,handles,opened,events,controls,pins,resources,owner,originalTargets,originalCount,
+  return {root,output,paths,keep,files,dirs,handles,opened,events,controls,pins,resources,owner,originalTargets,originalCount,graphData,
     api,handoff,finish,contained,checks:()=>checks,maxTemporary:()=>maxTemporary,
     delegate(){handoff();temporary=true;},startTemporary(){temporary=true;},stockClosed(){live=false;},stockFault(){ownerFault=true;},
     reads(){return events.filter(e=>e[0]==='read');},closes(){return events.filter(e=>e[0]==='close');}};
@@ -9166,7 +9176,7 @@ function task7dOrderV1(mode='boundary'){
   const profile={target:{sourceTreeHash:expected.treeHash,lockSha256:'f'.repeat(64)},
     targetResolution:Array.from({length:11},()=>({row:['x','dist/x.js','x'],members:[]}))};
   const pins={
-    check:guard(()=>{events.push('pins-check');}),
+    check:guard(()=>{events.push('pins-check');if(handed!==undefined)handed.check();}),
     directory:guard(()=>{events.push('early-directory');return {dev:1n};}),
     file:guard((locator)=>{
       events.push('file:'+path.basename(locator));
@@ -9223,7 +9233,10 @@ function task7dOrderV1(mode='boundary'){
       events.push('compiled-audit');assert.equal(kind,'target');assert.equal(manifest.length,1);
       if(mode==='compiled-audit')throw Error('FINITE_COMPILED_AUDIT');
     }),
-    common:guard(root=>root===SOURCE_M_V1?'/finite/M.git':'/finite/T.git'),
+    identityCommon:guard(root=>{
+      assert.ok([SOURCE_M_V1,SOURCE_T_V1].includes(root),'only original M/T identity roots');events.push('identity-common:'+root);
+      return root===SOURCE_M_V1?'/finite/M.git':'/finite/T.git';
+    }),
     captureTarget:guard(target=>{lateTarget=target;events.push('pre-inventory-stop');}),
     exerciseClose:mode==='normal-close',
   };
@@ -9307,4 +9320,701 @@ test('Task7D private custody failed stock batch recheck precedes every temporary
   // Catches doing delegated reads before the complete same-owner stock proof.
   const f=task7dPinsV1();f.delegate();f.stockFault();const before=f.opened.length;
   task7dRefusedV1(()=>f.pins.check(),true);assert.equal(f.opened.length,before);f.finish(true);
+});
+
+// Task7E: actual fixed lexical bodies only. Extraction gates precede fixtures.
+// A missing declaration is scaffolding RED; it is never reported as a reached
+// retained-owner/SQL/filesystem predicate. No successful whole Source emulator.
+function task7eLexicalV1(file,ownerName,names){
+  const source=readFileSync(file,'utf8'),ast=ts.createSourceFile('actual-private-unit.ts',source,ts.ScriptTarget.Latest,true,
+    String(file).endsWith('.ts')?ts.ScriptKind.TS:ts.ScriptKind.JS);
+  assert.deepEqual(ast.parseDiagnostics,[]);const owner=ownerName===null?ast:ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===ownerName);
+  assert.ok(owner,'actual containing function '+ownerName);const nodes=[];
+  const visit=n=>{nodes.push(n);ts.forEachChild(n,visit);};visit(ownerName===null?owner:owner.body);
+  return names.map(name=>{const found=nodes.filter(n=>(ts.isFunctionDeclaration(n)&&n.name?.text===name)
+    ||(ts.isVariableDeclaration(n)&&ts.isIdentifier(n.name)&&n.name.text===name));
+    assert.equal(found.length,1,'Task7E scaffolding RED: missing unique '+name+'; semantic controls NOT reached');
+    return ts.isFunctionDeclaration(found[0])?found[0].getText(ast):'const '+found[0].getText(ast)+';';}).join('\n');
+}
+function task7eVmV1(code,names,bindings={}){
+  const faults=[],c=capture();const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
+  const context={Buffer,Error,TextDecoder,path,createHash,pathToFileURL:url.pathToFileURL,...bindings};
+  for(const name of ['process','fs','orphanFs','console','performance'])context[name]=new Proxy(context[name]??{},{get(target,key){
+    if(Object.hasOwn(target,key))return target[key];c.calls.forbidden++;c.forbiddenSites.push(name+'.'+String(key));throw Error('TASK7E_UNLISTED_PROPERTY');}});
+  context.Date=new Proxy(function(){c.calls.forbidden++;throw Error('TASK7E_DATE');},{get(){c.calls.forbidden++;throw Error('TASK7E_DATE');}});
+  if(!Object.hasOwn(context,'require'))context.require=guard(specifier=>{c.forbiddenSites.push('require '+specifier);c.calls.forbidden++;throw Error('TASK7E_FORBIDDEN');});
+  const compiled=ts.transpileModule(code+'\nglobalThis.unit={'+names.join(',')+'};',{fileName:'actual-task7e-unit.ts',reportDiagnostics:true,
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});
+  assert.deepEqual((compiled.diagnostics??[]).filter(x=>x.category===ts.DiagnosticCategory.Error),[]);
+  runInNewContext(compiled.outputText,context,{filename:'actual-fixed-private-unit',timeout:5000});
+  return {context,api:context.unit,guard,faults,contained(){assert.deepEqual(faults,[]);assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));}};
+}
+function task7eGraphDataV1(){
+  // Independent finite import DATA, not copies of traversal or proof logic.
+  const roots=['dist/installation/fresh-installation-entry-v1.js','dist/db-pg.js','dist/db/contract-spine-migrations.js',
+    'dist/internal-production/baseline-post-handoff-receipt-v1.js','dist/cli/runtime-guard.js','dist/installation/fresh-installation-v1.js',
+    'dist/installation/fresh-installation-activation-verifier-v1.js','dist/installation/fresh-installation-activation-v1.js',
+    'dist/installation/fresh-installation-provenance-v1.js','dist/installation/fresh-installation-mission-control-schema-v1.js',
+    'dist/installation/fresh-installation-runtime-grants-v1.js','dist/installation/fresh-installation-artifact-bootstrap-v1.js'];
+  const observer=roots[3],common=Array.from({length:120},(_,i)=>'dist/graph-'+String(i).padStart(3,'0')+'.js'),
+    extra=Array.from({length:21},(_,i)=>'dist/extra-'+String(i).padStart(3,'0')+'.js');
+  const text=new Map();for(const name of roots)text.set(name,'export const finite=1;');
+  text.set(observer,common.map(x=>"import '../"+path.posix.basename(x)+"';").join('\n'));
+  text.set(roots[0],extra.map(x=>"import '../"+path.posix.basename(x)+"';").join('\n'));
+  for(const [i,name] of common.entries())text.set(name,i<79?"import 'pkg';":'export const finite=1;');
+  for(const [i,name] of extra.entries())text.set(name,i<6?"import 'pkg';":'export const finite=1;');
+  const member=(members)=>[{row:['esm',members[0],'pkg','node_modules/pkg/index.js'],members}];
+  return {names:[...roots,...common,...extra],text,groups:member([...common.slice(0,79),...extra.slice(0,6)]),observerGroups:member(common.slice(0,79))};
+}
+function task7ePinsV1(){
+  // The exact method gates run before constructing the 914-file finite seam.
+  task7eLexicalV1(HELPER,'ownedSourcePinsV1',['targetSetupGraph','targetObserverGraph','targetMembership']);
+  const f=task7dPinsV1({fixedGraph:true});f.delegate();return f;
+}
+function task7ePinCallV1(f,kind){
+  if(kind==='setup')return f.pins.targetSetupGraph(f.output,f.graphData.groups);
+  if(kind==='observer')return f.pins.targetObserverGraph(f.output,f.graphData.observerGroups);
+  return f.pins.targetMembership(f.graphData.groups);
+}
+for(const [kind,count] of [['setup',153],['observer',121],['membership',85]])test('Task7E H fixed '+kind+' retains same T around every original file proof',()=>{
+  // Break: per-file recursive stock check, skipped content/EOF/close, early result.
+  const f=task7ePinsV1(),before=f.opened.length,checks=f.checks();const result=task7ePinCallV1(f,kind);
+  assert.equal(f.checks()-checks,2);assert.equal(f.opened.length-before,count);assert.equal(f.maxTemporary(),1);
+  for(const h of f.opened.slice(before)){assert.equal(h.closed,true);assert.ok(f.events.some(x=>x[0]==='read'&&x[1]===h.fd&&x[2]===h.item.bytes.length));}
+  if(kind!=='membership')assert.equal(result.files.size,count);
+  const outside=f.checks();f.pins.file(f.paths[0]);assert.equal(f.checks()-outside,1,'ordinary file call retains its own full stock boundary');f.finish();
+});
+for(const position of ['first','middle','last'])test('Task7E H setup '+position+' original digest drift refuses before graph acceptance',()=>{
+  const f=task7ePinsV1(),locator=f.root+'/'+(position==='first'?f.graphData.names[11]:position==='middle'?'dist/graph-052.js':'dist/extra-000.js');
+  const item=f.files.get(locator);item.bytes=Buffer.alloc(item.bytes.length,120);
+  task7dRefusedV1(()=>task7ePinCallV1(f,'setup'));assert.ok(f.opened.filter(x=>x.temporary).every(x=>x.closed));f.finish();
+});
+for(const [kind,point] of [['setup','start'],['observer','body'],['membership','end']])test('Task7E H '+kind+' '+point+' Source drift burns the fixed unit',()=>{
+  const f=task7ePinsV1(),before=f.checks();
+  if(point==='start')f.stockFault();else if(point==='body')f.controls.afterRead=()=>f.stockFault();
+  else f.controls.afterCheck=n=>{if(n===before+2)throw Error('FINITE_TERMINAL_STOCK_DRIFT');};
+  task7dRefusedV1(()=>task7ePinCallV1(f,kind),true);const opened=f.opened.length;
+  task7dRefusedV1(()=>f.pins.file(f.paths[0]),true);assert.equal(f.opened.length,opened);f.finish(true);
+});
+for(const drift of ['named','held','directory','absence','short','eof','close-recycled','reentrant'])test('Task7E H fixed setup '+drift+' cannot escape complete custody',()=>{
+  const f=task7ePinsV1();let nested=false;
+  if(drift==='named')f.controls.named=f.root+'/'+f.graphData.names[0];if(drift==='held')f.controls.held=f.root+'/'+f.graphData.names[0];
+  if(drift==='directory')f.dirs.get(f.root+'/dist').ino+=1n;
+  if(drift==='absence')f.files.set(f.root+'/dist/absent.js',f.files.get(f.paths[0]));
+  if(drift==='short')f.controls.read='short';if(drift==='eof')f.controls.read='extra-eof';
+  if(drift==='close-recycled'){f.controls.close='temporary';f.controls.recycle=true;}
+  if(drift==='reentrant')f.controls.afterRead=()=>{if(!nested){nested=true;f.pins.targetMembership(f.graphData.groups);}};
+  task7dRefusedV1(()=>task7ePinCallV1(f,'setup'),drift==='close-recycled');if(drift==='reentrant')assert.equal(nested,true);
+  f.finish(drift==='close-recycled');
+});
+for(const invalid of ['wrong-output','wrong-groups','async-output'])test('Task7E H fixed setup refuses '+invalid+' without surviving authorization',()=>{
+  const f=task7ePinsV1();const output=invalid==='wrong-output'?new Map():invalid==='async-output'?Promise.resolve(f.output):f.output;
+  const groups=invalid==='wrong-groups'?[]:f.graphData.groups;
+  task7dRefusedV1(()=>f.pins.targetSetupGraph(output,groups));f.finish();
+});
+
+function task7eCleanupV1(options={}){
+  const names=['localCheck','check','readFixtureCatalogRowsLocal','readRunnerCatalogFactsLocal','readRuntimeCatalogFactsLocal','runnerCatalog','runtimeCatalog','readClosureFactsLocal','cleanupClosures','cleanupRunnerObjects'];
+  const code=task7eLexicalV1(TASK5C_FIXTURE_V1,'openManualOrphanFixtureContextV1',names);
+  const validators=task5cVmV1(['qualifyManualOrphanRunnerCatalogV1','advanceManualOrphanCleanupLedgerV1','advanceManualOrphanRouteLedgerV1']);
+  const events=[],faults=[],controls={proofFault:0,proofCost:0,drift:false,afterAwait:0,pendingAt:0,pending:null,localFault:null,...options};
+  let proof=0,awaits=0,now=0,origin=null,ended=false,pending=false,dropIndex=0;
+  const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
+  const need=guard(value=>{if(!value)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');});
+  const unknown=()=>Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+  const original=task4aCatalogV1();for(const role of original.roles)if(role.name==='root')Object.assign(role,{name:'postgres',inherit:true,createDb:true,replication:true});
+  const canonical=helper.canonicalizeManualOrphanClusterBaselineV1(original),installation=ownedInstallationData(true);
+  const rows=JSON.parse(JSON.stringify(original));rows.databases.push({name:installation.databaseName,oid:7,ownerOid:7,allowConnections:true,connectionLimit:-1});
+  rows.roles.push({name:installation.ownerRole,oid:7,superuser:false,inherit:false,createRole:false,createDb:false,login:false,replication:false,bypassRls:false,connectionLimit:-1,validUntilUTC:null},
+    {name:installation.runtimeRole,oid:8,superuser:false,inherit:false,createRole:false,createDb:false,login:true,replication:false,bypassRls:false,connectionLimit:-1,validUntilUTC:null});
+  const pair={pid:700,backendStartedAtUTC:'2026-10-21T00:00:01.234567Z',datid:5,usesysid:1},constructor={pid:701,backendStartedAtUTC:'2026-10-21T00:00:01.345678Z'};
+  const sessions=[{...pair,database:'postgres',user:'postgres',backendType:'client backend',clientAddress:'127.0.0.1'},
+    {...constructor,datid:5,usesysid:1,database:'postgres',user:'postgres',backendType:'client backend',clientAddress:'127.0.0.1'}];
+  const clockCode=task7eLexicalV1(TASK5C_FIXTURE_V1,'retainManualOrphanRunnerAdminV1',['mark','failure','sample','beginCleanup','endCleanup']);
+  const clock=task7eVmV1(clockCode,['sample','beginCleanup','endCleanup'],{unknown:false,closed:false,stopped:false,pending:null,clocks:[],
+    cleanupAttempted:false,cleanupEnded:false,cleanupClock:null,cleanupTimer:null,manualOrphanFixtureOutputFaultV1:false,
+    process:{hrtime:{bigint:()=>BigInt(now)*1000000n}},setTimeout:guard((fn,ms)=>{assert.equal(ms,30000);return 1;}),clearTimeout:guard(id=>assert.equal(id,1))});
+  const sample=guard(()=>{events.push('local:sample');clock.api.sample();if(controls.localFault==='sample'||clock.context.unknown)throw unknown();});
+  const admin={beginCleanup:guard(()=>{assert.equal(origin,null);origin=now;events.push('clock:start');clock.api.beginCleanup();}),
+    endCleanup:guard(()=>{events.push('clock:end');ended=true;clock.api.endCleanup();sample();}),
+    current:()=>({pair,pending,unknown:false,closed:false}),query:guard(async(kind,operation)=>{
+      sample();assert.equal(pending,false);pending=true;const index=++awaits;events.push('await:'+index+':'+kind);
+      try{if(controls.pendingAt===index){assert.ok(controls.pending);await controls.pending;}
+        if(kind.startsWith('drop-')){const object=kind.slice(5);assert.equal(object,['database','runtime','owner'][dropIndex++]);
+          assert.equal(operation.object.kind,object);assert.equal(operation.object.oid,object==='runtime'?8:7);assert.deepEqual(task5cPlainV1(operation.installation),installation);
+          assert.equal(operation.stage,{database:'activated',runtime:'database-dropped',owner:'runtime-dropped'}[object]);events.push('drop:'+object);
+          if(object==='database')rows.databases=rows.databases.filter(r=>r.oid!==7);else rows.roles=rows.roles.filter(r=>r.oid!==(object==='runtime'?8:7));
+        }
+        if(index===controls.afterAwait)controls.drift=true;events.push('settled:'+index+':'+kind);
+        if(kind==='identity'||kind.startsWith('drop-'))return [];
+        assert.ok(['databases','roles','memberships','sessions'].includes(kind));return kind==='sessions'?sessions:rows[kind];
+      }finally{pending=false;}
+    })};
+  const localRecord=label=>guard(()=>{events.push('local:'+label);if(controls.localFault===label)throw unknown();});
+  const context={kind:'runner',frame:{source:ownedSourceData(),constructorAdminBackend:constructor,cluster:canonical},installation,baseline:canonical,
+    ledger:task5cRouteLedgerV1('cases-settled'),cleanup:task5cCleanupLedgerV1(),admin,sqlClosed:false,initialPending:null,children:[],sourceClosed:false,
+    sample,need,initialEnvironment:{},longPins:[],aliases:[],socketPin:null,originalGraph:{},prepared:{assertUnchanged:localRecord('prepared')},activation:{assertUnchanged:localRecord('activation')},
+    process:{env:{},getuid:()=>501,geteuid:()=>501,getgid:()=>20,getegid:()=>20,platform:'darwin',arch:'arm64',version:'v26.4.0'},
+    holder:{check:guard(()=>{events.push('source:'+ ++proof);now+=controls.proofCost;if(controls.drift||proof===controls.proofFault)throw unknown();})},
+    observeManualOrphanOwnedFd4V1:()=>({claimed:true,adopted:true,closed:true,unknown:false}),
+    setTimeout:guard((yes,ms)=>{assert.equal(ms,100);events.push('delay:100');now+=ms;yes();return 1;}),
+    canonicalizeManualOrphanClusterBaselineV1:guard(value=>helper.canonicalizeManualOrphanClusterBaselineV1(task5cPlainV1(value))),
+    qualifyManualOrphanRunnerCatalogV1:guard((...args)=>{events.push('census:'+args[0]);return task5cPlainV1(validators.api.qualifyManualOrphanRunnerCatalogV1(...args.map(x=>task5cDataV1(validators,x))));}),
+    advanceManualOrphanCleanupLedgerV1:guard((ledger,event)=>{assert.equal(controls.drift,false,'no acknowledgement/absence before terminal Source proof');events.push('ledger:'+event.type);
+      return task5cPlainV1(validators.api.advanceManualOrphanCleanupLedgerV1(task5cDataV1(validators,ledger),task5cDataV1(validators,event)));}),
+    advanceManualOrphanRouteLedgerV1:guard((ledger,event)=>{assert.equal(controls.drift,false,'no route result before terminal Source proof');events.push('route:'+event.type);
+      return task5cPlainV1(validators.api.advanceManualOrphanRouteLedgerV1(task5cDataV1(validators,ledger),task5cDataV1(validators,event)));}),
+    closures:guard(()=>{faults.push('general closures reintroduced');throw Error('TASK7E_GENERAL_CLOSURES');}),
+    phaseEvent:guard(()=>{faults.push('general phaseEvent reintroduced');throw Error('TASK7E_GENERAL_PHASE_EVENT');}),
+  };
+  const vm=task7eVmV1(code,names,context);
+  return {events,controls,rows,sessions,context:vm.context,api:vm.api,run:vm.api.cleanupRunnerObjects,proofs:()=>proof,awaits:()=>awaits,pending:()=>pending,ended:()=>ended,at:ms=>{now=ms;},
+    clean(){assert.deepEqual(faults,[],'no swallowed finite SQL/ledger assertion');vm.contained();clock.contained();validators.check();}};
+}
+function task7eBeforeV1(events,a,b){assert.ok(events.indexOf(a)>=0&&events.indexOf(b)>events.indexOf(a),a+' precedes '+b);}
+function task7eProofRefusalV1(error){return ['MANUAL_ORPHAN_OWNER_REFUSED','MANUAL_ORPHAN_CLEANUP_UNKNOWN'].includes(error?.message);}
+test('Task7E F cleanup has eight complete proofs and admits each exact DROP only after its own census',async()=>{
+  // Break: borrowing an outside proof, acknowledging before post-census proof,
+  // recursive general closures, reordered DROP, or replacing full validators.
+  const f=task7eCleanupV1();await f.run();assert.equal(f.proofs(),8);assert.equal(f.ended(),true);assert.equal(f.awaits(),43);
+  assert.deepEqual(f.events.filter(x=>x.startsWith('drop:')),['drop:database','drop:runtime','drop:owner']);
+  task7eBeforeV1(f.events,'clock:start','source:1');task7eBeforeV1(f.events,'source:1','census:activated');
+  for(const [object,before,after,pre,post] of [['database','activated','database-dropped',2,3],['runtime','database-dropped','runtime-dropped',4,5],['owner','runtime-dropped','owner-dropped',6,7]]){
+    task7eBeforeV1(f.events,'source:'+pre,'drop:'+object);task7eBeforeV1(f.events,'drop:'+object,'census:'+after);
+    task7eBeforeV1(f.events,'source:'+post,'ledger:'+object+'-ack');task7eBeforeV1(f.events,'ledger:'+object+'-ack','ledger:'+object+'-absent');
+    task7eBeforeV1(f.events,'ledger:'+object+'-absent','route:'+after);
+  }
+  task7eBeforeV1(f.events,'delay:100','source:8');task7eBeforeV1(f.events,'source:8','clock:end');f.clean();
+});
+for(const at of [1,2,3,4,5,6,7,8])test('Task7E F cleanup complete proof '+at+' failure forbids next effect and authority',async()=>{
+  const f=task7eCleanupV1({proofFault:at});await assert.rejects(f.run(),task7eProofRefusalV1);
+  const drops=f.events.filter(x=>x.startsWith('drop:'));assert.equal(drops.length,Math.min(3,Math.floor((at-1)/2)));
+  const accepted=f.events.filter(x=>/^ledger:.*-absent$/.test(x));assert.equal(accepted.length,Math.min(3,Math.max(0,Math.floor((at-2)/2))));
+  assert.equal(f.ended(),true);assert.equal(f.pending(),false);f.clean();
+});
+// All 43 actual awaited query boundaries: eight five-query censuses + three
+// DROP promises. One finite registration per await, no Cartesian fault matrix.
+for(let at=1;at<=43;at++)test('Task7E F cleanup Source drift after awaited operation '+at+' prevents later DROP or accepted fact',async()=>{
+  const f=task7eCleanupV1({afterAwait:at});await assert.rejects(f.run(),task7eProofRefusalV1);
+  assert.ok(f.events.some(x=>x.startsWith('settled:'+at+':')),'injected await was reached');const index=f.events.findIndex(x=>x.startsWith('settled:'+at+':'));
+  assert.equal(f.events.slice(index+1).some(x=>/^(drop:|ledger:|route:)/.test(x)),false);assert.equal(f.ended(),true);assert.equal(f.pending(),false);f.clean();
+});
+for(const at of [1,6,11,12,17,22,23,28,33,34,39,43])test('Task7E F cleanup pending operation '+at+' retains its actual promise through clock expiry',async()=>{
+  const d=task5bDeferredV1(),f=task7eCleanupV1({pendingAt:at,pending:d.promise});let settled=false;
+  const result=f.run().then(()=>{settled=true;return null;},error=>{settled=true;return error;});
+  for(let i=0;i<300;i++)await Promise.resolve();assert.equal(f.awaits(),at);assert.equal(f.pending(),true);assert.equal(settled,false);
+  f.at(30000);d.resolve();assert.ok(task7eProofRefusalV1(await result));assert.equal(f.pending(),false);assert.equal(f.ended(),true);f.clean();
+});
+for(const fault of ['prepared','activation','sample'])test('Task7E F cleanup preserves local '+fault+' refusal before first DROP',async()=>{
+  const f=task7eCleanupV1({localFault:fault});await assert.rejects(f.run(),task7eProofRefusalV1);assert.equal(f.events.some(x=>x.startsWith('drop:')),false);f.clean();
+});
+test('Task7E F cleanup expensive proof cannot move outside the same thirty-second window',async()=>{
+  const f=task7eCleanupV1({proofCost:15000});await assert.rejects(f.run(),task7eProofRefusalV1);
+  assert.equal(f.events.some(x=>x.startsWith('drop:')),false);assert.equal(f.ended(),true);f.clean();
+});
+for(const fault of ['backend-pair','duplicate-session','database-owner','role-flags'])test('Task7E F cleanup local census retains '+fault+' predicate',async()=>{
+  const f=task7eCleanupV1();if(fault==='backend-pair')f.sessions[0].backendStartedAtUTC='2026-10-21T00:00:01.234568Z';
+  if(fault==='duplicate-session')f.sessions.push({...f.sessions[0]});if(fault==='database-owner')f.rows.databases.at(-1).ownerOid=99;
+  if(fault==='role-flags')f.rows.roles.at(-1).superuser=true;
+  await assert.rejects(f.run(),task7eProofRefusalV1);assert.equal(f.events.some(x=>x.startsWith('drop:')),false);f.clean();
+});
+
+function task7eResolverV1(options={}){
+  const code=task7eLexicalV1(HELPER,null,['ownedSourceResolversV1','ownedResolutionProgramV1','ownedNodeV1','ownedSourceCleanupUncertainV1','ownedSourceRefusalV1','ownedSourceRequireV1']);
+  const events=[],faults=[],controls={sourceFault:0,pinFault:0,childFault:null,absenceFault:false,...options};let proofs=0,pins=0,runs=0;
+  const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
+  const groups=[{row:['esm','dist/example.js','pkg','node_modules/pkg/index.js'],members:['dist/example.js']}];
+  const recheck=guard(()=>{events.push('source:'+ ++proofs);if(proofs===controls.sourceFault)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');});
+  const finitePins={check:guard(()=>{events.push('pins:'+ ++pins);if(pins===controls.pinFault)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');}),
+    absent:guard(locator=>{events.push('absence:'+locator);assert.ok(locator.startsWith('/finite/search/pkg'));if(controls.absenceFault)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');})};
+  const spawnSync=guard((node,args,options)=>{
+    const index=runs++;events.push('spawn:'+index);assert.equal(node,TASK3_NODE_V1);
+    assert.deepEqual(Array.from(args.slice(0,3)),['--experimental-import-meta-resolve','--input-type=module','-e']);assert.equal(args.length,4);
+    assert.equal(args[3],"import fs from 'node:fs';import {createRequire} from 'node:module';import {pathToFileURL,fileURLToPath} from 'node:url';\nconst input=JSON.parse(fs.readFileSync(0,'utf8'));\nprocess.stdout.write(JSON.stringify(input.edges.map(([mode,parent,specifier])=>{\nconst url=pathToFileURL(parent),require=createRequire(url);\nreturn input.phase==='paths'?require.resolve.paths(specifier):fileURLToPath(import.meta.resolve(specifier,url.href));\n})));",'exact builtin-only resolution program, no package body import');
+    assert.deepEqual(Object.keys(options).sort(),['cwd','encoding','env','input','maxBuffer','shell','timeout']);
+    assert.equal(options.cwd,controls.root??SOURCE_T_V1);assert.equal(options.encoding,'utf8');assert.equal(options.shell,false);assert.equal(options.timeout,5000);assert.equal(options.maxBuffer,1048576);
+    assert.deepEqual(task5cPlainV1(options.env),{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',...(index>=2?{HOME:SOURCE_HOME_V1}:{})});
+    const input=JSON.parse(options.input);assert.deepEqual(input,{phase:index%2===0?'paths':'resolve',edges:[['esm',(controls.root??SOURCE_T_V1)+'/dist/example.js','pkg']]});
+    const response={status:0,signal:null,stderr:'',stdout:JSON.stringify(index%2===0?[['/finite/search',(controls.root??SOURCE_T_V1)+'/node_modules']]:[(controls.root??SOURCE_T_V1)+'/node_modules/pkg/index.js'])};
+    if(index===(controls.childAt??0)){
+      if(controls.childFault==='error')response.error=Error('finite error');if(controls.childFault==='timeout')response.error=Object.assign(Error('finite timeout'),{code:'ETIMEDOUT'});
+      if(controls.childFault==='signal')response.signal='SIGTERM';if(controls.childFault==='status')response.status=1;if(controls.childFault==='stderr')response.stderr='unexpected';
+      if(controls.childFault==='malformed')response.stdout='{';if(controls.childFault==='oversize')response.stdout=' '.repeat(1048577);
+      if(controls.childFault==='resolve')response.stdout=JSON.stringify(['/wrong/result']);if(controls.childFault==='async')return Promise.resolve(response);
+      if(controls.childFault==='no-node-modules')response.stdout=JSON.stringify([['/finite/search']]);
+    }
+    return response;
+  });
+  const vm=task7eVmV1(code,['ownedSourceResolversV1'],{spawnSync});
+  return {events,controls,run:()=>vm.api.ownedSourceResolversV1(finitePins,controls.root??SOURCE_T_V1,groups,SOURCE_HOME_V1,recheck),
+    proofs:()=>proofs,pins:()=>pins,runs:()=>runs,clean(){assert.deepEqual(faults,[],'no swallowed subprocess fixture assertion');vm.contained();}};
+}
+for(const root of [SOURCE_M_V1,SOURCE_T_V1])test('Task7E H exact fixed resolver unit for '+(root===SOURCE_M_V1?'M':'T')+' preserves all four programs and nine local proofs',()=>{
+  const f=task7eResolverV1({root});f.run();assert.equal(f.runs(),4);assert.equal(f.proofs(),2);assert.equal(f.pins(),9);
+  task7eBeforeV1(f.events,'source:1','spawn:0');task7eBeforeV1(f.events,'spawn:3','source:2');
+  for(let i=0;i<4;i++){task7eBeforeV1(f.events,'pins:'+(i*2+1),'spawn:'+i);task7eBeforeV1(f.events,'spawn:'+i,'pins:'+(i*2+2));}
+  assert.equal(f.events.filter(x=>x.startsWith('absence:')).length,8);f.clean();
+});
+for(const point of [1,2])test('Task7E H resolver Source bookend '+point+' refuses before any result authorization',()=>{
+  const f=task7eResolverV1({sourceFault:point});assert.throws(f.run,task7eProofRefusalV1);assert.equal(f.runs(),point===1?0:4);f.clean();
+});
+for(const point of [1,2,3,4,5,6,7,8,9])test('Task7E H resolver local full-pin pass '+point+' drift forbids the next child',()=>{
+  const f=task7eResolverV1({pinFault:point});assert.throws(f.run,task7eProofRefusalV1);assert.equal(f.runs(),Math.min(4,Math.floor(point/2)));f.clean();
+});
+for(const fault of ['error','timeout','signal','status','stderr','malformed','oversize','async','no-node-modules','resolve'])test('Task7E H resolver '+fault+' never permits a later resolver',()=>{
+  const f=task7eResolverV1({childFault:fault,childAt:fault==='resolve'?1:0});assert.throws(f.run);assert.equal(f.runs(),fault==='resolve'?2:1);f.clean();
+});
+test('Task7E H resolver newly present search candidate refuses before resolving a package',()=>{
+  const f=task7eResolverV1({absenceFault:true});assert.throws(f.run,task7eProofRefusalV1);assert.equal(f.runs(),1);f.clean();
+});
+
+function task7eHolderCheckV1(options={}){
+  // No acquire body is evaluated. Real pins/resources prove retained contents;
+  // exact owner/observer/Git boundaries are finite dependencies of actual check.
+  const code=task7eLexicalV1(HELPER,null,['ownedSourceCleanupUncertainV1','ownedSourceRefusalV1','ownedSourceRequireV1','ownedGitShaV1','probeHexV1','ownedSourceBuildDataV1','ownedSourceEqualBuildV1'])+'\n'
+    +task7eLexicalV1(HELPER,'holdManualOrphanOwnedSourcesV1',['check','close']);
+  task7eLexicalV1(HELPER,'holdManualOrphanOwnedSourcesV1',['retainedTarget']);
+  const f=task7dPinsV1();f.delegate();const events=[],controls={fault:null,...options};
+  const guard=fn=>task5bGuardV1(events,fn),target=f.owner;
+  const maintenance={check:()=>{events.push('maintenance');if(controls.fault==='maintenance')throw Error('MANUAL_ORPHAN_OWNER_REFUSED');}},
+    anchor={check:()=>{events.push('anchor');if(controls.fault==='anchor')throw Error('MANUAL_ORPHAN_OWNER_REFUSED');}};
+  const context={invalid:false,closed:false,ready:true,resources:f.resources,pins:f.pins,retainedTarget:target,owners:[maintenance,anchor,target],
+    contextCheck:()=>{events.push('context');if(controls.fault==='context')throw Error('MANUAL_ORPHAN_OWNER_REFUSED');},
+    identityCheck:()=>{events.push('identity');if(controls.fault==='identity')f.stockFault();},
+    observers:['M','T'].map(name=>({expected:ownedReleaseData(name==='M'?OWN_M:OWN_T),read:()=>{events.push('observer:'+name);
+      if(controls.fault==='observer:'+name)f.stockFault();return ownedReleaseData(name==='M'?OWN_M:OWN_T);}})),
+    cleanup:()=>{events.push('cleanup');context.closed=true;f.resources.close();},
+    ownedSourceRequireV1:value=>{if(!value)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');},
+    ownedSourceRefusalV1:()=>Error('MANUAL_ORPHAN_OWNER_REFUSED')};
+  const vm=task7eVmV1(code,['check','close'],context);return {f,events,controls,api:vm.api,clean(){f.contained();vm.contained();}};
+}
+test('Task7E H complete check has two same-T full pin proofs and retains M anchor both observers',()=>{
+  const h=task7eHolderCheckV1(),before=h.f.checks(),opened=h.f.opened.length;h.api.check();
+  assert.equal(h.f.checks()-before,2);assert.equal(h.f.opened.length-opened,1828);
+  assert.deepEqual(h.events,['context','maintenance','anchor','identity','observer:M','observer:T','context']);h.f.finish();h.clean();
+});
+for(const fault of ['context','maintenance','anchor','identity','observer:M','observer:T'])test('Task7E H complete check '+fault+' refusal prevents accepted current Source',()=>{
+  const h=task7eHolderCheckV1({fault});assert.throws(h.api.check,task7eProofRefusalV1);const before=h.f.opened.length;
+  assert.throws(h.api.check,task7eProofRefusalV1);assert.equal(h.f.opened.length,before,'invalid owner cannot restart proof');
+  h.f.finish(['identity','observer:M','observer:T'].includes(fault));h.clean();
+});
+test('Task7E H close runs complete proof while both stock owners remain retained then unwinds once',()=>{
+  const h=task7eHolderCheckV1(),before=h.f.checks();h.api.close();assert.equal(h.f.checks()-before,2);
+  assert.equal(h.events.at(-1),'cleanup');h.f.finish();h.clean();
+});
+
+for(const fault of ['escaped-facade','nested','async-result','wrong-root','wrong-home'])test('Task7E H resolver private scope rejects '+fault+' without a reusable local proof',()=>{
+  task7eLexicalV1(HELPER,'ownedSourcePinsV1',['resolvePackages']);let facade=null,f,entered=0;
+  const scope={ownedSourceResolversV1:(pins,root,groups,home,recheck)=>{
+    facade=pins;entered++;if(fault==='nested')return f.pins.resolvePackages(root,groups,home,recheck);
+    if(fault==='async-result')return Promise.resolve();pins.check();
+  }};
+  f=task7dPinsV1({scope});f.delegate();const recheck=()=>f.pins.check();
+  const call=()=>f.pins.resolvePackages(fault==='wrong-root'?'/unadmitted':SOURCE_T_V1,[],fault==='wrong-home'?'/elsewhere':SOURCE_HOME_V1,recheck);
+  if(fault==='escaped-facade'){call();assert.ok(facade);assert.throws(()=>facade.check(),task7eProofRefusalV1);}
+  else assert.throws(call,task7eProofRefusalV1);
+  assert.ok(entered<=1,'nested resolver never acquires another authorization');assert.equal(Object.hasOwn(f.pins,'checkLocal'),false);
+  assert.equal(Object.hasOwn(f.pins,'skip'),false);f.finish();
+});
+
+function task7ePhaseV1(options={}){
+  const names=['localPhaseCheck','check','queryLocal','readPhaseCatalogFactsLocal','catalog','qualify','loadNamespaceLocal','load',
+    'loadRecordsAndMigrations','recordPins','readPreparedLocal','readActivationLocal','readPrepared','readActivation','readPreparedAndActivationForMechanical','select'];
+  const code=task7eLexicalV1(HELPER,'runManualOrphanOwnedPhaseV1',names);
+  const vm=task5bGateV1(),events=[],faults=[],controls={proofFault:0,drift:false,importFault:null,recordDrift:false,...options};
+  const guard=fn=>task5bGuardV1(faults,fn),frame=ownedPhaseData('old_entry_positive');
+  const base=task4aCatalogV1();for(const role of base.roles)if(role.name==='root')Object.assign(role,{name:'postgres',inherit:true,createDb:true,replication:true});
+  const canonical=helper.canonicalizeManualOrphanClusterBaselineV1(base);Object.assign(frame.cluster,canonical);
+  const rows=JSON.parse(JSON.stringify(base)),installation=ownedInstallationData(true);
+  rows.databases.push({name:installation.databaseName,oid:7,ownerOid:7,allowConnections:true,connectionLimit:-1});
+  rows.roles.push({name:installation.ownerRole,oid:7,superuser:false,inherit:false,createRole:false,createDb:false,login:false,replication:false,bypassRls:false,connectionLimit:-1,validUntilUTC:null},
+    {name:installation.runtimeRole,oid:8,superuser:false,inherit:false,createRole:false,createDb:false,login:true,replication:false,bypassRls:false,connectionLimit:-1,validUntilUTC:null});
+  const sql=task5bSqlFixtureV1(vm,{catalogRows:rows}),d=task5bDerivedV1();let proof=0,unknown=false,captured=false;
+  const record=task5bProjectionV1(true),prepared=record.recordView.prepared,activation=record.recordView.activation;
+  prepared.assertUnchanged=guard(()=>{events.push('prepared-current');if(controls.recordDrift)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');});
+  activation.assertUnchanged=guard(()=>{events.push('activation-current');if(controls.recordDrift)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');});
+  const recordApi={readFreshInstallationPreparedStateV1:guard(()=>{events.push('read-prepared');return prepared;}),
+    readFreshInstallationActivationStateV1:guard(()=>{events.push('read-activation');if(controls.recordAfterRead)controls.recordDrift=true;return activation;})};
+  const migrations=Array.from({length:33},(_,i)=>({version:i+1,name:'finite-'+i,checksum:OWN_H,migrationClass:'automatic'}));
+  const namespaces={postgres:{default:guard((_endpoint,config)=>{assert.equal(config.max,1);assert.equal(config.connection.statement_timeout,5000);events.push('pool-return');return sql.pool;})},
+    records:recordApi,migrations:{getContractSpineCurrentHeadJournalIdentitiesV1:()=>migrations},
+    targetDatabase:{},maintenanceDatabase:{},targetSelection:{freshInstallationSelectionV1:{directory:d.installationsDirectory+'/'+OWN_ID},assertFreshInstallationSelectionUnchangedV1:guard(()=>events.push('selection-current'))},
+    maintenanceSelection:{freshInstallationSelectionV1:{directory:d.installationsDirectory+'/'+OWN_ID},assertFreshInstallationSelectionUnchangedV1:guard(()=>events.push('selection-current'))},targetEntry:{},maintenanceEntry:{}};
+  for(const key of ['targetDatabase','maintenanceDatabase'])Object.defineProperty(namespaces[key],'getSql',{get:guard(()=>{assert.equal(captured,true,'database retained before fallible property');events.push('database-property');return ()=>{};})});
+  const paths={postgres:d.targetRoot+'/node_modules/postgres/src/index.js',records:d.targetRoot+'/dist/installation/fresh-installation-records-v1.js',
+    migrations:d.targetRoot+'/dist/db/contract-spine-migrations.js',targetDatabase:d.targetRoot+'/dist/db-pg.js',maintenanceDatabase:d.maintenanceRoot+'/dist/db-pg.js',
+    targetSelection:d.targetRoot+'/dist/installation/fresh-installation-selection-v1.js',maintenanceSelection:d.maintenanceRoot+'/dist/installation/fresh-installation-selection-v1.js',
+    targetEntry:d.targetRoot+'/dist/installation/fresh-installation-entry-v1.js',maintenanceEntry:d.maintenanceRoot+'/dist/installation/fresh-installation-entry-v1.js'};
+  const context={frame,admitted:d,derived:d,unknown:false,finished:false,qualified:false,expectedIdentity:null,sql:null,databaseClose:null,
+    prepared:null,activationState:null,directory:null,records:recordApi,migrations:null,moduleCache:new Map(),selectionMade:false,selectedDirectory:null,
+    holder:{source:{target:ownedReleaseData(OWN_T)},check:guard(()=>{events.push('source:'+ ++proof);if(controls.drift||proof===controls.proofFault)throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');})},
+    pins:{check:guard(()=>events.push('phase-pins')),file:guard((locator,cap)=>{
+      const name=path.basename(locator);assert.equal(path.dirname(locator),d.installationsDirectory+'/'+OWN_ID);
+      const expected=name==='activation-prepared.json'?activation.preparedPin:name==='activated.json'?activation.activatedPin:prepared.baseRecordPins[name];
+      assert.ok(expected,'only actual fixed record pins');assert.equal(cap,name==='runtime-credentials.json'?4096:32768);events.push('record-pin:'+name);
+      return {stat:{uid:501n,gid:20n,mode:0o100600n},bytes:Buffer.alloc(expected.bytes+(controls.pinFault==='bytes'?1:0)),sha256:controls.pinFault==='hash'?OWN_C:expected.sha256};
+    })},aliases:[],observations:null,
+    sample:guard(()=>{if(unknown)throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');events.push('sample');}),contextCurrent:guard(()=>events.push('context')),
+    burn:()=>{unknown=true;},ownedTransportUnknownV1:()=>Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN'),
+    require:guard(value=>{if(!value)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');}),process:{env:{}},detach:value=>JSON.parse(JSON.stringify(value)),
+    privateDirectory:guard(()=>({dev:'1',ino:'2',uid:501,gid:20,mode:448})),capacity:guard(()=>events.push('capacity')),
+    ownedUuidV1:value=>value===OWN_ID,ownedCreatedRecordKeysV1:Object.keys(ownedInstallationData().records),
+    recordPins:guard((names,expected)=>{events.push('record-pins');assert.ok(names.every(name=>expected[name]));if(controls.recordDrift)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');}),
+    createManualOrphanPhaseSqlLedgerV1:guard(()=>{events.push('sql-ledger');return {...sql.ledger,query:(kind,expected)=>sql.ledger.query(kind,expected===undefined?undefined:task5bDataV1(vm,expected))};}),
+    captureManualOrphanPhaseDatabaseV1:guard(namespace=>{events.push('capture-database');captured=true;return vm.api.captureManualOrphanPhaseDatabaseV1(namespace);}),
+    validateManualOrphanPhaseBaselineV1:guard((rows,cluster,i)=>task5bPlainV1(vm.api.validateManualOrphanPhaseBaselineV1(task5bDataV1(vm,rows),task5bDataV1(vm,cluster),task5bDataV1(vm,i)))),
+  };
+  // The source uses require as a lexical assertion. Only transpiled import's
+  // module dispatch is renamed, leaving every actual predicate untouched.
+  const compiled=ts.transpileModule(code+'\nglobalThis.unit={'+names.join(',')+'};',{fileName:'actual-H-phase-units.ts',reportDiagnostics:true,
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});
+  assert.deepEqual((compiled.diagnostics??[]).filter(x=>x.category===ts.DiagnosticCategory.Error),[]);
+  const ast=ts.createSourceFile('actual-phase-lowered.js',compiled.outputText,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+  const edits=[];const visit=node=>{if(ts.isCallExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==='require'
+    &&node.arguments.length===1&&ts.isIdentifier(node.arguments[0])&&node.parent&&ts.isArrowFunction(node.parent)
+    &&node.parent.parameters.length===1&&node.parent.parameters[0].name.getText(ast)===node.arguments[0].text
+    &&ts.isCallExpression(node.parent.parent)&&ts.isPropertyAccessExpression(node.parent.parent.expression)
+    &&node.parent.parent.expression.name.text==='then')edits.push([node.expression.getStart(ast),node.expression.end]);ts.forEachChild(node,visit);};visit(ast);
+  assert.equal(edits.length,1,'only actual loadNamespaceLocal dynamic import is redirected');
+  // TS lowers import() to Promise.resolve(...).then(s => require(s)); the exact
+  // generated node alone is redirected. Plain Source require(predicates) stays.
+  let lowered=compiled.outputText;for(const [start,end] of edits.reverse())lowered=lowered.slice(0,start)+'importBoundary'+lowered.slice(end);
+  context.importBoundary=guard(specifier=>{const key=Object.keys(paths).find(key=>url.pathToFileURL(paths[key]).href===specifier);assert.ok(key,'closed exact import URL');events.push('import:'+key);
+    if(controls.importFault===key)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');if(controls.importDrift===key)controls.drift=true;return namespaces[key];});
+  Object.assign(context,{Buffer,Error,path,pathToFileURL:url.pathToFileURL});
+  runInNewContext(lowered,context,{filename:'actual-H-phase-units',timeout:5000});
+  return {events,controls,context,api:context.unit,sql,rows,installation,prepared,activation,recordApi,namespaces,proofs:()=>proof,
+    async finish(){try{await sql.ledger.close();}catch(error){assert.ok(task7eProofRefusalV1(error));}assert.deepEqual(faults,[]);sql.check();vm.assertContained();},
+    selectReady(purpose='old_entry_positive'){context.qualified=true;context.sql={current:()=>({closed:true})};context.prepared=prepared;context.directory=d.installationsDirectory+'/'+OWN_ID;context.frame.purpose=purpose;},
+    qualify:()=>context.unit.qualify('postgresql://finite',installation,prepared)};
+}
+
+test('Task7E H qualifier keeps four full proofs and actual reservation identity catalog joins',async()=>{
+  const f=task7ePhaseV1();await f.qualify();assert.equal(f.proofs(),4);assert.equal(f.context.qualified,true);
+  assert.deepEqual(f.sql.calls.queries,['identity','databases','roles','memberships','identity']);assert.equal(f.sql.calls.reserves,1);
+  task7eBeforeV1(f.events,'source:1','import:postgres');task7eBeforeV1(f.events,'import:postgres','source:2');task7eBeforeV1(f.events,'pool-return','source:3');
+  const before=f.proofs();await f.api.catalog(f.installation);assert.equal(f.proofs()-before,2);await f.finish();
+});
+for(const proof of [1,2,3,4])test('Task7E H qualifier failed proof '+proof+' never grants qualification',async()=>{
+  const f=task7ePhaseV1({proofFault:proof});await assert.rejects(f.qualify(),task7eProofRefusalV1);assert.equal(f.context.qualified,false);
+  if(proof<=2)assert.equal(f.sql.ledger.current().poolCaptured,false);if(proof>=3)assert.equal(f.sql.ledger.current().poolCaptured,true);
+  if(proof===4){assert.equal(f.sql.ledger.current().reservationCaptured,true);assert.equal(f.sql.calls.queries.length,5);}await f.finish();
+});
+test('Task7E H qualifier retains a late actual reservation and joins close after terminal drift',async()=>{
+  const f=task7ePhaseV1(),d=task5bDeferredV1();f.sql.reserveValue=d.promise;
+  const out=trackProbePromiseV1(f.qualify());await task5bPumpV1();assert.equal(f.sql.calls.reserves,1);assert.equal(out.outcome,null);
+  f.controls.drift=true;d.resolve(f.sql.reservation);await out.done;assert.ok(task7eProofRefusalV1(out.outcome.error));
+  assert.equal(f.sql.ledger.current().reservationCaptured,true);assert.equal(f.context.qualified,false);await f.finish();assert.equal(f.sql.calls.releases,1);assert.equal(f.sql.calls.ends,1);
+});
+for(const fault of ['owner-oid','postgres-flags','backend-pair'])test('Task7E H qualifier retains actual '+fault+' rejection',async()=>{
+  const f=task7ePhaseV1();if(fault==='owner-oid')f.rows.databases.find(x=>x.name==='postgres').ownerOid=99;
+  if(fault==='postgres-flags')f.rows.roles.find(x=>x.name==='postgres').superuser=false;
+  if(fault==='backend-pair')f.sql.nextRows=[{...task5bIdentityV1().rows[0],pid:701}];
+  await assert.rejects(f.qualify(),task7eProofRefusalV1);assert.equal(f.context.qualified,false);await f.finish();
+});
+for(const [purpose,count] of [['old_entry_positive',5],['new_entry_refusal',5],['activate',4]])test('Task7E H select '+purpose+' fully brackets each actual import and retains database first',async()=>{
+  const f=task7ePhaseV1();f.selectReady(purpose);await f.api.select(false);assert.equal(f.proofs(),count);
+  const imports=f.events.filter(x=>x.startsWith('import:'));assert.deepEqual(imports,purpose==='activate'?['import:targetDatabase','import:targetSelection']:['import:targetDatabase','import:targetSelection','import:targetEntry']);
+  task7eBeforeV1(f.events,'import:targetDatabase','capture-database');task7eBeforeV1(f.events,'capture-database','source:3');
+  task7eBeforeV1(f.events,'source:3','import:targetSelection');if(purpose!=='activate')task7eBeforeV1(f.events,'source:4','import:targetEntry');assert.ok(f.context.databaseClose);await f.finish();
+});
+for(const [key,after] of [['targetDatabase','targetSelection'],['targetSelection','targetEntry']])test('Task7E H drift after '+key+' retains namespace and prevents '+after,async()=>{
+  const f=task7ePhaseV1({importDrift:key});f.selectReady();await assert.rejects(f.api.select(false),task7eProofRefusalV1);
+  assert.equal(f.events.includes('import:'+after),false);assert.ok(f.context.databaseClose,'namespace close obligation retained before failed post-import proof');await f.finish();
+});
+test('Task7E H fixed records migrations startup shares only adjacent complete import boundaries',async()=>{
+  const f=task7ePhaseV1();await f.api.loadRecordsAndMigrations();assert.equal(f.proofs(),3);
+  task7eBeforeV1(f.events,'source:1','import:records');task7eBeforeV1(f.events,'import:records','source:2');task7eBeforeV1(f.events,'source:2','import:migrations');task7eBeforeV1(f.events,'import:migrations','source:3');
+  assert.equal(f.context.migrations.length,33);await f.finish();
+});
+for(const at of [1,2,3])test('Task7E H startup Source proof '+at+' failure prevents accepted modules',async()=>{
+  const f=task7ePhaseV1({proofFault:at});await assert.rejects(f.api.loadRecordsAndMigrations(),task7eProofRefusalV1);
+  if(at<3)assert.equal(f.events.includes('import:migrations'),false);await f.finish();
+});
+for(const key of ['records','unknown-key'])test('Task7E H standalone load '+key+' cannot bypass full guard on cache or unrecognized key',async()=>{
+  const f=task7ePhaseV1({proofFault:1});f.context.moduleCache.set('records',f.recordApi);await assert.rejects(f.api.load(key),task7eProofRefusalV1);
+  assert.equal(f.events.some(x=>x.startsWith('import:')),false);await f.finish();
+});
+test('Task7E H mechanical record pair keeps two full proofs with both actual retained record readers',async()=>{
+  const f=task7ePhaseV1();f.context.frame.input.installation=f.installation;
+  const got=f.api.readPreparedAndActivationForMechanical();assert.equal(f.proofs(),2);assert.ok(got);assert.equal(f.context.prepared,f.prepared);assert.equal(f.context.activationState,f.activation);
+  task7eBeforeV1(f.events,'source:1','read-prepared');task7eBeforeV1(f.events,'read-prepared','read-activation');task7eBeforeV1(f.events,'read-activation','source:2');await f.finish();
+});
+for(const fault of ['record-after-read','terminal-source'])test('Task7E H mechanical pair '+fault+' refuses provisional records',async()=>{
+  const f=task7ePhaseV1(fault==='record-after-read'?{recordAfterRead:true}:{proofFault:2});f.context.frame.input.installation=f.installation;
+  assert.throws(()=>f.api.readPreparedAndActivationForMechanical(),task7eProofRefusalV1);assert.equal(f.context.activationState,f.activation,'returned record retained before validation');await f.finish();
+});
+
+function task7eFirstObserverV1(failRoot=null){
+  task7eLexicalV1(HELPER,null,['ownedSourceResolversV1']);
+  const source=task7dSourceV1(),owner=source.ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='holdManualOrphanOwnedSourcesV1');
+  const outer=owner.body.statements.find(ts.isTryStatement),statements=[...outer.tryBlock.statements];
+  const start=statements.findIndex(n=>ts.isForOfStatement(n)&&n.getText(source.ast).includes('ownedSourcePackagesV1'));
+  assert.ok(start>=0,'actual two-root audit loop');const end=statements.findIndex((n,i)=>i>start&&ts.isForOfStatement(n)&&n.getText(source.ast).includes('await import'));
+  assert.ok(end>start,'actual first full observer import loop');const code=statements.slice(start,end+1).map(n=>n.getText(source.ast)).join('\n');
+  const events=[],faults=[],sets={maintenance:new Set(Array.from({length:143},(_,i)=>'dist/m'+i+'.js')),
+    target:new Set(Array.from({length:153},(_,i)=>'dist/t'+i+'.js')),observer:new Set(Array.from({length:121},(_,i)=>'dist/o'+i+'.js'))};
+  const guard=fn=>task5bGuardV1(faults,fn),resolvers=new Map();
+  const roots=['dist/setup'],observer='dist/observer',profile={maintenanceObserver:{resolution:[]},targetAbsences:[]};
+  const context={path,pathToFileURL:url.pathToFileURL,maintenanceRoot:SOURCE_M_V1,targetRoot:SOURCE_T_V1,maintenanceOutput:new Map(),targetOutput:new Map(),
+    maintenanceGroups:[],targetGroups:[],ownedOrdinaryRootsV1:roots,ownedSetupRootsV1:roots,ownedObserverV1:observer,profile,
+    ordinaryFiles:sets.maintenance,setupFiles:sets.target,observerFiles:sets.observer,pins:{},home:SOURCE_HOME_V1,
+    maintenance:{expected:ownedReleaseData(OWN_M)},target:{expected:ownedReleaseData(OWN_T)},observers:[],
+    check:guard(()=>events.push('holder-check')),ownedSourceRequireV1:guard(value=>assert.ok(value,'actual audit guard')),
+    ownedSourceSetEqualV1:(a,b)=>JSON.stringify([...a].sort())===JSON.stringify([...b].sort()),
+    compiled:guard(()=>{faults.push('unexpected slice compiled read');throw Error('TASK7E_UNLISTED');}),
+    ownedSourceGraphV1:guard((root,_output,starts)=>({files:starts[0]===observer?sets.observer:root===SOURCE_M_V1?sets.maintenance:sets.target,
+      members:new Set(Array.from({length:starts[0]===observer?79:root===SOURCE_M_V1?82:85},(_,i)=>i))})),
+    ownedSourcePackagesV1:guard((_pins,root)=>{events.push('package:'+root);const f=task7eResolverV1({root,sourceFault:failRoot===root?2:0});resolvers.set(root,f);return f.run();}),
+    require:guard(specifier=>{events.push('first-observer-import');assert.equal(specifier,url.pathToFileURL(SOURCE_M_V1+'/'+observer).href);throw Error('TASK7E_FIRST_OBSERVER_STOP');}),
+  };
+  context.pins.targetSetupGraph=()=>({files:sets.target,members:new Set(Array.from({length:85},(_,i)=>i))});
+  context.pins.targetObserverGraph=()=>({files:sets.observer,members:new Set(Array.from({length:79},(_,i)=>i))});
+  const lowered=ts.transpileModule('globalThis.run=async()=>{'+code+'};',{fileName:'actual-H-first-observer.ts',compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});
+  runInNewContext(lowered.outputText,context,{filename:'actual-H-post-audit-import-order',timeout:5000});
+  return {events,resolvers,run:context.run,clean(){assert.deepEqual(faults,[]);for(const f of resolvers.values())f.clean();}};
+}
+test('Task7E H first full observer import follows both actual four-resolver terminal proofs',async()=>{
+  const f=task7eFirstObserverV1();await assert.rejects(f.run(),/TASK7E_FIRST_OBSERVER_STOP/);
+  assert.equal(f.resolvers.size,2);assert.equal([...f.resolvers.values()].reduce((n,x)=>n+x.runs(),0),8);
+  task7eBeforeV1(f.events,'package:'+SOURCE_T_V1,'first-observer-import');f.clean();
+});
+for(const root of [SOURCE_M_V1,SOURCE_T_V1])test('Task7E H '+(root===SOURCE_M_V1?'M':'T')+' resolver terminal drift prevents first compiled observer import',async()=>{
+  const f=task7eFirstObserverV1(root);await assert.rejects(f.run(),task7eProofRefusalV1);assert.equal(f.events.includes('first-observer-import'),false);
+  assert.equal(f.resolvers.get(root).runs(),4);if(root===SOURCE_M_V1)assert.equal(f.resolvers.has(SOURCE_T_V1),false);f.clean();
+});
+
+function task7eIdentityGitV1(options={}){
+  const code=task7eLexicalV1(HELPER,'holdManualOrphanOwnedSourcesV1',['identityGit']);
+  const events=[],faults=[],controls={fault:null,...options};
+  const guard=fn=>task5bGuardV1(faults,fn),refuse=()=>Error('MANUAL_ORPHAN_OWNER_REFUSED');
+  const context={maintenanceRoot:SOURCE_M_V1,targetRoot:SOURCE_T_V1,maintenanceCommon:'/finite/M.git',targetCommon:'/finite/T.git',
+    ownedSourceRequireV1:guard(value=>{if(!value)throw refuse();}),ownedSourceRefusalV1:refuse,
+    pins:{file:guard((locator)=>{assert.equal(locator,'/usr/bin/git');events.push('executable-proof');if(controls.fault==='executable')throw refuse();return {bytes:Buffer.from('finite-git'),sha256:OWN_H};}),
+      directory:guard(locator=>{assert.ok(['/finite/M.git','/finite/T.git'].includes(locator));events.push('directory-proof');if(controls.fault==='common-directory')throw refuse();return {dev:1n,ino:2n};}),
+      check:guard(()=>{faults.push('recursive whole-Source pins check');throw Error('TASK7E_RECURSIVE');})},
+    spawnSync:guard((executable,args,options)=>{assert.equal(executable,'/usr/bin/git');events.push('git');
+      assert.deepEqual(Array.from(args),['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','rev-parse','--git-common-dir']);
+      assert.equal(options.cwd,SOURCE_M_V1);assert.equal(options.shell,false);assert.equal(options.timeout,10000);assert.equal(options.maxBuffer,16777216);
+      assert.deepEqual(task5bPlainV1(options.env),{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0'});
+      const result={status:0,signal:null,stderr:Buffer.alloc(0),stdout:Buffer.from('/finite/M.git\n')};
+      if(controls.fault==='signal')result.signal='SIGTERM';if(controls.fault==='status')result.status=1;if(controls.fault==='stderr')result.stderr=Buffer.from('unexpected');
+      if(controls.fault==='stdout-type')result.stdout='/finite/M.git\n';if(controls.fault==='timeout')result.error=Object.assign(Error('timeout'),{code:'ETIMEDOUT'});
+      if(controls.fault==='executable-after')controls.fault='executable';if(controls.fault==='directory-after')controls.fault='common-directory';return result;
+    })};
+  const vm=task7eVmV1(code,['identityGit'],context);return {events,run:()=>vm.api.identityGit(['rev-parse','--git-common-dir']),clean(){assert.deepEqual(faults,[]);vm.contained();}};
+}
+test('Task7E H internal identity Git authenticates executable and common directory at the actual fixed command',()=>{
+  const f=task7eIdentityGitV1();assert.equal(f.run().toString(),'/finite/M.git\n');task7eBeforeV1(f.events,'executable-proof','git');task7eBeforeV1(f.events,'directory-proof','git');f.clean();
+});
+for(const fault of ['executable','common-directory','executable-after','directory-after','signal','status','stderr','stdout-type','timeout'])test('Task7E H identity Git '+fault+' refuses actual fixed identity',()=>{
+  const f=task7eIdentityGitV1({fault});assert.throws(f.run,task7eProofRefusalV1);if(['executable','common-directory'].includes(fault))assert.equal(f.events.includes('git'),false);f.clean();
+});
+
+for(const kind of ['runner','runtime'])test('Task7E F standalone '+kind+' catalog has complete boundaries around original local row predicates',async()=>{
+  const f=task7eCleanupV1();if(kind==='runner')await f.api.runnerCatalog('activated');else await f.api.runtimeCatalog();
+  assert.equal(f.proofs(),2);assert.equal(f.awaits(),5);assert.equal(f.events.some(x=>x.startsWith('drop:')),false);f.clean();
+});
+for(const kind of ['runner','runtime'])test('Task7E F standalone '+kind+' catalog terminal drift cannot return accepted facts',async()=>{
+  const f=task7eCleanupV1({afterAwait:5});await assert.rejects(kind==='runner'?f.api.runnerCatalog('activated'):f.api.runtimeCatalog(),task7eProofRefusalV1);
+  assert.equal(f.events.some(x=>x.startsWith('ledger:')||x.startsWith('route:')),false);f.clean();
+});
+for(const fault of ['runtime-login','generated-membership','residual-baseline'])test('Task7E F runtime local facts preserve '+fault+' refusal',async()=>{
+  const f=task7eCleanupV1();if(fault==='runtime-login')f.rows.roles.at(-1).login=false;
+  if(fault==='generated-membership')f.rows.memberships.push({roleOid:7,memberOid:8,grantorOid:1,adminOption:false,inheritOption:true,setOption:true});
+  if(fault==='residual-baseline')f.rows.databases.find(x=>x.name==='template0').connectionLimit=1;
+  await assert.rejects(f.api.runtimeCatalog(),task7eProofRefusalV1);f.clean();
+});
+test('Task7E F general closure projection still requires its own complete Source check',()=>{
+  const f=task7eCleanupV1(),code=task7eLexicalV1(TASK5C_FIXTURE_V1,'openManualOrphanFixtureContextV1',['readClosureFactsLocal','closures']);
+  const vm=task7eVmV1(code,['closures'],{...f.context,check:f.api.check});const result=vm.api.closures();assert.equal(result.source,'retained');assert.equal(f.proofs(),1);vm.contained();f.clean();
+});
+
+// Wiring assertions supplement the behavioral fault controls above; they never
+// substitute for a retained-stock, content, operation or deadline predicate.
+test('Task7E fixed private methods remain connected only to the adopted Source lexical callsites',()=>{
+  const text=readFileSync(HELPER,'utf8'),ast=ts.createSourceFile('actual-H.mjs',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),nodes=[];
+  const visit=n=>{nodes.push(n);ts.forEachChild(n,visit);};visit(ast);
+  for(const name of ['targetSetupGraph','targetObserverGraph','targetMembership','resolvePackages']){
+    const calls=nodes.filter(n=>ts.isCallExpression(n)&&ts.isPropertyAccessExpression(n.expression)&&n.expression.name.text===name);
+    assert.equal(calls.length,1,'one fixed lexical use of '+name);assert.equal(calls[0].expression.expression.getText(ast),'pins');
+  }
+  const holder=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='holdManualOrphanOwnedSourcesV1');
+  const frozen=nodes.filter(n=>ts.isCallExpression(n)&&n.expression.getText(ast)==='Object.freeze'&&n.arguments.length===1
+    &&ts.isObjectLiteralExpression(n.arguments[0])&&n.pos>holder.pos&&n.end<holder.end
+    &&JSON.stringify(n.arguments[0].properties.map(p=>p.name?.getText(ast)).sort())===JSON.stringify(['check','close','source']));
+  assert.equal(frozen.length,1,'frozen public owner remains exact');
+  for(const name of ['targetSetupGraph','targetObserverGraph','targetMembership','resolvePackages','ownedSourceResolversV1'])
+    assert.equal(ast.statements.some(n=>n.modifiers?.some(m=>m.kind===ts.SyntaxKind.ExportKeyword)&&n.name?.text===name),false,'no new public proof interface');
+});
+test('Task7E constructor fixed observation units remain single lexical calls with local admin ownership',()=>{
+  const text=readFileSync(CONSTRUCTOR,'utf8'),ast=ts.createSourceFile('actual-K.mjs',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),nodes=[];
+  const owner=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='runManualOrphanConstructorV1');assert.ok(owner);
+  const visit=n=>{nodes.push(n);ts.forEachChild(n,visit);};visit(owner);
+  for(const name of ['waitForConstructorReadinessAndOpenAdmin','readConstructorInitialIdentity','readConstructorInitialBaseline',
+    'readConstructorPreSpawnFacts','readConstructorQuiescenceSamples','closeConstructorAdmin','settleConstructorServer']){
+    const calls=nodes.filter(n=>ts.isCallExpression(n)&&ts.isIdentifier(n.expression)&&n.expression.text===name);assert.equal(calls.length,1,'one fixed call '+name);assert.equal(calls[0].arguments.length,0);
+  }
+  const opens=nodes.filter(n=>ts.isCallExpression(n)&&ts.isIdentifier(n.expression)&&n.expression.text==='openManualOrphanConstructorAdminV1');
+  assert.equal(opens.length,1);assert.equal(opens[0].arguments[1].getText(ast),'localCheck');
+});
+
+test('Task7E H resolver local full-pin predicate detects changed original Node bytes before another subprocess',()=>{
+  task7eLexicalV1(HELPER,'ownedSourcePinsV1',['resolvePackages']);let f,passes=0;
+  const scope={ownedSourceResolversV1:pins=>{pins.check();passes++;f.files.get(TASK3_NODE_V1).bytes=Buffer.from('changedNode');pins.check();passes++;}};
+  f=task7dPinsV1({scope,extraFiles:[[TASK3_NODE_V1,'originalNod']]});f.delegate();
+  assert.throws(()=>f.pins.resolvePackages(SOURCE_T_V1,[],SOURCE_HOME_V1,()=>f.pins.check()),task7eProofRefusalV1);
+  assert.equal(passes,1,'actual original pin digest predicate rejects the next local complete pass');f.finish();
+});
+for(const fault of ['bytes','hash'])test('Task7E H mechanical pair actual record-pin '+fault+' predicate refuses provisional state',async()=>{
+  const f=task7ePhaseV1({pinFault:fault});f.context.frame.input.installation=f.installation;
+  assert.throws(()=>f.api.readPreparedAndActivationForMechanical(),task7eProofRefusalV1);assert.ok(f.events.some(x=>x.startsWith('record-pin:')));await f.finish();
+});
+
+
+// The resolver subprocess body is separately exercised above. These six rows
+// isolate its actual private pins facade and injected fixed context predicate;
+// every local pin read below still executes the original Source implementation.
+function task7eResolverContextV1(mode){
+  task7eLexicalV1(HELPER,'ownedSourcePinsV1',['resolvePackages']);
+  const faults=[],guard=fn=>task5bGuardV1(faults,fn);let f,calls=0,entered=0,accepted=0,nested=0;
+  const recheck=()=>f.pins.check(),groups=[];
+  const scope={ownedSourceResolversV1:guard((facade,root,actualGroups,home,actualRecheck)=>{
+    entered++;assert.equal(root,SOURCE_T_V1);assert.equal(actualGroups,groups);assert.equal(home,SOURCE_HOME_V1);assert.equal(actualRecheck,recheck);
+    facade.check();accepted++;
+  })};
+  const sourceContext=mode==='nonfunction'?null:guard(()=>{
+    calls++;f.events.push(['resolver-context',calls]);
+    if(mode==='before-throw'||mode==='terminal-throw'&&calls===2)throw Error('FINITE_CONTEXT_DRIFT');
+    if(mode==='async-return')return Promise.resolve();
+    if(mode==='caught-reentrant'&&calls===1){
+      assert.throws(()=>f.pins.resolvePackages(SOURCE_T_V1,groups,SOURCE_HOME_V1,recheck),task7eProofRefusalV1);nested++;
+    }
+  });
+  f=task7dPinsV1({scope,sourceContext});f.delegate();
+  return {f,run:()=>f.pins.resolvePackages(SOURCE_T_V1,groups,SOURCE_HOME_V1,recheck),calls:()=>calls,entered:()=>entered,
+    accepted:()=>accepted,nested:()=>nested,clean(){f.finish();assert.deepEqual(faults,[],'no swallowed context/facade assertion');}};
+}
+test('Task7E H resolver context synchronous undefined guard brackets actual complete local pins',()=>{
+  const h=task7eResolverContextV1('positive'),f=h.f,start=f.events.length,opened=f.opened.length;h.run();
+  assert.equal(h.calls(),2);assert.equal(h.entered(),1);assert.equal(h.accepted(),1);
+  const events=f.events.slice(start),first=events.findIndex(e=>e[0]==='resolver-context'&&e[1]===1),last=events.findIndex(e=>e[0]==='resolver-context'&&e[1]===2);
+  assert.ok(first>=0&&last>first);const body=events.slice(first+1,last);
+  assert.equal(f.opened.length-opened,914,'actual local pass opens all original delegated files');
+  for(const item of f.opened.slice(opened)){
+    assert.ok(body.some(e=>e[0]==='held'&&e[1]===item.fd));assert.ok(body.some(e=>e[0]==='named'&&e[1]===item.path));
+    assert.ok(body.some(e=>e[0]==='read'&&e[1]===item.fd&&e[2]===item.item.bytes.length),'actual EOF before terminal context');
+    assert.ok(body.some(e=>e[0]==='close'&&e[1]===item.fd));assert.equal(item.closed,true);
+  }
+  const retained=f.opened.find(item=>item.path===f.keep);assert.ok(retained);
+  assert.ok(body.some(e=>e[0]==='read'&&e[1]===retained.fd&&e[2]===retained.item.bytes.length),'retained H file EOF also checked');
+  assert.ok(body.some(e=>e[0]==='members'),'actual topology accompanies local content');h.clean();
+});
+test('Task7E H resolver context before throw prevents local read and accepted return',()=>{
+  const h=task7eResolverContextV1('before-throw'),opened=h.f.opened.length;assert.throws(h.run,task7eProofRefusalV1);
+  assert.equal(h.calls(),1);assert.equal(h.entered(),1);assert.equal(h.accepted(),0);assert.equal(h.f.opened.length,opened);h.clean();
+});
+test('Task7E H resolver context terminal throw rejects completed provisional local pins',()=>{
+  const h=task7eResolverContextV1('terminal-throw'),opened=h.f.opened.length;assert.throws(h.run,task7eProofRefusalV1);
+  assert.equal(h.calls(),2);assert.equal(h.accepted(),0);assert.equal(h.f.opened.length-opened,914);
+  assert.ok(h.f.opened.slice(opened).every(item=>item.closed),'actual reads closed before terminal refusal');h.clean();
+});
+test('Task7E H resolver context async thenable return cannot grant a local scope',()=>{
+  const h=task7eResolverContextV1('async-return'),opened=h.f.opened.length;assert.throws(h.run,task7eProofRefusalV1);
+  assert.equal(h.calls(),1);assert.equal(h.accepted(),0);assert.equal(h.f.opened.length,opened);h.clean();
+});
+test('Task7E H resolver context caught reentrant attempt leaves sticky refusal',()=>{
+  const h=task7eResolverContextV1('caught-reentrant'),opened=h.f.opened.length;assert.throws(h.run,task7eProofRefusalV1);
+  assert.equal(h.nested(),1);assert.equal(h.calls(),1);assert.equal(h.entered(),1);assert.equal(h.accepted(),0);
+  assert.equal(h.f.opened.length,opened);assert.throws(()=>h.f.pins.file(h.f.paths[0]),task7eProofRefusalV1);
+  assert.equal(h.f.opened.length,opened,'caught nested refusal cannot restart ordinary reads');h.clean();
+});
+test('Task7E H resolver context nonfunction shape refuses before fixed resolver entry',()=>{
+  const h=task7eResolverContextV1('nonfunction'),opened=h.f.opened.length;assert.throws(h.run,task7eProofRefusalV1);
+  assert.equal(h.calls(),0);assert.equal(h.entered(),0);assert.equal(h.accepted(),0);assert.equal(h.f.opened.length,opened);h.clean();
+});
+
+// Task2 cache boundary. Complete actual F functions in the existing inert
+// realm; no Source holder, successful constructor, native child or TSX import.
+// Break: integration lacks fixed1, builtin leaves inherit it, or metadata/input
+// are changed while the plan builds its fresh output.
+test('Task2 F adds cache suppression only to integration output with Darwin metadata',()=>{
+  const vm=task5cVmV1(['planManualOrphanFixtureChildV1']),cases=task5cCasesV1(5);
+  for(const purpose of ['integration','provision','activate','old_entry_positive','new_entry_refusal'])cases.run(purpose,()=>{
+    const paths=task5cChildPathsV1();paths.env.__CF_USER_TEXT_ENCODING='0x1F5:0x23:0x18';
+    const input=task5cDataV1(vm,paths),before=JSON.stringify(input);
+    const plan=vm.api.planManualOrphanFixtureChildV1(purpose,input),env=plan.options.env;
+    assert.notEqual(env,input.env);assert.equal(JSON.stringify(input),before);
+    assert.equal(Object.hasOwn(input.env,'TSX_DISABLE_CACHE'),false);
+    assert.equal(env.__CF_USER_TEXT_ENCODING,'0x1F5:0x23:0x18');
+    if(purpose==='integration'){
+      assert.equal(env.TSX_DISABLE_CACHE,'1');
+      assert.deepEqual(task5cPlainV1(plan.args),['--import','tsx','--test','--test-isolation=none',FILE]);
+      assert.deepEqual(task5cPlainV1(env),{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C',
+        __CF_USER_TEXT_ENCODING:'0x1F5:0x23:0x18',TSX_DISABLE_CACHE:'1'});
+    }else{
+      assert.equal(Object.hasOwn(env,'TSX_DISABLE_CACHE'),false);
+      assert.deepEqual(task5cPlainV1(plan.args),[SOURCE_M_V1+SOURCE_SUFFIX_V1]);
+      assert.deepEqual(task5cPlainV1(env),{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C',__CF_USER_TEXT_ENCODING:'0x1F5:0x23:0x18'});
+    }
+    assert.equal(plan.executable,TASK3_NODE_V1);assert.equal(plan.options.cwd,SOURCE_M_V1);
+    assert.equal(plan.options.argv0,TASK3_NODE_V1);assert.equal(plan.options.shell,false);assert.equal(plan.options.detached,false);
+    assert.deepEqual(task5cPlainV1(plan.options.stdio),['ignore','pipe','pipe','ignore','pipe']);
+    task5cFrozenV1(plan);vm.check();
+  });
+  cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
+});
+
+// Break: the generated OUTPUT flag is admitted as ambient plan INPUT.
+test('Task2 F refuses ambient cache flag in unchanged plan input',()=>{
+  const vm=task5cVmV1(['planManualOrphanFixtureChildV1']),cases=task5cCasesV1(2);
+  for(const purpose of ['integration','old_entry_positive'])cases.run(purpose,()=>{
+    const paths=task5cChildPathsV1();paths.env.TSX_DISABLE_CACHE='1';
+    const input=task5cDataV1(vm,paths),before=JSON.stringify(input);
+    task5cRefusedV1(()=>vm.api.planManualOrphanFixtureChildV1(purpose,input));
+    assert.equal(JSON.stringify(input),before);vm.check();
+  });
+  cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
+});
+
+function task2CacheLaunchV1(kind){
+  const vm=task5cVmV1(['qualifyManualOrphanFixtureLaunchV1']),cases=task5cCasesV1(8);
+  const call=f=>vm.api.qualifyManualOrphanFixtureLaunchV1(kind,task5cDataV1(vm,f.actual),task5cDataV1(vm,f.frame));
+  for(const [name,change] of [
+    ['missing flag',f=>{delete f.actual.env.TSX_DISABLE_CACHE;}],
+    ['empty flag',f=>{f.actual.env.TSX_DISABLE_CACHE='';}],
+    ['zero flag',f=>{f.actual.env.TSX_DISABLE_CACHE='0';}],
+    ['two flag',f=>{f.actual.env.TSX_DISABLE_CACHE='2';}],
+    ['text true flag',f=>{f.actual.env.TSX_DISABLE_CACHE='true';}],
+    ['boolean true flag',f=>{f.actual.env.TSX_DISABLE_CACHE=true;}],
+    ['extra environment key',f=>{f.actual.env.NODE_OPTIONS='';}],
+  ])cases.run(name,()=>{
+    const f=task5cLaunchV1(kind);change(f);const before=JSON.stringify(f);
+    task5cRefusedV1(()=>call(f));assert.equal(JSON.stringify(f),before);vm.check();
+  });
+  cases.run('exact literal1',()=>{
+    const f=task5cLaunchV1(kind),before=JSON.stringify(f);
+    const result=call(f);task5cFrozenV1(result);assert.equal(result.maintenanceRoot,SOURCE_M_V1);
+    assert.equal(JSON.stringify(f),before);vm.check();
+  });
+  cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
+}
+// Break: genuine runner accepts env3 or a truthy/extra-key cache environment.
+test('Task2 F runner qualifier requires exact literal1 and exact environment keys',()=>{
+  task2CacheLaunchV1('runner');
+});
+// Break: genuine integration diverges from the same mandatory cache contract.
+test('Task2 F integration qualifier requires exact literal1 and exact environment keys',()=>{
+  task2CacheLaunchV1('integration');
+});
+// Break: adding the one cache key weakens recipient-only worker metadata.
+test('Task2 F integration cache environment retains exact worker1 policy',()=>{
+  const vm=task5cVmV1(['qualifyManualOrphanFixtureLaunchV1']),cases=task5cCasesV1(2);
+  for(const [name,worker] of [['worker zero',{NODE_TEST_WORKER_ID:'0'}],
+    ['extra worker context',{NODE_TEST_WORKER_ID:'1',NODE_TEST_CONTEXT:'child-v8'}]])cases.run(name,()=>{
+    const f=task5cLaunchV1('integration');f.actual.worker=worker;
+    task5cRefusedV1(()=>vm.api.qualifyManualOrphanFixtureLaunchV1('integration',
+      task5cDataV1(vm,f.actual),task5cDataV1(vm,f.frame)));vm.check();
+  });
+  cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
 });
