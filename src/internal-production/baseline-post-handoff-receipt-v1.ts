@@ -368,6 +368,20 @@ function compareBytes(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
+function sortCleanSourceByUtf8V1<T>(items: T[], keyOf: (item: T) => string): T[] {
+  if (items.length < 2) return items;
+  const encoded = items.map((item) => ({ item, key: Buffer.from(keyOf(item), "utf8") }));
+  encoded.sort((left, right) => Buffer.compare(left.key, right.key));
+  for (let index = 0; index < items.length; index += 1) items[index] = encoded[index]!.item;
+  return items;
+}
+
+function equalCleanSourceStringVectorsV1(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
+  return true;
+}
+
 function strictUtf8(bytes: Buffer, label: string): string {
   let text: string;
   try {
@@ -594,7 +608,7 @@ function derivePinnedSet(root: string): PinnedSet {
   const records = strictUtf8(listingBytes, "Git tree listing").split("\0");
   if (records.pop() !== "") fail("Git tree listing has no terminal NUL");
   if (records.length > MAX_BUILD_INPUT_ENTRIES_V1) fail("Pinned input set exceeds the entry cap");
-  const entries = records.map((record): PinnedEntry => {
+  const entries = sortCleanSourceByUtf8V1(records.map((record): PinnedEntry => {
     const tab = record.indexOf("\t");
     const header = tab < 0 ? [] : record.slice(0, tab).split(" ");
     const locator = tab < 0 ? "" : canonicalLocator(record.slice(tab + 1));
@@ -605,7 +619,7 @@ function derivePinnedSet(root: string): PinnedSet {
       || !FULL_HASH.test(header[2] ?? "")
     ) fail(`unsupported tracked Git entry ${record.slice(0, 200)}`);
     return Object.freeze({ locator, gitMode: header[0], gitBlobHash: header[2]! });
-  }).sort((left, right) => compareBytes(left.locator, right.locator));
+  }), (entry) => entry.locator);
   const raw = new Set<string>();
   const folded = new Set<string>();
   for (const entry of entries) {
@@ -709,7 +723,7 @@ function expectedTopology(pinned: PinnedSet): Readonly<{ outputs: readonly strin
       outputs.push(`dist/${locator.slice(4)}`);
     }
   }
-  outputs.sort(compareBytes);
+  sortCleanSourceByUtf8V1(outputs, (locator) => locator);
   const seen = new Set<string>();
   const folded = new Set<string>();
   for (const locator of outputs) {
@@ -731,7 +745,7 @@ function expectedTopology(pinned: PinnedSet): Readonly<{ outputs: readonly strin
   if (outputs.length + directories.size + 4 > MAX_BUILD_OUTPUT_ENTRIES_V1) {
     fail("derived output file/directory closure exceeds the combined output-entry cap");
   }
-  return Object.freeze({ outputs: Object.freeze(outputs), directories: Object.freeze([...directories].sort(compareBytes)) });
+  return Object.freeze({ outputs: Object.freeze(outputs), directories: Object.freeze(sortCleanSourceByUtf8V1([...directories], (locator) => locator)) });
 }
 
 function observeSource(root: string): SourceObservation {
@@ -770,7 +784,7 @@ function strictObject(
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} is not one object`);
   const record = value as Record<string, unknown>;
-  if (canonicalComparable(Object.keys(record)) !== canonicalComparable(keys)) fail(`${label} has unknown, missing, or reordered fields`);
+  if (!equalCleanSourceStringVectorsV1(Object.keys(record), keys)) fail(`${label} has unknown, missing, or reordered fields`);
   const exact = `${JSON.stringify(record, null, pretty ? 2 : undefined)}\n`;
   if (text !== exact) fail(`${label} raw bytes are not exact`);
   return record;
@@ -821,7 +835,7 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
   const directoryIdentities: Array<Readonly<{ locator: string; snapshot: DirectorySnapshot }>> = [];
   function visit(directoryPath: string, relative: string, depth: number): void {
     if (depth > MAX_BUILD_TREE_DEPTH_V1) fail("finalized dist exceeds depth cap");
-    for (const name of readdirSync(directoryPath).sort(compareBytes)) {
+    for (const name of sortCleanSourceByUtf8V1(readdirSync(directoryPath), (name) => name)) {
       entryCount += 1;
       if (entryCount > MAX_BUILD_OUTPUT_ENTRIES_V1) fail("finalized dist exceeds entry cap");
       const locator = relative ? `${relative}/${name}` : `dist/${name}`;
@@ -846,11 +860,11 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
     }
   }
   visit(distPath, "", 0);
-  directories.sort(compareBytes);
-  if (canonicalComparable(directories) !== canonicalComparable(source.directories)) fail("finalized directory topology is not exact");
-  const expectedFiles = [...source.outputs, "dist/BUILD_INFO.json", "dist/PLATFORM_BUILD_OUTPUT_TREE.json", "dist/PLATFORM_RELEASE_MANIFEST.json"].sort(compareBytes);
-  files.sort(compareBytes);
-  if (canonicalComparable(files) !== canonicalComparable(expectedFiles)) fail("finalized file topology is not exact");
+  sortCleanSourceByUtf8V1(directories, (locator) => locator);
+  if (!equalCleanSourceStringVectorsV1(directories, source.directories)) fail("finalized directory topology is not exact");
+  const expectedFiles = sortCleanSourceByUtf8V1([...source.outputs, "dist/BUILD_INFO.json", "dist/PLATFORM_BUILD_OUTPUT_TREE.json", "dist/PLATFORM_RELEASE_MANIFEST.json"], (locator) => locator);
+  sortCleanSourceByUtf8V1(files, (locator) => locator);
+  if (!equalCleanSourceStringVectorsV1(files, expectedFiles)) fail("finalized file topology is not exact");
 
   const ordinarySnapshots: FileSnapshot[] = [];
   const outputEntries = source.outputs.map((locator) => {
@@ -905,8 +919,7 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
       !entry
       || typeof entry !== "object"
       || Array.isArray(entry)
-      || canonicalComparable(Object.keys(entry as Record<string, unknown>))
-        !== canonicalComparable(["locator", "mode", "byteLength", "sha256"])
+      || !equalCleanSourceStringVectorsV1(Object.keys(entry as Record<string, unknown>), ["locator", "mode", "byteLength", "sha256"])
     ) fail("output tree entry has unknown, missing, or reordered fields");
   }
   const outputProjection = {
@@ -946,12 +959,12 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
     outputTreeHash: outputTree.outputTreeHash,
     releaseManifestHash: hashCanonicalJson(manifest),
   });
-  const fileSnapshots = Object.freeze([
+  const fileSnapshots = Object.freeze(sortCleanSourceByUtf8V1([
     ...ordinarySnapshots,
     Object.freeze({ locator: "dist/BUILD_INFO.json", observed: infoObserved }),
     Object.freeze({ locator: "dist/PLATFORM_BUILD_OUTPUT_TREE.json", observed: outputObserved }),
     Object.freeze({ locator: "dist/PLATFORM_RELEASE_MANIFEST.json", observed: manifestObserved }),
-  ].sort((left, right) => compareBytes(left.locator, right.locator)));
+  ], (snapshot) => snapshot.locator));
   const stableTotalBytes = fileSnapshots.reduce((sum, snapshot) => sum + snapshot.observed.bytes.length, 0);
   if (stableTotalBytes !== totalBytes || stableTotalBytes > MAX_BUILD_TOTAL_BYTES_V1) {
     fail("finalized file totals changed across stable reads");

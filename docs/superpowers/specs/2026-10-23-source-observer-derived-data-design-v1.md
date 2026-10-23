@@ -111,14 +111,29 @@ unchanged canonical hashes and the full actual explicit FS/Git/read/metadata/
 EOF/close/bookend operation trace. Instrument only the isolated test realm;
 never mutate host globals/prototypes or instrument a measured Source owner.
 
-Task1 produces observer/tests with task review. Root commits the tested scoped
-source before any build, then runs the ordinary guarded clean build. No dirty
-build/runtime bypass flags. Root independently derives exact M143 records
+Task1 produces observer/tests with task review. Existing adjacent tests also
+need the missing real fresh-installation-origin parser and matching compiled
+fixture entry; repair that finite fixture closure without changing assertions
+or effect containment. Root commits the tested scoped source, obtains broad
+branch review and normally merges PR1 before the ordinary guarded clean build.
+The actual writer requires canonical origin, HEAD equal to real origin/main,
+branch main and a clean tree. A clean feature commit does not satisfy it.
+Preserve W's eight build archives; do not fake Git refs, rename the feature
+branch, delete generations or use dirty-build/runtime bypass flags. Build a
+fresh physical clone of actual canonical remote main with its own Git database
+and physical lockfile-installed dependencies, preserving all build guards.
+No live cutover follows this source-only delivery. Root independently derives exact M143 records
 from the reviewed clean-build output and cross-checks the unchanged members
 against the qualified baseline. Review the changed body and expected aggregate.
 Task2 adds admission RED tests, separates T fixtures and binds only reviewed M
-expectations, then Root verifies GREEN and final whole-branch review. Intermediate
-stale H admission fails closed; it is not used to acquire a new Source owner.
+expectations, then Root verifies GREEN and final review of the cumulative two
+PR result. Deliver Task2 by normal PR2 merge and repeat the genuine remote-main
+stock guarded build, verifying every143 M record and aggregate remain exact.
+Both reviewed deliveries and actual builds are required for source-fix closure;
+premerge tests do not substitute for a guarded build. Existing required checks
+and branch protections remain mandatory. Intermediate stale H admission fails
+closed; it is not used to acquire a new Source owner. A required check blocked
+by the main-only contract remains unresolved until safely satisfied.
 
 Root owns normal branch push/PR/reviews/merge, clean-main stock qualification
 and separately admitted fresh public/composition measurement. No live rollout

@@ -14553,7 +14553,7 @@ function phase5bNestedPresentedPathV1(store: string, target: string): string {
 }
 
 function topLevelFunctionRegionV1(source: string, functionName: string): string {
-  const starts = [...source.matchAll(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function ${functionName}\\(`, "gm"))]
+  const starts = [...source.matchAll(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function ${functionName}${functionName === "sortCleanSourceByUtf8V1" ? "<T>" : ""}\\(`, "gm"))]
     .map((match) => match.index);
   assert.ok(starts.length > 0, `${functionName} must have a top-level implementation`);
   const start = starts.at(-1)!;
@@ -15566,6 +15566,7 @@ function ensureBaselinePostHandoffImportSupportV1(root: string): void {
     'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
   ));
   ensure("src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
+  ensure("src/installation/fresh-installation-origin-v1.ts", readFileSync(path.join(sourceRoot, "src/installation/fresh-installation-origin-v1.ts")));
   ensure("src/execution/recovery-source-bootstrap-repository-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-repository-v1.ts")));
   ensure("src/execution/recovery-source-bootstrap-run-authority-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-run-authority-v1.ts")));
   ensure("src/db/contract-spine-migration-digests.generated.ts", 'export const CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS={31:"f052eff1b45df0f00ffb844fe0d23b542eafa4789da5e90a329a8d756dfcdc3a"};\n');
@@ -15945,6 +15946,7 @@ function materializeOutputs(root: string): void {
     "dist/execution/recovery-source-bootstrap-run-authority-v1.js": "// compiled recovery authority fixture\n",
     "dist/execution/v3-git-revision.js": "// compiled git fixture\n",
     "dist/findings/legacy-finding-publication-inventory-v1.js": "// compiled legacy finding inventory fixture\n",
+    "dist/installation/fresh-installation-origin-v1.js": "// compiled installation origin fixture\n",
     "dist/installer/compat-rules.json": "{}\n",
     "dist/installer/prompts/prompt.md": "prompt\n",
     "dist/installer/run.js": "// compiled recovery installer fixture\n",
@@ -45712,6 +45714,644 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture, operationBHash), operationBLocatorsBefore, "operation-crossed status does not rewrite operation-B current locators");
     } finally {
       removeFixture(fixture.root);
+    }
+  });
+});
+
+
+describe("clean Source derived computation parity v1", () => {
+  // Exercise private production functions through the existing bounded source
+  // extractor/compiler seam. No public Source owner or custody is synthesized.
+  function loadDerivedFunctions(
+    ports: Record<string, unknown>,
+    vectors: string[][],
+    source = readFileSync(observerSource, "utf8"),
+  ): Record<string, (...args: any[]) => any> {
+    const names = [
+      "fail", "sha256", "compareBytes", "strictUtf8", "canonicalLocator",
+      "directorySnapshot", "sameDirectory", "assertDirectory", "sameRegularMetadata",
+      "gitLine", "readStableRegular", "readPinnedBlobs", "derivePinnedSet",
+      "expectedTopology", "strictObject", "expectedManifest", "observeArtifacts",
+    ];
+    // Optional private dependencies are extracted only when present; baseline
+    // RED must invoke the current real functions, never fail on a future name.
+    for (const name of ["sortCleanSourceByUtf8V1", "equalCleanSourceStringVectorsV1"]) {
+      if (new RegExp(`^function ${name}(?:<|\\()`, "m").test(source)) names.push(name);
+    }
+    const constants = source.split("\n").filter(line =>
+      /^const (?:MAX_BUILD_[A-Z0-9_]+|MAX_STITCH_CONVERTER_BYTES_V1|FULL_HASH|SHA256|RFC3339_MILLIS|UTF8) =/.test(line));
+    const comparable = topLevelFunctionRegionV1(source, "canonicalComparable")
+      .replace("function canonicalComparable(", "function originalCanonicalComparable(");
+    const executable = transformSync([
+      ...constants, comparable,
+      `function canonicalComparable(value: unknown): string {
+        if (Array.isArray(value) && value.every(item => typeof item === "string")) vectors.push([...value]);
+        return originalCanonicalComparable(value);
+      }`,
+      ...names.map(name => topLevelFunctionRegionV1(source, name)),
+    ].join("\n"), { loader: "ts", target: "es2022" }).code;
+    return Function(...Object.keys(ports), "vectors", `${executable}\nreturn { ${names.join(", ")} };`)(...Object.values(ports), vectors);
+  }
+
+  // Historical oracle only: exact selected declarations from immutable 9e,
+  // whose complete source SHA256 is f64947121326ceb9bf8c82f6ea4be22b7f24bd7cf0f5b4b51056234ce0020a4c.
+  // In-file bytes keep shallow CI independent of Git history or network fetches.
+  // Current production functions are always loaded separately as the SUT.
+  function originalSource(): string {
+    const declarations = [
+      { name: "constants", bytes: 541, sha256: "2fc13ff7c14de10fb42b0f6dc0695be72f076043fed2f049fee9ad420376885d", base64: [
+        "Y29uc3QgTUFYX0JVSUxEX1RSRUVfREVQVEhfVjEgPSA2NDsKY29uc3QgTUFYX0JVSUxEX0lOUFVUX0VOVFJJRVNfVjEgPSAxMF8wMDA7CmNvbnN0IE1BWF9C",
+        "VUlMRF9PVVRQVVRfRU5UUklFU19WMSA9IDEwXzAwMDsKY29uc3QgTUFYX0JVSUxEX0xPQ0FUT1JfVVRGOF9PQ1RFVFNfVjEgPSAxXzAyNDsKY29uc3QgTUFY",
+        "X0JVSUxEX0ZJTEVfQllURVNfVjEgPSAzM181NTRfNDMyOwpjb25zdCBNQVhfQlVJTERfVE9UQUxfQllURVNfVjEgPSA1MzZfODcwXzkxMjsKY29uc3QgTUFY",
+        "X1NUSVRDSF9DT05WRVJURVJfQllURVNfVjEgPSAxNl83NzdfMjE2Owpjb25zdCBGVUxMX0hBU0ggPSAvXig/OlthLWYwLTldezQwfXxbYS1mMC05XXs2NH0p",
+        "JC87CmNvbnN0IFNIQTI1NiA9IC9eW2EtZjAtOV17NjR9JC87CmNvbnN0IFJGQzMzMzlfTUlMTElTID0gL15cZHs0fS1cZHsyfS1cZHsyfVRcZHsyfTpcZHsy",
+        "fTpcZHsyfVwuXGR7M31aJC87CmNvbnN0IFVURjggPSBuZXcgVGV4dERlY29kZXIoInV0Zi04IiwgeyBmYXRhbDogdHJ1ZSwgaWdub3JlQk9NOiB0cnVlIH0p",
+        "Ow==",
+      ].join("") },
+      { name: "fail", bytes: 124, sha256: "519572a6ee04060304d34c1f9b44fa4241e82195c07c1cb5c1646232efa56f9d", base64: [
+        "ZnVuY3Rpb24gZmFpbChtZXNzYWdlOiBzdHJpbmcpOiBuZXZlciB7CiAgdGhyb3cgbmV3IEVycm9yKGBJTlRFUk5BTF9QUk9EVUNUSU9OX1NFVEZBUk1fU09V",
+        "UkNFX0JVSUxEX0lOVkFMSUQ6JHttZXNzYWdlfWApOwp9Cg==",
+      ].join("") },
+      { name: "sha256", bytes: 111, sha256: "fdee6e5ce62f16453860ae4a55201a4b844cad809c0618c57a576e89915249a4", base64: [
+        "ZnVuY3Rpb24gc2hhMjU2KGJ5dGVzOiBCdWZmZXIgfCBzdHJpbmcpOiBzdHJpbmcgewogIHJldHVybiBjcmVhdGVIYXNoKCJzaGEyNTYiKS51cGRhdGUoYnl0",
+        "ZXMpLmRpZ2VzdCgiaGV4Iik7Cn0K",
+      ].join("") },
+      { name: "canonicalComparable", bytes: 402, sha256: "2dd1284f172e293ffe04a01cbf99eafb07766c95a04fbc2b7e28a2ae578a9d07", base64: [
+        "ZnVuY3Rpb24gY2Fub25pY2FsQ29tcGFyYWJsZSh2YWx1ZTogdW5rbm93bik6IHN0cmluZyB7CiAgaWYgKHZhbHVlID09PSBudWxsIHx8IHR5cGVvZiB2YWx1",
+        "ZSAhPT0gIm9iamVjdCIpIHJldHVybiBKU09OLnN0cmluZ2lmeSh2YWx1ZSk7CiAgaWYgKEFycmF5LmlzQXJyYXkodmFsdWUpKSByZXR1cm4gYFske3ZhbHVl",
+        "Lm1hcChjYW5vbmljYWxDb21wYXJhYmxlKS5qb2luKCIsIil9XWA7CiAgY29uc3QgcmVjb3JkID0gdmFsdWUgYXMgUmVjb3JkPHN0cmluZywgdW5rbm93bj47",
+        "CiAgcmV0dXJuIGB7JHtPYmplY3Qua2V5cyhyZWNvcmQpLnNvcnQoKS5tYXAoKGtleSkgPT4gYCR7SlNPTi5zdHJpbmdpZnkoa2V5KX06JHtjYW5vbmljYWxD",
+        "b21wYXJhYmxlKHJlY29yZFtrZXldKX1gKS5qb2luKCIsIil9fWA7Cn0K",
+      ].join("") },
+      { name: "compareBytes", bytes: 143, sha256: "64d21d851278be9eccfb8793b8a9022986229eb6d722b2217b7b4c3b59c6b5e1", base64: [
+        "ZnVuY3Rpb24gY29tcGFyZUJ5dGVzKGxlZnQ6IHN0cmluZywgcmlnaHQ6IHN0cmluZyk6IG51bWJlciB7CiAgcmV0dXJuIEJ1ZmZlci5jb21wYXJlKEJ1ZmZl",
+        "ci5mcm9tKGxlZnQsICJ1dGY4IiksIEJ1ZmZlci5mcm9tKHJpZ2h0LCAidXRmOCIpKTsKfQo=",
+      ].join("") },
+      { name: "strictUtf8", bytes: 296, sha256: "f8fcc84f19492e830f5c93f4f94dd9f4255c6a008ead88ba1a209ff73d3657f5", base64: [
+        "ZnVuY3Rpb24gc3RyaWN0VXRmOChieXRlczogQnVmZmVyLCBsYWJlbDogc3RyaW5nKTogc3RyaW5nIHsKICBsZXQgdGV4dDogc3RyaW5nOwogIHRyeSB7CiAg",
+        "ICB0ZXh0ID0gVVRGOC5kZWNvZGUoYnl0ZXMpOwogIH0gY2F0Y2ggewogICAgcmV0dXJuIGZhaWwoYCR7bGFiZWx9IGlzIG5vdCBzdHJpY3QgVVRGLThgKTsK",
+        "ICB9CiAgaWYgKCFCdWZmZXIuZnJvbSh0ZXh0LCAidXRmOCIpLmVxdWFscyhieXRlcykpIGZhaWwoYCR7bGFiZWx9IGRvZXMgbm90IHJvdW5kLXRyaXAgYXMg",
+        "VVRGLThgKTsKICByZXR1cm4gdGV4dDsKfQo=",
+      ].join("") },
+      { name: "canonicalLocator", bytes: 626, sha256: "ca086cc7b0a248f14bda781b51e132e1f133a6746dc03a82c68505726e7dd14f", base64: [
+        "ZnVuY3Rpb24gY2Fub25pY2FsTG9jYXRvcihsb2NhdG9yOiBzdHJpbmcpOiBzdHJpbmcgewogIGNvbnN0IHNlZ21lbnRzID0gbG9jYXRvci5zcGxpdCgiLyIp",
+        "OwogIGlmIChzZWdtZW50cy5sZW5ndGggLSAxID4gTUFYX0JVSUxEX1RSRUVfREVQVEhfVjEpIGZhaWwoYGJ1aWxkIGxvY2F0b3IgZXhjZWVkcyB0aGUgZGVw",
+        "dGggY2FwOiAke0pTT04uc3RyaW5naWZ5KGxvY2F0b3IpfWApOwogIGlmICgKICAgICFsb2NhdG9yCiAgICB8fCBsb2NhdG9yICE9PSBsb2NhdG9yLm5vcm1h",
+        "bGl6ZSgiTkZDIikKICAgIHx8IEJ1ZmZlci5ieXRlTGVuZ3RoKGxvY2F0b3IsICJ1dGY4IikgPiBNQVhfQlVJTERfTE9DQVRPUl9VVEY4X09DVEVUU19WMQog",
+        "ICAgfHwgbG9jYXRvci5zdGFydHNXaXRoKCIvIikKICAgIHx8IGxvY2F0b3IuaW5jbHVkZXMoIlxcIikKICAgIHx8IC9bXDAtXHgxZlx4N2YtXHg5Zl0vLnRl",
+        "c3QobG9jYXRvcikKICAgIHx8IHNlZ21lbnRzLnNvbWUoKHNlZ21lbnQpID0+ICFzZWdtZW50IHx8IHNlZ21lbnQgPT09ICIuIiB8fCBzZWdtZW50ID09PSAi",
+        "Li4iKQogICkgZmFpbChgbm9uY2Fub25pY2FsIGxvY2F0b3IgJHtKU09OLnN0cmluZ2lmeShsb2NhdG9yKX1gKTsKICByZXR1cm4gbG9jYXRvcjsKfQo=",
+      ].join("") },
+      { name: "directorySnapshot", bytes: 691, sha256: "453d55ced39fdd913a4f15d686b9795dcdd3521fa30209e9264dcac04755d724", base64: [
+        "ZnVuY3Rpb24gZGlyZWN0b3J5U25hcHNob3QoZGlyZWN0b3J5UGF0aDogc3RyaW5nLCBsYWJlbDogc3RyaW5nLCBleHBlY3RlZERldmljZT86IGJpZ2ludCk6",
+        "IERpcmVjdG9yeVNuYXBzaG90IHsKICBjb25zdCByZWFsID0gcmVhbHBhdGhTeW5jKGRpcmVjdG9yeVBhdGgpOwogIGNvbnN0IHN0YXRzID0gbHN0YXRTeW5j",
+        "KGRpcmVjdG9yeVBhdGgsIHsgYmlnaW50OiB0cnVlIH0pOwogIGlmICghc3RhdHMuaXNEaXJlY3RvcnkoKSB8fCBzdGF0cy5pc1N5bWJvbGljTGluaygpIHx8",
+        "IHJlYWwgIT09IGRpcmVjdG9yeVBhdGgpIGZhaWwoYCR7bGFiZWx9IG11c3QgYmUgb25lIHJlYWwgZGlyZWN0b3J5YCk7CiAgaWYgKGV4cGVjdGVkRGV2aWNl",
+        "ICE9PSB1bmRlZmluZWQgJiYgc3RhdHMuZGV2ICE9PSBleHBlY3RlZERldmljZSkgZmFpbChgJHtsYWJlbH0gaXMgb24gdGhlIHdyb25nIGRldmljZWApOwog",
+        "IHJldHVybiBPYmplY3QuZnJlZXplKHsKICAgIGlkZW50aXR5OiBPYmplY3QuZnJlZXplKHsKICAgICAgcmVhbHBhdGg6IHJlYWwsCiAgICAgIGRldkRlY2lt",
+        "YWw6IHN0YXRzLmRldi50b1N0cmluZygxMCksCiAgICAgIGlub0RlY2ltYWw6IHN0YXRzLmluby50b1N0cmluZygxMCksCiAgICAgIG1vZGU6IE51bWJlcihz",
+        "dGF0cy5tb2RlICYgMG83Nzc3biksCiAgICB9KSwKICAgIGRldmljZTogc3RhdHMuZGV2LAogIH0pOwp9Cg==",
+      ].join("") },
+      { name: "sameDirectory", bytes: 254, sha256: "71db80e92d33b35f72d264e047700d6f80ee46816cd9d70a6bd5ce59f6afb7ce", base64: [
+        "ZnVuY3Rpb24gc2FtZURpcmVjdG9yeShsZWZ0OiBEaXJlY3RvcnlJZGVudGl0eVYxLCByaWdodDogRGlyZWN0b3J5SWRlbnRpdHlWMSk6IGJvb2xlYW4gewog",
+        "IHJldHVybiBsZWZ0LnJlYWxwYXRoID09PSByaWdodC5yZWFscGF0aAogICAgJiYgbGVmdC5kZXZEZWNpbWFsID09PSByaWdodC5kZXZEZWNpbWFsCiAgICAm",
+        "JiBsZWZ0Lmlub0RlY2ltYWwgPT09IHJpZ2h0Lmlub0RlY2ltYWwKICAgICYmIGxlZnQubW9kZSA9PT0gcmlnaHQubW9kZTsKfQo=",
+      ].join("") },
+      { name: "assertDirectory", bytes: 274, sha256: "c76f4c0eb1ab26b96deae5a0a344eb548b65841c3954d4e8a9c1ccdf17429f8a", base64: [
+        "ZnVuY3Rpb24gYXNzZXJ0RGlyZWN0b3J5KGRpcmVjdG9yeVBhdGg6IHN0cmluZywgZXhwZWN0ZWQ6IERpcmVjdG9yeVNuYXBzaG90LCBsYWJlbDogc3RyaW5n",
+        "KTogdm9pZCB7CiAgY29uc3Qgb2JzZXJ2ZWQgPSBkaXJlY3RvcnlTbmFwc2hvdChkaXJlY3RvcnlQYXRoLCBsYWJlbCwgZXhwZWN0ZWQuZGV2aWNlKTsKICBp",
+        "ZiAoIXNhbWVEaXJlY3Rvcnkob2JzZXJ2ZWQuaWRlbnRpdHksIGV4cGVjdGVkLmlkZW50aXR5KSkgZmFpbChgJHtsYWJlbH0gaWRlbnRpdHkgY2hhbmdlZGAp",
+        "Owp9Cg==",
+      ].join("") },
+      { name: "sameRegularMetadata", bytes: 348, sha256: "9fbe87dc8831ae5b38d6029d888b5578650386c6ba279920694ac9809942300f", base64: [
+        "ZnVuY3Rpb24gc2FtZVJlZ3VsYXJNZXRhZGF0YShsZWZ0OiBCaWdJbnRTdGF0cywgcmlnaHQ6IEJpZ0ludFN0YXRzKTogYm9vbGVhbiB7CiAgcmV0dXJuIGxl",
+        "ZnQuZGV2ID09PSByaWdodC5kZXYKICAgICYmIGxlZnQuaW5vID09PSByaWdodC5pbm8KICAgICYmIGxlZnQubW9kZSA9PT0gcmlnaHQubW9kZQogICAgJiYg",
+        "bGVmdC51aWQgPT09IHJpZ2h0LnVpZAogICAgJiYgbGVmdC5ubGluayA9PT0gcmlnaHQubmxpbmsKICAgICYmIGxlZnQuc2l6ZSA9PT0gcmlnaHQuc2l6ZQog",
+        "ICAgJiYgbGVmdC5tdGltZU5zID09PSByaWdodC5tdGltZU5zCiAgICAmJiBsZWZ0LmN0aW1lTnMgPT09IHJpZ2h0LmN0aW1lTnM7Cn0K",
+      ].join("") },
+      { name: "gitLine", bytes: 325, sha256: "a827edc827cd70a6129aec4fdbe4f4d529243cc9b17254c943d995b6501f07f6", base64: [
+        "ZnVuY3Rpb24gZ2l0TGluZShyb290OiBzdHJpbmcsIGFyZ3M6IHJlYWRvbmx5IHN0cmluZ1tdLCBsYWJlbDogc3RyaW5nKTogc3RyaW5nIHsKICBjb25zdCB0",
+        "ZXh0ID0gc3RyaWN0VXRmOChydW5HaXQocm9vdCwgYXJncykuc3Rkb3V0LCBsYWJlbCk7CiAgaWYgKCF0ZXh0LmVuZHNXaXRoKCJcbiIpIHx8IHRleHQuc2xp",
+        "Y2UoMCwgLTEpLmluY2x1ZGVzKCJcbiIpIHx8IHRleHQuc2xpY2UoMCwgLTEpLmluY2x1ZGVzKCJcciIpKSB7CiAgICBmYWlsKGAke2xhYmVsfSBtdXN0IGJl",
+        "IGV4YWN0bHkgb25lIGxpbmVgKTsKICB9CiAgcmV0dXJuIHRleHQuc2xpY2UoMCwgLTEpOwp9Cg==",
+      ].join("") },
+      { name: "readStableRegular", bytes: 2865, sha256: "0d25145b93bc503d071009f3e8d1ffc934ec74bff2ec7a9dcf68cdd3156d5601", base64: [
+        "ZnVuY3Rpb24gcmVhZFN0YWJsZVJlZ3VsYXIoCiAgZmlsZVBhdGg6IHN0cmluZywKICBtYXhCeXRlczogbnVtYmVyLAogIGRldmljZTogYmlnaW50LAogIGV4",
+        "cGVjdGVkTGlua0NvdW50ID0gMSwKKTogU3RhYmxlUmVndWxhciB7CiAgY29uc3QgcGFyZW50UGF0aCA9IHBhdGguZGlybmFtZShmaWxlUGF0aCk7CiAgY29u",
+        "c3QgcGFyZW50QmVmb3JlID0gZGlyZWN0b3J5U25hcHNob3QocGFyZW50UGF0aCwgYHBhcmVudCBvZiAke2ZpbGVQYXRofWAsIGRldmljZSk7CiAgbGV0IGRl",
+        "c2NyaXB0b3I6IG51bWJlciB8IHVuZGVmaW5lZDsKICB0cnkgewogICAgZGVzY3JpcHRvciA9IG9wZW5TeW5jKGZpbGVQYXRoLCBjb25zdGFudHMuT19SRE9O",
+        "TFkgfCBjb25zdGFudHMuT19OT0ZPTExPVyB8IGNvbnN0YW50cy5PX05PTkJMT0NLKTsKICAgIGNvbnN0IGJlZm9yZSA9IGZzdGF0U3luYyhkZXNjcmlwdG9y",
+        "LCB7IGJpZ2ludDogdHJ1ZSB9KTsKICAgIGlmICghYmVmb3JlLmlzRmlsZSgpIHx8IGJlZm9yZS5pc1N5bWJvbGljTGluaygpIHx8IGJlZm9yZS5kZXYgIT09",
+        "IGRldmljZSB8fCBiZWZvcmUubmxpbmsgIT09IEJpZ0ludChleHBlY3RlZExpbmtDb3VudCkpIHsKICAgICAgZmFpbChgJHtmaWxlUGF0aH0gaXMgbm90IG9u",
+        "ZSBzYW1lLWRldmljZSByZWd1bGFyIGxpbmstY291bnQtJHtleHBlY3RlZExpbmtDb3VudH0gZmlsZWApOwogICAgfQogICAgaWYgKGJlZm9yZS5zaXplID4g",
+        "QmlnSW50KG1heEJ5dGVzKSkgZmFpbChgJHtmaWxlUGF0aH0gZXhjZWVkcyB0aGUgZmlsZSBjYXBgKTsKICAgIGNvbnN0IGJ5dGVzID0gcmVhZEZpbGVTeW5j",
+        "KGRlc2NyaXB0b3IpOwogICAgY29uc3QgYWZ0ZXIgPSBmc3RhdFN5bmMoZGVzY3JpcHRvciwgeyBiaWdpbnQ6IHRydWUgfSk7CiAgICBpZiAoCiAgICAgIGJl",
+        "Zm9yZS5kZXYgIT09IGFmdGVyLmRldgogICAgICB8fCBiZWZvcmUuaW5vICE9PSBhZnRlci5pbm8KICAgICAgfHwgYmVmb3JlLm1vZGUgIT09IGFmdGVyLm1v",
+        "ZGUKICAgICAgfHwgYmVmb3JlLnVpZCAhPT0gYWZ0ZXIudWlkCiAgICAgIHx8IGJlZm9yZS5ubGluayAhPT0gYWZ0ZXIubmxpbmsKICAgICAgfHwgYmVmb3Jl",
+        "LnNpemUgIT09IGFmdGVyLnNpemUKICAgICAgfHwgYmVmb3JlLm10aW1lTnMgIT09IGFmdGVyLm10aW1lTnMKICAgICAgfHwgYmVmb3JlLmN0aW1lTnMgIT09",
+        "IGFmdGVyLmN0aW1lTnMKICAgICAgfHwgQmlnSW50KGJ5dGVzLmxlbmd0aCkgIT09IGFmdGVyLnNpemUKICAgICkgZmFpbChgJHtmaWxlUGF0aH0gY2hhbmdl",
+        "ZCBkdXJpbmcgcmVhZGApOwogICAgY29uc3QgcmVvcGVuZWQgPSBsc3RhdFN5bmMoZmlsZVBhdGgsIHsgYmlnaW50OiB0cnVlIH0pOwogICAgaWYgKAogICAg",
+        "ICByZW9wZW5lZC5pc1N5bWJvbGljTGluaygpIHx8ICFyZW9wZW5lZC5pc0ZpbGUoKSB8fCByZW9wZW5lZC5kZXYgIT09IGFmdGVyLmRldgogICAgICB8fCBy",
+        "ZW9wZW5lZC5pbm8gIT09IGFmdGVyLmlubyB8fCByZW9wZW5lZC51aWQgIT09IGFmdGVyLnVpZAogICAgKSB7CiAgICAgIGZhaWwoYCR7ZmlsZVBhdGh9IGNo",
+        "YW5nZWQgYmVmb3JlIHJlb3BlbmApOwogICAgfQogICAgYXNzZXJ0RGlyZWN0b3J5KHBhcmVudFBhdGgsIHBhcmVudEJlZm9yZSwgYHBhcmVudCBvZiAke2Zp",
+        "bGVQYXRofWApOwogICAgY29uc3Qgc2Vjb25kRGVzY3JpcHRvciA9IG9wZW5TeW5jKGZpbGVQYXRoLCBjb25zdGFudHMuT19SRE9OTFkgfCBjb25zdGFudHMu",
+        "T19OT0ZPTExPVyB8IGNvbnN0YW50cy5PX05PTkJMT0NLKTsKICAgIHRyeSB7CiAgICAgIGNvbnN0IHNlY29uZEJlZm9yZSA9IGZzdGF0U3luYyhzZWNvbmRE",
+        "ZXNjcmlwdG9yLCB7IGJpZ2ludDogdHJ1ZSB9KTsKICAgICAgaWYgKCFzZWNvbmRCZWZvcmUuaXNGaWxlKCkgfHwgIXNhbWVSZWd1bGFyTWV0YWRhdGEoYWZ0",
+        "ZXIsIHNlY29uZEJlZm9yZSkpIGZhaWwoYCR7ZmlsZVBhdGh9IGNoYW5nZWQgYmVmb3JlIHNlY29uZCBvcGVuYCk7CiAgICAgIGNvbnN0IHNlY29uZEJ5dGVz",
+        "ID0gcmVhZEZpbGVTeW5jKHNlY29uZERlc2NyaXB0b3IpOwogICAgICBjb25zdCBzZWNvbmRBZnRlciA9IGZzdGF0U3luYyhzZWNvbmREZXNjcmlwdG9yLCB7",
+        "IGJpZ2ludDogdHJ1ZSB9KTsKICAgICAgaWYgKCFzYW1lUmVndWxhck1ldGFkYXRhKHNlY29uZEJlZm9yZSwgc2Vjb25kQWZ0ZXIpIHx8IEJpZ0ludChzZWNv",
+        "bmRCeXRlcy5sZW5ndGgpICE9PSBzZWNvbmRBZnRlci5zaXplIHx8ICFzZWNvbmRCeXRlcy5lcXVhbHMoYnl0ZXMpKSB7CiAgICAgICAgZmFpbChgJHtmaWxl",
+        "UGF0aH0gY2hhbmdlZCBkdXJpbmcgc2Vjb25kIHJlYWRgKTsKICAgICAgfQogICAgICBjb25zdCBzZWNvbmRSZW9wZW4gPSBsc3RhdFN5bmMoZmlsZVBhdGgs",
+        "IHsgYmlnaW50OiB0cnVlIH0pOwogICAgICBpZiAoc2Vjb25kUmVvcGVuLmlzU3ltYm9saWNMaW5rKCkgfHwgIXNlY29uZFJlb3Blbi5pc0ZpbGUoKSB8fCAh",
+        "c2FtZVJlZ3VsYXJNZXRhZGF0YShzZWNvbmRBZnRlciwgc2Vjb25kUmVvcGVuKSkgewogICAgICAgIGZhaWwoYCR7ZmlsZVBhdGh9IGNoYW5nZWQgYWZ0ZXIg",
+        "c2Vjb25kIHJlYWRgKTsKICAgICAgfQogICAgICBhc3NlcnREaXJlY3RvcnkocGFyZW50UGF0aCwgcGFyZW50QmVmb3JlLCBgcGFyZW50IG9mICR7ZmlsZVBh",
+        "dGh9YCk7CiAgICAgIHJldHVybiBPYmplY3QuZnJlZXplKHsgYnl0ZXM6IHNlY29uZEJ5dGVzLCBtb2RlOiBOdW1iZXIoc2Vjb25kQWZ0ZXIubW9kZSAmIDBv",
+        "Nzc3N24pLCBzdGF0czogc2Vjb25kQWZ0ZXIgfSk7CiAgICB9IGZpbmFsbHkgewogICAgICBjbG9zZVN5bmMoc2Vjb25kRGVzY3JpcHRvcik7CiAgICB9CiAg",
+        "fSBmaW5hbGx5IHsKICAgIGlmIChkZXNjcmlwdG9yICE9PSB1bmRlZmluZWQpIGNsb3NlU3luYyhkZXNjcmlwdG9yKTsKICB9Cn0K",
+      ].join("") },
+      { name: "readPinnedBlobs", bytes: 1211, sha256: "e4963267ffe7bb97c0d766ed4c031f9e8c6f3706a31ecb90bd4cc2034a20e23d", base64: [
+        "ZnVuY3Rpb24gcmVhZFBpbm5lZEJsb2JzKHJvb3Q6IHN0cmluZywgZW50cmllczogcmVhZG9ubHkgUGlubmVkRW50cnlbXSk6IFJlYWRvbmx5TWFwPHN0cmlu",
+        "ZywgQnVmZmVyPiB7CiAgY29uc3QgaW5wdXQgPSBCdWZmZXIuZnJvbShgJHtlbnRyaWVzLm1hcCgoZW50cnkpID0+IGVudHJ5LmdpdEJsb2JIYXNoKS5qb2lu",
+        "KCJcbiIpfVxuYCwgImFzY2lpIik7CiAgY29uc3Qgb3V0cHV0ID0gcnVuR2l0KHJvb3QsIFsiY2F0LWZpbGUiLCAiLS1iYXRjaCJdLCBbMF0sIGlucHV0KS5z",
+        "dGRvdXQ7CiAgY29uc3QgYmxvYnMgPSBuZXcgTWFwPHN0cmluZywgQnVmZmVyPigpOwogIGxldCBvZmZzZXQgPSAwOwogIGZvciAoY29uc3QgZW50cnkgb2Yg",
+        "ZW50cmllcykgewogICAgY29uc3QgbmV3bGluZSA9IG91dHB1dC5pbmRleE9mKDB4MGEsIG9mZnNldCk7CiAgICBpZiAobmV3bGluZSA8IDApIGZhaWwoIkdp",
+        "dCBibG9iIGJhdGNoIGhlYWRlciBpcyB0cnVuY2F0ZWQiKTsKICAgIGNvbnN0IG1hdGNoID0gL14oW2EtZjAtOV17NDB9fFthLWYwLTldezY0fSkgYmxvYiAo",
+        "WzAtOV0rKSQvLmV4ZWMob3V0cHV0LnN1YmFycmF5KG9mZnNldCwgbmV3bGluZSkudG9TdHJpbmcoImFzY2lpIikpOwogICAgaWYgKCFtYXRjaCB8fCBtYXRj",
+        "aFsxXSAhPT0gZW50cnkuZ2l0QmxvYkhhc2gpIGZhaWwoIkdpdCBibG9iIGJhdGNoIHJldHVybmVkIHRoZSB3cm9uZyBvYmplY3QiKTsKICAgIGNvbnN0IHNp",
+        "emUgPSBOdW1iZXIobWF0Y2hbMl0pOwogICAgaWYgKCFOdW1iZXIuaXNTYWZlSW50ZWdlcihzaXplKSB8fCBzaXplID4gTUFYX0JVSUxEX0ZJTEVfQllURVNf",
+        "VjEpIGZhaWwoIlBpbm5lZCBHaXQgYmxvYiBleGNlZWRzIGl0cyBjYXAiKTsKICAgIGNvbnN0IHN0YXJ0ID0gbmV3bGluZSArIDE7CiAgICBjb25zdCBlbmQg",
+        "PSBzdGFydCArIHNpemU7CiAgICBpZiAoZW5kID49IG91dHB1dC5sZW5ndGggfHwgb3V0cHV0W2VuZF0gIT09IDB4MGEpIGZhaWwoIkdpdCBibG9iIGJhdGNo",
+        "IGJvZHkgaXMgdHJ1bmNhdGVkIik7CiAgICBibG9icy5zZXQoZW50cnkuZ2l0QmxvYkhhc2gsIEJ1ZmZlci5mcm9tKG91dHB1dC5zdWJhcnJheShzdGFydCwg",
+        "ZW5kKSkpOwogICAgb2Zmc2V0ID0gZW5kICsgMTsKICB9CiAgaWYgKG9mZnNldCAhPT0gb3V0cHV0Lmxlbmd0aCkgZmFpbCgiR2l0IGJsb2IgYmF0Y2ggZW1p",
+        "dHRlZCB0cmFpbGluZyBieXRlcyIpOwogIHJldHVybiBibG9iczsKfQo=",
+      ].join("") },
+      { name: "derivePinnedSet", bytes: 2235, sha256: "6fbf53784b491b62006281cb61c0cd0f59bf881ede6d6f411b2d02fb392ed631", base64: [
+        "ZnVuY3Rpb24gZGVyaXZlUGlubmVkU2V0KHJvb3Q6IHN0cmluZyk6IFBpbm5lZFNldCB7CiAgY29uc3Qgc291cmNlU2hhID0gZ2l0TGluZShyb290LCBbInJl",
+        "di1wYXJzZSIsICItLXZlcmlmeSIsICJIRUFEXntjb21taXR9Il0sICJIRUFEIGNvbW1pdCIpOwogIGNvbnN0IHNvdXJjZVRyZWVIYXNoID0gZ2l0TGluZShy",
+        "b290LCBbInJldi1wYXJzZSIsICItLXZlcmlmeSIsICJIRUFEXnt0cmVlfSJdLCAiSEVBRCB0cmVlIik7CiAgaWYgKCFGVUxMX0hBU0gudGVzdChzb3VyY2VT",
+        "aGEpIHx8ICFGVUxMX0hBU0gudGVzdChzb3VyY2VUcmVlSGFzaCkgfHwgc291cmNlU2hhLmxlbmd0aCAhPT0gc291cmNlVHJlZUhhc2gubGVuZ3RoKSB7CiAg",
+        "ICBmYWlsKCJIRUFEIGNvbW1pdC90cmVlIGhhc2hlcyBhcmUgaW52YWxpZCIpOwogIH0KICBjb25zdCBsaXN0aW5nQnl0ZXMgPSBydW5HaXQocm9vdCwgWyJs",
+        "cy10cmVlIiwgIi1yIiwgIi16IiwgIi0tZnVsbC10cmVlIiwgc291cmNlU2hhXSkuc3Rkb3V0OwogIGNvbnN0IHJlY29yZHMgPSBzdHJpY3RVdGY4KGxpc3Rp",
+        "bmdCeXRlcywgIkdpdCB0cmVlIGxpc3RpbmciKS5zcGxpdCgiXDAiKTsKICBpZiAocmVjb3Jkcy5wb3AoKSAhPT0gIiIpIGZhaWwoIkdpdCB0cmVlIGxpc3Rp",
+        "bmcgaGFzIG5vIHRlcm1pbmFsIE5VTCIpOwogIGlmIChyZWNvcmRzLmxlbmd0aCA+IE1BWF9CVUlMRF9JTlBVVF9FTlRSSUVTX1YxKSBmYWlsKCJQaW5uZWQg",
+        "aW5wdXQgc2V0IGV4Y2VlZHMgdGhlIGVudHJ5IGNhcCIpOwogIGNvbnN0IGVudHJpZXMgPSByZWNvcmRzLm1hcCgocmVjb3JkKTogUGlubmVkRW50cnkgPT4g",
+        "ewogICAgY29uc3QgdGFiID0gcmVjb3JkLmluZGV4T2YoIlx0Iik7CiAgICBjb25zdCBoZWFkZXIgPSB0YWIgPCAwID8gW10gOiByZWNvcmQuc2xpY2UoMCwg",
+        "dGFiKS5zcGxpdCgiICIpOwogICAgY29uc3QgbG9jYXRvciA9IHRhYiA8IDAgPyAiIiA6IGNhbm9uaWNhbExvY2F0b3IocmVjb3JkLnNsaWNlKHRhYiArIDEp",
+        "KTsKICAgIGlmICgKICAgICAgaGVhZGVyLmxlbmd0aCAhPT0gMwogICAgICB8fCAoaGVhZGVyWzBdICE9PSAiMTAwNjQ0IiAmJiBoZWFkZXJbMF0gIT09ICIx",
+        "MDA3NTUiKQogICAgICB8fCBoZWFkZXJbMV0gIT09ICJibG9iIgogICAgICB8fCAhRlVMTF9IQVNILnRlc3QoaGVhZGVyWzJdID8/ICIiKQogICAgKSBmYWls",
+        "KGB1bnN1cHBvcnRlZCB0cmFja2VkIEdpdCBlbnRyeSAke3JlY29yZC5zbGljZSgwLCAyMDApfWApOwogICAgcmV0dXJuIE9iamVjdC5mcmVlemUoeyBsb2Nh",
+        "dG9yLCBnaXRNb2RlOiBoZWFkZXJbMF0sIGdpdEJsb2JIYXNoOiBoZWFkZXJbMl0hIH0pOwogIH0pLnNvcnQoKGxlZnQsIHJpZ2h0KSA9PiBjb21wYXJlQnl0",
+        "ZXMobGVmdC5sb2NhdG9yLCByaWdodC5sb2NhdG9yKSk7CiAgY29uc3QgcmF3ID0gbmV3IFNldDxzdHJpbmc+KCk7CiAgY29uc3QgZm9sZGVkID0gbmV3IFNl",
+        "dDxzdHJpbmc+KCk7CiAgZm9yIChjb25zdCBlbnRyeSBvZiBlbnRyaWVzKSB7CiAgICBjb25zdCBmb2xkID0gZW50cnkubG9jYXRvci5ub3JtYWxpemUoIk5G",
+        "QyIpLnRvTG9jYWxlTG93ZXJDYXNlKCJlbi1VUyIpOwogICAgaWYgKHJhdy5oYXMoZW50cnkubG9jYXRvcikgfHwgZm9sZGVkLmhhcyhmb2xkKSkgZmFpbChg",
+        "Y29sbGlkaW5nIHBpbm5lZCBsb2NhdG9yICR7ZW50cnkubG9jYXRvcn1gKTsKICAgIHJhdy5hZGQoZW50cnkubG9jYXRvcik7CiAgICBmb2xkZWQuYWRkKGZv",
+        "bGQpOwogIH0KICBjb25zdCBibG9icyA9IHJlYWRQaW5uZWRCbG9icyhyb290LCBlbnRyaWVzKTsKICBsZXQgdG90YWxCeXRlcyA9IDA7CiAgZm9yIChjb25z",
+        "dCBlbnRyeSBvZiBlbnRyaWVzKSB7CiAgICB0b3RhbEJ5dGVzICs9IGJsb2JzLmdldChlbnRyeS5naXRCbG9iSGFzaCkhLmxlbmd0aDsKICAgIGlmICh0b3Rh",
+        "bEJ5dGVzID4gTUFYX0JVSUxEX1RPVEFMX0JZVEVTX1YxKSBmYWlsKCJQaW5uZWQgaW5wdXQgc2V0IGV4Y2VlZHMgdGhlIHRvdGFsLWJ5dGUgY2FwIik7CiAg",
+        "fQogIGNvbnN0IGJvZHkgPSBPYmplY3QuZnJlZXplKHsKICAgIHNjaGVtYTogInNldGZhcm0uaW50ZXJuYWwtcHJvZHVjdGlvbi1waW5uZWQtYnVpbGQtaW5w",
+        "dXQtc2V0LnYxIiBhcyBjb25zdCwKICAgIHNvdXJjZVNoYSwKICAgIHNvdXJjZVRyZWVIYXNoLAogICAgZW50cmllcywKICB9KTsKICByZXR1cm4gT2JqZWN0",
+        "LmZyZWV6ZSh7IC4uLmJvZHksIGJ1aWxkSW5wdXRTZXRIYXNoOiBoYXNoQ2Fub25pY2FsSnNvbihib2R5KSwgYmxvYnMgfSk7Cn0K",
+      ].join("") },
+      { name: "expectedTopology", bytes: 1732, sha256: "f4d16a2330e1ade4e2a3601ec33c91a56d247e0a0a3688546426cffe538f1233", base64: [
+        "ZnVuY3Rpb24gZXhwZWN0ZWRUb3BvbG9neShwaW5uZWQ6IFBpbm5lZFNldCk6IFJlYWRvbmx5PHsgb3V0cHV0czogcmVhZG9ubHkgc3RyaW5nW107IGRpcmVj",
+        "dG9yaWVzOiByZWFkb25seSBzdHJpbmdbXSB9PiB7CiAgY29uc3Qgb3V0cHV0czogc3RyaW5nW10gPSBbXTsKICBmb3IgKGNvbnN0IGVudHJ5IG9mIHBpbm5l",
+        "ZC5lbnRyaWVzKSB7CiAgICBjb25zdCBsb2NhdG9yID0gZW50cnkubG9jYXRvcjsKICAgIGlmIChsb2NhdG9yLnN0YXJ0c1dpdGgoInNyYy8iKSAmJiBsb2Nh",
+        "dG9yLmVuZHNXaXRoKCIudHMiKSAmJiAhL1wuKD86ZHxtfGMpXC50cyQvLnRlc3QobG9jYXRvcikpIHsKICAgICAgb3V0cHV0cy5wdXNoKGBkaXN0LyR7bG9j",
+        "YXRvci5zbGljZSg0LCAtMyl9LmpzYCk7CiAgICB9IGVsc2UgaWYgKGxvY2F0b3IgPT09ICJzcmMvc2VydmVyL2luZGV4Lmh0bWwiIHx8IGxvY2F0b3IgPT09",
+        "ICJzcmMvaW5zdGFsbGVyL2NvbXBhdC1ydWxlcy5qc29uIikgewogICAgICBvdXRwdXRzLnB1c2goYGRpc3QvJHtsb2NhdG9yLnNsaWNlKDQpfWApOwogICAg",
+        "fSBlbHNlIGlmICgvXnNyY1wvaW5zdGFsbGVyXC9wcm9tcHRzXC9bXi9dK1wubWQkLy50ZXN0KGxvY2F0b3IpIHx8IC9ec3JjXC9pbnN0YWxsZXJcL3N0ZXBz",
+        "XC8uK1wubWQkLy50ZXN0KGxvY2F0b3IpKSB7CiAgICAgIG91dHB1dHMucHVzaChgZGlzdC8ke2xvY2F0b3Iuc2xpY2UoNCl9YCk7CiAgICB9CiAgfQogIG91",
+        "dHB1dHMuc29ydChjb21wYXJlQnl0ZXMpOwogIGNvbnN0IHNlZW4gPSBuZXcgU2V0PHN0cmluZz4oKTsKICBjb25zdCBmb2xkZWQgPSBuZXcgU2V0PHN0cmlu",
+        "Zz4oKTsKICBmb3IgKGNvbnN0IGxvY2F0b3Igb2Ygb3V0cHV0cykgewogICAgY2Fub25pY2FsTG9jYXRvcihsb2NhdG9yKTsKICAgIGNvbnN0IGZvbGQgPSBs",
+        "b2NhdG9yLm5vcm1hbGl6ZSgiTkZDIikudG9Mb2NhbGVMb3dlckNhc2UoImVuLVVTIik7CiAgICBpZiAoc2Vlbi5oYXMobG9jYXRvcikgfHwgZm9sZGVkLmhh",
+        "cyhmb2xkKSkgZmFpbChgY29sbGlkaW5nIGV4cGVjdGVkIG91dHB1dCAke2xvY2F0b3J9YCk7CiAgICBzZWVuLmFkZChsb2NhdG9yKTsKICAgIGZvbGRlZC5h",
+        "ZGQoZm9sZCk7CiAgfQogIGlmICghc2Vlbi5oYXMoImRpc3QvY2xpL2NsaS5qcyIpKSBmYWlsKCJleHBlY3RlZCBvdXRwdXQgdG9wb2xvZ3kgbGFja3MgdGhl",
+        "IENMSSIpOwogIGNvbnN0IGRpcmVjdG9yaWVzID0gbmV3IFNldDxzdHJpbmc+KCk7CiAgZm9yIChjb25zdCBsb2NhdG9yIG9mIG91dHB1dHMpIHsKICAgIGxl",
+        "dCBwYXJlbnQgPSBwYXRoLnBvc2l4LmRpcm5hbWUobG9jYXRvcik7CiAgICB3aGlsZSAocGFyZW50ICE9PSAiZGlzdCIgJiYgcGFyZW50ICE9PSAiLiIpIHsK",
+        "ICAgICAgZGlyZWN0b3JpZXMuYWRkKHBhcmVudCk7CiAgICAgIHBhcmVudCA9IHBhdGgucG9zaXguZGlybmFtZShwYXJlbnQpOwogICAgfQogIH0KICBpZiAo",
+        "b3V0cHV0cy5sZW5ndGggKyBkaXJlY3Rvcmllcy5zaXplICsgNCA+IE1BWF9CVUlMRF9PVVRQVVRfRU5UUklFU19WMSkgewogICAgZmFpbCgiZGVyaXZlZCBv",
+        "dXRwdXQgZmlsZS9kaXJlY3RvcnkgY2xvc3VyZSBleGNlZWRzIHRoZSBjb21iaW5lZCBvdXRwdXQtZW50cnkgY2FwIik7CiAgfQogIHJldHVybiBPYmplY3Qu",
+        "ZnJlZXplKHsgb3V0cHV0czogT2JqZWN0LmZyZWV6ZShvdXRwdXRzKSwgZGlyZWN0b3JpZXM6IE9iamVjdC5mcmVlemUoWy4uLmRpcmVjdG9yaWVzXS5zb3J0",
+        "KGNvbXBhcmVCeXRlcykpIH0pOwp9Cg==",
+      ].join("") },
+      { name: "strictObject", bytes: 742, sha256: "eec95003fc189393e7ea94547f9d107c40cfa6007642b8f4d31d95bf529e158d", base64: [
+        "ZnVuY3Rpb24gc3RyaWN0T2JqZWN0KAogIGJ5dGVzOiBCdWZmZXIsCiAga2V5czogcmVhZG9ubHkgc3RyaW5nW10sCiAgbGFiZWw6IHN0cmluZywKICBwcmV0",
+        "dHk6IGJvb2xlYW4sCik6IFJlY29yZDxzdHJpbmcsIHVua25vd24+IHsKICBjb25zdCB0ZXh0ID0gc3RyaWN0VXRmOChieXRlcywgbGFiZWwpOwogIGxldCB2",
+        "YWx1ZTogdW5rbm93bjsKICB0cnkgewogICAgdmFsdWUgPSBKU09OLnBhcnNlKHRleHQpOwogIH0gY2F0Y2ggewogICAgcmV0dXJuIGZhaWwoYCR7bGFiZWx9",
+        "IGlzIG5vdCBKU09OYCk7CiAgfQogIGlmICghdmFsdWUgfHwgdHlwZW9mIHZhbHVlICE9PSAib2JqZWN0IiB8fCBBcnJheS5pc0FycmF5KHZhbHVlKSkgZmFp",
+        "bChgJHtsYWJlbH0gaXMgbm90IG9uZSBvYmplY3RgKTsKICBjb25zdCByZWNvcmQgPSB2YWx1ZSBhcyBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPjsKICBpZiAo",
+        "Y2Fub25pY2FsQ29tcGFyYWJsZShPYmplY3Qua2V5cyhyZWNvcmQpKSAhPT0gY2Fub25pY2FsQ29tcGFyYWJsZShrZXlzKSkgZmFpbChgJHtsYWJlbH0gaGFz",
+        "IHVua25vd24sIG1pc3NpbmcsIG9yIHJlb3JkZXJlZCBmaWVsZHNgKTsKICBjb25zdCBleGFjdCA9IGAke0pTT04uc3RyaW5naWZ5KHJlY29yZCwgbnVsbCwg",
+        "cHJldHR5ID8gMiA6IHVuZGVmaW5lZCl9XG5gOwogIGlmICh0ZXh0ICE9PSBleGFjdCkgZmFpbChgJHtsYWJlbH0gcmF3IGJ5dGVzIGFyZSBub3QgZXhhY3Rg",
+        "KTsKICByZXR1cm4gcmVjb3JkOwp9Cg==",
+      ].join("") },
+      { name: "expectedManifest", bytes: 968, sha256: "e7ee417b663ee741e93d8bbb6ef35aa0879d7e0997820831bab083293a27dc3c", base64: [
+        "ZnVuY3Rpb24gZXhwZWN0ZWRNYW5pZmVzdChzb3VyY2U6IFNvdXJjZU9ic2VydmF0aW9uKTogUmVjb3JkPHN0cmluZywgdW5rbm93bj4gewogIGNvbnN0IGVu",
+        "dHJ5ID0gc291cmNlLnBpbm5lZC5lbnRyaWVzLmZpbmQoKGNhbmRpZGF0ZSkgPT4gY2FuZGlkYXRlLmxvY2F0b3IgPT09ICJzY3JpcHRzL3N0aXRjaC10by1q",
+        "c3gubWpzIik7CiAgaWYgKCFlbnRyeSB8fCBlbnRyeS5naXRNb2RlICE9PSAiMTAwNjQ0IikgZmFpbCgiUGlubmVkIFN0aXRjaCBjb252ZXJ0ZXIgaXMgbWlz",
+        "c2luZyBvciBleGVjdXRhYmxlIik7CiAgY29uc3QgYnl0ZXMgPSBzb3VyY2UucGlubmVkLmJsb2JzLmdldChlbnRyeS5naXRCbG9iSGFzaCkhOwogIGlmIChi",
+        "eXRlcy5sZW5ndGggPCAxIHx8IGJ5dGVzLmxlbmd0aCA+IE1BWF9TVElUQ0hfQ09OVkVSVEVSX0JZVEVTX1YxKSBmYWlsKCJQaW5uZWQgU3RpdGNoIGNvbnZl",
+        "cnRlciBoYXMgaW52YWxpZCBzaXplIik7CiAgc3RyaWN0VXRmOChieXRlcywgIlBpbm5lZCBTdGl0Y2ggY29udmVydGVyIik7CiAgcmV0dXJuIHsKICAgIHNj",
+        "aGVtYTogInNldGZhcm0ucGxhdGZvcm0tcmVsZWFzZS1tYW5pZmVzdC52MSIsCiAgICByZWxlYXNlU2hhOiBzb3VyY2UucGlubmVkLnNvdXJjZVNoYSwKICAg",
+        "IGJyYW5jaDogIm1haW4iLAogICAgZGlydHk6IGZhbHNlLAogICAgc3RpdGNoQ29udmVydGVyOiB7CiAgICAgIGNvbnZlcnRlcklkOiAic2V0ZmFybS5zdGl0",
+        "Y2gtdG8tanN4IiwKICAgICAgc291cmNlOiB7CiAgICAgICAgc2NoZW1hOiAic2V0ZmFybS5zb3VyY2UtYXJ0aWZhY3QtcmVmLnYxIiwKICAgICAgICBoYXNo",
+        "OiBzaGEyNTYoYnl0ZXMpLAogICAgICAgIG1lZGlhVHlwZTogInRleHQvamF2YXNjcmlwdCIsCiAgICAgICAgbG9jYXRvcjogInNjcmlwdHMvc3RpdGNoLXRv",
+        "LWpzeC5tanMiLAogICAgICAgIGJ5dGVMZW5ndGg6IGJ5dGVzLmxlbmd0aCwKICAgICAgfSwKICAgIH0sCiAgfTsKfQo=",
+      ].join("") },
+      { name: "observeArtifacts", bytes: 9759, sha256: "4075707ae658f4d9314ad86b9cc5a3c51300a00f930ab1039d9daa76915295ec", base64: [
+        "ZnVuY3Rpb24gb2JzZXJ2ZUFydGlmYWN0cyhyb290OiBzdHJpbmcsIHNvdXJjZTogU291cmNlT2JzZXJ2YXRpb24pOiBSZWFkb25seTx7CiAgYnVpbGRJbmZv",
+        "OiBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPjsKICBvdXRwdXRUcmVlOiBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPjsKICBtYW5pZmVzdDogUmVjb3JkPHN0cmlu",
+        "ZywgdW5rbm93bj47CiAgYnVpbGRIYXNoOiBzdHJpbmc7CiAgYnl0ZXM6IHJlYWRvbmx5IEJ1ZmZlcltdOwogIGZpbGVTbmFwc2hvdHM6IHJlYWRvbmx5IEZp",
+        "bGVTbmFwc2hvdFtdOwogIGRpc3Q6IERpcmVjdG9yeVNuYXBzaG90OwogIGRpcmVjdG9yeUlkZW50aXRpZXM6IHJlYWRvbmx5IFJlYWRvbmx5PHsgbG9jYXRv",
+        "cjogc3RyaW5nOyBzbmFwc2hvdDogRGlyZWN0b3J5U25hcHNob3QgfT5bXTsKfT4gewogIGNvbnN0IGRpc3RQYXRoID0gcGF0aC5qb2luKHJvb3QsICJkaXN0",
+        "Iik7CiAgY29uc3QgZGlzdCA9IGRpcmVjdG9yeVNuYXBzaG90KGRpc3RQYXRoLCAiZmluYWxpemVkIGRpc3QiLCBzb3VyY2UucmVwb3NpdG9yeS5kZXZpY2Up",
+        "OwogIGlmIChkaXN0LmlkZW50aXR5Lm1vZGUgIT09IDBvNzU1KSBmYWlsKCJmaW5hbGl6ZWQgZGlzdCBoYXMgd3JvbmcgbW9kZSIpOwogIGxldCBlbnRyeUNv",
+        "dW50ID0gMDsKICBsZXQgdG90YWxCeXRlcyA9IDA7CiAgY29uc3QgZmlsZXM6IHN0cmluZ1tdID0gW107CiAgY29uc3QgZW51bWVyYXRlZEZpbGVzID0gbmV3",
+        "IE1hcDxzdHJpbmcsIFN0YWJsZVJlZ3VsYXI+KCk7CiAgY29uc3QgZGlyZWN0b3JpZXM6IHN0cmluZ1tdID0gW107CiAgY29uc3QgZGlyZWN0b3J5SWRlbnRp",
+        "dGllczogQXJyYXk8UmVhZG9ubHk8eyBsb2NhdG9yOiBzdHJpbmc7IHNuYXBzaG90OiBEaXJlY3RvcnlTbmFwc2hvdCB9Pj4gPSBbXTsKICBmdW5jdGlvbiB2",
+        "aXNpdChkaXJlY3RvcnlQYXRoOiBzdHJpbmcsIHJlbGF0aXZlOiBzdHJpbmcsIGRlcHRoOiBudW1iZXIpOiB2b2lkIHsKICAgIGlmIChkZXB0aCA+IE1BWF9C",
+        "VUlMRF9UUkVFX0RFUFRIX1YxKSBmYWlsKCJmaW5hbGl6ZWQgZGlzdCBleGNlZWRzIGRlcHRoIGNhcCIpOwogICAgZm9yIChjb25zdCBuYW1lIG9mIHJlYWRk",
+        "aXJTeW5jKGRpcmVjdG9yeVBhdGgpLnNvcnQoY29tcGFyZUJ5dGVzKSkgewogICAgICBlbnRyeUNvdW50ICs9IDE7CiAgICAgIGlmIChlbnRyeUNvdW50ID4g",
+        "TUFYX0JVSUxEX09VVFBVVF9FTlRSSUVTX1YxKSBmYWlsKCJmaW5hbGl6ZWQgZGlzdCBleGNlZWRzIGVudHJ5IGNhcCIpOwogICAgICBjb25zdCBsb2NhdG9y",
+        "ID0gcmVsYXRpdmUgPyBgJHtyZWxhdGl2ZX0vJHtuYW1lfWAgOiBgZGlzdC8ke25hbWV9YDsKICAgICAgY2Fub25pY2FsTG9jYXRvcihsb2NhdG9yKTsKICAg",
+        "ICAgY29uc3QgY2hpbGQgPSBwYXRoLmpvaW4oZGlyZWN0b3J5UGF0aCwgbmFtZSk7CiAgICAgIGNvbnN0IHN0YXRzID0gbHN0YXRTeW5jKGNoaWxkLCB7IGJp",
+        "Z2ludDogdHJ1ZSB9KTsKICAgICAgaWYgKHN0YXRzLmRldiAhPT0gc291cmNlLnJlcG9zaXRvcnkuZGV2aWNlIHx8IHN0YXRzLmlzU3ltYm9saWNMaW5rKCkp",
+        "IGZhaWwoYGludmFsaWQgZmluYWxpemVkIGRpc3QgZW50cnkgJHtsb2NhdG9yfWApOwogICAgICBpZiAoc3RhdHMuaXNEaXJlY3RvcnkoKSkgewogICAgICAg",
+        "IGNvbnN0IGlkZW50aXR5ID0gZGlyZWN0b3J5U25hcHNob3QoY2hpbGQsIGxvY2F0b3IsIHNvdXJjZS5yZXBvc2l0b3J5LmRldmljZSk7CiAgICAgICAgaWYg",
+        "KGlkZW50aXR5LmlkZW50aXR5Lm1vZGUgIT09IDBvNzU1KSBmYWlsKGB3cm9uZyBmaW5hbGl6ZWQgZGlyZWN0b3J5IG1vZGUgJHtsb2NhdG9yfWApOwogICAg",
+        "ICAgIGRpcmVjdG9yaWVzLnB1c2gobG9jYXRvcik7CiAgICAgICAgZGlyZWN0b3J5SWRlbnRpdGllcy5wdXNoKE9iamVjdC5mcmVlemUoeyBsb2NhdG9yLCBz",
+        "bmFwc2hvdDogaWRlbnRpdHkgfSkpOwogICAgICAgIHZpc2l0KGNoaWxkLCBsb2NhdG9yLCBkZXB0aCArIDEpOwogICAgICB9IGVsc2UgaWYgKHN0YXRzLmlz",
+        "RmlsZSgpKSB7CiAgICAgICAgaWYgKHN0YXRzLm5saW5rICE9PSAxbiB8fCBzdGF0cy5zaXplID4gQmlnSW50KE1BWF9CVUlMRF9GSUxFX0JZVEVTX1YxKSkg",
+        "ZmFpbChgaW52YWxpZCBmaW5hbGl6ZWQgZmlsZSAke2xvY2F0b3J9YCk7CiAgICAgICAgY29uc3Qgb2JzZXJ2ZWQgPSByZWFkU3RhYmxlUmVndWxhcihjaGls",
+        "ZCwgTUFYX0JVSUxEX0ZJTEVfQllURVNfVjEsIHNvdXJjZS5yZXBvc2l0b3J5LmRldmljZSk7CiAgICAgICAgdG90YWxCeXRlcyArPSBvYnNlcnZlZC5ieXRl",
+        "cy5sZW5ndGg7CiAgICAgICAgaWYgKHRvdGFsQnl0ZXMgPiBNQVhfQlVJTERfVE9UQUxfQllURVNfVjEpIGZhaWwoImZpbmFsaXplZCBkaXN0IGV4Y2VlZHMg",
+        "dG90YWwtYnl0ZSBjYXAiKTsKICAgICAgICBmaWxlcy5wdXNoKGxvY2F0b3IpOwogICAgICAgIGVudW1lcmF0ZWRGaWxlcy5zZXQobG9jYXRvciwgb2JzZXJ2",
+        "ZWQpOwogICAgICB9IGVsc2UgZmFpbChgc3BlY2lhbCBmaW5hbGl6ZWQgZGlzdCBlbnRyeSAke2xvY2F0b3J9YCk7CiAgICB9CiAgfQogIHZpc2l0KGRpc3RQ",
+        "YXRoLCAiIiwgMCk7CiAgZGlyZWN0b3JpZXMuc29ydChjb21wYXJlQnl0ZXMpOwogIGlmIChjYW5vbmljYWxDb21wYXJhYmxlKGRpcmVjdG9yaWVzKSAhPT0g",
+        "Y2Fub25pY2FsQ29tcGFyYWJsZShzb3VyY2UuZGlyZWN0b3JpZXMpKSBmYWlsKCJmaW5hbGl6ZWQgZGlyZWN0b3J5IHRvcG9sb2d5IGlzIG5vdCBleGFjdCIp",
+        "OwogIGNvbnN0IGV4cGVjdGVkRmlsZXMgPSBbLi4uc291cmNlLm91dHB1dHMsICJkaXN0L0JVSUxEX0lORk8uanNvbiIsICJkaXN0L1BMQVRGT1JNX0JVSUxE",
+        "X09VVFBVVF9UUkVFLmpzb24iLCAiZGlzdC9QTEFURk9STV9SRUxFQVNFX01BTklGRVNULmpzb24iXS5zb3J0KGNvbXBhcmVCeXRlcyk7CiAgZmlsZXMuc29y",
+        "dChjb21wYXJlQnl0ZXMpOwogIGlmIChjYW5vbmljYWxDb21wYXJhYmxlKGZpbGVzKSAhPT0gY2Fub25pY2FsQ29tcGFyYWJsZShleHBlY3RlZEZpbGVzKSkg",
+        "ZmFpbCgiZmluYWxpemVkIGZpbGUgdG9wb2xvZ3kgaXMgbm90IGV4YWN0Iik7CgogIGNvbnN0IG9yZGluYXJ5U25hcHNob3RzOiBGaWxlU25hcHNob3RbXSA9",
+        "IFtdOwogIGNvbnN0IG91dHB1dEVudHJpZXMgPSBzb3VyY2Uub3V0cHV0cy5tYXAoKGxvY2F0b3IpID0+IHsKICAgIGNvbnN0IG9ic2VydmVkID0gcmVhZFN0",
+        "YWJsZVJlZ3VsYXIocGF0aC5qb2luKHJvb3QsIC4uLmxvY2F0b3Iuc3BsaXQoIi8iKSksIE1BWF9CVUlMRF9GSUxFX0JZVEVTX1YxLCBzb3VyY2UucmVwb3Np",
+        "dG9yeS5kZXZpY2UpOwogICAgY29uc3QgZW51bWVyYXRlZCA9IGVudW1lcmF0ZWRGaWxlcy5nZXQobG9jYXRvcik7CiAgICBpZiAoIWVudW1lcmF0ZWQgfHwg",
+        "IXNhbWVSZWd1bGFyTWV0YWRhdGEob2JzZXJ2ZWQuc3RhdHMsIGVudW1lcmF0ZWQuc3RhdHMpIHx8ICFvYnNlcnZlZC5ieXRlcy5lcXVhbHMoZW51bWVyYXRl",
+        "ZC5ieXRlcykpIHsKICAgICAgZmFpbChgb3JkaW5hcnkgb3V0cHV0IGNoYW5nZWQgYWZ0ZXIgZW51bWVyYXRpb24gJHtsb2NhdG9yfWApOwogICAgfQogICAg",
+        "Y29uc3QgZXhwZWN0ZWRNb2RlID0gbG9jYXRvciA9PT0gImRpc3QvY2xpL2NsaS5qcyIgPyAwbzc1NSA6IDBvNjQ0OwogICAgaWYgKG9ic2VydmVkLm1vZGUg",
+        "IT09IGV4cGVjdGVkTW9kZSkgZmFpbChgd3Jvbmcgb3JkaW5hcnkgb3V0cHV0IG1vZGUgJHtsb2NhdG9yfWApOwogICAgb3JkaW5hcnlTbmFwc2hvdHMucHVz",
+        "aChPYmplY3QuZnJlZXplKHsgbG9jYXRvciwgb2JzZXJ2ZWQgfSkpOwogICAgcmV0dXJuIE9iamVjdC5mcmVlemUoeyBsb2NhdG9yLCBtb2RlOiBleHBlY3Rl",
+        "ZE1vZGUsIGJ5dGVMZW5ndGg6IG9ic2VydmVkLmJ5dGVzLmxlbmd0aCwgc2hhMjU2OiBzaGEyNTYob2JzZXJ2ZWQuYnl0ZXMpIH0pOwogIH0pOwoKICBjb25z",
+        "dCBpbmZvT2JzZXJ2ZWQgPSByZWFkU3RhYmxlUmVndWxhcihwYXRoLmpvaW4oZGlzdFBhdGgsICJCVUlMRF9JTkZPLmpzb24iKSwgTUFYX0JVSUxEX0ZJTEVf",
+        "QllURVNfVjEsIHNvdXJjZS5yZXBvc2l0b3J5LmRldmljZSk7CiAgY29uc3QgZW51bWVyYXRlZEluZm8gPSBlbnVtZXJhdGVkRmlsZXMuZ2V0KCJkaXN0L0JV",
+        "SUxEX0lORk8uanNvbiIpOwogIGlmICghZW51bWVyYXRlZEluZm8gfHwgIXNhbWVSZWd1bGFyTWV0YWRhdGEoaW5mb09ic2VydmVkLnN0YXRzLCBlbnVtZXJh",
+        "dGVkSW5mby5zdGF0cykgfHwgIWluZm9PYnNlcnZlZC5ieXRlcy5lcXVhbHMoZW51bWVyYXRlZEluZm8uYnl0ZXMpKSB7CiAgICBmYWlsKCJCVUlMRF9JTkZP",
+        "IGNoYW5nZWQgYWZ0ZXIgZW51bWVyYXRpb24iKTsKICB9CiAgaWYgKGluZm9PYnNlcnZlZC5tb2RlICE9PSAwbzQ0NCkgZmFpbCgiQlVJTERfSU5GTyBoYXMg",
+        "d3JvbmcgbW9kZSIpOwogIGNvbnN0IGJ1aWxkSW5mbyA9IHN0cmljdE9iamVjdChpbmZvT2JzZXJ2ZWQuYnl0ZXMsIFsic2hhIiwgInNob3J0U2hhIiwgImJy",
+        "YW5jaCIsICJkaXJ0eSIsICJwYWNrYWdlVmVyc2lvbiIsICJkaXNwbGF5VmVyc2lvbiIsICJidWlsdEF0Il0sICJCVUlMRF9JTkZPIiwgdHJ1ZSk7CiAgaWYg",
+        "KAogICAgYnVpbGRJbmZvLnNoYSAhPT0gc291cmNlLnBpbm5lZC5zb3VyY2VTaGEKICAgIHx8IGJ1aWxkSW5mby5zaG9ydFNoYSAhPT0gc291cmNlLnBpbm5l",
+        "ZC5zb3VyY2VTaGEuc2xpY2UoMCwgOCkKICAgIHx8IGJ1aWxkSW5mby5icmFuY2ggIT09ICJtYWluIgogICAgfHwgYnVpbGRJbmZvLmRpcnR5ICE9PSBmYWxz",
+        "ZQogICAgfHwgYnVpbGRJbmZvLnBhY2thZ2VWZXJzaW9uICE9PSBzb3VyY2UucGFja2FnZVZlcnNpb24KICAgIHx8IGJ1aWxkSW5mby5kaXNwbGF5VmVyc2lv",
+        "biAhPT0gYCR7c291cmNlLnBhY2thZ2VWZXJzaW9ufSske3NvdXJjZS5waW5uZWQuc291cmNlU2hhLnNsaWNlKDAsIDgpfWAKICAgIHx8IHR5cGVvZiBidWls",
+        "ZEluZm8uYnVpbHRBdCAhPT0gInN0cmluZyIKICAgIHx8ICFSRkMzMzM5X01JTExJUy50ZXN0KGJ1aWxkSW5mby5idWlsdEF0KQogICAgfHwgbmV3IERhdGUo",
+        "YnVpbGRJbmZvLmJ1aWx0QXQpLnRvSVNPU3RyaW5nKCkgIT09IGJ1aWxkSW5mby5idWlsdEF0CiAgKSBmYWlsKCJCVUlMRF9JTkZPIGZpZWxkcyBhcmUgaW52",
+        "YWxpZCIpOwoKICBjb25zdCBvdXRwdXRPYnNlcnZlZCA9IHJlYWRTdGFibGVSZWd1bGFyKHBhdGguam9pbihkaXN0UGF0aCwgIlBMQVRGT1JNX0JVSUxEX09V",
+        "VFBVVF9UUkVFLmpzb24iKSwgTUFYX0JVSUxEX0ZJTEVfQllURVNfVjEsIHNvdXJjZS5yZXBvc2l0b3J5LmRldmljZSk7CiAgY29uc3QgZW51bWVyYXRlZE91",
+        "dHB1dFRyZWUgPSBlbnVtZXJhdGVkRmlsZXMuZ2V0KCJkaXN0L1BMQVRGT1JNX0JVSUxEX09VVFBVVF9UUkVFLmpzb24iKTsKICBpZiAoIWVudW1lcmF0ZWRP",
+        "dXRwdXRUcmVlIHx8ICFzYW1lUmVndWxhck1ldGFkYXRhKG91dHB1dE9ic2VydmVkLnN0YXRzLCBlbnVtZXJhdGVkT3V0cHV0VHJlZS5zdGF0cykgfHwgIW91",
+        "dHB1dE9ic2VydmVkLmJ5dGVzLmVxdWFscyhlbnVtZXJhdGVkT3V0cHV0VHJlZS5ieXRlcykpIHsKICAgIGZhaWwoIm91dHB1dCB0cmVlIGNoYW5nZWQgYWZ0",
+        "ZXIgZW51bWVyYXRpb24iKTsKICB9CiAgaWYgKG91dHB1dE9ic2VydmVkLm1vZGUgIT09IDBvNDQ0KSBmYWlsKCJvdXRwdXQgdHJlZSBoYXMgd3JvbmcgbW9k",
+        "ZSIpOwogIGNvbnN0IG91dHB1dFRyZWUgPSBzdHJpY3RPYmplY3Qob3V0cHV0T2JzZXJ2ZWQuYnl0ZXMsIFsic2NoZW1hIiwgInNvdXJjZVNoYSIsICJzb3Vy",
+        "Y2VUcmVlSGFzaCIsICJlbnRyaWVzIiwgIm91dHB1dFRyZWVIYXNoIl0sICJvdXRwdXQgdHJlZSIsIGZhbHNlKTsKICBpZiAoCiAgICBvdXRwdXRUcmVlLnNj",
+        "aGVtYSAhPT0gInNldGZhcm0ucGxhdGZvcm0tYnVpbGQtb3V0cHV0LXRyZWUudjEiCiAgICB8fCBvdXRwdXRUcmVlLnNvdXJjZVNoYSAhPT0gc291cmNlLnBp",
+        "bm5lZC5zb3VyY2VTaGEKICAgIHx8IG91dHB1dFRyZWUuc291cmNlVHJlZUhhc2ggIT09IHNvdXJjZS5waW5uZWQuc291cmNlVHJlZUhhc2gKICAgIHx8ICFB",
+        "cnJheS5pc0FycmF5KG91dHB1dFRyZWUuZW50cmllcykKICAgIHx8IGNhbm9uaWNhbENvbXBhcmFibGUob3V0cHV0VHJlZS5lbnRyaWVzKSAhPT0gY2Fub25p",
+        "Y2FsQ29tcGFyYWJsZShvdXRwdXRFbnRyaWVzKQogICAgfHwgdHlwZW9mIG91dHB1dFRyZWUub3V0cHV0VHJlZUhhc2ggIT09ICJzdHJpbmciCiAgICB8fCAh",
+        "U0hBMjU2LnRlc3Qob3V0cHV0VHJlZS5vdXRwdXRUcmVlSGFzaCkKICApIGZhaWwoIm91dHB1dCB0cmVlIGZpZWxkcyBvciBlbnRyaWVzIGFyZSBpbnZhbGlk",
+        "Iik7CiAgZm9yIChjb25zdCBlbnRyeSBvZiBvdXRwdXRUcmVlLmVudHJpZXMpIHsKICAgIGlmICgKICAgICAgIWVudHJ5CiAgICAgIHx8IHR5cGVvZiBlbnRy",
+        "eSAhPT0gIm9iamVjdCIKICAgICAgfHwgQXJyYXkuaXNBcnJheShlbnRyeSkKICAgICAgfHwgY2Fub25pY2FsQ29tcGFyYWJsZShPYmplY3Qua2V5cyhlbnRy",
+        "eSBhcyBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPikpCiAgICAgICAgIT09IGNhbm9uaWNhbENvbXBhcmFibGUoWyJsb2NhdG9yIiwgIm1vZGUiLCAiYnl0ZUxl",
+        "bmd0aCIsICJzaGEyNTYiXSkKICAgICkgZmFpbCgib3V0cHV0IHRyZWUgZW50cnkgaGFzIHVua25vd24sIG1pc3NpbmcsIG9yIHJlb3JkZXJlZCBmaWVsZHMi",
+        "KTsKICB9CiAgY29uc3Qgb3V0cHV0UHJvamVjdGlvbiA9IHsKICAgIHNjaGVtYTogb3V0cHV0VHJlZS5zY2hlbWEsCiAgICBzb3VyY2VTaGE6IG91dHB1dFRy",
+        "ZWUuc291cmNlU2hhLAogICAgc291cmNlVHJlZUhhc2g6IG91dHB1dFRyZWUuc291cmNlVHJlZUhhc2gsCiAgICBlbnRyaWVzOiBvdXRwdXRUcmVlLmVudHJp",
+        "ZXMsCiAgfTsKICBpZiAob3V0cHV0VHJlZS5vdXRwdXRUcmVlSGFzaCAhPT0gaGFzaENhbm9uaWNhbEpzb24ob3V0cHV0UHJvamVjdGlvbikpIGZhaWwoIm91",
+        "dHB1dCB0cmVlIGhhc2ggaXMgaW52YWxpZCIpOwoKICBjb25zdCBtYW5pZmVzdE9ic2VydmVkID0gcmVhZFN0YWJsZVJlZ3VsYXIocGF0aC5qb2luKGRpc3RQ",
+        "YXRoLCAiUExBVEZPUk1fUkVMRUFTRV9NQU5JRkVTVC5qc29uIiksIE1BWF9CVUlMRF9GSUxFX0JZVEVTX1YxLCBzb3VyY2UucmVwb3NpdG9yeS5kZXZpY2Up",
+        "OwogIGNvbnN0IGVudW1lcmF0ZWRNYW5pZmVzdCA9IGVudW1lcmF0ZWRGaWxlcy5nZXQoImRpc3QvUExBVEZPUk1fUkVMRUFTRV9NQU5JRkVTVC5qc29uIik7",
+        "CiAgaWYgKCFlbnVtZXJhdGVkTWFuaWZlc3QgfHwgIXNhbWVSZWd1bGFyTWV0YWRhdGEobWFuaWZlc3RPYnNlcnZlZC5zdGF0cywgZW51bWVyYXRlZE1hbmlm",
+        "ZXN0LnN0YXRzKSB8fCAhbWFuaWZlc3RPYnNlcnZlZC5ieXRlcy5lcXVhbHMoZW51bWVyYXRlZE1hbmlmZXN0LmJ5dGVzKSkgewogICAgZmFpbCgicmVsZWFz",
+        "ZSBtYW5pZmVzdCBjaGFuZ2VkIGFmdGVyIGVudW1lcmF0aW9uIik7CiAgfQogIGlmIChtYW5pZmVzdE9ic2VydmVkLm1vZGUgIT09IDBvNDQ0KSBmYWlsKCJy",
+        "ZWxlYXNlIG1hbmlmZXN0IGhhcyB3cm9uZyBtb2RlIik7CiAgY29uc3QgbWFuaWZlc3QgPSBzdHJpY3RPYmplY3QobWFuaWZlc3RPYnNlcnZlZC5ieXRlcywg",
+        "WyJzY2hlbWEiLCAicmVsZWFzZVNoYSIsICJicmFuY2giLCAiZGlydHkiLCAic3RpdGNoQ29udmVydGVyIl0sICJyZWxlYXNlIG1hbmlmZXN0IiwgZmFsc2Up",
+        "OwogIGNvbnN0IG1hbmlmZXN0Q2FuZGlkYXRlID0gZXhwZWN0ZWRNYW5pZmVzdChzb3VyY2UpOwogIGNvbnN0IGV4cGVjdGVkTWFuaWZlc3RCeXRlcyA9IEJ1",
+        "ZmZlci5mcm9tKGAke0pTT04uc3RyaW5naWZ5KG1hbmlmZXN0Q2FuZGlkYXRlKX1cbmAsICJ1dGY4Iik7CiAgaWYgKCFtYW5pZmVzdE9ic2VydmVkLmJ5dGVz",
+        "LmVxdWFscyhleHBlY3RlZE1hbmlmZXN0Qnl0ZXMpIHx8IGNhbm9uaWNhbENvbXBhcmFibGUobWFuaWZlc3QpICE9PSBjYW5vbmljYWxDb21wYXJhYmxlKG1h",
+        "bmlmZXN0Q2FuZGlkYXRlKSkgewogICAgZmFpbCgicmVsZWFzZSBtYW5pZmVzdCBieXRlcyBkaWZmZXIgZnJvbSBwaW5uZWQgc291cmNlIGF1dGhvcml0eSIp",
+        "OwogIH0KCiAgY29uc3Qgc3RhYmxlQnVpbGRJbmZvID0gewogICAgc2NoZW1hOiAic2V0ZmFybS5pbnRlcm5hbC1wcm9kdWN0aW9uLXN0YWJsZS1zZXRmYXJt",
+        "LWJ1aWxkLWluZm8udjEiLAogICAgc2hhOiBidWlsZEluZm8uc2hhLAogICAgc2hvcnRTaGE6IGJ1aWxkSW5mby5zaG9ydFNoYSwKICAgIGJyYW5jaDogYnVp",
+        "bGRJbmZvLmJyYW5jaCwKICAgIGRpcnR5OiBidWlsZEluZm8uZGlydHksCiAgICBwYWNrYWdlVmVyc2lvbjogYnVpbGRJbmZvLnBhY2thZ2VWZXJzaW9uLAog",
+        "ICAgZGlzcGxheVZlcnNpb246IGJ1aWxkSW5mby5kaXNwbGF5VmVyc2lvbiwKICB9OwogIGNvbnN0IGJ1aWxkSGFzaCA9IGhhc2hDYW5vbmljYWxKc29uKHsK",
+        "ICAgIHNjaGVtYTogInNldGZhcm0uaW50ZXJuYWwtcHJvZHVjdGlvbi1jb250cm9sbGVyLWJ1aWxkLnYxIiwKICAgIHN0YWJsZUJ1aWxkSW5mbywKICAgIGJ1",
+        "aWxkSW5wdXRTZXRIYXNoOiBzb3VyY2UucGlubmVkLmJ1aWxkSW5wdXRTZXRIYXNoLAogICAgb3V0cHV0VHJlZUhhc2g6IG91dHB1dFRyZWUub3V0cHV0VHJl",
+        "ZUhhc2gsCiAgICByZWxlYXNlTWFuaWZlc3RIYXNoOiBoYXNoQ2Fub25pY2FsSnNvbihtYW5pZmVzdCksCiAgfSk7CiAgY29uc3QgZmlsZVNuYXBzaG90cyA9",
+        "IE9iamVjdC5mcmVlemUoWwogICAgLi4ub3JkaW5hcnlTbmFwc2hvdHMsCiAgICBPYmplY3QuZnJlZXplKHsgbG9jYXRvcjogImRpc3QvQlVJTERfSU5GTy5q",
+        "c29uIiwgb2JzZXJ2ZWQ6IGluZm9PYnNlcnZlZCB9KSwKICAgIE9iamVjdC5mcmVlemUoeyBsb2NhdG9yOiAiZGlzdC9QTEFURk9STV9CVUlMRF9PVVRQVVRf",
+        "VFJFRS5qc29uIiwgb2JzZXJ2ZWQ6IG91dHB1dE9ic2VydmVkIH0pLAogICAgT2JqZWN0LmZyZWV6ZSh7IGxvY2F0b3I6ICJkaXN0L1BMQVRGT1JNX1JFTEVB",
+        "U0VfTUFOSUZFU1QuanNvbiIsIG9ic2VydmVkOiBtYW5pZmVzdE9ic2VydmVkIH0pLAogIF0uc29ydCgobGVmdCwgcmlnaHQpID0+IGNvbXBhcmVCeXRlcyhs",
+        "ZWZ0LmxvY2F0b3IsIHJpZ2h0LmxvY2F0b3IpKSk7CiAgY29uc3Qgc3RhYmxlVG90YWxCeXRlcyA9IGZpbGVTbmFwc2hvdHMucmVkdWNlKChzdW0sIHNuYXBz",
+        "aG90KSA9PiBzdW0gKyBzbmFwc2hvdC5vYnNlcnZlZC5ieXRlcy5sZW5ndGgsIDApOwogIGlmIChzdGFibGVUb3RhbEJ5dGVzICE9PSB0b3RhbEJ5dGVzIHx8",
+        "IHN0YWJsZVRvdGFsQnl0ZXMgPiBNQVhfQlVJTERfVE9UQUxfQllURVNfVjEpIHsKICAgIGZhaWwoImZpbmFsaXplZCBmaWxlIHRvdGFscyBjaGFuZ2VkIGFj",
+        "cm9zcyBzdGFibGUgcmVhZHMiKTsKICB9CiAgZm9yIChjb25zdCBpdGVtIG9mIGRpcmVjdG9yeUlkZW50aXRpZXMpIHsKICAgIGFzc2VydERpcmVjdG9yeShw",
+        "YXRoLmpvaW4ocm9vdCwgLi4uaXRlbS5sb2NhdG9yLnNwbGl0KCIvIikpLCBpdGVtLnNuYXBzaG90LCBpdGVtLmxvY2F0b3IpOwogIH0KICBhc3NlcnREaXJl",
+        "Y3RvcnkoZGlzdFBhdGgsIGRpc3QsICJmaW5hbGl6ZWQgZGlzdCIpOwogIHJldHVybiBPYmplY3QuZnJlZXplKHsKICAgIGJ1aWxkSW5mbywKICAgIG91dHB1",
+        "dFRyZWUsCiAgICBtYW5pZmVzdCwKICAgIGJ1aWxkSGFzaCwKICAgIGJ5dGVzOiBPYmplY3QuZnJlZXplKFtpbmZvT2JzZXJ2ZWQuYnl0ZXMsIG91dHB1dE9i",
+        "c2VydmVkLmJ5dGVzLCBtYW5pZmVzdE9ic2VydmVkLmJ5dGVzXSksCiAgICBmaWxlU25hcHNob3RzLAogICAgZGlzdCwKICAgIGRpcmVjdG9yeUlkZW50aXRp",
+        "ZXM6IE9iamVjdC5mcmVlemUoZGlyZWN0b3J5SWRlbnRpdGllcyksCiAgfSk7Cn0KCi8qKiBPYnNlcnZlcyBvbmx5IHRoZSBjb2RlLXJlbGF0aXZlIGN1cnJl",
+        "bnQgY2xlYW4gU2V0ZmFybSBjaGVja291dCBhbmQgYnVpbGQuICov",
+      ].join("") },
+    ];
+    return declarations.map(declaration => {
+      const bytes = Buffer.from(declaration.base64, "base64");
+      assert.equal(bytes.length, declaration.bytes, `${declaration.name}: original byte length`);
+      assert.equal(createHash("sha256").update(bytes).digest("hex"), declaration.sha256, `${declaration.name}: original bytes`);
+      return bytes.toString("utf8");
+    }).join("\n");
+  }
+
+  function refusalOrValue(operation: () => unknown): unknown {
+    try { return { value: operation() }; } catch (error) {
+      // Fixture assertions, extraction errors and unexpected exceptions must
+      // never be accepted as a production refusal.
+      if (!(error instanceof Error) || !error.message.startsWith("INTERNAL_PRODUCTION_SETFARM_SOURCE_BUILD_INVALID:")) throw error;
+      return { refusal: error.message };
+    }
+  }
+
+  it("preserves byte order, stable equal-byte ties, array/entry identity and zero-work boundaries", () => {
+    const original = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash }, [], originalSource());
+    const keys = ["a", "a/b", "a0", "b", "quote\"", "slash\\", "\0", "\n", "e\u0301", "\u00e9", "\ue000", "\u{10000}", "\u{1f600}", "\ud800", "\ud801", "\udc00", "\ufffd", "a"];
+    const ascending = keys.slice().sort((a, b) => Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8")));
+    for (const values of [[], ["only"], ["a", "a/b", "a0", "b"], keys, ascending, ascending.slice().reverse()]) {
+      let encodings = 0, keyCalls = 0;
+      const isolatedBuffer = new Proxy(Buffer, { get(target, property) {
+        if (property !== "from") return Reflect.get(target, property);
+        return (value: string, encoding?: BufferEncoding) => { if (encoding === "utf8") encodings += 1; return Buffer.from(value, encoding); };
+      } });
+      const loaded = loadDerivedFunctions({ Buffer: isolatedBuffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash }, []);
+      const items = values.map((key, index) => ({ key, index }));
+      const expected = items.slice().sort((left, right) => original.compareBytes!(left.key, right.key));
+      const handComparator = items.slice().sort((left, right) => Buffer.compare(Buffer.from(left.key, "utf8"), Buffer.from(right.key, "utf8")));
+      assert.deepEqual(expected, handComparator);
+      const observed = loaded.sortCleanSourceByUtf8V1!(items, (item: { key: string }) => { keyCalls += 1; return item.key; });
+      assert.equal(observed, items);
+      assert.deepEqual(items, expected);
+      expected.forEach((entry, index) => assert.equal(items[index], entry));
+      assert.equal(Object.isFrozen(items), false);
+      assert.ok(items.every(item => !Object.isFrozen(item)));
+      assert.equal(encodings, values.length < 2 ? 0 : values.length);
+      assert.equal(keyCalls, encodings);
+      const strings = values.slice();
+      assert.equal(loaded.sortCleanSourceByUtf8V1!(strings, (value: string) => value), strings);
+      assert.deepEqual(strings, values.slice().sort((a, b) => original.compareBytes!(a, b)));
+    }
+  });
+
+  it("preserves positional string equality and exact strict-key/raw refusals for escaped and surrogate keys", () => {
+    const ports = { Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash };
+    const current = loadDerivedFunctions(ports, []), original = loadDerivedFunctions(ports, [], originalSource());
+    for (const [left, right, expected] of [
+      [[], [], true], [["a"], ["a"], true], [["a", "b"], ["b", "a"], false],
+      [["a", "b"], ["a", "c"], false], [["a"], [], false], [[], ["a"], false],
+      [["quote\"", "slash\\", "\0", "\ud800"], ["quote\"", "slash\\", "\0", "\ud800"], true],
+      [["\ud800"], ["\ud801"], false], [["\ud800"], ["\ufffd"], false], [["e\u0301"], ["\u00e9"], false],
+    ] as const) {
+      assert.equal(current.equalCleanSourceStringVectorsV1!(left, right), expected);
+      assert.equal(canonical(left) === canonical(right), expected);
+    }
+    for (const keys of [[], ["only"], ["quote\"", "slash\\", "\0", "\ud800", "e\u0301", "\u00e9"]]) {
+      const record = Object.fromEntries(keys.map((key, index) => [key, index]));
+      for (const pretty of [false, true]) {
+        const exact = `${JSON.stringify(record, null, pretty ? 2 : undefined)}\n`;
+        for (const text of [exact, ` ${exact}`, exact.trimEnd(), `${exact}\n`, '{"duplicate":1,"duplicate":2}\n']) {
+          const call = (loaded: ReturnType<typeof loadDerivedFunctions>) => refusalOrValue(() => loaded.strictObject!(Buffer.from(text), keys, "edge keys", pretty));
+          assert.deepEqual(call(current), call(original));
+        }
+        for (const crossed of [keys.slice().reverse(), [...keys, "extra"], keys.slice(1), keys.map((key, index) => index === 0 ? "substitute" : key)]) {
+          assert.deepEqual(refusalOrValue(() => current.strictObject!(Buffer.from(exact), crossed, "edge keys", pretty)), refusalOrValue(() => original.strictObject!(Buffer.from(exact), crossed, "edge keys", pretty)));
+        }
+      }
+    }
+  });
+
+  it("preserves actual derived-topology validation and collision refusal order", () => {
+    const ports = { Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash };
+    const current = loadDerivedFunctions(ports, []), original = loadDerivedFunctions(ports, [], originalSource());
+    const many = ["src/cli/cli.ts", "src/z/nested.ts", "src/a.ts", "src/quote\".ts", "src/\u00e9.ts", "src/\ue000.ts", "src/\u{10000}.ts", "src/server/index.html", "src/installer/prompts/p.md"];
+    for (const locators of [[], ["src/cli/cli.ts"], many, many.slice().reverse(), many.slice().sort(),
+      ["src/cli/cli.ts", "src/A.ts", "src/a.ts"], ["src/cli/cli.ts", "src/a.ts", "src/a.ts"],
+      ["src/cli/cli.ts", "src/A.ts", "src/a.ts", "src/\u0001.ts"], ["src/cli/cli.ts", "src/e\u0301.ts"], ["src/cli/cli.ts", "src/back\\slash.ts"]]) {
+      const pinned = { entries: locators.map(locator => ({ locator })) };
+      const observed = refusalOrValue(() => current.expectedTopology!(pinned));
+      assert.deepEqual(observed, refusalOrValue(() => original.expectedTopology!(pinned)));
+      if ("value" in (observed as any)) {
+        const topology = (observed as any).value;
+        assert.equal(Object.isFrozen(topology.outputs), true);
+        assert.equal(Object.isFrozen(topology.directories), true);
+      }
+    }
+  });
+
+  it("preserves actual pinned mapping validation before sorting/collision/blob observation", () => {
+    function run(locators: string[], sourceText: string) {
+      const trace: string[] = [];
+      const records = locators.map((locator, index) => ({ locator, hash: (index + 1).toString(16).padStart(40, "0"), bytes: Buffer.from(`body:${index}`) }));
+      const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash,
+        runGit: (_root: string, args: string[], _statuses?: number[], input?: Buffer) => {
+          trace.push(args.join(" "));
+          if (args[0] === "rev-parse") return { stdout: Buffer.from(`${args[2] === "HEAD^{commit}" ? "a".repeat(40) : "b".repeat(40)}\n`) };
+          if (args[0] === "ls-tree") return { stdout: Buffer.from(records.map(item => `100644 blob ${item.hash}\t${item.locator}\0`).join("")) };
+          assert.deepEqual(args, ["cat-file", "--batch"]);
+          const ordered = input!.toString("ascii").trimEnd().split("\n").filter(Boolean).map(hash => { const entry = records.find(item => item.hash === hash); assert.ok(entry); return entry; });
+          return { stdout: Buffer.concat(ordered.flatMap(item => [Buffer.from(`${item.hash} blob ${item.bytes.length}\n`), item.bytes, Buffer.from("\n")])) };
+        },
+      }, [], sourceText);
+      return { result: refusalOrValue(() => loaded.derivePinnedSet!("/finite-source")), trace };
+    }
+    const original = originalSource(), current = readFileSync(observerSource, "utf8");
+    for (const locators of [[], ["src/only.ts"], ["src/z.ts", "src/a.ts", "src/\u00e9.ts", "src/\u{10000}.ts", "src/\ue000.ts"],
+      ["src/a.ts", "src/A.ts"], ["src/a.ts", "src/a.ts"], ["src/a.ts", "src/A.ts", "src/\u0001.ts"], ["src/e\u0301.ts"], ["src/back\\slash.ts"]]) {
+      assert.deepEqual(run(locators, current), run(locators, original));
+    }
+  });
+
+  it("encodes each pinned locator at most once while retaining old-comparator entries and identity", () => {
+    // Break caught: repeated UTF8 allocation inside the actual pinned comparator.
+    for (const locators of [[], ["src/only.ts"], ["src/z.ts", "src/q.ts", "src/m.ts", "src/k.ts", "src/h.ts", "src/f.ts", "src/c.ts", "src/a.ts"]]) {
+      const captured: Array<{ locator: string; gitMode: string; gitBlobHash: string }> = [];
+      let locatorEncodings = 0;
+      const isolatedBuffer = new Proxy(Buffer, { get(target, property) {
+        if (property !== "from") return Reflect.get(target, property);
+        return (value: unknown, encoding?: BufferEncoding) => {
+          if (encoding === "utf8" && typeof value === "string" && locators.includes(value)) locatorEncodings += 1;
+          return Buffer.from(value as string, encoding);
+        };
+      } });
+      const isolatedObject = new Proxy(Object, { get(target, property) {
+        if (property !== "freeze") return Reflect.get(target, property);
+        return (value: any) => {
+          if (value && typeof value.locator === "string" && typeof value.gitBlobHash === "string") captured.push(value);
+          return Object.freeze(value);
+        };
+      } });
+      const blobs = locators.map((locator, index) => ({ locator, hash: (index + 1).toString(16).padStart(40, "0"), bytes: Buffer.from(`body:${index}`) }));
+      const listing = Buffer.from(blobs.map(item => `100644 blob ${item.hash}\t${item.locator}\0`).join(""));
+      const calls: string[] = [];
+      const loaded = loadDerivedFunctions({ Buffer: isolatedBuffer, Object: isolatedObject, TextDecoder, path, createHash,
+        hashCanonicalJson: canonicalHash,
+        runGit: (_root: string, args: string[], statuses?: number[], input?: Buffer) => {
+          calls.push(args.join(" "));
+          if (args[0] === "rev-parse") return { status: 0, stdout: Buffer.from(`${args[2] === "HEAD^{commit}" ? "a".repeat(40) : "b".repeat(40)}\n`) };
+          if (args[0] === "ls-tree") return { status: 0, stdout: listing };
+          assert.deepEqual(args, ["cat-file", "--batch"]);
+          assert.deepEqual(statuses, [0]);
+          const expected = [...blobs].sort((a, b) => Buffer.compare(Buffer.from(a.locator, "utf8"), Buffer.from(b.locator, "utf8")));
+          assert.equal(input!.toString("ascii"), `${expected.map(item => item.hash).join("\n")}\n`);
+          return { status: 0, stdout: Buffer.concat(expected.flatMap(item => [Buffer.from(`${item.hash} blob ${item.bytes.length}\n`, "ascii"), item.bytes, Buffer.from("\n")])) };
+        },
+      }, []);
+      const observed = loaded.derivePinnedSet!("/finite-source");
+      const expected = captured.slice().sort((a, b) => Buffer.compare(Buffer.from(a.locator, "utf8"), Buffer.from(b.locator, "utf8")));
+      assert.equal(captured.length, locators.length);
+      assert.deepEqual(observed.entries, expected);
+      expected.forEach((entry, index) => assert.equal(observed.entries[index], entry));
+      assert.equal(Object.isFrozen(observed.entries), false, "the original mapped array is not frozen early");
+      assert.deepEqual(calls, ["rev-parse --verify HEAD^{commit}", "rev-parse --verify HEAD^{tree}", `ls-tree -r -z --full-tree ${"a".repeat(40)}`, "cat-file --batch"]);
+      assert.equal(observed.buildInputSetHash, canonicalHash({ schema: observed.schema, sourceSha: observed.sourceSha, sourceTreeHash: observed.sourceTreeHash, entries: expected }));
+      const limit = locators.length < 2 ? 0 : locators.length;
+      assert.ok(locatorEncodings <= limit, `pinned locator UTF8 encodings ${locatorEncodings} exceed ${limit}`);
+    }
+  });
+
+  it("compares strict ordered keys without serializing vectors while retaining exact raw JSON", () => {
+    // Break caught: selected key-vector canonicalization remains on the read path.
+    const vectors: string[][] = [];
+    const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash }, vectors);
+    const keys = ["locator", "mode", "byteLength", "sha256"];
+    const record = { locator: "dist/quote\"-\\-\ud800.js", mode: 420, byteLength: 0, sha256: "a".repeat(64) };
+    assert.deepEqual(loaded.strictObject!(Buffer.from(`${JSON.stringify(record)}\n`), keys, "finite entry", false), record);
+    for (const [bytes, message] of [
+      [`${JSON.stringify({ mode: record.mode, locator: record.locator, byteLength: 0, sha256: record.sha256 })}\n`, /unknown, missing, or reordered fields/],
+      [`${JSON.stringify({ ...record, extra: true })}\n`, /unknown, missing, or reordered fields/],
+      [`${JSON.stringify({ locator: record.locator, mode: record.mode, byteLength: 0 })}\n`, /unknown, missing, or reordered fields/],
+      [` ${JSON.stringify(record)}\n`, /raw bytes are not exact/],
+      ['{"locator":"a","locator":"b","mode":420,"byteLength":0,"sha256":"' + record.sha256 + '"}\n', /raw bytes are not exact/],
+    ] as const) assert.throws(() => loaded.strictObject!(Buffer.from(bytes), keys, "finite entry", false), message);
+    assert.equal(vectors.length, 0, `strict ordered-key vector canonicalizations: ${vectors.length}`);
+  });
+
+  function artifactFixture(sourceText: string, fault = "none") {
+    // Real observeArtifacts, directory and stable-read implementations run over
+    // finite FS ports. Every open/stat/read/reopen/close/bookend remains visible.
+    const vectors: string[][] = [], trace: string[] = [];
+    const root = "/finite-source", sha = "a".repeat(40), tree = "b".repeat(40);
+    const cli = Buffer.from("#!/usr/bin/env node\n"), stitch = Buffer.from("export {};\n");
+    const outputEntry = { locator: "dist/cli/cli.js", mode: 0o755, byteLength: cli.length, sha256: createHash("sha256").update(cli).digest("hex") };
+    const outputProjection = { schema: "setfarm.platform-build-output-tree.v1", sourceSha: sha, sourceTreeHash: tree, entries: [outputEntry] };
+    const outputTree = { ...outputProjection, outputTreeHash: canonicalHash(outputProjection) };
+    const manifest = { schema: "setfarm.platform-release-manifest.v1", releaseSha: sha, branch: "main", dirty: false,
+      stitchConverter: { converterId: "setfarm.stitch-to-jsx", source: { schema: "setfarm.source-artifact-ref.v1", hash: createHash("sha256").update(stitch).digest("hex"), mediaType: "text/javascript", locator: "scripts/stitch-to-jsx.mjs", byteLength: stitch.length } } };
+    const info = { sha, shortSha: sha.slice(0, 8), branch: "main", dirty: false, packageVersion: "1.0.0", displayVersion: `1.0.0+${sha.slice(0, 8)}`, builtAt: "2026-10-23T00:00:00.000Z" };
+    if (fault === "output-keys") outputTree.entries[0] = { sha256: outputEntry.sha256, byteLength: cli.length, mode: 0o755, locator: outputEntry.locator };
+    if (fault === "output-hash") outputTree.outputTreeHash = "f".repeat(64);
+    if (fault === "manifest-bytes") manifest.stitchConverter.source.hash = "e".repeat(64);
+    const files = new Map([
+      [`${root}/dist/cli/cli.js`, { bytes: cli, mode: 0o755 }],
+      [`${root}/dist/BUILD_INFO.json`, { bytes: Buffer.from(`${JSON.stringify(info, null, 2)}\n`), mode: 0o444 }],
+      [`${root}/dist/PLATFORM_BUILD_OUTPUT_TREE.json`, { bytes: Buffer.from(`${JSON.stringify(outputTree)}\n`), mode: 0o444 }],
+      [`${root}/dist/PLATFORM_RELEASE_MANIFEST.json`, { bytes: Buffer.from(`${JSON.stringify(manifest)}\n`), mode: 0o444 }],
+    ]);
+    const infoFile = files.get(`${root}/dist/BUILD_INFO.json`)!;
+    if (fault === "info-whitespace") infoFile.bytes = Buffer.from(` ${infoFile.bytes.toString("utf8")}`);
+    if (fault === "info-duplicate") infoFile.bytes = Buffer.from(infoFile.bytes.toString("utf8").replace('"sha":', '"sha": "crossed",\n  "sha":'));
+    const directories = new Set([`${root}/dist`, `${root}/dist/cli`]);
+    const descriptors = new Map<number, string>();
+    let nextDescriptor = 10;
+    const stats = (target: string) => {
+      const file = files.get(target), directory = directories.has(target);
+      assert.ok(file || directory, `unmapped finite stat ${target}`);
+      return { dev: 1n, ino: BigInt([...directories, ...files.keys()].indexOf(target) + 1), mode: BigInt(file?.mode ?? (fault === "directory-mode" ? 0o700 : 0o755)), uid: 501n, nlink: 1n, size: BigInt(file?.bytes.length ?? 0), mtimeNs: 1n, ctimeNs: 1n,
+        isDirectory: () => directory, isSymbolicLink: () => false, isFile: () => !!file };
+    };
+    const reads = new Map<string, number>();
+    const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash,
+      constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100, O_NONBLOCK: 0x200 },
+      realpathSync: (target: string) => { trace.push(`realpath:${target}`); return target; },
+      lstatSync: (target: string) => { trace.push(`lstat:${target}`); return stats(target); },
+      readdirSync: (target: string) => { trace.push(`readdir:${target}`); assert.ok(directories.has(target)); return target.endsWith("/cli") ? ["cli.js"] : [...(fault === "malformed-name" ? ["\u0001"] : []), "cli", "PLATFORM_RELEASE_MANIFEST.json", "BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json"]; },
+      openSync: (target: string, flags: number) => { trace.push(`open:${target}:${flags}`); assert.ok(files.has(target)); const fd = nextDescriptor++; descriptors.set(fd, target); return fd; },
+      fstatSync: (fd: number) => { const target = descriptors.get(fd); assert.ok(target); trace.push(`fstat:${target}`); return stats(target); },
+      readFileSync: (fd: number) => { const target = descriptors.get(fd); assert.ok(target); trace.push(`read:${target}`); const count = (reads.get(target) ?? 0) + 1; reads.set(target, count); const bytes = Buffer.from(files.get(target)!.bytes); if (fault === "second-read-drift" && target.endsWith("/BUILD_INFO.json") && count === 2) bytes[0] = 0x5b; return bytes; },
+      closeSync: (fd: number) => { const target = descriptors.get(fd); assert.ok(target); trace.push(`close:${target}`); descriptors.delete(fd); },
+    }, vectors, sourceText);
+    const source = { pinned: { sourceSha: sha, sourceTreeHash: tree, buildInputSetHash: "c".repeat(64), entries: [{ locator: "scripts/stitch-to-jsx.mjs", gitMode: "100644", gitBlobHash: "d".repeat(40) }], blobs: new Map([["d".repeat(40), stitch]]) },
+      repository: { device: 1n }, packageVersion: "1.0.0", outputs: ["dist/cli/cli.js"], directories: ["dist/cli"] };
+    if (fault === "directory-vector") source.directories = ["dist/wrong"];
+    if (fault === "file-vector") source.outputs = ["dist/cli/wrong.js"];
+    const outcome = refusalOrValue(() => loaded.observeArtifacts!(root, source)) as { value?: any; refusal?: string };
+    assert.equal(descriptors.size, 0, "all stable-read descriptors close even on refusal");
+    if (outcome.refusal) return { refusal: outcome.refusal, trace, vectors, projection: null };
+    const observed = outcome.value;
+    assert.deepEqual(observed.outputTree, outputTree);
+    assert.deepEqual(observed.manifest, manifest);
+    assert.equal(Object.isFrozen(observed.fileSnapshots), true);
+    assert.equal(Object.isFrozen(observed.directoryIdentities), true);
+    assert.ok(observed.fileSnapshots.every((item: any) => Object.isFrozen(item)));
+    assert.deepEqual(observed.fileSnapshots.map((item: any) => item.locator), [...files.keys()].map(target => target.slice(root.length + 1)).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))));
+    assert.equal(observed.buildHash, canonicalHash({ schema: "setfarm.internal-production-controller-build.v1", stableBuildInfo: { schema: "setfarm.internal-production-stable-setfarm-build-info.v1", sha, shortSha: info.shortSha, branch: "main", dirty: false, packageVersion: info.packageVersion, displayVersion: info.displayVersion }, buildInputSetHash: source.pinned.buildInputSetHash, outputTreeHash: outputTree.outputTreeHash, releaseManifestHash: canonicalHash(manifest) }));
+    assert.equal(descriptors.size, 0);
+    for (const target of files.keys()) {
+      for (const operation of ["open", "fstat", "read", "close"]) assert.ok(trace.some(item => item.startsWith(`${operation}:${target}`)), `${operation} retained for ${target}`);
+    }
+    const directoryTrace = (target: string) => [`realpath:${target}`, `lstat:${target}`];
+    const stableReadTrace = (target: string) => [
+      ...directoryTrace(path.dirname(target)), `open:${target}:768`, `fstat:${target}`, `read:${target}`, `fstat:${target}`, `lstat:${target}`,
+      ...directoryTrace(path.dirname(target)), `open:${target}:768`, `fstat:${target}`, `read:${target}`, `fstat:${target}`, `lstat:${target}`,
+      ...directoryTrace(path.dirname(target)), `close:${target}`, `close:${target}`,
+    ];
+    // Hand-checked original sequence, including the byte-order traversal before
+    // cli, both stable reads, descriptor closure, and final directory bookends.
+    const metadata = ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"];
+    assert.deepEqual(trace, [
+      ...directoryTrace(`${root}/dist`), `readdir:${root}/dist`,
+      ...metadata.flatMap(name => [`lstat:${root}/dist/${name}`, ...stableReadTrace(`${root}/dist/${name}`)]),
+      `lstat:${root}/dist/cli`, ...directoryTrace(`${root}/dist/cli`), `readdir:${root}/dist/cli`,
+      `lstat:${root}/dist/cli/cli.js`, ...stableReadTrace(`${root}/dist/cli/cli.js`),
+      ...stableReadTrace(`${root}/dist/cli/cli.js`),
+      ...metadata.flatMap(name => stableReadTrace(`${root}/dist/${name}`)),
+      ...directoryTrace(`${root}/dist/cli`), ...directoryTrace(`${root}/dist`),
+    ]);
+    return { refusal: null, trace, vectors, projection: { buildInfo: observed.buildInfo, outputTree: observed.outputTree, manifest: observed.manifest, buildHash: observed.buildHash,
+      files: observed.fileSnapshots.map((item: any) => ({ locator: item.locator, mode: item.observed.mode, bytes: item.observed.bytes.toString("base64") })) } };
+  }
+
+  it("compares selected artifact topology and entry keys without vector serialization and retains raw/hash checks", () => {
+    const current = artifactFixture(readFileSync(observerSource, "utf8"));
+    const original = artifactFixture(originalSource());
+    assert.deepEqual(current.projection, original.projection);
+    assert.deepEqual(current.trace, original.trace);
+    assert.equal(current.refusal, null);
+    assert.equal(original.vectors.length, 12, "the exact original selected serialization sites are observed");
+    assert.equal(current.vectors.length, 0, `selected artifact key/topology vector canonicalizations: ${current.vectors.length}`);
+  });
+
+  it("preserves actual artifact refusal messages and full operation/close prefixes against the original", () => {
+    const current = readFileSync(observerSource, "utf8"), original = originalSource();
+    for (const fault of ["malformed-name", "directory-mode", "directory-vector", "file-vector", "output-keys", "output-hash", "manifest-bytes", "info-whitespace", "info-duplicate", "second-read-drift"]) {
+      const actual = artifactFixture(current, fault), expected = artifactFixture(original, fault);
+      assert.ok(actual.refusal, `${fault}: a production refusal is required`);
+      assert.equal(actual.refusal, expected.refusal, fault);
+      assert.deepEqual(actual.trace, expected.trace, `${fault}: exact original refusal/close prefix`);
+      assert.equal(actual.projection, null);
     }
   });
 });

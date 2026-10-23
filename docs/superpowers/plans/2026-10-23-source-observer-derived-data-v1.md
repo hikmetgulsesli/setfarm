@@ -5,9 +5,11 @@
 **Goal:** Reduce repeated private encoding/serialization while preserving
 every Source observation, result, refusal and clock.
 
-**Architecture:** Task1 observer/tests, Root semantic RED then minimal GREEN
-and review/clean-build evidence; Task2 independently reviewed M admission and
-fixed-T fixture separation, RED/GREEN and final review. Root alone executes.
+**Architecture:** Task1 observer/tests, Root semantic RED then minimal GREEN,
+task and branch review, normal PR1 merge and genuine remote-main stock build;
+Task2 independently reviewed M admission and fixed-T fixture separation,
+RED/GREEN, cumulative final review, normal PR2 merge and final stock build.
+Root alone executes. Both deliveries are required for source-fix completion.
 
 **Tech Stack:** existing TypeScript ESM observer and finite Node test harness,
 existing pinned compiler/loader; no dependency or public API addition.
@@ -27,6 +29,29 @@ and reviewers do not run Node/tests/builds or stage/commit/deliver; Root does.
 
 Modify only observer TS, its existing TS test file, H maintenance admission,
 J manifest/admission tests, this plan and its spec. No release/generated edits.
+
+## Guarded build sequencing
+
+The actual writer at scripts/write-build-info.mjs:913-927 requires canonical
+origin, HEAD equal to real origin/main, branch main and a clean worktree. A clean
+feature commit cannot satisfy that contract. Preserve W's eight retained build
+generations. Do not attempt a known-refused feature build, manufacture local
+main/origin refs, delete generations or use guard overrides.
+
+Deliver reviewed Task1 first by normal PR1 merge, then qualify a fresh physical
+stock clone from the actual canonical remote main, with its own Git database,
+lockfile-installed physical dependencies and ordinary guarded build. It is a
+build artifact surface, not a second source writer or live installation. Keep
+H stale and fail closed until Task2. After Task2's normal PR2 merge, repeat the
+fresh stock lifecycle and verify all143 M records still match the reviewed
+expectation. Existing branch protections and required checks remain binding;
+an unresolved required premerge check cannot be waived by this sequencing.
+No service, installation or Source-owner activation follows either merge.
+
+The Root ruling follows the independently reviewed build dependency recorded
+in logs/2026-10-21-controls-current-evidence-v1/
+task7e-derived-guarded-build-sequence-review-v1.md (SHA256
+9260c4dcce152a015f6b9c731f903855fe490dfb2a6dc541e883a25b393eb164).
 
 ### Task 1: Derived computations with actual-function parity
 
@@ -111,7 +136,11 @@ if (!equalCleanSourceStringVectorsV1(Object.keys(record), keys))
 - [ ] Step4: Freeze source/tests after IMPLEMENTED; report exact changed files,
   group command, tests/coverage and all actual observations Root supplied.
   Root runs focused group/adjacent observer controls, obtains task review and
-  commits scoped tested source. Root then runs guarded build on CLEAN writer;
+  commits scoped tested source. The adjacent controls require the existing
+  fixture to copy the real fresh-installation-origin parser and its matching
+  compiled-output fixture entry; preserve all assertions and effect stubs.
+  Root obtains whole-branch review and normally merges PR1, then runs the
+  guarded build on a fresh, qualified CLEAN actual remote-main stock clone;
   no SETFARM_ALLOW_DIRTY_BUILD or runtime bypass. If a real guard refuses, keep
   original evidence and diagnose rather than disable it. No Source acquisition
   with the intermediate stale H aggregate.
@@ -121,7 +150,8 @@ if (!equalCleanSourceStringVectorsV1(Object.keys(record), keys))
 **Files:**
 - Modify tests/execution-attempts/helpers/manual-control-orphan-bootstrap-child-v1.mjs (H).
 - Test scripts/__tests__/manual-orphan-bootstrap-owned-route-v1.test.js (J).
-**Consumes:** Task1 reviewed code, Root clean-build actual compiled output and
+**Consumes:** Task1 reviewed, normally merged code, Root guarded actual-main
+stock-build compiled output and
 independent143-record audit/review. Unknown future digests are NOT guessed.
 **Produces:** separate M/T expectations and scoped reviewed M aggregate only.
 
@@ -153,15 +183,20 @@ createHash('sha256').update(JSON.stringify(records)).digest('hex');
   fallback or generated runtime edit. Freeze and report Root exact pins.
 - [ ] Step4: Root runs the existing three safe Node suites (J,
   private-postgres-test-cluster.test.js, path-contract-fixed-host-policy.test.js),
-  H syntax, relevant observer parity/adjacent tests and guarded CLEAN build.
+  H syntax and relevant observer parity/adjacent tests before delivery.
   Every required original is consumed; record scoped skips honestly, no generic
   npm test selection of separate protected campaigns. Obtain Task2 review and
-  broad final branch review; Root owns conventional commits/push/PR/normal merge.
+  broad final review of the cumulative PR1+PR2 result; Root owns conventional
+  commits/push/PR2/normal merge. Qualify a fresh actual remote-main stock clone
+  and guarded CLEAN build after PR2, then compare every M143 record and its
+  aggregate to Task2's independently reviewed expectation. Any unexplained
+  compiled drift requires a reviewed correction before Source admission.
 
 ## Completion boundary
 
 Source code completion requires actual semantic RED/GREEN, task/final review,
-clean build and reviewed M admission. Delivery does not prove timing. Root must
+both normal PR merges, actual guarded stock builds and reviewed M admission.
+Delivery does not prove timing. Root must
 qualify successor clean-main stock/actual public point and a separately admitted
 fresh120s composition with original custody. Do not replay prior namespaces,
 widen/reset clocks or claim Source/genuine/full8/rollout GO from pure tests.
