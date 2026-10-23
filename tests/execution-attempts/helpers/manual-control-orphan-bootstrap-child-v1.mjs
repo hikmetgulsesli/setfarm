@@ -1372,6 +1372,7 @@ export async function holdManualOrphanOwnedSourcesV1(){
     check();
     // Every release's complete package inventory and finite resolution has now
     // qualified. These are the FIRST full-observer imports in this process.
+    let source;
     for(const [root,expected] of [[maintenanceRoot,maintenance.expected],[targetRoot,target.expected]]){
       const api=await import(pathToFileURL(path.join(root,ownedObserverV1)).href);check();
       ownedSourceRequireV1(typeof api.observeCurrentInternalProductionCleanSetfarmSourceBuildV1==='function'
@@ -1386,12 +1387,16 @@ export async function holdManualOrphanOwnedSourcesV1(){
         }
         ownedSourceRequireV1(value?.branch==='main'&&value.clean===true&&value.originMainSha===expected.sha);return value;
       };
-      ownedSourceRequireV1(ownedSourceEqualBuildV1(read(),expected));observers.push({read,expected});check();
+      observers.push({read,expected});
+      if(root===targetRoot){
+        source=Object.freeze({maintenance:maintenance.expected,target:target.expected,
+          profileSha256:ownedSourceHashV1(profileBytes),files:Object.freeze(comparisonFiles)});
+        // Validate the exact public data shape without granting codec data authority.
+        ownedSourcesV1(source);
+      }
+      check();
     }
-    const source=Object.freeze({maintenance:maintenance.expected,target:target.expected,
-      profileSha256:ownedSourceHashV1(profileBytes),files:Object.freeze(comparisonFiles)});
-    // Validate the exact public data shape without granting codec data authority.
-    ownedSourcesV1(source);check();ready=true;
+    ready=true;
     return Object.freeze({source,check(){ownedSourceRequireV1(ready);check();},close});
   }catch{
     invalid=true;try{cleanup();}catch{ownedSourceCleanupUncertainV1=true;}

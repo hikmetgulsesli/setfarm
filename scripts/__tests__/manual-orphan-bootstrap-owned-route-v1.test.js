@@ -10281,3 +10281,156 @@ test('Task2 F integration cache environment retains exact worker1 policy',()=>{
   });
   cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
 });
+
+
+// Task7E Task2: controlled acquisition component, never whole-Source success.
+// Breaks: an unregistered first read, omitted import guard, early publication,
+// or a changed terminal/later complete-check composition must remain observable.
+function task7eAcquisitionObserverSuffixV1(options={}){
+  const source=task7dSourceV1(),holder=source.ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='holdManualOrphanOwnedSourcesV1');
+  const outer=holder.body.statements.find(ts.isTryStatement),body=[...outer.tryBlock.statements];
+  const loop=body.findIndex(n=>ts.isForOfStatement(n)&&n.getText(source.ast).includes('await import'));
+  assert.ok(loop>=0,'actual fixed two-release observer loop');
+  const prior=body[loop-1],start=ts.isVariableStatement(prior)&&prior.declarationList.declarations.some(n=>n.name.getText(source.ast)==='source')?loop-1:loop;
+  assert.ok(ts.isReturnStatement(body.at(-1)),'actual frozen owner return terminates acquisition');
+  assert.ok(outer.catchClause,'actual outer acquisition invalidation and cleanup');
+  const prefix=holder.body.statements.slice(0,holder.body.statements.indexOf(outer)).map(n=>n.getText(source.ast)).join('\n');
+  const declarations=['ownedTargetShaV1','ownedSourceFileKeysV1','probeFrameRefusalV1','probeOwnDataV1','probeHexV1',
+    'ownedRequireV1','ownedIntegerV1','ownedDecimalV1','ownedGitShaV1','ownedFileV1','ownedReleaseV1','ownedReleasePairV1','ownedSourcesV1',
+    'ownedSourceCleanupUncertainV1','ownedSourceRefusalV1','ownedSourceRequireV1','ownedSourceHashV1','ownedSourceBuildDataV1',
+    'ownedSourceEqualBuildV1','ownedSourceResourcesV1'].map(source.declaration).join('\n');
+  // Prefix retains actual check/close/cleanup, reentry bits and resource owner.
+  // Only dependencies already acquired before this suffix are finite controls.
+  const wire=ownedSourceData();wire.maintenance.treeHash='1'.repeat(40);wire.target.treeHash='2'.repeat(40);
+  wire.maintenance.buildHash='c'.repeat(64);wire.target.buildHash='d'.repeat(64);
+  const events=[],faults=[],readNames=[],sets=[],controls={...options};let state,pinPass=0,contextPass=0,final=false,nested=false;
+  const guard=fn=>task5bGuardV1(faults,fn),refused=()=>Error('MANUAL_ORPHAN_OWNER_REFUSED');
+  const hit=name=>{events.push(name);if(controls.finalFault===name&&final)throw refused();};
+  const finiteContext=guard(()=>{
+    if(contextPass===0){pinPass=0;final=state.observers.length===2;sets.push(Array.from(state.observers,x=>x.expected===state.maintenance.expected?'M':'T'));}
+    contextPass++;hit('context:'+contextPass);
+    if(contextPass===1&&controls.postImportFault===state.imported)throw refused();
+    if(contextPass===2)contextPass=0;
+  });
+  const finitePins={check:guard(()=>{pinPass++;hit('pin:'+pinPass);})};
+  const owner=name=>({check:guard(()=>hit('owner:'+name)),close:guard(()=>{
+    events.push('close:'+name);if(controls.closeFault===name)throw refused();
+  })});
+  const finiteInitialize=guard(value=>{state=value;
+    for(const name of ['M','anchor','T'])state.resources.add(()=>state.owners[['M','anchor','T'].indexOf(name)].close());
+  });
+  const require=guard(specifier=>{
+    const name=specifier===url.pathToFileURL(SOURCE_M_V1+'/dist/finite-observer.js').href?'M':'T';
+    assert.equal(specifier,url.pathToFileURL((name==='M'?SOURCE_M_V1:SOURCE_T_V1)+'/dist/finite-observer.js').href);
+    state.imported=name;events.push('import:'+name);if(controls.importThrow===name)throw refused();
+    const api={};let actual=function(){
+      events.push('read:'+name);readNames.push(name);
+      events.push('custody:'+name+':active='+Boolean(state.check.active)+':pin='+pinPass);
+      assert.equal(this,api,'actual namespace method receiver');assert.equal(arguments.length,0,'actual zeroarg observer call');
+      if(controls.nested===name&&!nested){nested=true;try{state.check();events.push('nested:accepted');}catch{events.push('nested:refused');}}
+      if(controls.throwRead===name)throw Error('finite opaque observer throw');
+      if(final&&controls.finalFault==='observer:'+name)throw Error('finite terminal observer throw');
+      return state.actual[name];
+    };
+    if(controls.apiRoot===name){if(controls.apiFault==='type')actual=17;if(controls.apiFault==='missing')actual=undefined;
+      if(controls.apiFault==='arity')actual=function(argument){return argument;};}
+    Object.defineProperty(api,'observeCurrentInternalProductionCleanSetfarmSourceBuildV1',{enumerable:true,get:guard(()=>{events.push('api:'+name);return actual;})});
+    return api;
+  });
+  const setup=`
+    const seed=JSON.parse(seedJson),maintenance={expected:Object.freeze(seed.maintenance)},target={expected:Object.freeze(seed.target)},
+      comparisonFiles=seed.files,profileBytes=Buffer.from('finite authenticated profile');
+    for(const key of Object.keys(comparisonFiles))Object.freeze(comparisonFiles[key]);
+    const actual={M:{...maintenance.expected,branch:'main',clean:true,originMainSha:maintenance.expected.sha},
+      T:{...target.expected,branch:'main',clean:true,originMainSha:target.expected.sha}};
+    if(observerFault){actual[observerFault.root][observerFault.field]=observerFault.value;}
+    if(codecFault==='shape')delete comparisonFiles.profile;
+    if(codecFault==='accessor')Object.defineProperty(comparisonFiles,'profile',{enumerable:true,configurable:true,get(){codecGetter();return seed.files.constructor;}});
+    if(codecFault==='proxy')comparisonFiles.profile=new Proxy({...comparisonFiles.profile},{get(){codecGetter();throw Error('proxy trap');}});
+    owners.push(finiteMaintenance,finiteAnchor,finiteTarget);retainedTarget=finiteTarget;
+    pins=finitePins;contextCheck=finiteContext;identityCheck=finiteIdentity;
+    finiteInitialize({resources,owners,observers,maintenance,target,actual,check,close,
+      status:()=>({invalid,closed,ready,unknown:ownedSourceCleanupUncertainV1})});
+  `;
+  const code=declarations+'\nasync function run(){'+prefix+'\n'+setup+'\ntry{'+body.slice(start).map(n=>n.getText(source.ast)).join('\n')+'}'+outer.catchClause.getText(source.ast)+'}';
+  const vm=task7eVmV1(code,['run'],{seedJson:JSON.stringify(wire),maintenanceRoot:SOURCE_M_V1,targetRoot:SOURCE_T_V1,
+    ownedObserverV1:'dist/finite-observer.js',finiteInitialize,finiteContext,finitePins,finiteIdentity:guard(()=>hit('identity')),
+    finiteMaintenance:owner('M'),finiteAnchor:owner('anchor'),finiteTarget:owner('T'),require,
+    observerFault:controls.observerFault??null,codecFault:controls.codecFault??null,codecGetter:guard(()=>events.push('codec:getter')),
+    types:{isProxy:guard(value=>{events.push('codec');return createRequire(import.meta.url)('node:util').types.isProxy(value);})}});
+  return {events,controls,run:vm.api.run,reads:()=>[...readNames],observerSets:()=>sets.map(x=>[...x]),
+    async finish(){
+      if(state.status().unknown)assert.throws(state.close,/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);else state.close();
+      const before=events.filter(x=>x.startsWith('close:'));assert.deepEqual(before,['close:T','close:anchor','close:M']);
+      if(state.status().unknown)assert.throws(state.close,/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);else state.close();
+      assert.deepEqual(events.filter(x=>x.startsWith('close:')),before,'retained closers never retry');
+      assert.equal(state.status().closed,true);assert.deepEqual(faults,[],'no swallowed component assertions');vm.contained();
+    }};
+}
+function task7eAcquisitionRefusalV1(error){return error?.message==='MANUAL_ORPHAN_OWNER_REFUSED';}
+
+test('Task7E Task2 actual acquisition qualifies M3 T1 at the four complete observer boundaries',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1(),owner=await f.run();
+  assert.deepEqual(f.reads(),['M','M','M','T']);assert.deepEqual(f.observerSets(),[[],['M'],['M'],['M','T']]);
+  assert.equal(Object.isFrozen(owner),true);assert.equal(Object.isFrozen(owner.source),true);assert.equal(Object.isFrozen(owner.source.files),true);
+  assert.deepEqual(Object.keys(owner).sort(),['check','close','source']);
+  assert.deepEqual(task5cPlainV1(owner.source.maintenance),{sha:OWN_M,treeHash:'1'.repeat(40),buildHash:'c'.repeat(64)});
+  assert.deepEqual(task5cPlainV1(owner.source.target),{sha:OWN_T,treeHash:'2'.repeat(40),buildHash:'d'.repeat(64)});
+  assert.equal(owner.source.profileSha256,createHash('sha256').update('finite authenticated profile').digest('hex'));
+  assert.deepEqual(Object.keys(owner.source.files).sort(),Object.keys(ownedSourceData().files).sort());
+  assert.ok(f.events.indexOf('codec')<f.events.indexOf('read:T'),'exact Source DATA validation precedes first T invocation');
+  assert.equal(f.events.at(-1),'context:2','terminal complete proof directly precedes publication');
+  assert.equal(owner.check.length,0);assert.equal(owner.close.length,0);await f.finish();
+});
+for(const root of ['M','T'])test('Task7E Task2 first actual '+root+' invocation is inside complete-check pin custody',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1();await f.run();
+  const first=f.events.indexOf('read:'+root);assert.equal(f.events[first+1],'custody:'+root+':active=true:pin=1');
+  const after=f.events.slice(first+2);assert.ok(after.indexOf('pin:2')>=0);assert.ok(after.indexOf('context:2')>after.indexOf('pin:2'));await f.finish();
+});
+for(const root of ['M','T'])test('Task7E Task2 '+root+' post-import guard refuses before API inspection',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({postImportFault:root});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.ok(f.events.includes('import:'+root));assert.equal(f.events.includes('api:'+root),false);assert.equal(f.reads().includes(root),false);await f.finish();
+});
+for(const root of ['M','T'])test('Task7E Task2 '+root+' import rejection never publishes an owner',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({importThrow:root});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.equal(f.events.includes('api:'+root),false);await f.finish();
+});
+for(const root of ['M','T'])for(const apiFault of ['missing','type','arity'])test('Task7E Task2 '+root+' '+apiFault+' API refuses before actual invocation',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({apiRoot:root,apiFault});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.equal(f.reads().includes(root),false);await f.finish();
+});
+for(const root of ['M','T'])for(const [field,value] of [['branch','feature'],['clean',false],['originMainSha','0'.repeat(40)],
+  ['sha','0'.repeat(40)],['treeHash','0'.repeat(40)],['buildHash','0'.repeat(64)]])
+  test('Task7E Task2 first '+root+' '+field+' mismatch refuses with the original independent snapshot',async()=>{
+    const f=task7eAcquisitionObserverSuffixV1({observerFault:{root,field,value}});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+    assert.ok(f.reads().includes(root));await f.finish();
+  });
+for(const root of ['M','T'])test('Task7E Task2 started '+root+' opaque invocation throw burns sticky cleanup UNKNOWN',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({throwRead:root});await assert.rejects(f.run(),/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);
+  assert.ok(f.reads().includes(root));await f.finish();
+});
+for(const finalFault of ['pin:1','pin:2','context:1','context:2','owner:M','owner:anchor','identity','observer:M','observer:T'])
+  test('Task7E Task2 terminal '+finalFault+' refusal prevents publication and closes retained owners',async()=>{
+    const f=task7eAcquisitionObserverSuffixV1({finalFault});await assert.rejects(f.run(),
+      finalFault.startsWith('observer:')?/MANUAL_ORPHAN_CLEANUP_UNKNOWN/:task7eAcquisitionRefusalV1);
+    if(['pin:1','context:1','owner:M','owner:anchor','identity','observer:M'].includes(finalFault))assert.equal(f.reads().includes('T'),false,'unstarted T receives no authority');
+    await f.finish();
+  });
+for(const codecFault of ['shape','accessor','proxy'])test('Task7E Task2 Source DATA '+codecFault+' fault refuses before first T invocation without invented UNKNOWN',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({codecFault});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.equal(f.reads().includes('T'),false);assert.equal(f.events.includes('codec:getter'),false);await f.finish();
+});
+for(const root of ['M','T'])test('Task7E Task2 nested actual check during first '+root+' read invalidates acquisition even when caught',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({nested:root});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.ok(f.events.includes('nested:refused'));assert.equal(f.events.includes('nested:accepted'),false);await f.finish();
+});
+test('Task7E Task2 failed reverse retained close is sticky UNKNOWN and never retried',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({closeFault:'anchor'}),owner=await f.run();
+  assert.throws(owner.close,/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);assert.throws(owner.check,/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);await f.finish();
+});
+test('Task7E Task2 later public check and successful close retain complete M T composition',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1(),owner=await f.run(),before=f.events.length;
+  owner.check();assert.deepEqual(f.events.slice(before),['context:1','pin:1','owner:M','owner:anchor','identity',
+    'api:M','read:M','custody:M:active=true:pin=1','api:T','read:T','custody:T:active=true:pin=1','pin:2','context:2']);
+  assert.deepEqual(f.reads().slice(-2),['M','T']);const reads=f.reads().length;await f.finish();assert.deepEqual(f.reads().slice(reads),['M','T']);
+});
