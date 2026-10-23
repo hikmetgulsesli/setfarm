@@ -2819,7 +2819,9 @@ for(const size of [16384,16385]){
 // Source compiled DATA only: independent Root AST manifests, no application
 // Source bytes, release reads, owner/observer doubles or custody authority.
 // Own M62 artifact1767db82... and fixed T artifact40bba031... were read separately.
-const COMPILED_DATA_M_V1=Object.freeze([
+// Immutable historical common rows independently retained for old M and fixed T.
+// Task2's reviewed M override below must never flow into the target fixture.
+const COMPILED_DATA_HISTORICAL_COMMON_V1=Object.freeze([
   ["dist/cli/runtime-guard.js","ee41f24c7666ede347507fb914ab4955ec3f14b9bd2a75b934389b86c8666e1e"],
   ["dist/contracts/operational-active-run-status-v1.js","f080d9873a6ecd138ba814eb06ac2ae8865d43276eec03242094da85f264317b"],
   ["dist/db-pg.js","9eef3c2eb47da21f527f06934029e926923af27a83f1141a925f93bc8a280afd"],
@@ -2976,8 +2978,17 @@ const COMPILED_DATA_T_ONLY_V1=Object.freeze([
   ["dist/product-compiler/artifact-store.js","204e2af9b6d41462a2faf724cee849236bcd8981e7530c0f561d3c401f350457"],
   ["dist/product-compiler/indexed-artifact-publisher.js","6aa25a5930e10f92ba5e7671998e20ddb5320fa585bd16ab3c39645179cee9e5"],
 ].map(([locator,sha256])=>Object.freeze({locator,sha256})));
-const COMPILED_DATA_T_V1=Object.freeze([...COMPILED_DATA_M_V1,...COMPILED_DATA_T_ONLY_V1]
+const COMPILED_DATA_T_V1=Object.freeze([...COMPILED_DATA_HISTORICAL_COMMON_V1,...COMPILED_DATA_T_ONLY_V1]
   .sort((a,b)=>Buffer.compare(Buffer.from(a.locator),Buffer.from(b.locator))));
+// Root's independent compiler-derived records (audit SHA256 2f6fb7c17251fe9b...
+// and independent review SHA256 1d4ee34a34956670...) approve this sole M change.
+// These are fixed expected data, never observations read from a future release.
+const COMPILED_DATA_M_OVERRIDES_V1=Object.freeze([
+  Object.freeze({locator:'dist/internal-production/baseline-post-handoff-receipt-v1.js',
+    sha256:'a2953ff418ae1a44677eaf0779ea43bb0543bd57ee99024f5a8e49bb06b6b890'}),
+]);
+const COMPILED_DATA_M_V1=Object.freeze(COMPILED_DATA_HISTORICAL_COMMON_V1.map(row=>
+  COMPILED_DATA_M_OVERRIDES_V1.find(override=>override.locator===row.locator)??row));
 function compiledDataVmV1(){
   // The pure predicate needs no Node binary fixture or filesystem facts. Every
   // effect remains the same closed/counted whole-helper boundary.
@@ -3006,7 +3017,7 @@ test('Source compiled DATA-admission simulation accepts the independent approved
   const manifest=compiledManifestCopyV1('maintenance');
   assert.equal(manifest.length,143);
   assert.equal(createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
-    'ec4d076a604601dff3618b4f7c54e8924d1d33b2b9177ac216aecce7e598a8de');
+    'f79648a0b1edaaca3052bde668429acab2e6514ac9804e46207bd19f038a4921');
   assertCompiledDataOutcomeV1(manifest,'maintenance',true);
 });
 test('Source compiled DATA-admission simulation accepts the independent approved T153 manifest',()=>{
@@ -3040,6 +3051,107 @@ test('Source compiled DATA-admission simulation refuses one extra M record',()=>
 });
 test('Source compiled DATA-admission simulation refuses the T manifest crossed into M admission',()=>{
   assertCompiledDataOutcomeV1(compiledManifestCopyV1('target'),'maintenance',false);
+});
+test('Source compiled DATA-admission simulation retains immutable independent historical common and T fixtures',()=>{
+  assert.equal(COMPILED_DATA_HISTORICAL_COMMON_V1.length,143);
+  assert.equal(createHash('sha256').update(JSON.stringify(COMPILED_DATA_HISTORICAL_COMMON_V1)).digest('hex'),
+    'ec4d076a604601dff3618b4f7c54e8924d1d33b2b9177ac216aecce7e598a8de');
+  assert.equal(COMPILED_DATA_M_OVERRIDES_V1.length,1);
+  const changed=COMPILED_DATA_M_V1.filter((row,index)=>
+    row.sha256!==COMPILED_DATA_HISTORICAL_COMMON_V1[index].sha256);
+  assert.deepEqual(changed,COMPILED_DATA_M_OVERRIDES_V1);
+  assert.deepEqual(COMPILED_DATA_M_V1.map(row=>row.locator),
+    COMPILED_DATA_HISTORICAL_COMMON_V1.map(row=>row.locator));
+  for(const manifest of [COMPILED_DATA_HISTORICAL_COMMON_V1,COMPILED_DATA_T_ONLY_V1,
+    COMPILED_DATA_T_V1,COMPILED_DATA_M_OVERRIDES_V1,COMPILED_DATA_M_V1]){
+    assert.equal(Object.isFrozen(manifest),true);
+    manifest.forEach((row,index)=>{
+      assert.equal(Object.isFrozen(row),true);assert.deepEqual(Object.keys(row),['locator','sha256']);
+      if(index)assert.ok(Buffer.compare(Buffer.from(manifest[index-1].locator),Buffer.from(row.locator))<0);
+    });
+  }
+  for(const historical of COMPILED_DATA_HISTORICAL_COMMON_V1)
+    assert.equal(COMPILED_DATA_T_V1.find(row=>row.locator===historical.locator),historical);
+  const targetObserver=COMPILED_DATA_T_V1.find(row=>row.locator===COMPILED_DATA_M_OVERRIDES_V1[0].locator);
+  assert.equal(targetObserver.sha256,'f9c7755d2cfc69ccc250fc1da08c21b02fce8835b527fe4eb2647534392151ea');
+  assert.notEqual(targetObserver.sha256,COMPILED_DATA_M_OVERRIDES_V1[0].sha256);
+  assertCompiledDataOutcomeV1(compiledManifestCopyV1('target'),'target',true);
+});
+test('Source compiled DATA-admission simulation refuses the historical shared M143 digest as maintenance',()=>{
+  const manifest=COMPILED_DATA_HISTORICAL_COMMON_V1.map(row=>({...row}));
+  assert.equal(manifest.length,143);
+  assert.equal(createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    'ec4d076a604601dff3618b4f7c54e8924d1d33b2b9177ac216aecce7e598a8de');
+  assertCompiledDataOutcomeV1(manifest,'maintenance',false);
+});
+test('Source compiled DATA-admission simulation refuses the reviewed M observer digest crossed into T153',()=>{
+  const manifest=compiledManifestCopyV1('target');
+  const override=COMPILED_DATA_M_OVERRIDES_V1[0];
+  manifest.find(row=>row.locator===override.locator).sha256=override.sha256;
+  assert.equal(manifest.length,153);
+  assert.deepEqual(manifest.map(row=>row.locator),COMPILED_DATA_T_V1.map(row=>row.locator));
+  assert.notEqual(createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    'ef3696ca8b4cfcd387eb3cc77000a13781fde1cb17da9550abe2b88ed7656d2b');
+  assertCompiledDataOutcomeV1(manifest,'target',false);
+});
+test('Source compiled DATA-admission simulation refuses the M manifest crossed into T admission',()=>{
+  assertCompiledDataOutcomeV1(compiledManifestCopyV1('maintenance'),'target',false);
+});
+test('Source compiled DATA-admission simulation refuses one omitted T record',()=>{
+  const manifest=compiledManifestCopyV1('target');manifest.shift();
+  assertCompiledDataOutcomeV1(manifest,'target',false);
+});
+test('Source compiled DATA-admission simulation refuses one extra T record',()=>{
+  const manifest=compiledManifestCopyV1('target');
+  manifest.push({locator:'dist/unadmitted-compiled-data-fixture-v1.js',sha256:'a'.repeat(64)});
+  assertCompiledDataOutcomeV1(manifest,'target',false);
+});
+test('Source compiled DATA-admission simulation refuses same-count duplicate records in each manifest',()=>{
+  for(const kind of ['maintenance','target']){
+    const manifest=compiledManifestCopyV1(kind),count=manifest.length;
+    manifest[1]={...manifest[0]};assert.equal(manifest.length,count);
+    assertCompiledDataOutcomeV1(manifest,kind,false);
+  }
+});
+test('Source compiled DATA-admission simulation refuses same-count reordered records in each manifest',()=>{
+  for(const kind of ['maintenance','target']){
+    const manifest=compiledManifestCopyV1(kind),count=manifest.length;
+    [manifest[0],manifest[1]]=[manifest[1],manifest[0]];assert.equal(manifest.length,count);
+    assertCompiledDataOutcomeV1(manifest,kind,false);
+  }
+});
+test('Source compiled DATA-admission simulation refuses wrong locators in each manifest',()=>{
+  for(const kind of ['maintenance','target'])for(const locator of [
+    'dist/cli/runtime-guard-wrong.js','../dist/cli/runtime-guard.js','/dist/cli/runtime-guard.js',
+    'dist/cli/../runtime-guard.js','dist/cli/runtime-guard.ts',
+  ]){
+    const manifest=compiledManifestCopyV1(kind);manifest[0].locator=locator;
+    assertCompiledDataOutcomeV1(manifest,kind,false);
+  }
+});
+test('Source compiled DATA-admission simulation refuses malformed digests in each manifest',()=>{
+  for(const kind of ['maintenance','target'])for(const sha256 of [null,0,'','a'.repeat(63),'A'.repeat(64),'g'.repeat(64)]){
+    const manifest=compiledManifestCopyV1(kind);manifest[0].sha256=sha256;
+    assertCompiledDataOutcomeV1(manifest,kind,false);
+  }
+});
+test('Source compiled DATA-admission simulation refuses malformed records in each manifest',()=>{
+  for(const kind of ['maintenance','target']){
+    const original=compiledManifestCopyV1(kind)[0];
+    for(const entry of [null,[],original.locator,{locator:original.locator},{sha256:original.sha256},
+      {...original,extra:true}]){
+      const manifest=compiledManifestCopyV1(kind);manifest[0]=entry;
+      assertCompiledDataOutcomeV1(manifest,kind,false);
+    }
+  }
+});
+test('Source compiled DATA-admission simulation refuses non-array manifests for each admission',()=>{
+  for(const kind of ['maintenance','target'])for(const manifest of [null,undefined,{},'manifest'])
+    assertCompiledDataOutcomeV1(manifest,kind,false);
+});
+test('Source compiled DATA-admission simulation refuses unknown admission kinds',()=>{
+  for(const kind of [null,undefined,'','Maintenance','observer'])
+    assertCompiledDataOutcomeV1(compiledManifestCopyV1('target'),kind,false);
 });
 
 // Task3 transport contracts. Every callback gates both future APIs BEFORE any
