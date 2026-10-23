@@ -870,10 +870,9 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
     need(s.uid===501n&&s.gid===20n&&(s.mode&0o7777n)===0o700n);const data=directoryData(s);
     if(expected!==null)need(Object.keys(data).every(key=>data[key]===expected[key]));return data;
   };
-  const check=():void=>{
+  const localCheck=():void=>{
     sample();need(JSON.stringify(process.env)===JSON.stringify(initialEnvironment)&&process.getuid?.()===501&&process.geteuid?.()===501
       &&process.getgid?.()===20&&process.getegid?.()===20&&process.platform==="darwin"&&process.arch==="arm64"&&process.version==="v26.4.0");
-    holder?.check();
     for(const pin of longPins){need(!pin.attempted);const named=orphanFs.lstatSync(pin.path,{bigint:true}),held=orphanFs.fstatSync(pin.fd,{bigint:true});
       need(!named.isSymbolicLink()&&same(pin.initial,named,pin.mutable)&&same(pin.initial,held,pin.mutable));}
     for(const a of aliases){const now=orphanFs.lstatSync(a.path,{bigint:true});need(now.isSymbolicLink()&&same(a.initial,now)
@@ -883,6 +882,7 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
       need(JSON.stringify(got)===JSON.stringify(originalGraph[key]));}
     prepared?.assertUnchanged();activation?.assertUnchanged();sample();
   };
+  const check=():void=>{localCheck();holder?.check();localCheck();};
   const bounded=async(begin:()=>unknown,retain?:(value:any)=>void):Promise<any>=>{
     sample();let timeout:ReturnType<typeof setTimeout>|null=null,origin=process.hrtime.bigint(),observed=origin;
     let original:Promise<unknown>|null=null;
@@ -922,13 +922,13 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
       need(JSON.stringify(a.preparedPin)===JSON.stringify(i.records["activation-prepared.json"])&&JSON.stringify(a.activatedPin)===JSON.stringify(i.records["activated.json"]));a.assertUnchanged();}
     check();return identity;
   };
-  const catalogRows=async():Promise<ManualOrphanDataV1>=>{
-    need(admin!==null&&!sqlClosed);check();await admin!.query("identity");
-    const databases=await admin!.query("databases");check();const roles=await admin!.query("roles");check();const memberships=await admin!.query("memberships");check();
+  const readFixtureCatalogRowsLocal=async():Promise<ManualOrphanDataV1>=>{
+    need(admin!==null&&!sqlClosed);localCheck();await admin!.query("identity");
+    const databases=await admin!.query("databases");localCheck();const roles=await admin!.query("roles");localCheck();const memberships=await admin!.query("memberships");localCheck();
     return {databases,roles,memberships};
   };
-  const runnerCatalog=async(stage:string):Promise<ManualOrphanDataV1>=>{
-    need(kind==="runner");const rows=await catalogRows(),sessions=await admin!.query("sessions");check();
+  const readRunnerCatalogFactsLocal=async(stage:string):Promise<ManualOrphanDataV1>=>{
+    need(kind==="runner");const rows=await readFixtureCatalogRowsLocal(),sessions=await admin!.query("sessions");localCheck();
     const pair=admin!.current().pair,constructor={...frame.constructorAdminBackend,datid:pair.datid,usesysid:pair.usesysid};
     const result=qualifyManualOrphanRunnerCatalogV1(stage,baseline??frame.cluster,stage==="initial"?null:installation,rows,
       {own:pair,constructor,database:"postgres",user:"postgres",rows:sessions});
@@ -936,10 +936,10 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
     need(db!==undefined&&role!==undefined&&db.oid===pair.datid&&db.ownerOid===role.oid&&role.oid===pair.usesysid
       &&db.allowConnections===true&&db.connectionLimit===-1&&role.superuser===true&&role.inherit===true&&role.createRole===true
       &&role.createDb===true&&role.login===true&&role.replication===true&&role.bypassRls===true&&role.connectionLimit===-1&&role.validUntilUTC===null);
-    if(baseline===null)baseline=result;return {rows,canonical:result,sessions};
+    return {rows,canonical:result,sessions};
   };
-  const runtimeCatalog=async():Promise<void>=>{
-    const rows=await catalogRows(),i=installation!;need(rows.databases.length===4&&rows.roles.length<=130&&rows.memberships.length<=256);
+  const readRuntimeCatalogFactsLocal=async():Promise<ManualOrphanDataV1>=>{
+    const rows=await readFixtureCatalogRowsLocal(),i=installation!;need(rows.databases.length===4&&rows.roles.length<=130&&rows.memberships.length<=256);
     const db=rows.databases.filter((r:ManualOrphanDataV1)=>r.name===i.databaseName||r.oid===i.databaseOid);
     need(db.length===1&&db[0].name===i.databaseName&&db[0].oid===i.databaseOid&&db[0].ownerOid===i.ownerOid&&db[0].allowConnections===true&&db[0].connectionLimit===-1);
     const generated:unknown[]=[];for(const [name,oid,login] of [[i.ownerRole,i.ownerOid,false],[i.runtimeRole,i.runtimeOid,true]]){
@@ -949,7 +949,15 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
     need(rows.memberships.every((r:ManualOrphanDataV1)=>[r.roleOid,r.memberOid,r.grantorOid].every(v=>v!==i.ownerOid&&v!==i.runtimeOid)));
     const residual=canonicalizeManualOrphanClusterBaselineV1({databases:rows.databases.filter((r:unknown)=>r!==db[0]),roles:rows.roles.filter((r:unknown)=>!generated.includes(r)),memberships:rows.memberships}) as ManualOrphanDataV1;
     for(const key of ["databaseBaselineSha256","roleBaselineSha256","membershipBaselineSha256"])need(residual[key]===frame.cluster[key]);
-    baseline=residual;await admin!.query("identity");check();
+    await admin!.query("identity");localCheck();return residual;
+  };
+  // Raw catalog facts stay provisional inside these fixed complete units.
+  const runnerCatalog=async(stage:string):Promise<ManualOrphanDataV1>=>{
+    check();const observed=await readRunnerCatalogFactsLocal(stage);check();
+    if(baseline===null)baseline=observed.canonical;return observed;
+  };
+  const runtimeCatalog=async():Promise<void>=>{
+    check();const observed=await readRuntimeCatalogFactsLocal();check();baseline=observed;
   };
   const closeSql=async():Promise<void>=>{
     if(handedOff&&admin!==null){await admin.close();need(admin.current().closed);sqlClosed=true;return;}
@@ -959,13 +967,21 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
       let t:ReturnType<typeof setTimeout>|null=null;try{const original=Promise.resolve(end);try{t=setTimeout(burn,5000);}catch{burn();}await original;}catch{burn();}finally{if(t!==null)try{clearTimeout(t);}catch{burn();}}}
     sqlClosed=!unknown;if(unknown)throw Error("MANUAL_ORPHAN_CLEANUP_UNKNOWN");
   };
-  const closures=():ManualOrphanDataV1=>{
+  // These facts remain provisional until their explicit wrapper guard succeeds.
+  const readClosureFactsLocal=():ManualOrphanDataV1=>{
     sample();const input=observeManualOrphanOwnedFd4V1();need(input.claimed&&input.adopted&&input.closed&&!input.unknown);
     const state=admin?.current();need(initialPending===null&&children.every(child=>child.closed));
     need(sqlClosed||state!==undefined&&!state.pending&&!state.unknown&&!state.closed);
-    if(!sourceClosed){need(holder!==null);check();}
+    if(!sourceClosed)need(holder!==null);
     return {input:"fulfilled",source:sourceClosed?"fulfilled":"retained",admin:sqlClosed?"fulfilled":"retained",
       children:"fulfilled",queries:"settled",pending:0,fault:null};
+  };
+  const closures=():ManualOrphanDataV1=>{
+    const facts=readClosureFactsLocal();if(!sourceClosed)check();return facts;
+  };
+  // Cleanup's explicit Source bookend precedes this local receipt acceptance.
+  const cleanupClosures=():ManualOrphanDataV1=>{
+    const facts=readClosureFactsLocal();if(!sourceClosed)localCheck();return facts;
   };
   const phaseEvent=(type:string,phase:unknown,integration:unknown,cleanup:unknown=null):ManualOrphanDataV1=>({type,phase,integration,installation,baseline,
     source:frame.source,closures:closures(),cleanup});
@@ -1116,19 +1132,27 @@ async function openManualOrphanFixtureContextV1(kind:string,frame:ManualOrphanDa
       // The last verifier's own finally has completed before the no-generated-session census. No further verifier is opened during cleanup.
       check();await runnerCatalog("activated");ledger=advanceManualOrphanRouteLedgerV1(ledger,phaseEvent("cases-settled",null,integration));
       let cleanup:ManualOrphanDataV1={state:"cases-settled",databaseAck:null,runtimeAck:null,ownerAck:null,unknown:false};
-      try{
-        admin!.beginCleanup();
-        for(const [object,before,after] of [["database","activated","database-dropped"],["runtime","database-dropped","runtime-dropped"],["owner","runtime-dropped","owner-dropped"]] as const){
-          check();need(ledger.state===(object==="database"?"cases-settled":before));await runnerCatalog(before);check();
-          const i=installation!,identity={kind:object,name:i[object==="database"?"databaseName":object==="runtime"?"runtimeRole":"ownerRole"],oid:i[object==="database"?"databaseOid":object==="runtime"?"runtimeOid":"ownerOid"]};
-          await admin!.query("drop-"+object,{installation:i,object:identity,stage:before});check();
-          const event={type:object+"-ack",installation:i,object:identity,completion:"fulfilled",absence:{nameAbsent:true,oidAbsent:true},baseline,closures:closures()};
-          cleanup=advanceManualOrphanCleanupLedgerV1(cleanup,event);const absentCatalog=await runnerCatalog(after);check();
-          cleanup=advanceManualOrphanCleanupLedgerV1(cleanup,{...event,type:object+"-absent",baseline:absentCatalog.canonical});
-          ledger=advanceManualOrphanRouteLedgerV1(ledger,phaseEvent(after,null,null,cleanup));
-        }
-        await runnerCatalog("owner-dropped");await new Promise<void>(yes=>setTimeout(yes,100));check();await runnerCatalog("owner-dropped");check();
-      }finally{admin!.endCleanup();}
+      const cleanupRunnerObjects=async():Promise<void>=>{
+        try{
+          admin!.beginCleanup();check();
+          for(const [object,before,after] of [["database","activated","database-dropped"],["runtime","database-dropped","runtime-dropped"],["owner","runtime-dropped","owner-dropped"]] as const){
+            localCheck();need(ledger.state===(object==="database"?"cases-settled":before));await readRunnerCatalogFactsLocal(before);check();
+            const i=installation!,identity={kind:object,name:i[object==="database"?"databaseName":object==="runtime"?"runtimeRole":"ownerRole"],oid:i[object==="database"?"databaseOid":object==="runtime"?"runtimeOid":"ownerOid"]};
+            await admin!.query("drop-"+object,{installation:i,object:identity,stage:before});localCheck();
+            // Fulfillment is provisional until the exact post-DROP census and
+            // terminal full Source proof. No ACK/absence/route state escapes.
+            const absentCatalog=await readRunnerCatalogFactsLocal(after);check();
+            const event={type:object+"-ack",installation:i,object:identity,completion:"fulfilled",absence:{nameAbsent:true,oidAbsent:true},baseline,closures:cleanupClosures()};
+            cleanup=advanceManualOrphanCleanupLedgerV1(cleanup,event);
+            cleanup=advanceManualOrphanCleanupLedgerV1(cleanup,{...event,type:object+"-absent",baseline:absentCatalog.canonical});
+            ledger=advanceManualOrphanRouteLedgerV1(ledger,{type:after,phase:null,integration:null,installation,baseline,
+              source:frame.source,closures:cleanupClosures(),cleanup});
+          }
+          await readRunnerCatalogFactsLocal("owner-dropped");localCheck();await new Promise<void>(yes=>setTimeout(yes,100));localCheck();
+          await readRunnerCatalogFactsLocal("owner-dropped");check();
+        }finally{admin!.endCleanup();}
+      };
+      await cleanupRunnerObjects();
       await closeSql();check();const clean={databaseAbsent:true,ownerRoleAbsent:true,runtimeRoleAbsent:true,baselineRestored:true,adminClose:"fulfilled"};
       finalLedger=ledger;finalCleanup=clean;
       result={schema:"setfarm.manual-orphan-runner-result.v1",run:frame.run,frameSha256:createHash("sha256").update(encodeManualOrphanRunnerSetupFrameV1(frame)).digest("hex"),

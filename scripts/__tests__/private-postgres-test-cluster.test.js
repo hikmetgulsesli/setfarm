@@ -2301,3 +2301,129 @@ test('Task7 host context rejects a self-consistent different account home after 
 test('Task7 host context rejects a different account UID before configuration IO',()=>task7ContextCase('uid'));
 test('Task7 host context rejects a different account GID before configuration IO',()=>task7ContextCase('gid'));
 test('Task7 host context rejects a different release parent before configuration IO',()=>task7ContextCase('parent'));
+
+// Task7E fixed proof-cost units. Only actual lexical declarations are evaluated;
+// finite dependencies below cannot construct a successful constructor/Source owner.
+function task7eConstructorDeclarationsV1(names){
+  const ts=createRequire(import.meta.url)('typescript'),source=readFileSync(MODULE,'utf8');
+  const ast=ts.createSourceFile('actual-K.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+  assert.deepEqual(ast.parseDiagnostics,[]);
+  const owner=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='runManualOrphanConstructorV1');
+  assert.ok(owner?.body);const nodes=[];
+  const visit=n=>{nodes.push(n);ts.forEachChild(n,visit);};visit(owner.body);
+  return names.map(name=>{
+    const found=nodes.filter(n=>(ts.isFunctionDeclaration(n)&&n.name?.text===name)
+      ||(ts.isVariableDeclaration(n)&&ts.isIdentifier(n.name)&&n.name.text===name));
+    assert.equal(found.length,1,'Task7E scaffolding RED: missing unique K lexical '+name+'; semantic controls NOT reached');
+    return ts.isFunctionDeclaration(found[0])?found[0].getText(ast):'const '+found[0].getText(ast)+';';
+  }).join('\n');
+}
+const TASK7E_K_UNITS_V1=Object.freeze(['waitForConstructorReadinessAndOpenAdmin','readConstructorInitialIdentity',
+  'readConstructorInitialBaseline','readConstructorPreSpawnFacts','readConstructorQuiescenceSamples','closeConstructorAdmin','settleConstructorServer']);
+async function task7eConstructorUnitV1(name,options={}){
+  // Gate before any seam/fixture work. Initial RED is explicitly scaffolding.
+  const code=task7eConstructorDeclarationsV1(['localCheck','fullCheck',name]);
+  const h=await task4bContainedConstructor(),events=[],faults=[];let now=0n,unknown=false,proof=0,polls=0;
+  const createClock=task4bBinding(h,'createManualOrphanConstructorClockV1'),readinessClock=createClock();
+  const controls={proofFault:0,proofCost:0,drift:false,localFault:null,awaitFault:null,awaitPending:null,...options};
+  const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}};
+  const refuse=()=>Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+  const current=guard(()=>{events.push('local:originals');if(unknown||controls.localFault==='originals')throw refuse();});
+  const local=label=>guard(()=>{events.push('local:'+label);if(controls.localFault===label)throw refuse();});
+  const backend={pid:7110,backendStartedAtUTC:'2026-10-22T00:00:00.123456Z'};
+  const baseline={databaseBaselineSha256:'a'.repeat(64),roleBaselineSha256:'b'.repeat(64),membershipBaselineSha256:'c'.repeat(64)};
+  const identity={systemIdentifier:'7550000000000000001',postmasterStartedAtUTC:'2026-10-22T00:00:00.000001Z',serverVersionNum:170010};
+  let adminClosed=false;
+  const awaited=guard(async(label,value)=>{events.push('await:'+label);if(controls.awaitPending?.label===label)await controls.awaitPending.promise;
+    if(controls.awaitFault===label)controls.drift=true;events.push('settled:'+label);return value;});
+  const admin={readIdentity:()=>awaited('identity',identity),readBaselines:()=>awaited('baselines',baseline),
+    readSessions:()=>awaited('sessions',[backend]),snapshot:()=>({backend,pending:false,unknown:false,closed:adminClosed}),
+    close:async()=>{await awaited('admin-close');adminClosed=true;}};
+  const server={child:{pid:7101},serverWitness:{},check:guard(limit=>{assert.equal(limit,30000000000n);events.push('clock:readiness');return readinessClock.check(limit);}),
+    witness:{output:guard(()=>{events.push('poll');return {stderr:Buffer.from(polls++<(controls.polls??0)?'starting\n':'LOG:  database system is ready to accept connections\n')};}),
+      snapshot:()=>({state:'observed'})}};
+  const context={Buffer,Error,sourceClosed:false,sourceHolder:{check:guard(()=>{events.push('source:'+ ++proof);now+=BigInt(controls.proofCost)*1000000n;h.time(now);
+      if(controls.drift||proof===controls.proofFault)throw refuse();})},currentOriginals:current,
+    tools:{check:local('tools')},rootMetadata:local('root'),delivery:{check:local('delivery')},journal:{healthy:true},
+    mark:()=>{unknown=true;},manualOrphanUnknownV1:refuse,manualOrphanRequireV1:guard(value=>{if(!value)throw refuse();}),
+    observeServer:local('server'),server,serverMayExit:false,admin:name==='waitForConstructorReadinessAndOpenAdmin'?null:admin,
+    root,physicalRoot:'/private'+root,password:'a'.repeat(64),port:55439,identity:null,baseline:null,originalBaseline:JSON.stringify(baseline),constructorAdminBackend:backend,
+    adminClosed:false,control:guard((stage,fields={})=>{events.push('control:'+stage);assert.equal(controls.drift,false,'no accepted output during unresolved Source drift');}),
+    delay:guard(async ms=>{assert.equal(ms,100);events.push('delay:100');now+=100000000n;h.time(now);}),
+    openManualOrphanConstructorAdminV1:guard(async(endpoint,boundary)=>{events.push('open-admin');assert.equal(endpoint.port,55439);
+      assert.equal(boundary,context.unit.localCheck,'only fixed local guard enters the private admin');boundary();return awaited('open-admin',admin);}),
+    createManualOrphanConstructorClockV1:guard(()=>{events.push('clock:start');const clock=createClock();return {check:guard(limit=>{assert.equal(limit,30000000000n);events.push('clock:check');return clock.check(limit);})};}),
+    settleOwnedPrivatePostgresV1:guard(async(witness,ms)=>{assert.equal(witness,server.serverWitness);assert.equal(ms,30000);events.push('signal');return awaited('settle',true);}),
+    waitManualOrphanConstructorChildV1:guard(async(child,clock)=>{assert.equal(child,server);assert.equal(typeof clock.check,'function');return awaited('wait');}),
+    requireManualOrphanConstructorChildSuccessV1:guard((witness,purpose)=>{assert.equal(witness,server.witness);assert.equal(purpose,'server');events.push('child-success');}),
+  };
+  const deny=site=>guard(()=>{faults.push(site);throw Error('TASK7E_K_FORBIDDEN');});
+  context.process=new Proxy({},{get:(_o,key)=>{faults.push('process.'+String(key));throw Error('TASK7E_K_FORBIDDEN');}});context.require=deny('require');
+  runInNewContext(code+'\nglobalThis.unit={run:'+name+',localCheck,fullCheck};',context,{filename:'actual-K-fixed-unit',timeout:5000});
+  return {events,controls,context,admin,run:context.unit.run,proofs:()=>proof,at:value=>{now=BigInt(value)*1000000n;h.time(now);},
+    clean(){assert.deepEqual(faults,[],'no swallowed fixture assertion/unlisted operation');h.clean();}};
+}
+function task7eKBeforeV1(f,before,after){const a=f.events.indexOf(before),b=f.events.indexOf(after);assert.ok(a>=0&&b>a,before+' precedes '+after);}
+for(const [name,count,terminal] of [
+  ['waitForConstructorReadinessAndOpenAdmin',3,'settled:open-admin'],['readConstructorInitialIdentity',2,'control:identity-verified'],
+  ['readConstructorInitialBaseline',2,'settled:baselines'],['readConstructorPreSpawnFacts',2,'settled:sessions'],
+  ['readConstructorQuiescenceSamples',4,'control:quiescence-sample'],['closeConstructorAdmin',2,'settled:admin-close'],
+  ['settleConstructorServer',2,'control:server-definitely-closed'],
+])test('Task7E K '+name+' accepts only complete fixed observations',async()=>{
+  // Break: nested full checks, missing local guards, early result/output/effect.
+  const f=await task7eConstructorUnitV1(name,{polls:2});await f.run();assert.equal(f.proofs(),count);assert.ok(f.events.includes(terminal));
+  assert.ok(f.events.includes('local:tools'));assert.ok(f.events.includes('local:root'));assert.ok(f.events.includes('local:delivery'));
+  if(name==='waitForConstructorReadinessAndOpenAdmin'){task7eKBeforeV1(f,'source:2','open-admin');task7eKBeforeV1(f,'settled:open-admin','source:3');assert.equal(f.context.admin,f.admin);}
+  if(name==='readConstructorInitialIdentity')task7eKBeforeV1(f,'source:2','control:identity-verified');
+  if(name==='readConstructorPreSpawnFacts')assert.deepEqual(f.events.filter(x=>x.startsWith('await:')),['await:identity','await:baselines','await:sessions']);
+  if(name==='readConstructorQuiescenceSamples'){assert.equal(f.events.filter(x=>x==='control:quiescence-sample').length,2);assert.equal(f.events.filter(x=>x==='delay:100').length,1);
+    const accepted=f.events.reduce((out,x,i)=>x==='control:quiescence-sample'?[...out,i]:out,[]);assert.ok(f.events.indexOf('source:2')<accepted[0]);assert.ok(f.events.indexOf('source:4')<accepted[1]);}
+  if(name==='settleConstructorServer'){task7eKBeforeV1(f,'clock:start','source:1');task7eKBeforeV1(f,'source:1','signal');task7eKBeforeV1(f,'settled:wait','source:2');task7eKBeforeV1(f,'source:2','control:server-definitely-closed');}
+  f.clean();
+});
+for(const polls of [0,3])test('Task7E K readiness retains three full proofs with '+polls+' unsuccessful polls',async()=>{
+  const f=await task7eConstructorUnitV1('waitForConstructorReadinessAndOpenAdmin',{polls});await f.run();
+  assert.equal(f.proofs(),3);assert.equal(f.events.filter(x=>x==='poll').length,polls+1);assert.equal(f.events.filter(x=>x==='delay:100').length,polls);
+  assert.ok(f.events.filter(x=>x==='clock:readiness').length>=polls+3);f.clean();
+});
+for(const at of [1,2,3])test('Task7E K readiness Source failure '+at+' forbids unqualified acceptance',async()=>{
+  const f=await task7eConstructorUnitV1('waitForConstructorReadinessAndOpenAdmin',{proofFault:at});await assert.rejects(f.run(),task4bUnknown);
+  if(at<3)assert.equal(f.events.includes('open-admin'),false);else assert.equal(f.context.admin,f.admin,'late actual admin retained before failed terminal proof');f.clean();
+});
+for(const cost of [15000,30000])test('Task7E K readiness Source cost '+cost+' stays inside original thirty seconds',async()=>{
+  const f=await task7eConstructorUnitV1('waitForConstructorReadinessAndOpenAdmin',{proofCost:cost});await assert.rejects(f.run(),task4bUnknown);
+  assert.equal(f.events.includes('open-admin'),false,'expired complete proof cannot open the connection');f.clean();
+});
+for(const [name,at,forbidden] of [
+  ['readConstructorInitialIdentity',2,'control:identity-verified'],['readConstructorInitialBaseline',2,'control:identity-verified'],
+  ['readConstructorPreSpawnFacts',2,'signal'],['readConstructorQuiescenceSamples',2,'control:quiescence-sample'],
+  ['readConstructorQuiescenceSamples',4,'control:server-definitely-closed'],['closeConstructorAdmin',2,'control:admin-ended'],
+  ['settleConstructorServer',1,'signal'],['settleConstructorServer',2,'control:server-definitely-closed'],
+])test('Task7E K '+name+' terminal proof '+at+' cannot publish authority',async()=>{
+  const f=await task7eConstructorUnitV1(name,{proofFault:at});await assert.rejects(f.run(),task4bUnknown);assert.equal(f.events.includes(forbidden),false);
+  if(name==='readConstructorQuiescenceSamples')assert.equal(f.events.filter(x=>x==='control:quiescence-sample').length,at===4?1:0);
+  if(name==='settleConstructorServer'&&at===2)task7eKBeforeV1(f,'settled:settle','settled:wait');f.clean();
+});
+for(const label of ['open-admin','identity','baselines','sessions'])test('Task7E K pending '+label+' is joined before drift refusal',async()=>{
+  const name=label==='open-admin'?'waitForConstructorReadinessAndOpenAdmin':'readConstructorPreSpawnFacts';
+  let resolve;const promise=new Promise(yes=>{resolve=yes;});const f=await task7eConstructorUnitV1(name,{awaitPending:{label,promise}});
+  let settled=false;const outcome=f.run().then(()=>{settled=true;return null;},error=>{settled=true;return error;});
+  for(let i=0;i<12;i++)await Promise.resolve();assert.ok(f.events.includes('await:'+label));assert.equal(settled,false);
+  f.controls.drift=true;resolve();assert.ok(task4bUnknown(await outcome));assert.ok(f.events.includes('settled:'+label));
+  assert.equal(f.events.some(x=>x.startsWith('control:')),false);if(label==='open-admin')assert.equal(f.context.admin,f.admin);f.clean();
+});
+for(const label of ['settle','wait'])test('Task7E K shutdown retains pending '+label+' through terminal clock fault',async()=>{
+  let resolve;const promise=new Promise(yes=>{resolve=yes;});const f=await task7eConstructorUnitV1('settleConstructorServer',{awaitPending:{label,promise}});
+  let settled=false;const outcome=f.run().then(()=>{settled=true;return null;},error=>{settled=true;return error;});
+  for(let i=0;i<12;i++)await Promise.resolve();assert.ok(f.events.includes('await:'+label));assert.equal(settled,false);f.at(30000);resolve();
+  assert.ok(task4bUnknown(await outcome));assert.ok(f.events.includes('settled:settle'));assert.ok(f.events.includes('settled:wait'),'both started joins complete');
+  assert.equal(f.events.includes('control:server-definitely-closed'),false);f.clean();
+});
+for(const name of ['readConstructorQuiescenceSamples','settleConstructorServer'])test('Task7E K '+name+' charges expensive terminal proof to same clock',async()=>{
+  const f=await task7eConstructorUnitV1(name,{proofCost:15000});await assert.rejects(f.run(),task4bUnknown);
+  assert.equal(f.events.some(x=>x==='control:quiescence-sample'||x==='control:server-definitely-closed'),false);f.clean();
+});
+for(const fault of ['originals','tools','root','delivery'])test('Task7E K local '+fault+' fault cannot be hidden by complete Source proof',async()=>{
+  const f=await task7eConstructorUnitV1('readConstructorPreSpawnFacts',{localFault:fault});await assert.rejects(f.run(),task4bUnknown);
+  assert.equal(f.events.some(x=>x.startsWith('await:')),false);f.clean();
+});

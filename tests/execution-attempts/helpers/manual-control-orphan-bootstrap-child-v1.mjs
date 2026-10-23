@@ -624,9 +624,9 @@ function ownedSourceResourcesV1(){
     },
   };
 }
-function ownedSourcePinsV1(resources,home){
+function ownedSourcePinsV1(resources,home,sourceContext=()=>{}){
   const directories=new Map(),files=new Map(),absences=new Set();
-  let custody=null,handoffStarted=false,invalid=false,reading=false;
+  let custody=null,handoffStarted=false,invalid=false,reading=false,fixedUnit=null;
   const guard=()=>{resources.guard();ownedSourceRequireV1(!invalid);};
   // The handoff and reverse cleanup share this exact one-attempt closer.
   // Burn before the syscall: a thrown close may already have recycled the FD.
@@ -783,7 +783,7 @@ function ownedSourcePinsV1(resources,home){
       for(const locator of files.keys())if(locator.startsWith(root+'/dist/'))ownedSourceRequireV1(selected.has(locator));
       // Bind the SAME private retained wrapper and its complete stock recheck,
       // never a cached observation, replacement instance or borrowed descriptor.
-      custody={owner:retainedTarget,check:retainedTarget.check,state:'OVERLAP'};
+      custody={owner:retainedTarget,check:retainedTarget.check,output:outputMap,state:'OVERLAP'};
       stockCheck();check(); // Complete held/named/content/topology batch BEFORE any close.
       for(const pin of batch){
         attempted=true;pin.state='HANDOFF_ATTEMPTED';
@@ -800,7 +800,86 @@ function ownedSourcePinsV1(resources,home){
       throw ownedSourceRefusalV1();
     }
   };
-  return {directory,file,absent,check,handoffTargetOutput};
+  // These three units are fixed, synchronous, and retain the SAME original T.
+  // Ordinary file() always keeps its own stock proof; no mode flag changes it.
+  const targetRead=(locator,output)=>{
+    guard();ownedSourceRequireV1((fixedUnit==='setup'||fixedUnit==='observer')&&custody?.state==='STOCK_HELD'
+      &&output===custody.output&&ownedSourceLocatorV1(locator)&&locator.startsWith('dist/')&&locator.endsWith('.js'));
+    const root=path.join(home,'ai','setrox','releases','setfarm-161297ff'),absolute=path.join(root,locator);
+    const entry=Map.prototype.get.call(output,locator),pin=files.get(absolute);
+    ownedSourceRequireV1(entry&&pin&&pin.state==='STOCK_HELD'&&pin.stat.size<=33554432n);
+    directory(path.dirname(absolute));const value=bytes(pin,true);
+    ownedSourceRequireV1(value.length===entry.byteLength&&pin.sha256===entry.sha256&&Number(pin.stat.mode&0o7777n)===entry.mode);
+    return value;
+  };
+  const targetSetupGraph=(output,groups)=>{
+    let entered=false;
+    try{
+      guard();ownedSourceRequireV1(fixedUnit===null&&!reading&&custody?.state==='STOCK_HELD'&&output===custody.output);
+      fixedUnit='setup';entered=true;stockCheck();topology();
+      const graph=ownedSourceGraphV1(path.join(home,'ai','setrox','releases','setfarm-161297ff'),output,ownedSetupRootsV1,groups,
+        locator=>targetRead(locator,output));
+      ownedSourceRequireV1(graph.files.size===153&&graph.members.size===85);
+      topology();stockCheck();guard();return graph;
+    }catch{invalid=true;throw ownedSourceRefusalV1();}finally{if(entered)fixedUnit=null;}
+  };
+  const targetObserverGraph=(output,groups)=>{
+    let entered=false;
+    try{
+      guard();ownedSourceRequireV1(fixedUnit===null&&!reading&&custody?.state==='STOCK_HELD'&&output===custody.output);
+      fixedUnit='observer';entered=true;stockCheck();topology();
+      const graph=ownedSourceGraphV1(path.join(home,'ai','setrox','releases','setfarm-161297ff'),output,[ownedObserverV1],groups,
+        locator=>targetRead(locator,output));
+      ownedSourceRequireV1(graph.files.size===121&&graph.members.size===79);
+      topology();stockCheck();guard();return graph;
+    }catch{invalid=true;throw ownedSourceRefusalV1();}finally{if(entered)fixedUnit=null;}
+  };
+  const targetMembership=groups=>{
+    let entered=false;
+    try{
+      guard();ownedSourceRequireV1(fixedUnit===null&&!reading&&custody?.state==='STOCK_HELD'&&Array.isArray(groups));
+      fixedUnit='membership';entered=true;stockCheck();topology();
+      const root=path.join(home,'ai','setrox','releases','setfarm-161297ff'),device=directory(root).dev,memberships=new Set(),contexts=new Set();
+      for(const {row,members} of groups){
+        ownedSourceRequireV1(Array.isArray(row)&&row.length===4&&row[0]==='esm'&&ownedSourceLocatorV1(row[1])&&ownedSourceLocatorV1(row[3])
+          &&Array.isArray(members)&&members.length>0&&members.includes(row[1]));
+        const context=JSON.stringify([row[0],path.dirname(row[1]),row[2],row[3]]);ownedSourceRequireV1(!contexts.has(context));contexts.add(context);
+        const original=directory(path.join(root,path.dirname(row[1])),true);
+        for(const member of members){
+          const key=member+':'+row[2];ownedSourceRequireV1(ownedSourceLocatorV1(member)&&member.startsWith('dist/')&&member.endsWith('.js')
+            &&path.dirname(member)===path.dirname(row[1])&&!memberships.has(key));memberships.add(key);
+          const locator=path.join(root,member),actual=directory(path.dirname(locator)),pin=files.get(locator);
+          ownedSourceRequireV1(ownedSourceSameV1(original,actual)&&pin&&pin.state==='STOCK_HELD'&&pin.stat.size<=16777216n&&pin.stat.dev===device);
+          bytes(pin,true);
+        }
+      }
+      ownedSourceRequireV1(memberships.size===85);topology();stockCheck();guard();
+    }catch{invalid=true;throw ownedSourceRefusalV1();}finally{if(entered)fixedUnit=null;}
+  };
+  const resolvePackages=(root,groups,accountHome,recheck)=>{
+    let entered=false,localReading=false;
+    try{
+      guard();ownedSourceRequireV1(fixedUnit===null&&!reading&&custody?.state==='STOCK_HELD'&&accountHome===home
+        &&path.dirname(root)===path.join(home,'ai','setrox','releases')&&/^setfarm-[a-f0-9]{8}$/.test(path.basename(root))
+        &&Array.isArray(groups)&&typeof recheck==='function'&&typeof sourceContext==='function');
+      fixedUnit='resolver';entered=true;
+      const facade=Object.freeze({
+        check(){
+          try{
+            guard();ownedSourceRequireV1(fixedUnit==='resolver'&&entered&&!localReading&&!reading);localReading=true;
+            ownedSourceRequireV1(sourceContext()===undefined);topology();for(const pin of files.values())bytes(pin,true);
+            ownedSourceRequireV1(sourceContext()===undefined);guard();
+          }catch{invalid=true;throw ownedSourceRefusalV1();}finally{localReading=false;}
+        },
+        absent(locator){guard();ownedSourceRequireV1(fixedUnit==='resolver'&&entered&&!localReading&&!reading);absent(locator);},
+      });
+      // The only callee is the fixed builtin-only four-resolver body. Its two
+      // full bookends remain ordinary H checks; the facade cannot escape here.
+      const result=ownedSourceResolversV1(facade,root,groups,accountHome,recheck);
+      ownedSourceRequireV1(result===undefined);guard();
+    }catch{invalid=true;throw ownedSourceRefusalV1();}finally{if(entered){fixedUnit=null;entered=false;}}
+  };
+  return {directory,file,absent,check,handoffTargetOutput,targetSetupGraph,targetObserverGraph,targetMembership,resolvePackages};
 }
 
 // Read static edges as DATA. Mask strings/comments/regex first, so embedded
@@ -1049,18 +1128,27 @@ function ownedSourcePackagesV1(pins,root,profile,groups,absences,home,recheck){
       const key=member+':'+row[2];ownedSourceRequireV1(ownedSourceLocatorV1(member)&&member.startsWith('dist/')&&member.endsWith('.js')
         &&path.dirname(member)===path.dirname(row[1])&&!memberships.has(key));memberships.add(key);
       const actual=pins.directory(path.dirname(path.join(root,member)));
-      ownedSourceRequireV1(ownedSourceSameV1(directory,actual));pins.file(path.join(root,member),16777216,device);
+      ownedSourceRequireV1(ownedSourceSameV1(directory,actual));
+      if(root!==path.join(home,'ai','setrox','releases','setfarm-161297ff'))pins.file(path.join(root,member),16777216,device);
     }
   }
+  if(root===path.join(home,'ai','setrox','releases','setfarm-161297ff'))pins.targetMembership(groups);
   for(const locator of absences){ownedSourceRequireV1(ownedSourceLocatorV1(locator));pins.absent(path.join(root,locator));}
+  pins.resolvePackages(root,groups,home,recheck);
+}
+
+// Exactly four builtin-only resolver processes. No resolved package body is
+// imported. The private pins facade supplies all nine full local pin proofs.
+function ownedSourceResolversV1(pins,root,groups,home,recheck){
+  recheck();
   const run=(phase,accountHome)=>{
-    recheck();pins.check();const input=JSON.stringify({phase,edges:groups.map(({row})=>[row[0],path.join(root,row[1]),row[2]])});
+    pins.check();const input=JSON.stringify({phase,edges:groups.map(({row})=>[row[0],path.join(root,row[1]),row[2]])});
     ownedSourceRequireV1(Buffer.byteLength(input)<=1048576);
     const child=spawnSync(ownedNodeV1,['--experimental-import-meta-resolve','--input-type=module','-e',ownedResolutionProgramV1],{
       input,encoding:'utf8',cwd:root,shell:false,timeout:5000,maxBuffer:1048576,
       env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',...(accountHome?{HOME:home}:{})},
     });
-    recheck();pins.check();ownedSourceRequireV1(!child.error&&!child.signal&&child.status===0&&child.stderr===''
+    pins.check();ownedSourceRequireV1(!child.error&&!child.signal&&child.status===0&&child.stderr===''
       &&typeof child.stdout==='string'&&Buffer.byteLength(child.stdout)<=1048576);
     const result=JSON.parse(child.stdout);ownedSourceRequireV1(Array.isArray(result)&&result.length===groups.length);return result;
   };
@@ -1076,22 +1164,24 @@ function ownedSourcePackagesV1(pins,root,profile,groups,absences,home,recheck){
     }
     for(const [index,result] of run('resolve',accountHome).entries())ownedSourceRequireV1(result===path.join(root,groups[index].row[3]));
   }
-  recheck();pins.check();
+  pins.check();recheck();
 }
 
 export async function holdManualOrphanOwnedSourcesV1(){
   if(arguments.length||ownedSourceCleanupUncertainV1)throw ownedSourceRefusalV1();
   const resources=ownedSourceResourcesV1();let invalid=false,closed=false,ready=false;
   const owners=[],observers=[];let identityCheck=()=>{},contextCheck=()=>{};
-  let pins;
+  let pins,retainedTarget=null;
   const cleanup=()=>{closed=true;resources.close();};
   const check=()=>{
+    let entered=false;
     try{
-      ownedSourceRequireV1(!closed&&!invalid);resources.guard();contextCheck();pins?.check();
-      for(const owner of owners)owner.check();identityCheck();
+      ownedSourceRequireV1(!closed&&!invalid&&!check.active);check.active=true;entered=true;
+      resources.guard();contextCheck();pins?.check();
+      for(const owner of owners)if(owner!==retainedTarget)owner.check();identityCheck();
       for(const observer of observers){const actual=observer.read();ownedSourceRequireV1(ownedSourceEqualBuildV1(actual,observer.expected));}
-      pins?.check();contextCheck();
-    }catch{invalid=true;throw ownedSourceRefusalV1();}
+      pins?.check();contextCheck();ownedSourceRequireV1(!invalid);
+    }catch{invalid=true;throw ownedSourceRefusalV1();}finally{if(entered)check.active=false;}
   };
   const close=()=>{
     if(closed){resources.close();return;}
@@ -1124,7 +1214,7 @@ export async function holdManualOrphanOwnedSourcesV1(){
     contextCheck=()=>ownedSourceRequireV1(process.getuid?.()===501&&process.geteuid?.()===501&&process.getgid?.()===20&&process.getegid?.()===20
       &&process.execPath===ownedNodeV1&&process.argv0===ownedNodeV1&&process.argv[0]===ownedNodeV1
       &&process.platform==='darwin'&&process.arch==='arm64'&&process.version==='v26.4.0'&&process.cwd()===maintenanceRoot);
-    pins=ownedSourcePinsV1(resources,home);const device=pins.directory(maintenanceRoot).dev;
+    pins=ownedSourcePinsV1(resources,home,contextCheck);const device=pins.directory(maintenanceRoot).dev;
     ownedSourceRequireV1(fs.realpathSync(maintenanceRoot)===maintenanceRoot&&fs.realpathSync(locators.helper)===locators.helper
       &&fs.realpathSync(ownedNodeV1)===ownedNodeV1
       &&pins.file(ownedNodeV1,16777216,undefined,true).sha256===ownedNodeHashV1);
@@ -1221,6 +1311,25 @@ export async function holdManualOrphanOwnedSourcesV1(){
     };
     const maintenanceCommon=common(maintenanceRoot),targetCommon=common(targetRoot);
     pins.directory(maintenanceCommon);pins.directory(targetCommon);
+    const identityGit=args=>{
+      const target=args.length===4&&args[0]==='-C'&&args[1]===targetRoot;
+      ownedSourceRequireV1(JSON.stringify(args)===JSON.stringify(target?['-C',targetRoot,'rev-parse','--git-common-dir']:['rev-parse','--git-common-dir']));
+      const commonDirectory=target?targetCommon:maintenanceCommon;
+      pins.file('/usr/bin/git',16777216,undefined,true);pins.directory(commonDirectory);
+      const result=spawnSync('/usr/bin/git',['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',...args],{
+        cwd:maintenanceRoot,shell:false,timeout:10000,maxBuffer:16777216,
+        env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',
+          GIT_NO_REPLACE_OBJECTS:'1',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0'},
+      });
+      pins.file('/usr/bin/git',16777216,undefined,true);pins.directory(commonDirectory);
+      ownedSourceRequireV1(!result.error&&!result.signal&&result.status===0&&result.stderr.length===0&&Buffer.isBuffer(result.stdout));
+      return result.stdout;
+    };
+    const identityCommon=root=>{
+      const line=identityGit([...(root===maintenanceRoot?[]:['-C',root]),'rev-parse','--git-common-dir']).toString('utf8');
+      ownedSourceRequireV1(line.endsWith('\n')&&line.indexOf('\n')===line.length-1);
+      const resolved=path.resolve(root,line.slice(0,-1));ownedSourceRequireV1(fs.realpathSync(resolved)===resolved);return resolved;
+    };
     ownedSourceRequireV1(maintenanceCommon!==targetCommon
       &&git(['-C',targetRoot,'rev-parse','--verify','HEAD']).toString('utf8')===ownedTargetShaV1+'\n'
       &&git(['-C',targetRoot,'rev-parse','--verify',ownedTargetShaV1+'^{tree}']).toString('utf8')===profile.target.sourceTreeHash+'\n');
@@ -1237,9 +1346,9 @@ export async function holdManualOrphanOwnedSourcesV1(){
     ownedSourceAuditedCompiledV1([...setupFiles]
       .sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)))
       .map(locator=>({locator,sha256:ownedSourceHashV1(compiled(targetRoot,targetOutput,locator))})),'target');
-    pins.handoffTargetOutput(targetRoot,targetOutput,target);check();
+    pins.handoffTargetOutput(targetRoot,targetOutput,target);retainedTarget=target;check();
     identityCheck=()=>{
-      ownedSourceRequireV1(common(maintenanceRoot)===maintenanceCommon&&common(targetRoot)===targetCommon);
+      ownedSourceRequireV1(identityCommon(maintenanceRoot)===maintenanceCommon&&identityCommon(targetRoot)===targetCommon);
     };
     const maintenanceGroups=profile.targetResolution.map(group=>({row:[...group.row],members:[...group.members]}));
     const targetGroups=profile.targetResolution.map(group=>({row:[...group.row],members:[...group.members]}));
@@ -1249,10 +1358,10 @@ export async function holdManualOrphanOwnedSourcesV1(){
       [maintenanceRoot,maintenanceOutput,maintenanceGroups,ownedOrdinaryRootsV1,143,82],
       [targetRoot,targetOutput,targetGroups,ownedSetupRootsV1,153,85],
     ]){
-      const graph=ownedSourceGraphV1(root,output,roots,groups,(locator)=>compiled(root,output,locator));
+      const graph=root===targetRoot?pins.targetSetupGraph(output,groups):ownedSourceGraphV1(root,output,roots,groups,(locator)=>compiled(root,output,locator));
       ownedSourceRequireV1(graph.files.size===count&&graph.members.size===sites
         &&ownedSourceSetEqualV1(graph.files,root===maintenanceRoot?ordinaryFiles:setupFiles));
-      const observer=ownedSourceGraphV1(root,output,[ownedObserverV1],profile.maintenanceObserver.resolution,
+      const observer=root===targetRoot?pins.targetObserverGraph(output,profile.maintenanceObserver.resolution):ownedSourceGraphV1(root,output,[ownedObserverV1],profile.maintenanceObserver.resolution,
         locator=>compiled(root,output,locator));
       ownedSourceRequireV1(observer.files.size===121&&observer.members.size===79
         &&ownedSourceSetEqualV1(observer.files,observerFiles)
@@ -2669,9 +2778,9 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
       &&keys.every(key=>Object.hasOwn(initialEnvironment,key)||(selectionMade&&key==='SETFARM_INSTALLATION_DIR'))
       &&(!selectionMade||process.env.SETFARM_INSTALLATION_DIR===selectedDirectory));
   };
-  const check=()=>{
+  const localPhaseCheck=()=>{
     try{
-      sample();contextCurrent();holder?.check();pins?.check();
+      sample();contextCurrent();pins?.check();
       for(const alias of aliases){const stat=fs.lstatSync(alias.path,{bigint:true});
         require(stat.isSymbolicLink()&&ownedSourceSameV1(alias.stat,stat,true)&&fs.readlinkSync(alias.path)===alias.text
           &&fs.realpathSync(alias.path)===alias.physical);}
@@ -2684,6 +2793,10 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
       }
       prepared?.assertUnchanged();activationState?.assertUnchanged();sample();
     }catch(error){if(holder!==null)burn();throw unknown?ownedTransportUnknownV1():error;}
+  };
+  const check=()=>{
+    try{localPhaseCheck();holder?.check();localPhaseCheck();}
+    catch(error){if(holder!==null)burn();throw unknown?ownedTransportUnknownV1():error;}
   };
   // All started calls are awaited to settlement. A purpose/deadline fault may
   // prevent the next effect, but cannot discard this actual pending promise.
@@ -2724,8 +2837,8 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
   };
   const capacity=()=>{const space=fs.statfsSync(derived.physicalRoot,{bigint:true});
     require(space.bavail*space.bsize>=8n*1024n**3n+64n*1024n**2n);};
-  const load=async key=>{
-    check();
+  const loadNamespaceLocal=async key=>{
+    localPhaseCheck();
     const paths={factory:admitted.targetRoot+'/dist/installation/fresh-installation-v1.js',
       records:admitted.targetRoot+'/dist/installation/fresh-installation-records-v1.js',
       migrations:admitted.targetRoot+'/dist/db/contract-spine-migrations.js',
@@ -2742,7 +2855,14 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
     if(key==='targetDatabase'||key==='maintenanceDatabase'){
       require(databaseClose===null);databaseClose=captureManualOrphanPhaseDatabaseV1(actual);
     }
-    moduleCache.set(key,actual);check();return actual;
+    moduleCache.set(key,actual);localPhaseCheck();return actual;
+  };
+  const load=async key=>{check();const actual=await loadNamespaceLocal(key);check();return actual;};
+  const loadRecordsAndMigrations=async()=>{
+    check();capacity();const actualRecords=await loadNamespaceLocal('records');check();records=actualRecords;
+    const journal=await loadNamespaceLocal('migrations');
+    const actualMigrations=detach(journal.getContractSpineCurrentHeadJournalIdentitiesV1());
+    require(actualMigrations.length===33);check();migrations=actualMigrations;
   };
   const recordPins=(names,expected)=>{
     for(const name of names){
@@ -2751,20 +2871,27 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
         &&file.bytes.length===expected[name].bytes&&file.sha256===expected[name].sha256);
     }
   };
-  const readPrepared=(locator,installation)=>{
-    check();require(typeof locator==='string'&&path.dirname(locator)===derived.installationsDirectory
+  const readPreparedLocal=(locator,installation)=>{
+    localPhaseCheck();require(typeof locator==='string'&&path.dirname(locator)===derived.installationsDirectory
       &&ownedUuidV1(path.basename(locator))&&(directory===null||directory===locator));
     directory=locator;privateDirectory(directory,installation?.directory);
     const actual=records.readFreshInstallationPreparedStateV1(directory,true);
     prepared=actual; // Retain the actual stock unchanged assertion as well as DATA.
     require(prepared.origin.installationId===path.basename(directory)&&prepared.origin.sourceSha===holder.source.target.sha);
-    recordPins(ownedCreatedRecordKeysV1,prepared.baseRecordPins);prepared.assertUnchanged();check();return prepared;
+    recordPins(ownedCreatedRecordKeysV1,prepared.baseRecordPins);prepared.assertUnchanged();localPhaseCheck();return prepared;
   };
-  const readActivation=()=>{
-    check();const actual=records.readFreshInstallationActivationStateV1(directory,'required');activationState=actual;
+  const readActivationLocal=()=>{
+    localPhaseCheck();const actual=records.readFreshInstallationActivationStateV1(directory,'required');activationState=actual;
     require(actual!==null&&actual.acknowledged===true);
     recordPins(['activation-prepared.json','activated.json'],{'activation-prepared.json':actual.preparedPin,'activated.json':actual.activatedPin});
-    actual.assertUnchanged();check();return actual;
+    actual.assertUnchanged();localPhaseCheck();return actual;
+  };
+  const readPrepared=(locator,installation)=>{check();const actual=readPreparedLocal(locator,installation);check();return actual;};
+  const readActivation=()=>{check();const actual=readActivationLocal();check();return actual;};
+  const readPreparedAndActivationForMechanical=()=>{
+    check();const installation=frame.input.installation;
+    const p=readPreparedLocal(derived.installationsDirectory+'/'+installation.installationId,installation);
+    const active=readActivationLocal();check();return {prepared:p,activation:active};
   };
   const project=(stage,installation,activation,absence,stale,returned)=>{
     check();const p={};for(const key of ['origin','catalogHash','ownerOid','runtimeOid','runtimeUrl','committed','baseRecordBytes','baseRecordPins'])p[key]=prepared[key];
@@ -2776,10 +2903,10 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
     return projectManualOrphanPhaseInstallationV1(view,{cluster:frame.cluster,sourceSha:holder.source.target.sha,migrations,
       installationsDirectory:derived.installationsDirectory,installation},stage);
   };
-  const query=async(kind,expected)=>{check();const value=await sql.query(kind,expected);check();return value;};
-  const catalog=async installation=>{
+  const queryLocal=async(kind,expected)=>{localPhaseCheck();const value=await sql.query(kind,expected);localPhaseCheck();return value;};
+  const readPhaseCatalogFactsLocal=async installation=>{
     require(sql!==null&&expectedIdentity!==null);
-    const databases=await query('databases'),roles=await query('roles'),memberships=await query('memberships');
+    const databases=await queryLocal('databases'),roles=await queryLocal('roles'),memberships=await queryLocal('memberships');
     const canonical=validateManualOrphanPhaseBaselineV1({databases,roles,memberships},frame.cluster,installation);
     // The baseline digests authenticate these independent exact names/security
     // facts. Initial admin OIDs must JOIN the already retained own pair.
@@ -2793,33 +2920,33 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
       if(expectedIdentity.databaseOid===null)expectedIdentity=Object.freeze({...expectedIdentity,databaseOid:pair.datid,ownerOid:pair.usesysid,userOid:pair.usesysid});
       else require(expectedIdentity.databaseOid===pair.datid&&expectedIdentity.ownerOid===pair.usesysid&&expectedIdentity.userOid===pair.usesysid);
     }
-    await query('identity',expectedIdentity);check();return canonical;
+    await queryLocal('identity',expectedIdentity);localPhaseCheck();return canonical;
   };
+  const catalog=async installation=>{check();const actual=await readPhaseCatalogFactsLocal(installation);check();return actual;};
   const qualify=async(endpoint,installation,runtime)=>{
     require(sql===null&&!qualified);check();
-    const driver=await load('postgres');require(typeof driver.default==='function');
+    const driver=await loadNamespaceLocal('postgres');check();require(typeof driver.default==='function');
     sql=createManualOrphanPhaseSqlLedgerV1();
     let pool;
     try{pool=driver.default(endpoint,{max:1,connect_timeout:5,idle_timeout:0,max_lifetime:0,
       connection:{statement_timeout:5000,lock_timeout:5000},onclose:sql.onclose,onnotice(){}});
       sql.capturePool(pool);
     }catch{burn();throw ownedTransportUnknownV1();}
-    check();await sql.reserve();check();
+    check();await sql.reserve();localPhaseCheck();
     expectedIdentity=Object.freeze(runtime===null?{cluster:frame.cluster,databaseName:'postgres',databaseOid:null,ownerOid:null,
       currentRole:'postgres',sessionRole:'postgres',runtimeOid:null,userOid:null}:{cluster:frame.cluster,
       databaseName:installation.databaseName,databaseOid:installation.databaseOid,ownerOid:installation.ownerOid,
       currentRole:installation.runtimeRole,sessionRole:installation.runtimeRole,runtimeOid:installation.runtimeOid,userOid:installation.runtimeOid});
-    await query('identity',expectedIdentity);
+    await queryLocal('identity',expectedIdentity);
     // No phase/effect token is enabled by the provisional identity above.
-    await catalog(installation);qualified=true;check();
+    await readPhaseCatalogFactsLocal(installation);check();qualified=true;
   };
   const expectedRefusal=(call,code)=>{let refused=false;try{call();}catch(error){refused=error?.message===code;}
     if(!refused)throw Error('MANUAL_ORPHAN_CASE_REFUSED');};
   const unprepared=namespace=>expectedRefusal(()=>namespace.getSql(),'FRESH_INSTALLATION_DATABASE_NOT_PREPARED');
   const qualifyMechanical=async()=>{
     const installation=frame.input.installation;
-    const p=readPrepared(derived.installationsDirectory+'/'+installation.installationId,installation);
-    const active=readActivation();
+    const {prepared:p,activation:active}=readPreparedAndActivationForMechanical();
     // The real stock verifier below supplies the mechanical return observation.
     // Complete SQL identity/baseline qualification closes first.
     const endpoint=deriveManualOrphanPhaseEndpointV1(frame.purpose,derived,frame.input,p);
@@ -2858,11 +2985,13 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
     selectionMade=true;selectedDirectory=directory;process.env.SETFARM_INSTALLATION_DIR=directory;
     check();
     const prefix=maintenance?'maintenance':'target';
-    const database=await load(prefix+'Database'),selection=await load(prefix+'Selection');
+    const database=await loadNamespaceLocal(prefix+'Database');check();
+    const selection=await loadNamespaceLocal(prefix+'Selection');
     const selected=selection.freshInstallationSelectionV1;
     require(selected!==null&&selected.directory===directory);selection.assertFreshInstallationSelectionUnchangedV1();
     check();
-    const entry=frame.purpose==='activate'?null:await load(prefix+'Entry');
+    let entry=null;
+    if(frame.purpose!=='activate'){entry=await loadNamespaceLocal(prefix+'Entry');check();}
     return {database,selection,entry};
   };
   try{
@@ -2894,9 +3023,8 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
       root,physicalRoot,dataDirectory:root+'/data',port:Number(match[2]),installationsDirectory:physicalRoot+'/installations'};
     derived=checkManualOrphanPhaseGraphV1(frame,observations,derived);
     privateDirectory(physicalRoot,frame.cluster.root);privateDirectory(physicalRoot+'/data',frame.cluster.data);
-    privateDirectory(derived.installationsDirectory,frame.installations);check();capacity();
-    records=await load('records');const journal=await load('migrations');
-    migrations=detach(journal.getContractSpineCurrentHeadJournalIdentitiesV1());require(migrations.length===33);check();
+    privateDirectory(derived.installationsDirectory,frame.installations);
+    await loadRecordsAndMigrations();
     const phase={frame,derived,source:holder.source,records,require,check,capacity,load,effect,unknown:burn,
       qualify,catalog,closeQualification,closeDatabase,closeFactory,readPrepared,readActivation,project,
       qualifyMechanical,select,unprepared,expectedRefusal,

@@ -926,12 +926,15 @@ async function runManualOrphanConstructorV1(){
     tmp?.check();if(rootPin&&!rootPin.closed)manualOrphanCheckMutablePinV1(rootPin);
     if(dataPin&&!dataPin.closed)manualOrphanCheckMutablePinV1(dataPin);
   }
-  function fullCheck(){
+  function localCheck(){
     try{
-      currentOriginals();
-      if(sourceHolder!==null&&!sourceClosed)sourceHolder.check();
       currentOriginals();tools?.check();currentOriginals();rootMetadata();delivery?.check();currentOriginals();
       if(journal!==null&&!journal.healthy)throw manualOrphanUnknownV1();
+    }catch{mark();throw manualOrphanUnknownV1();}
+  }
+  function fullCheck(){
+    try{
+      localCheck();if(sourceHolder!==null&&!sourceClosed)sourceHolder.check();localCheck();
     }catch{mark();throw manualOrphanUnknownV1();}
   }
   function control(next,fields={}){
@@ -1051,33 +1054,79 @@ async function runManualOrphanConstructorV1(){
     control('server-start');fullCheck();
     server=spawnManualOrphanConstructorChildV1('server',plan.server,context.root,
       manualOrphanEnvironmentV1(context.hostPolicy),context.hostPolicy);
-    const serverTap=ownChild(server,'server');serverTap.flush();fullCheck();observeServer();
-    control('identity');
-    // Readiness output permits only attempting the sole connection; actual
-    // server/settings/backend qualification is still the read-only SQL below.
-    while(true){
+    const serverTap=ownChild(server,'server');serverTap.flush();
+    // Fixed lexical observations keep every original local guard. Only their
+    // complete Source boundaries are shared; no result authorizes the next
+    // effect or success record before its terminal proof.
+    async function waitForConstructorReadinessAndOpenAdmin(){
+      fullCheck();observeServer();
+      if(!server.check(30000000000n))throw manualOrphanUnknownV1();
+      while(true){
+        localCheck();if(!server.check(30000000000n))throw manualOrphanUnknownV1();
+        const output=server.witness.output();
+        if(output.stderr.toString('utf8').split('\n').some(line=>/LOG:  database system is ready to accept connections$/.test(line)))break;
+        await delay(100);localCheck();
+        if(!server.check(30000000000n))throw manualOrphanUnknownV1();
+      }
       fullCheck();if(!server.check(30000000000n))throw manualOrphanUnknownV1();
-      const output=server.witness.output();
-      if(output.stderr.toString('utf8').split('\n').some(line=>/LOG:  database system is ready to accept connections$/.test(line)))break;
-      await delay(100);fullCheck();
+      const endpoint={url:'postgresql://postgres:'+password+'@127.0.0.1:'+port+'/postgres',root,physicalRoot,
+        dataDirectory:root+'/data',port};
+      admin=await openManualOrphanConstructorAdminV1(endpoint,localCheck);
+      // Retain the actual returned admin before any terminal proof/property.
+      fullCheck();if(!server.check(30000000000n))throw manualOrphanUnknownV1();
     }
-    const endpoint={url:'postgresql://postgres:'+password+'@127.0.0.1:'+port+'/postgres',root,physicalRoot,
-      dataDirectory:root+'/data',port};
-    admin=await openManualOrphanConstructorAdminV1(endpoint,fullCheck);fullCheck();
-    if(!server.check(30000000000n))throw manualOrphanUnknownV1();
-    identity=await admin.readIdentity();fullCheck();observeServer();
-    control('identity-verified',{root,port,serverPid:server.child.pid});
-    baseline=await admin.readBaselines();fullCheck();
+    async function readConstructorInitialIdentity(){
+      fullCheck();const observed=await admin.readIdentity();localCheck();observeServer();fullCheck();
+      identity=observed;control('identity-verified',{root,port,serverPid:server.child.pid});
+    }
+    async function readConstructorInitialBaseline(){
+      fullCheck();const observed=await admin.readBaselines();localCheck();fullCheck();baseline=observed;
+    }
+    async function readConstructorPreSpawnFacts(){
+      fullCheck();const observed=await admin.readIdentity();localCheck();
+      const beforeSpawn=await admin.readBaselines();localCheck();
+      manualOrphanRequireV1(JSON.stringify(beforeSpawn)===originalBaseline);
+      await admin.readSessions();localCheck();observeServer();
+      manualOrphanRequireV1(JSON.stringify(admin.snapshot().backend)===JSON.stringify(constructorAdminBackend)
+        &&admin.snapshot().pending===false);
+      fullCheck();identity=observed;
+    }
+    async function readConstructorQuiescenceSamples(){
+      const cleanupClock=createManualOrphanConstructorClockV1();
+      for(let sample=0;sample<2;sample++){
+        fullCheck();observeServer();
+        if(!cleanupClock.check(30000000000n))throw manualOrphanUnknownV1();
+        const restored=await admin.readBaselines();localCheck();
+        manualOrphanRequireV1(JSON.stringify(restored)===originalBaseline);
+        await admin.readSessions();localCheck();observeServer();
+        manualOrphanRequireV1(JSON.stringify(admin.snapshot().backend)===JSON.stringify(constructorAdminBackend));
+        fullCheck();if(!cleanupClock.check(30000000000n))throw manualOrphanUnknownV1();
+        control('quiescence-sample',{sample,passed:true});
+        if(sample===0){localCheck();await delay(100);localCheck();
+          if(!cleanupClock.check(30000000000n))throw manualOrphanUnknownV1();}
+      }
+    }
+    async function closeConstructorAdmin(){
+      fullCheck();await admin.close();adminClosed=true;fullCheck();
+    }
+    async function settleConstructorServer(){
+      const shutdownClock=createManualOrphanConstructorClockV1();
+      fullCheck();if(!shutdownClock.check(30000000000n))throw manualOrphanUnknownV1();
+      serverMayExit=true;
+      let settled=false,failed=false;
+      try{settled=await settleOwnedPrivatePostgresV1(server.serverWitness,30000);}catch{failed=true;}
+      try{localCheck();}catch{failed=true;}
+      // Attempt the existing wait after a failed observation. Its own deadline
+      // guards may refuse without certifying actual witness settlement.
+      try{await waitManualOrphanConstructorChildV1(server,shutdownClock);}catch{failed=true;}
+      fullCheck();if(!shutdownClock.check(30000000000n)||failed||!settled)throw manualOrphanUnknownV1();
+      requireManualOrphanConstructorChildSuccessV1(server.witness,'server');
+      control('server-definitely-closed',{root,port,code:0,retained:true});
+    }
+    await waitForConstructorReadinessAndOpenAdmin();control('identity');
+    await readConstructorInitialIdentity();await readConstructorInitialBaseline();
     const originalBaseline=JSON.stringify(baseline),constructorAdminBackend=admin.snapshot().backend;
-    // Every settled SQL await rejoins the complete Source owner before spawn.
-    // These serialized observations are historical, not an atomic SQL/Source
-    // snapshot. No expensive Source callback enters the delivery window.
-    identity=await admin.readIdentity();fullCheck();
-    const beforeSpawn=await admin.readBaselines();fullCheck();
-    manualOrphanRequireV1(JSON.stringify(beforeSpawn)===originalBaseline);
-    await admin.readSessions();fullCheck();observeServer();
-    manualOrphanRequireV1(JSON.stringify(admin.snapshot().backend)===JSON.stringify(constructorAdminBackend)
-      &&admin.snapshot().pending===false);
+    await readConstructorPreSpawnFacts();
     requireManualOrphanConstructorSpaceV1();rootMetadata();tools.metadataCheck();delivery.check();currentOriginals();
     run=randomBytes(32).toString('hex');
     const cluster={root:manualOrphanDirectoryDataV1(rootPin),data:manualOrphanDirectoryDataV1(dataPin),port,
@@ -1134,20 +1183,9 @@ async function runManualOrphanConstructorV1(){
       &&JSON.stringify(receipt.oldEntry.maintenance)===JSON.stringify(sourceHolder.source.maintenance)
       &&JSON.stringify(receipt.oldEntry.target)===JSON.stringify(sourceHolder.source.target),'MANUAL_ORPHAN_FRAME_REFUSED');
     fullCheck();control('private-db-quiescence');
-    const cleanupClock=createManualOrphanConstructorClockV1();
-    for(let sample=0;sample<2;sample++){
-      fullCheck();observeServer();
-      if(!cleanupClock.check(30000000000n))throw manualOrphanUnknownV1();
-      const restored=await admin.readBaselines();fullCheck();
-      manualOrphanRequireV1(JSON.stringify(restored)===originalBaseline);
-      await admin.readSessions();fullCheck();observeServer();
-      if(!cleanupClock.check(30000000000n))throw manualOrphanUnknownV1();
-      manualOrphanRequireV1(JSON.stringify(admin.snapshot().backend)===JSON.stringify(constructorAdminBackend));
-      control('quiescence-sample',{sample,passed:true});
-      if(sample===0){await delay(100);fullCheck();}
-    }
+    await readConstructorQuiescenceSamples();
     control('direct-test-child-closed',{code:0,privateDbQuiescent:true});
-    control('admin-close');fullCheck();await admin.close();adminClosed=true;fullCheck();control('admin-ended');
+    control('admin-close');await closeConstructorAdmin();control('admin-ended');
     fullCheck();observeServer();
     const eligible=manualOrphanConstructorCleanupEligibleV1({runnerReceipt:true,
       runnerClosed:runner.witness.snapshot().state==='observed',baselineRestored:true,
@@ -1155,14 +1193,7 @@ async function runManualOrphanConstructorV1(){
       adminClosed:admin.snapshot().closed,currentSource:!sourceClosed,unknown,cancelled});
     if(!eligible)throw manualOrphanUnknownV1();
     control('server-close');fullCheck();observeServer();
-    const shutdownClock=createManualOrphanConstructorClockV1();
-    if(!shutdownClock.check(30000000000n))throw manualOrphanUnknownV1();
-    serverMayExit=true;
-    if(!await settleOwnedPrivatePostgresV1(server.serverWitness,30000))throw manualOrphanUnknownV1();
-    fullCheck();await waitManualOrphanConstructorChildV1(server,shutdownClock);fullCheck();
-    if(!shutdownClock.check(30000000000n))throw manualOrphanUnknownV1();
-    requireManualOrphanConstructorChildSuccessV1(server.witness,'server');
-    control('server-definitely-closed',{root,port,code:0,retained:true});
+    await settleConstructorServer();
     if(!journal.finish({outcome:'observed',testCode:0,privateDbQuiescent:true,
       adminEnded:true,serverClosed:true,productionAuthority:false}))throw manualOrphanUnknownV1();
     normal=true;
