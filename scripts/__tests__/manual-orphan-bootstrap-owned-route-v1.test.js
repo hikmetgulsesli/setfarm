@@ -6609,7 +6609,7 @@ function task5cLaunchV1(kind){
   const actual={node:TASK3_NODE_V1,maintenanceRoot:m,targetRoot:SOURCE_T_V1,workspace:SOURCE_WORKSPACE_V1,
     cwd:m,execPath:TASK3_NODE_V1,argv0:TASK3_NODE_V1,argv:[TASK3_NODE_V1,m+'/'+(kind==='runner'?'scripts/run-isolated-postgres-tests.ts':FILE),...(kind==='runner'?['--',...VECTOR]:[])],
     execArgv:kind==='runner'?['--import','tsx']:['--import','tsx','--test','--test-isolation=none'],
-    env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},worker:kind==='integration'?{NODE_TEST_WORKER_ID:'1'}:null,
+    env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C',TSX_DISABLE_CACHE:'1'},worker:kind==='integration'?{NODE_TEST_WORKER_ID:'1'}:null,
     self:{pin:task5cPlainV1(self),rawCommand},parent:{pin:task5cPlainV1(parent),rawCommand:kind==='runner'?graph.observations.constructor.rawCommand:graph.observations.runner.rawCommand},
     maintenance:ownedReleaseData(OWN_M),target:ownedReleaseData(OWN_T)};
   return {kind,actual,frame};
@@ -7044,7 +7044,8 @@ test('Task5C child plans use exact fixed vectors',()=>{
     const plan=vm.api.planManualOrphanFixtureChildV1(purpose,task5cDataV1(vm,task5cChildPathsV1()));
     assert.deepEqual(task5cPlainV1(plan),{executable:TASK3_NODE_V1,args:purpose==='integration'?
       ['--import','tsx','--test','--test-isolation=none',FILE]:[SOURCE_M_V1+SOURCE_SUFFIX_V1],options:{
-      cwd:SOURCE_M_V1,argv0:TASK3_NODE_V1,shell:false,detached:false,env:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},
+      cwd:SOURCE_M_V1,argv0:TASK3_NODE_V1,shell:false,detached:false,env:purpose==='integration'?
+        {PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C',TSX_DISABLE_CACHE:'1'}:{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C'},
       stdio:['ignore','pipe','pipe','ignore','pipe']}});task5cFrozenV1(plan);
     assert.equal(JSON.stringify(plan).includes(OWN_H),false);assert.equal(JSON.stringify(plan).includes('NODE_TEST_CONTEXT'),false);
   });cases.run('unsupported purpose',()=>task5cRefusedV1(()=>vm.api.planManualOrphanFixtureChildV1('initdb',task5cDataV1(vm,task5cChildPathsV1()))));
@@ -9931,4 +9932,89 @@ test('Task7E H resolver context caught reentrant attempt leaves sticky refusal',
 test('Task7E H resolver context nonfunction shape refuses before fixed resolver entry',()=>{
   const h=task7eResolverContextV1('nonfunction'),opened=h.f.opened.length;assert.throws(h.run,task7eProofRefusalV1);
   assert.equal(h.calls(),0);assert.equal(h.entered(),0);assert.equal(h.accepted(),0);assert.equal(h.f.opened.length,opened);h.clean();
+});
+
+// Task2 cache boundary. Complete actual F functions in the existing inert
+// realm; no Source holder, successful constructor, native child or TSX import.
+// Break: integration lacks fixed1, builtin leaves inherit it, or metadata/input
+// are changed while the plan builds its fresh output.
+test('Task2 F adds cache suppression only to integration output with Darwin metadata',()=>{
+  const vm=task5cVmV1(['planManualOrphanFixtureChildV1']),cases=task5cCasesV1(5);
+  for(const purpose of ['integration','provision','activate','old_entry_positive','new_entry_refusal'])cases.run(purpose,()=>{
+    const paths=task5cChildPathsV1();paths.env.__CF_USER_TEXT_ENCODING='0x1F5:0x23:0x18';
+    const input=task5cDataV1(vm,paths),before=JSON.stringify(input);
+    const plan=vm.api.planManualOrphanFixtureChildV1(purpose,input),env=plan.options.env;
+    assert.notEqual(env,input.env);assert.equal(JSON.stringify(input),before);
+    assert.equal(Object.hasOwn(input.env,'TSX_DISABLE_CACHE'),false);
+    assert.equal(env.__CF_USER_TEXT_ENCODING,'0x1F5:0x23:0x18');
+    if(purpose==='integration'){
+      assert.equal(env.TSX_DISABLE_CACHE,'1');
+      assert.deepEqual(task5cPlainV1(plan.args),['--import','tsx','--test','--test-isolation=none',FILE]);
+      assert.deepEqual(task5cPlainV1(env),{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C',
+        __CF_USER_TEXT_ENCODING:'0x1F5:0x23:0x18',TSX_DISABLE_CACHE:'1'});
+    }else{
+      assert.equal(Object.hasOwn(env,'TSX_DISABLE_CACHE'),false);
+      assert.deepEqual(task5cPlainV1(plan.args),[SOURCE_M_V1+SOURCE_SUFFIX_V1]);
+      assert.deepEqual(task5cPlainV1(env),{PATH:TASK3_PATH_V1,LANG:'C',LC_ALL:'C',__CF_USER_TEXT_ENCODING:'0x1F5:0x23:0x18'});
+    }
+    assert.equal(plan.executable,TASK3_NODE_V1);assert.equal(plan.options.cwd,SOURCE_M_V1);
+    assert.equal(plan.options.argv0,TASK3_NODE_V1);assert.equal(plan.options.shell,false);assert.equal(plan.options.detached,false);
+    assert.deepEqual(task5cPlainV1(plan.options.stdio),['ignore','pipe','pipe','ignore','pipe']);
+    task5cFrozenV1(plan);vm.check();
+  });
+  cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
+});
+
+// Break: the generated OUTPUT flag is admitted as ambient plan INPUT.
+test('Task2 F refuses ambient cache flag in unchanged plan input',()=>{
+  const vm=task5cVmV1(['planManualOrphanFixtureChildV1']),cases=task5cCasesV1(2);
+  for(const purpose of ['integration','old_entry_positive'])cases.run(purpose,()=>{
+    const paths=task5cChildPathsV1();paths.env.TSX_DISABLE_CACHE='1';
+    const input=task5cDataV1(vm,paths),before=JSON.stringify(input);
+    task5cRefusedV1(()=>vm.api.planManualOrphanFixtureChildV1(purpose,input));
+    assert.equal(JSON.stringify(input),before);vm.check();
+  });
+  cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
+});
+
+function task2CacheLaunchV1(kind){
+  const vm=task5cVmV1(['qualifyManualOrphanFixtureLaunchV1']),cases=task5cCasesV1(8);
+  const call=f=>vm.api.qualifyManualOrphanFixtureLaunchV1(kind,task5cDataV1(vm,f.actual),task5cDataV1(vm,f.frame));
+  for(const [name,change] of [
+    ['missing flag',f=>{delete f.actual.env.TSX_DISABLE_CACHE;}],
+    ['empty flag',f=>{f.actual.env.TSX_DISABLE_CACHE='';}],
+    ['zero flag',f=>{f.actual.env.TSX_DISABLE_CACHE='0';}],
+    ['two flag',f=>{f.actual.env.TSX_DISABLE_CACHE='2';}],
+    ['text true flag',f=>{f.actual.env.TSX_DISABLE_CACHE='true';}],
+    ['boolean true flag',f=>{f.actual.env.TSX_DISABLE_CACHE=true;}],
+    ['extra environment key',f=>{f.actual.env.NODE_OPTIONS='';}],
+  ])cases.run(name,()=>{
+    const f=task5cLaunchV1(kind);change(f);const before=JSON.stringify(f);
+    task5cRefusedV1(()=>call(f));assert.equal(JSON.stringify(f),before);vm.check();
+  });
+  cases.run('exact literal1',()=>{
+    const f=task5cLaunchV1(kind),before=JSON.stringify(f);
+    const result=call(f);task5cFrozenV1(result);assert.equal(result.maintenanceRoot,SOURCE_M_V1);
+    assert.equal(JSON.stringify(f),before);vm.check();
+  });
+  cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
+}
+// Break: genuine runner accepts env3 or a truthy/extra-key cache environment.
+test('Task2 F runner qualifier requires exact literal1 and exact environment keys',()=>{
+  task2CacheLaunchV1('runner');
+});
+// Break: genuine integration diverges from the same mandatory cache contract.
+test('Task2 F integration qualifier requires exact literal1 and exact environment keys',()=>{
+  task2CacheLaunchV1('integration');
+});
+// Break: adding the one cache key weakens recipient-only worker metadata.
+test('Task2 F integration cache environment retains exact worker1 policy',()=>{
+  const vm=task5cVmV1(['qualifyManualOrphanFixtureLaunchV1']),cases=task5cCasesV1(2);
+  for(const [name,worker] of [['worker zero',{NODE_TEST_WORKER_ID:'0'}],
+    ['extra worker context',{NODE_TEST_WORKER_ID:'1',NODE_TEST_CONTEXT:'child-v8'}]])cases.run(name,()=>{
+    const f=task5cLaunchV1('integration');f.actual.worker=worker;
+    task5cRefusedV1(()=>vm.api.qualifyManualOrphanFixtureLaunchV1('integration',
+      task5cDataV1(vm,f.actual),task5cDataV1(vm,f.frame)));vm.check();
+  });
+  cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
 });

@@ -454,7 +454,7 @@ function spawnManualOrphanConstructorChildV1(purpose,args,cwd,env,hostPolicy){
   const purposeLimitNs=BigInt(milliseconds)*1000000n;
   let child=null,writer=null,witness=null,serverWitness=null,unknown=false,purposeComplete=false;
   // Retain original and then its writer before any observer or clock read.
-  child=spawn(tool,args,{cwd,env:manualOrphanEnvironmentV1(hostPolicy),argv0:tool,shell:false,detached:false,
+  child=spawn(tool,args,{cwd,env:{...manualOrphanEnvironmentV1(hostPolicy),...(purpose==='runner'?{TSX_DISABLE_CACHE:'1'}:{})},argv0:tool,shell:false,detached:false,
     stdio:purpose==='runner'?['ignore','pipe','pipe','ignore','pipe']:['ignore','pipe','pipe']});
   try{if(purpose==='runner')writer=child.stdio[4];}catch{unknown=true;}
   try{witness=observeManualOrphanOwnedChildV1(child,purpose);}catch{unknown=true;}

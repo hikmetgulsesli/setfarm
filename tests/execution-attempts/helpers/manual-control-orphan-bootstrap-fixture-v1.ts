@@ -332,8 +332,8 @@ function qualifyManualOrphanFixtureLaunchV1(kind:string,actual:ManualOrphanDataV
     const argv=[manualOrphanNodeV1,m+"/"+(integration?manualOrphanFileV1:"scripts/run-isolated-postgres-tests.ts"),...(integration?[]:["--",...MANUAL_ORPHAN_VECTOR_V1])];
     need(JSON.stringify(actual.argv)===JSON.stringify(argv)&&JSON.stringify(actual.execArgv)===JSON.stringify(integration?
       ["--import","tsx","--test","--test-isolation=none"]:["--import","tsx"]));
-    need(actual.env.PATH===manualOrphanPathV1&&actual.env.LANG==="C"&&actual.env.LC_ALL==="C");
-    need(Object.keys(actual.env).every(key=>["PATH","LANG","LC_ALL","__CF_USER_TEXT_ENCODING"].includes(key)));
+    need(actual.env.PATH===manualOrphanPathV1&&actual.env.LANG==="C"&&actual.env.LC_ALL==="C"&&actual.env.TSX_DISABLE_CACHE==="1");
+    need(Object.keys(actual.env).every(key=>["PATH","LANG","LC_ALL","__CF_USER_TEXT_ENCODING","TSX_DISABLE_CACHE"].includes(key)));
     if(Object.hasOwn(actual.env,"__CF_USER_TEXT_ENCODING")){
       const value=actual.env.__CF_USER_TEXT_ENCODING;need(typeof value==="string");
       const fields=value.split(":");need(fields.length===3&&fields[0]==="0x1F5"
@@ -747,7 +747,7 @@ function planManualOrphanFixtureChildV1(purpose:string,admittedPaths:ManualOrpha
       ||p.targetRoot!==manualOrphanWorkspaceV1+"/releases/setfarm-161297ff"||m===p.targetRoot||p.helper!==m+"/"+manualOrphanHelperV1
       ||p.integration!==m+"/"+manualOrphanFileV1||p.env.PATH!==manualOrphanPathV1||p.env.LANG!=="C"||p.env.LC_ALL!=="C"
       ||!Object.keys(p.env).every(k=>["PATH","LANG","LC_ALL","__CF_USER_TEXT_ENCODING"].includes(k)))throw Error();
-    const env=Object.freeze({...p.env}),args=Object.freeze(purpose==="integration"?["--import","tsx","--test","--test-isolation=none",manualOrphanFileV1]:[p.helper]);
+    const env=Object.freeze({...p.env,...(purpose==="integration"?{TSX_DISABLE_CACHE:"1"}:{})}),args=Object.freeze(purpose==="integration"?["--import","tsx","--test","--test-isolation=none",manualOrphanFileV1]:[p.helper]);
     return Object.freeze({executable:manualOrphanNodeV1,args,options:Object.freeze({cwd:m,argv0:manualOrphanNodeV1,shell:false,detached:false,env,
       stdio:Object.freeze(["ignore","pipe","pipe","ignore","pipe"])})});
   }catch{throw Error("MANUAL_ORPHAN_OWNER_REFUSED");}

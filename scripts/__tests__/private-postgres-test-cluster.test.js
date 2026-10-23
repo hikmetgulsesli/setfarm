@@ -1525,7 +1525,7 @@ test('Task4B spawn consumer binds present original channels before postspawn clo
       assert.equal(executable,TASK4B_NODE);assert.equal(options.cwd,TASK4B_M);
       assert.equal(options.argv0,TASK4B_NODE);assert.equal(options.shell,false);assert.equal(options.detached,false);
       assert.deepEqual(Array.from(options.stdio),['ignore','pipe','pipe','ignore','pipe']);
-      assert.deepEqual(task4bPlain(options.env),{PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'});
+      assert.deepEqual(task4bPlain(options.env),{PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C',TSX_DISABLE_CACHE:'1'});
       h.time(5000000000n);return child;
     };
     try{
@@ -2426,4 +2426,69 @@ for(const name of ['readConstructorQuiescenceSamples','settleConstructorServer']
 for(const fault of ['originals','tools','root','delivery'])test('Task7E K local '+fault+' fault cannot be hidden by complete Source proof',async()=>{
   const f=await task7eConstructorUnitV1('readConstructorPreSpawnFacts',{localFault:fault});await assert.rejects(f.run(),task4bUnknown);
   assert.equal(f.events.some(x=>x.startsWith('await:')),false);f.clean();
+});
+
+// Task2 cache boundary. Actual private spawn consumer, original observer over
+// finite emitters, and denied native dispatch. No Source owner is emulated.
+// Break: the flag is absent at TSX dispatch or leaks into either native child.
+test('Task2 K supplies literal cache suppression before runner spawn only',async()=>{
+  const rows=[
+    {purpose:'runner',executable:TASK4B_NODE,args:['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+      'node','--import','tsx','--test','--test-isolation=none',
+      'tests/execution-attempts/manual-control-orphan-bootstrap-v1.integration.test.ts']},
+    {purpose:'initdb',executable:'/opt/homebrew/opt/postgresql@17/bin/initdb',args:['--locale=C']},
+    {purpose:'server',executable:'/opt/homebrew/opt/postgresql@17/bin/postgres',args:['-h','127.0.0.1']},
+  ];
+  let reached=0;
+  for(const row of rows){
+    const h=await task4bContainedConstructor(),spawn=task4bBinding(h,'spawnManualOrphanConstructorChildV1');
+    await task4bRealObserver(h);
+    const {child,writer}=task4bEventChild(h,row.purpose==='runner');let dispatches=0,owned=null;
+    const input=Object.freeze({PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'}),before=JSON.stringify(input);
+    h.seams.cp.spawn=task4bCheckedSeam(h,(executable,args,options)=>{
+      dispatches++;
+      assert.equal(executable,row.executable);assert.deepEqual(Array.from(args),row.args);
+      assert.equal(options.cwd,TASK4B_M);assert.equal(options.argv0,row.executable);
+      assert.equal(options.shell,false);assert.equal(options.detached,false);
+      assert.deepEqual(Array.from(options.stdio),row.purpose==='runner'?
+        ['ignore','pipe','pipe','ignore','pipe']:['ignore','pipe','pipe']);
+      assert.notEqual(options.env,input,'construct a fresh purpose-fixed output');
+      if(row.purpose==='runner'){
+        assert.deepEqual(Array.from(args).slice(0,2),['--import','tsx']);
+        assert.equal(options.env.TSX_DISABLE_CACHE,'1','literal1 must exist before initial TSX import');
+        assert.deepEqual(task4bPlain(options.env),{PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C',TSX_DISABLE_CACHE:'1'});
+      }else{
+        assert.equal(Object.hasOwn(options.env,'TSX_DISABLE_CACHE'),false);
+        assert.deepEqual(task4bPlain(options.env),{PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C'});
+      }
+      return child;
+    });
+    try{
+      owned=spawn(row.purpose,row.args,TASK4B_M,input,TASK7_HOST_POLICY);
+      assert.equal(dispatches,1);assert.equal(owned.child,child);assert.equal(owned.check(),true);
+      assert.equal(owned.writer,row.purpose==='runner'?writer:null);
+      assert.equal(JSON.stringify(input),before);assert.equal(Object.hasOwn(input,'TSX_DISABLE_CACHE'),false);
+      reached++;
+    }finally{
+      task4bFinish(child,row.purpose==='runner'?writer:null);
+      if(owned)await owned.witness.settled;
+      task4bReleaseSyntheticObserver(child);
+    }
+    h.clean();assert.equal(h.timers.size,0);
+  }
+  assert.equal(reached,3,'runner, initdb and server actual dispatch consumers reached');
+});
+
+// Break: output env4 becomes an accepted caller input or bypasses its guard.
+test('Task2 K still refuses ambient cache input before every purpose dispatch',async()=>{
+  const h=await task4bContainedConstructor(),spawn=task4bBinding(h,'spawnManualOrphanConstructorChildV1');
+  let dispatches=0;
+  h.seams.cp.spawn=task4bCheckedSeam(h,()=>{dispatches++;assert.fail('cache INPUT must refuse before spawn');});
+  for(const purpose of ['runner','initdb','server']){
+    const input=Object.freeze({PATH:TASK4B_PATH,LANG:'C',LC_ALL:'C',TSX_DISABLE_CACHE:'1'});
+    assert.throws(()=>spawn(purpose,[],TASK4B_M,input,TASK7_HOST_POLICY),
+      error=>error?.message==='MANUAL_ORPHAN_OWNER_REFUSED');
+    assert.equal(input.TSX_DISABLE_CACHE,'1');h.clean();
+  }
+  assert.equal(dispatches,0);assert.equal(h.timers.size,0);h.clean();
 });

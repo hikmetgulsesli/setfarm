@@ -53,7 +53,7 @@ Actual new holder6238 on clean Me912 passed natural0/both outputs closed, exact 
 
 **Exact H leaf units:** Keep phase full/local distinction lexical. Catalog9→2 full proofs with every existing SQL/local guard. Qualify17→4: before postgres import, after import, after pool captured before reserve, after reserve+identity/catalog/final identity; qualification stays provisional until terminal proof. Records+migrations startup6→3, preserving full boundary before/after each actual import. Mechanical-only prepared+activation read4→2; standalone record readers stay full elsewhere. Select shares adjacent post-import/pre-next-import boundaries, retaining database namespace/close obligation before any property: old/new9→5, activation7→4. Preserve full guards around real effects/imports/spawns, all close joins and every clock. Conditional postacquisition counts incl final Source-close check: provision24/activate29/old30/new25. Actual elapsed feasibility remains a later gate.
 
-- [ ] **Step 1: Tests only.** Add finite actual-code behavioral controls in J/K-test before H/K/F edits. First assert a required newly factored private interface before fixture work where absent; identify such RED as scaffolding, not reached semantics. Exercise actual changed private bodies through existing bounded seams, not copied algorithms. Required fault rows: start/body/end Source drift, first/middle/last per-file drift, directory/absence drift, one-attempt/recycled-close faults, reentrancy/async result refusal; exact resolver subprocess program/order/env/results and failure/timeout/absence/Node drift; K late admin return/poll/Source-consuming clock/quiescence/shutdown; F each of8 proofs and each awaited census/DROP, no next effect/output/ledger before terminal proof; H reservation retention, catalog identities, import-before/after and namespace-before-property, record-pair drift. Keep all old assertions. Report exact registration delta, reached predicate/control map and Source hashes.
+- [x] **Step 1: Tests only.** Add finite actual-code behavioral controls in J/K-test before H/K/F edits. First assert a required newly factored private interface before fixture work where absent; identify such RED as scaffolding, not reached semantics. Exercise actual changed private bodies through existing bounded seams, not copied algorithms. Required fault rows: start/body/end Source drift, first/middle/last per-file drift, directory/absence drift, one-attempt/recycled-close faults, reentrancy/async result refusal; exact resolver subprocess program/order/env/results and failure/timeout/absence/Node drift; K late admin return/poll/Source-consuming clock/quiescence/shutdown; F each of8 proofs and each awaited census/DROP, no next effect/output/ledger before terminal proof; H reservation retention, catalog identities, import-before/after and namespace-before-property, record-pair drift. Keep all old assertions. Report exact registration delta, reached predicate/control map and Source hashes.
 
 Use event traces from actual consumer seams, for example the required per-object behavior:
 
@@ -63,8 +63,8 @@ assert.ok(events.indexOf('source:post-census:database') < events.indexOf('ledger
 assert.equal(events.includes('drop:runtime'), false); // when database terminal proof fails
 ```
 
-- [ ] **Step 2: Root actual RED.** Root runs exactly the owned-route, private-cluster and path-contract test files on fixed Node26 with complete original output/EOF/close/source pins. Preserve first failure; distinguish absent private scaffolding from reached semantic faults. No wildcard PM test, actual PG or genuine route.
-- [ ] **Step 3: Separately released minimal implementation.** Freeze tests; author only H/K/F and own report. The fixed guard form is:
+- [x] **Step 2: Root actual RED.** Root runs exactly the owned-route, private-cluster and path-contract test files on fixed Node26 with complete original output/EOF/close/source pins. Preserve first failure; distinguish absent private scaffolding from reached semantic faults. No wildcard PM test, actual PG or genuine route.
+- [x] **Step 3: Separately released minimal implementation.** Freeze tests; author only H/K/F and own report. The fixed guard form is:
 
 ```js
 localCheck();
@@ -73,8 +73,8 @@ localCheck();
 ```
 
 K uses its retained `sourceHolder`; H/F use their existing lexical holder. Full proof boundaries use the actual owners. Fixed local bodies retain every original non-Source operation/guard and refuse after uncertainty. No global suppression switch or generic effect callback is introduced.
-- [ ] **Step 4: Root GREEN/strict/path/syntax.** Same exact tests/names and actual reached controls; strict four existing TS entries, fixed path checker and H/K syntax. No build on dirty Source. Tests validate clocks with controlled monotonic seams and actual pending settlements, never certify elapsed performance from a count.
-- [ ] **Step 5: Independent task review and Root scoped commit.** Reviewer gets BASE..HEAD full diff plus exact brief/report/evidence; spec and quality verdicts required. Root alone delivers Git. This task may be component-complete without actual new holder/time/private effects.
+- [x] **Step 4: Root GREEN/strict/path/syntax.** Same exact tests/names and actual reached controls; strict four existing TS entries, fixed path checker and H/K syntax. No build on dirty Source. Tests validate clocks with controlled monotonic seams and actual pending settlements, never certify elapsed performance from a count.
+- [x] **Step 5: Independent task review and Root scoped commit.** Reviewer gets BASE..HEAD full diff plus exact brief/report/evidence; spec and quality verdicts required. Root alone delivers Git. This task may be component-complete without actual new holder/time/private effects.
 
 ### Task 2: Purpose-fixed TSX disk-cache suppression
 
@@ -82,7 +82,7 @@ K uses its retained `sourceHolder`; H/F use their existing lexical holder. Full 
 
 **Interfaces:** K original constructor INPUT remains exact PATH/LANG/LC_ALL plus optional validated canonical Darwin metadata. K OUTPUT runner gets literal `TSX_DISABLE_CACHE:'1'` before unchanged `--import tsx`; initdb/server remain env3. F plan INPUT remains env3; OUTPUT integration gets literal1 while four builtin leaf purposes remain env3. F genuine runner/integration qualifier requires exact1 and allows that exact extra key. H builtin contexts, vectors, FD4, account, original executable/argv/cwd, worker policy and private frame data remain unchanged. No inherited caller value or new selector/directory/loader option.
 
-- [ ] **Step 1: Tests only.** Actual K spawned runner flag1/native outputs env3/input unchanged; original constructor ambient flag still rejects. Actual F integration-only output flag1/four leaf outputs env3; plan input rejects ambient cache flag. Genuine runner/integration require literal1; missing/empty/0/2/true/extra keys refuse; canonical Darwin metadata remains accepted; worker0/extra NODE_TEST_CONTEXT and all old process/frame guards stay strict. Update only the valid launch fixtures whose intended contract becomes env4 and report every changed old expectation.
+- [x] **Step 1: Tests only.** Actual K spawned runner flag1/native outputs env3/input unchanged; original constructor ambient flag still rejects. Actual F integration-only output flag1/four leaf outputs env3; plan input rejects ambient cache flag. Genuine runner/integration require literal1; missing/empty/0/2/true/extra keys refuse; canonical Darwin metadata remains accepted; worker0/extra NODE_TEST_CONTEXT and all old process/frame guards stay strict. Update only the valid launch fixtures whose intended contract becomes env4 and report every changed old expectation.
 
 ```js
 assert.equal(runner.env.TSX_DISABLE_CACHE, '1');
@@ -90,15 +90,15 @@ assert.equal(Object.hasOwn(initdb.env, 'TSX_DISABLE_CACHE'), false);
 assert.equal(Object.hasOwn(builtinLeaf.env, 'TSX_DISABLE_CACHE'), false);
 ```
 
-- [ ] **Step 2: Root actual RED.** Preserve natural result/dual output closure/full Source pins. The new exact flag requirement must fail on old Source rather than a fixture assertion swallowed as product refusal.
-- [ ] **Step 3: Separately released K/F implementation.** Exactly three semantic sites: K purpose runner output; F purpose integration output; F runner/integration qualifier requiring1. Example fixed output construction:
+- [x] **Step 2: Root actual RED.** Preserve natural result/dual output closure/full Source pins. The new exact flag requirement must fail on old Source rather than a fixture assertion swallowed as product refusal.
+- [x] **Step 3: Separately released K/F implementation.** Exactly three semantic sites: K purpose runner output; F purpose integration output; F runner/integration qualifier requiring1. Example fixed output construction:
 
 ```js
 const env = {PATH:fixedPath, LANG:'C', LC_ALL:'C', ...(purpose==='runner'?{TSX_DISABLE_CACHE:'1'}:{})};
 ```
 
 Use each existing constructor's actual variable names and preserve Darwin metadata. Add no production testing export or process.env mutation. Ordinary existing cache behavior stays untouched.
-- [ ] **Step 4: Root GREEN/strict/path/syntax and scoped review/commit.** Assert flag is present BEFORE actual TSX spawn. No actual TSX/cache/PG effect is authorized by component success.
+- [x] **Step 4: Root GREEN/strict/path/syntax and scoped review/commit.** Assert flag is present BEFORE actual TSX spawn. No actual TSX/cache/PG effect is authorized by component success.
 
 ## Delivery and actual qualification
 
@@ -117,3 +117,8 @@ Ruling: actual original80225 ended natural1,1930/1926pass/4fail with2421 stable 
 Ruling I1: Root independently read the actual activation consumer, shared effect and close helpers, startup and terminal cleanup. The unchanged required boundaries total 23 middle checks plus startup3 and terminal3, hence activation29 (not31). The earlier31/25-middle arithmetic was a plan/report error, not two missing safety boundaries. Correct the current task schedule to provision24/activate29/old30/new25; preserve all original proof/effect/import/close predicates and historical reports/captures. No redundant checks are added to satisfy the mistaken sum. This is static accounting only; actual elapsed feasibility remains unqualified. Cost if wrong: further count/source review and fresh measurement before genuine admission.
 
 I2 is accepted for repair: factor one lexical local closure-facts projection shared by explicit general and cleanup wrappers, preserving all original facts, receipt fields, guard order, full general proof and eight cleanup proofs. No caller-selected mode/skip/callback. Existing1936 actual GREEN is the refactor baseline; update only indispensable J actual-declaration extraction dependencies, with every assertion/registration retained. Same author may edit only F/J and append report; H/K/Ktest remain frozen. Root owns verification, docs and delivery; independent scoped re-review required.
+
+
+## Root Task2 component qualification and scoped review
+
+Original28873 actual RED1943/1934PASS9FAIL reached four new cache-contract semantic failures and five old valid-fixture contract failures; all2421pins stable, natural1, both original streams closed. After separately released K/F three-site implementation, original35122 full1943/1943PASS plus strict35123/path35124/Ksyntax35121 all natural0, complete original streams and2421 stable pins. Exact all RED names and all prior1936 names retained; qualification U/task7e-cache-contract-full-root-qualification-v1.json8559B SHA94e60c60e96012d8ffa95a88a9d25c2b8df4da610317ecdbb962504ba23ca5eb. Independent Task2 scoped review8581B SHA4f58a5f12583b49a1f6fbcf988c7100cbc4b3089fc4480a54ff0c6c771566dc0: SpecCompliant/QualityApproved C0I0M1. M1 concerns optional qualifier immutability assertions observing outer fixture rather than converted consumed arguments; it is recorded in the progress ledger for final whole-branch triage. Current Source introduces no input mutation. Root alone normally commits this reviewed component snapshot; actual new clean-main build/holder timings/FD restoration/deadline feasibility/genuine/native/full8/rollout remain separately OPEN.
