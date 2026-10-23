@@ -671,27 +671,34 @@ function ownedSourcePinsV1(resources,home,sourceContext=()=>{}){
     }
     return directories.get(locator).stat;
   };
-  const read=(pin,fd)=>{
+  const collect=pin=>{
+    const buffer=Buffer.alloc(Number(pin.stat.size));
+    return {buffer,destination:position=>position,accept:()=>{},eof:()=>Buffer.alloc(1),
+      digest:()=>ownedSourceHashV1(buffer),result:buffer};
+  };
+  // Both private consumers share the physical, metadata, positional-read and
+  // digest-acceptance algorithm. Only ordinary byte callers establish a hash.
+  const read=(pin,fd,consumer)=>{
     guard();physical(pin.path);
     const metadata=()=>{
       const named=fs.lstatSync(pin.path,{bigint:true}),held=fs.fstatSync(fd,{bigint:true});
       ownedSourceRequireV1(named.isFile()&&!named.isSymbolicLink()&&held.isFile()&&!held.isSymbolicLink()
         &&ownedSourceSameV1(pin.stat,named,true)&&ownedSourceSameV1(pin.stat,held,true));
     };
-    metadata();const result=Buffer.alloc(Number(pin.stat.size));let offset=0;
-    while(offset<result.length){
-      const wanted=Math.min(65536,result.length-offset),n=fs.readSync(fd,result,offset,wanted,offset);
-      ownedSourceRequireV1(Number.isSafeInteger(n)&&n>0&&n<=wanted);offset+=n;
+    metadata();const sink=consumer(pin),size=Number(pin.stat.size);let offset=0;
+    while(offset<size){
+      const wanted=Math.min(65536,size-offset),n=fs.readSync(fd,sink.buffer,sink.destination(offset),wanted,offset);
+      ownedSourceRequireV1(Number.isSafeInteger(n)&&n>0&&n<=wanted);sink.accept(n);offset+=n;
     }
-    ownedSourceRequireV1(fs.readSync(fd,Buffer.alloc(1),0,1,offset)===0);metadata();
-    const digest=ownedSourceHashV1(result);
+    ownedSourceRequireV1(fs.readSync(fd,sink.eof(),0,1,offset)===0);metadata();
+    const digest=sink.digest();
     if(pin.sha256!==undefined)ownedSourceRequireV1(digest===pin.sha256);
     else pin.sha256=digest;
-    return result;
+    return sink.result;
   };
-  const bytes=(pin,stockChecked=false)=>{
+  const consume=(pin,consumer,stockChecked)=>{
     guard();
-    if(pin.state==='H_HELD')return read(pin,pin.fd);
+    if(pin.state==='H_HELD')return read(pin,pin.fd,consumer);
     ownedSourceRequireV1(pin.state==='STOCK_HELD'&&custody?.state==='STOCK_HELD'&&pin.sha256!==undefined);
     if(!stockChecked)stockCheck();
     ownedSourceRequireV1(!reading);reading=true;
@@ -699,12 +706,13 @@ function ownedSourcePinsV1(resources,home,sourceContext=()=>{}){
       physical(pin.path);
       const fd=fs.openSync(pin.path,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
       const close=closer(fd);
-      try{return read(pin,fd);}finally{close();}
+      try{return read(pin,fd,consumer);}finally{close();}
     }catch{
       invalid=true;if(ownedSourceCleanupUncertainV1)custody.state='UNKNOWN';
       throw ownedSourceRefusalV1();
     }finally{reading=false;}
   };
+  const bytes=(pin,stockChecked=false)=>consume(pin,collect,stockChecked);
   const file=(locator,cap=16777216,device,system=false)=>{
     guard();directory(path.dirname(locator));physical(locator);
     let pin=files.get(locator);
@@ -750,9 +758,19 @@ function ownedSourcePinsV1(resources,home,sourceContext=()=>{}){
     }
   };
   const check=()=>{
+    // Scratch is private to this synchronous pass and created only after the
+    // first file's pre-read metadata gate. Each file has a fresh hash state.
+    let scratch,eof;
+    const verify=pin=>{
+      ownedSourceRequireV1(pin.sha256!==undefined);
+      if(scratch===undefined){scratch=Buffer.alloc(65536);eof=Buffer.alloc(1);}
+      const hash=createHash('sha256');
+      return {buffer:scratch,destination:()=>0,accept:n=>hash.update(scratch.subarray(0,n)),
+        eof:()=>eof,digest:()=>hash.digest('hex'),result:undefined};
+    };
     try{
       guard();if(custody?.state==='STOCK_HELD')stockCheck();
-      topology();for(const pin of files.values())bytes(pin,true);
+      topology();for(const pin of files.values())consume(pin,verify,true);
     }catch{invalid=true;throw ownedSourceRefusalV1();}
   };
   const handoffTargetOutput=(root,outputMap,retainedTarget)=>{
