@@ -183,7 +183,7 @@ Preserve the existing explanatory opaque-catch comment. Push/assignment grant no
 
 - [x] **Step 4: Root GREEN and focused checks.** Repeat original safe3-suite selection on exact fixed Source, preserve all1995 prior names plus finite new names, require allPASS/0skip/cancel/todo with complete stable capture. Run exact H `node --check` and `node scripts/check-path-contract.mjs` above. No dirty build; K/F remain unchanged. Repair actual defects/fixture plumbing with same author and fresh capture namespaces, never weaken old safety controls. No performance inference from controlled events.
 
-- [ ] **Step 5: Independent task spec/quality review and normal checkpoint.** Root sends full Task2 diff from Task1 checkpoint, immutable brief/report/spec and RED/GREEN pins. Require C0/I0; ledger minor findings and controller-resolve items. Fresh reviewer, no execution/delivery/subagents. Root alone normal commit after approval; preserve Task1 checkpoint. Task2 changes acquisition only, not phase schedules24/29/27/24 or subsequent public Source check/close composition.
+- [x] **Step 5: Independent task spec/quality review and normal checkpoint.** Root sends full Task2 diff from Task1 checkpoint, immutable brief/report/spec and RED/GREEN pins. Require C0/I0; ledger minor findings and controller-resolve items. Fresh reviewer, no execution/delivery/subagents. Root alone normal commit after approval; preserve Task1 checkpoint. Task2 changes acquisition only, not phase schedules24/29/27/24 or subsequent public Source check/close composition.
 
 ## Shared Root delivery and runtime verification
 
@@ -192,3 +192,13 @@ Preserve the existing explanatory opaque-catch comment. Push/assignment grant no
 - [ ] **Step 3: Fresh actual Source point and relevant real-Source deadline experiment.** Rebind exact new main/H/J/plan/build/source pins. Root independently validates Source DATA, full original process/stream/FD/close custody. Admit a separately scoped meaningful actual-Source phase-component experiment under unchanged120/180/300 clocks; do not turn synthetic n×C into universal floor/fit or call controlled SQL genuine. Native/current-material/initialTCB/OS/continuousDB/genuine/full8/rollout gates remain open until their own actual records pass. If cost still insufficient, continue evidence-backed proof-preserving hypotheses, never widen clocks or omit required guards.
 
 Ruling: Add acquisition qualification as Task2 before shared final delivery — actual A39886ms and CPU attribution show acquisition remains a causal cost, and static inspection identifies duplicate samples without a distinct import/effect/acceptance boundary — cost if wrong: keep Task1 checkpoint, revert only Task2 on this scoped branch, re-review/retest before any actual private admission. Repeated transient sampling equivalence and elapsed speedup are not claimed.
+
+
+## Verified Source checkpoints (runtime gates remain open)
+
+| Task | Normal scoped commit | Verified component evidence |
+|---|---|---|
+| Task1 | ae4d7d19fec4b44159a54d41e7370c5c4d4bd21b | Root original1995/1995PASS plus syntax/path0; independent spec/quality C0/I0/M0. Static phase schedules24/29/27/24 only. |
+| Task2 | 99f46a95a38d2af81f3ebb1020bc3c6d742db32a | Root original2038/2038PASS, all prior names retained, syntax/path0; independent spec/quality C0/I0/M0. Controlled acquisition M3/T1 only. |
+
+Shared final review, reviewed delivery, new clean-main build, real Source point/deadline, private/native/current-material/TCB/DB/genuine/full8/rollout outcomes are subsequent gates. Neither checkpoint certifies them or every former transient sampling history. All source/test/evidence workspaces are preserved.
