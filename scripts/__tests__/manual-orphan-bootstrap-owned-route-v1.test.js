@@ -9620,7 +9620,16 @@ for(const fault of ['escaped-facade','nested','async-result','wrong-root','wrong
 function task7ePhaseV1(options={}){
   const names=['localPhaseCheck','check','queryLocal','readPhaseCatalogFactsLocal','catalog','qualify','loadNamespaceLocal','load',
     'loadRecordsAndMigrations','recordPins','readPreparedLocal','readActivationLocal','readPrepared','readActivation','readPreparedAndActivationForMechanical','select'];
-  const code=task7eLexicalV1(HELPER,'runManualOrphanOwnedPhaseV1',names);
+  if(options.adjacent){
+    names.push('effect','closeQualification','closeDatabase','expectedRefusal','unprepared','qualifyMechanical');
+    // Before implementation, execute the original bodies and their original
+    // boundary costs. Optional extraction is plumbing, never a success double.
+    const source=readFileSync(HELPER,'utf8');
+    for(const name of ['verifyMechanicalActivation','prepareOldEntryTwice'])
+      if(source.includes('const '+name+'=async()=>'))names.push(name);
+  }
+  const code=task7eLexicalV1(HELPER,'runManualOrphanOwnedPhaseV1',names)+(options.adjacent?'\n'+
+    task7eLexicalV1(HELPER,null,['oldEntryManualOrphanOwnedPhaseV1','newEntryManualOrphanOwnedPhaseV1']):'');
   const vm=task5bGateV1(),events=[],faults=[],controls={proofFault:0,drift:false,importFault:null,recordDrift:false,...options};
   const guard=fn=>task5bGuardV1(faults,fn),frame=ownedPhaseData('old_entry_positive');
   const base=task4aCatalogV1();for(const role of base.roles)if(role.name==='root')Object.assign(role,{name:'postgres',inherit:true,createDb:true,replication:true});
@@ -9640,21 +9649,22 @@ function task7ePhaseV1(options={}){
     records:recordApi,migrations:{getContractSpineCurrentHeadJournalIdentitiesV1:()=>migrations},
     targetDatabase:{},maintenanceDatabase:{},targetSelection:{freshInstallationSelectionV1:{directory:d.installationsDirectory+'/'+OWN_ID},assertFreshInstallationSelectionUnchangedV1:guard(()=>events.push('selection-current'))},
     maintenanceSelection:{freshInstallationSelectionV1:{directory:d.installationsDirectory+'/'+OWN_ID},assertFreshInstallationSelectionUnchangedV1:guard(()=>events.push('selection-current'))},targetEntry:{},maintenanceEntry:{}};
-  for(const key of ['targetDatabase','maintenanceDatabase'])Object.defineProperty(namespaces[key],'getSql',{get:guard(()=>{assert.equal(captured,true,'database retained before fallible property');events.push('database-property');return ()=>{};})});
+  if(!options.adjacent)for(const key of ['targetDatabase','maintenanceDatabase'])Object.defineProperty(namespaces[key],'getSql',{get:guard(()=>{assert.equal(captured,true,'database retained before fallible property');events.push('database-property');return ()=>{};})});
   const paths={postgres:d.targetRoot+'/node_modules/postgres/src/index.js',records:d.targetRoot+'/dist/installation/fresh-installation-records-v1.js',
     migrations:d.targetRoot+'/dist/db/contract-spine-migrations.js',targetDatabase:d.targetRoot+'/dist/db-pg.js',maintenanceDatabase:d.maintenanceRoot+'/dist/db-pg.js',
     targetSelection:d.targetRoot+'/dist/installation/fresh-installation-selection-v1.js',maintenanceSelection:d.maintenanceRoot+'/dist/installation/fresh-installation-selection-v1.js',
-    targetEntry:d.targetRoot+'/dist/installation/fresh-installation-entry-v1.js',maintenanceEntry:d.maintenanceRoot+'/dist/installation/fresh-installation-entry-v1.js'};
+    targetEntry:d.targetRoot+'/dist/installation/fresh-installation-entry-v1.js',maintenanceEntry:d.maintenanceRoot+'/dist/installation/fresh-installation-entry-v1.js',
+    activation:d.targetRoot+'/dist/installation/fresh-installation-activation-v1.js'};
   const context={frame,admitted:d,derived:d,unknown:false,finished:false,qualified:false,expectedIdentity:null,sql:null,databaseClose:null,
     prepared:null,activationState:null,directory:null,records:recordApi,migrations:null,moduleCache:new Map(),selectionMade:false,selectedDirectory:null,
-    holder:{source:{target:ownedReleaseData(OWN_T)},check:guard(()=>{events.push('source:'+ ++proof);if(controls.drift||proof===controls.proofFault)throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');})},
+    holder:{source:{target:ownedReleaseData(OWN_T)},check:guard(()=>{events.push('source:'+ ++proof);controls.onSource?.(proof);if(controls.drift||proof===controls.proofFault)throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');})},
     pins:{check:guard(()=>events.push('phase-pins')),file:guard((locator,cap)=>{
       const name=path.basename(locator);assert.equal(path.dirname(locator),d.installationsDirectory+'/'+OWN_ID);
       const expected=name==='activation-prepared.json'?activation.preparedPin:name==='activated.json'?activation.activatedPin:prepared.baseRecordPins[name];
       assert.ok(expected,'only actual fixed record pins');assert.equal(cap,name==='runtime-credentials.json'?4096:32768);events.push('record-pin:'+name);
       return {stat:{uid:501n,gid:20n,mode:0o100600n},bytes:Buffer.alloc(expected.bytes+(controls.pinFault==='bytes'?1:0)),sha256:controls.pinFault==='hash'?OWN_C:expected.sha256};
     })},aliases:[],observations:null,
-    sample:guard(()=>{if(unknown)throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');events.push('sample');}),contextCurrent:guard(()=>events.push('context')),
+    sample:guard(()=>{controls.onSample?.();if(unknown)throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');events.push('sample');}),contextCurrent:guard(()=>{events.push('context');controls.onContext?.();}),
     burn:()=>{unknown=true;},ownedTransportUnknownV1:()=>Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN'),
     require:guard(value=>{if(!value)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');}),process:{env:{}},detach:value=>JSON.parse(JSON.stringify(value)),
     privateDirectory:guard(()=>({dev:'1',ino:'2',uid:501,gid:20,mode:448})),capacity:guard(()=>events.push('capacity')),
@@ -9666,7 +9676,7 @@ function task7ePhaseV1(options={}){
   };
   // The source uses require as a lexical assertion. Only transpiled import's
   // module dispatch is renamed, leaving every actual predicate untouched.
-  const compiled=ts.transpileModule(code+'\nglobalThis.unit={'+names.join(',')+'};',{fileName:'actual-H-phase-units.ts',reportDiagnostics:true,
+  const compiled=ts.transpileModule(code+'\nglobalThis.unit={'+names.join(',')+(options.adjacent?',oldEntryManualOrphanOwnedPhaseV1,newEntryManualOrphanOwnedPhaseV1':'')+'};',{fileName:'actual-H-phase-units.ts',reportDiagnostics:true,
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});
   assert.deepEqual((compiled.diagnostics??[]).filter(x=>x.category===ts.DiagnosticCategory.Error),[]);
   const ast=ts.createSourceFile('actual-phase-lowered.js',compiled.outputText,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
@@ -9683,7 +9693,7 @@ function task7ePhaseV1(options={}){
     if(controls.importFault===key)throw Error('MANUAL_ORPHAN_OWNER_REFUSED');if(controls.importDrift===key)controls.drift=true;return namespaces[key];});
   Object.assign(context,{Buffer,Error,path,pathToFileURL:url.pathToFileURL});
   runInNewContext(lowered,context,{filename:'actual-H-phase-units',timeout:5000});
-  return {events,controls,context,api:context.unit,sql,rows,installation,prepared,activation,recordApi,namespaces,proofs:()=>proof,
+  return {events,controls,context,api:context.unit,sql,gate:vm,rows,installation,prepared,activation,recordApi,namespaces,proofs:()=>proof,
     async finish(){try{await sql.ledger.close();}catch(error){assert.ok(task7eProofRefusalV1(error));}assert.deepEqual(faults,[]);sql.check();vm.assertContained();},
     selectReady(purpose='old_entry_positive'){context.qualified=true;context.sql={current:()=>({closed:true})};context.prepared=prepared;context.directory=d.installationsDirectory+'/'+OWN_ID;context.frame.purpose=purpose;},
     qualify:()=>context.unit.qualify('postgresql://finite',installation,prepared)};
@@ -9743,6 +9753,259 @@ test('Task7E H mechanical record pair keeps two full proofs with both actual ret
 for(const fault of ['record-after-read','terminal-source'])test('Task7E H mechanical pair '+fault+' refuses provisional records',async()=>{
   const f=task7ePhaseV1(fault==='record-after-read'?{recordAfterRead:true}:{proofFault:2});f.context.frame.input.installation=f.installation;
   assert.throws(()=>f.api.readPreparedAndActivationForMechanical(),task7eProofRefusalV1);assert.equal(f.context.activationState,f.activation,'returned record retained before validation');await f.finish();
+});
+
+// Adjacent-boundary controls execute the existing actual phase/handler bodies.
+// Source, phase-clock sampling and imported stock namespaces are controlled
+// dependencies here; none certifies real Source, SQL, native or private entry.
+function task7eAdjacentV1(options={}){
+  const f=task7ePhaseV1({adjacent:true,...options}),{events,controls,context,namespaces}=f;
+  const faults=[],guard=fn=>task5bGuardV1(faults,fn),purpose=options.purpose??'old_entry_positive';
+  context.frame.purpose=purpose;context.frame.input.installation=f.installation;
+  context.migrations=task5bPlainV1(f.prepared.origin.migrations);
+  context.holder.source.maintenance=ownedReleaseData(OWN_M);
+  const directory=task5bDerivedV1().installationsDirectory+'/'+OWN_ID;
+  const receipt={schema:'setfarm.fresh-installation-activation-verification.v1',state:'activated',
+    installationId:OWN_ID,sourceSha:OWN_T,catalogHash:OWN_B};
+  let prepares=0,ready=false,closed=false,client={},gets=0,entryAssertions=0,databaseAssertions=0;
+  const method=(namespace,name,body)=>{namespace[name]=function(...args){
+    try{assert.equal(this,namespace,name+' exact namespace receiver');assert.deepEqual(args,[],name+' zero arguments');return body();}
+    catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}
+  };};
+  for(const prefix of ['target','maintenance']){
+    const database=namespaces[prefix+'Database'],entry=namespaces[prefix+'Entry'];
+    database.getSql=guard(()=>{
+      if(closed){events.push('getSql:closed');throw Error('FRESH_INSTALLATION_DATABASE_NOT_PREPARED');}
+      if(!ready){events.push('getSql:unprepared');if(controls.unpreparedFault)return client;throw Error('FRESH_INSTALLATION_DATABASE_NOT_PREPARED');}
+      events.push('getSql:'+ ++gets);if(controls.getSqlFault&&gets===1)return null;
+      if(controls.clientFault&&gets===2)return {};return client;
+    });
+    method(entry,'prepareFreshInstallationOperationalEntryV1',()=>{
+      const n=++prepares;events.push('prepare:'+n);
+      if(prefix==='maintenance')return Promise.reject(Error('FRESH_INSTALLATION_OPERATIONAL_ENTRY_REFUSED'));
+      const value=controls.preparePendingAt===n?controls.preparePending:Promise.resolve();
+      return Promise.resolve(value).then(()=>{events.push('prepare:settled:'+n);
+        if(controls.prepareReject===n)throw Error('FINITE_PREPARE_REJECT');ready=true;
+        if(controls.replaceClient===n)client={};return undefined;
+      });
+    });
+    method(entry,'assertFreshInstallationOperationalEntryV1',()=>{
+      events.push('entry:assert:'+ ++entryAssertions);
+      if(controls.entryAssertFault===entryAssertions)throw Error('FINITE_ENTRY_ASSERT');
+    });
+    method(database,'assertSelectedFreshInstallationOperationalDatabaseV1',()=>{
+      events.push('database:assert:'+ ++databaseAssertions);
+      if(controls.databaseAssertFault===databaseAssertions)throw Error('FINITE_DATABASE_ASSERT');
+    });
+    method(database,'pgClose',()=>{
+      events.push('database:close:start');closed=true;
+      const value=controls.databaseClosePending??Promise.resolve();
+      return Promise.resolve(value).then(()=>{events.push('database:close:settled');
+        if(controls.databaseCloseReject)throw Error('FINITE_DATABASE_CLOSE_REJECT');
+      });
+    });
+  }
+  namespaces.activation={verifyFreshInstallationActivationV1:function(...args){
+    try{assert.equal(this,namespaces.activation);assert.deepEqual(args,[directory]);
+      assert.equal(f.sql.ledger.current().closed,true,'actual qualification closed before verifier');events.push('verifier:start');
+    }catch(error){if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;}
+    return Promise.resolve(controls.verifierPending).then(()=>{
+      events.push('verifier:settled');if(controls.verifierReject)throw Error('FINITE_VERIFIER_REJECT');
+      if(controls.postVerifierDrift)controls.drift=true;
+      if(controls.postVerifierRecordDrift)controls.recordDrift=true;
+      if(controls.postVerifierClock)controls.clockExpired=true;
+      return {...receipt,...controls.receipt};
+    });
+  }};
+  const createLedger=context.createManualOrphanPhaseSqlLedgerV1;
+  context.createManualOrphanPhaseSqlLedgerV1=guard(()=>{
+    const ledger=createLedger();return {...ledger,close:guard(async()=>{
+      events.push('qualification:close:start');await ledger.close();events.push('qualification:close:settled');
+    })};
+  });
+  context.deriveManualOrphanPhaseEndpointV1=guard((...args)=>{
+    events.push('endpoint');return f.gate.api.deriveManualOrphanPhaseEndpointV1(...args.map(x=>typeof x==='object'?task5bDataV1(f.gate,x):x));
+  });
+  context.ownedInstallationV1=guard((installation,activated)=>{
+    events.push('reconcile:start');assert.equal(installation,f.installation);assert.equal(activated,true);
+    assert.deepEqual(task5bPlainV1(installation),ownedInstallationData(true));
+    if(controls.reconcileOriginFault)f.prepared.origin.operationId=OWN_ID;
+    return installation;
+  });
+  context.probeOwnDataV1=guard((value,keys)=>{
+    events.push('receipt:read');assert.deepEqual(Array.from(keys),['schema','state','installationId','sourceSha','catalogHash']);
+    assert.deepEqual(Object.keys(value).sort(),['catalogHash','installationId','schema','sourceSha','state']);return value;
+  });
+  controls.onSample=()=>{if(controls.clockExpired)throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');};
+  controls.onSource=()=>{
+    const imported=events.includes('import:activation'),started=events.includes('verifier:start'),settled=events.includes('verifier:settled');
+    if(controls.sourceBoundary==='activation:preimport'&&events.includes('qualification:close:settled')&&!imported
+      ||controls.sourceBoundary==='activation:precall'&&imported&&!started
+      ||controls.sourceBoundary==='activation:postcall'&&settled&&!events.includes('reconcile:start')
+      ||controls.sourceBoundary==='activation:final'&&events.includes('receipt:read')
+      ||controls.sourceBoundary==='prepare:1'&&events.includes('getSql:unprepared')&&prepares===0
+      ||controls.sourceBoundary==='prepare:2'&&events.includes('getSql:2')&&prepares===1
+      ||controls.sourceBoundary==='prepare:postsecond'&&events.includes('prepare:settled:2')
+      ||controls.sourceBoundary==='prepare:final'&&events.includes('getSql:3')
+      ||controls.sourceBoundary==='database:postclose'&&events.includes('database:close:settled'))controls.drift=true;
+    if(controls.qualifiedFault&&imported&&!started)context.qualified=false;
+    if(controls.microtaskAtActivation&&imported&&!started)
+      queueMicrotask(()=>{events.push('queued:after-activation-proof');});
+    if(controls.microtaskAtPrepare&&events.includes('getSql:unprepared')&&prepares===0)
+      queueMicrotask(()=>{events.push('queued:after-proof');});
+  };
+  let importLocals=0,firstLocals=0,secondLocals=0;
+  controls.onContext=()=>{
+    if(events.includes('import:activation')&&!events.includes('verifier:start')){
+      importLocals++;if(controls.importLocalFault===importLocals)throw Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+    }
+    if(events.includes('getSql:unprepared')&&prepares===0){
+      firstLocals++;if(controls.firstLocalFault===firstLocals)throw Error('FINITE_FIRST_LOCAL_GUARD');
+    }
+    if(events.includes('getSql:2')&&prepares===1){
+      secondLocals++;if(controls.secondLocalFault===secondLocals)throw Error('FINITE_SECOND_LOCAL_GUARD');
+    }
+  };
+  const phase={frame:context.frame,source:context.holder.source,require:context.require,check:f.api.check,effect:f.api.effect,
+    qualifyMechanical:f.api.qualifyMechanical,unprepared:f.api.unprepared,unknown:context.burn,
+    prepareOldEntryTwice:f.api.prepareOldEntryTwice,closeDatabase:f.api.closeDatabase,
+    select:guard(async maintenance=>{events.push('select:'+maintenance);return f.api.select(maintenance);}),
+    get prepared(){return context.prepared;}};
+  context.ownedTransportUnknownV1=()=>Error('MANUAL_ORPHAN_CLEANUP_UNKNOWN');
+  return {...f,phase,prepares:()=>prepares,
+    run:()=>f.api[purpose==='old_entry_positive'?'oldEntryManualOrphanOwnedPhaseV1':'newEntryManualOrphanOwnedPhaseV1'](phase),
+    async finish(){
+      try{await f.api.closeDatabase();}catch(error){assert.ok(task7eProofRefusalV1(error));}
+      await f.finish();assert.deepEqual(faults,[],'no swallowed namespace/receipt/endpoint assertion');
+    }};
+}
+async function task7eAdjacentReachedV1(f,event){
+  for(let n=0;n<128&&!f.events.includes(event);n++)await task5bPumpV1();
+  assert.ok(f.events.includes(event),'actual component reached '+event);
+}
+function task7eAdjacentTraceV1(events){
+  return events.filter(x=>x==='context'||x.startsWith('source:')||x==='import:activation'||x.startsWith('verifier:')
+    ||x==='reconcile:start'||x==='receipt:read').map(x=>x==='context'?'local':x.startsWith('source:')?'full':x);
+}
+for(const purpose of ['old_entry_positive','new_entry_refusal'])test('Task7E H adjacent '+purpose+' mechanical activation uses four full proofs with exact local and effect order',async()=>{
+  // Break: the duplicate post-import/effect opening proof still consumes the
+  // phase budget, or any retained pre-import/post-verifier/final proof moves.
+  const f=task7eAdjacentV1({purpose});await f.api.qualifyMechanical();
+  const start=f.events.indexOf('qualification:close:settled');assert.ok(start>=0);
+  assert.deepEqual(task7eAdjacentTraceV1(f.events.slice(start+1)),[
+    'local','full','local','local','import:activation','local','local','local','local','full','local',
+    'verifier:start','verifier:settled','local','full','local','reconcile:start','receipt:read','local','full','local']);
+  assert.equal(f.proofs(),10);assert.equal(f.sql.calls.releases,1);assert.equal(f.sql.calls.ends,1);await f.finish();
+});
+for(const purpose of ['old_entry_positive','new_entry_refusal'])test('Task7E H adjacent '+purpose+' shared activation proof invokes verifier before queued work',async()=>{
+  const f=task7eAdjacentV1({purpose,microtaskAtActivation:true});await f.api.qualifyMechanical();
+  task7eBeforeV1(f.events,'verifier:start','queued:after-activation-proof');await f.finish();
+});
+for(const purpose of ['old_entry_positive','new_entry_refusal'])for(const boundary of ['activation:preimport','activation:precall','activation:postcall','activation:final'])
+test('Task7E H adjacent '+purpose+' '+boundary+' Source fault forbids next material effect',async()=>{
+  const f=task7eAdjacentV1({purpose,sourceBoundary:boundary});await assert.rejects(f.run(),task7eProofRefusalV1);
+  if(boundary==='activation:preimport')assert.equal(f.events.includes('import:activation'),false);
+  if(['activation:preimport','activation:precall'].includes(boundary))assert.equal(f.events.filter(x=>x==='verifier:start').length,0);
+  if(boundary==='activation:postcall')assert.equal(f.events.includes('reconcile:start'),false);
+  assert.equal(f.events.some(x=>x.startsWith('select:')||x.startsWith('prepare:')),false);await f.finish();
+});
+for(const [name,options,verifier,reconciliation] of [
+  ['activation import rejection',{importFault:'activation'},false,false],
+  ['post-import first retained local guard',{importLocalFault:2},false,false],
+  ['post-import second retained local guard',{importLocalFault:3},false,false],
+  ['qualified gate after shared proof',{qualifiedFault:true},false,false],
+  ['verifier rejection',{verifierReject:true},true,false],
+  ['post-verifier record drift',{postVerifierRecordDrift:true},true,false],
+  ['post-verifier phase clock fault',{postVerifierClock:true},true,false],
+  ['reconciliation origin mismatch',{reconcileOriginFault:true},true,true],
+  ['reconciliation verifier receipt mismatch',{receipt:{catalogHash:OWN_H}},true,true],
+])test('Task7E H adjacent mechanical '+name+' prevents selection',async()=>{
+  const f=task7eAdjacentV1(options);await assert.rejects(f.run(),error=>task7eProofRefusalV1(error)||error?.message==='MANUAL_ORPHAN_CASE_REFUSED');
+  assert.equal(f.events.includes('verifier:start'),verifier);assert.equal(f.events.includes('reconcile:start'),reconciliation);
+  assert.equal(f.events.some(x=>x.startsWith('select:')||x.startsWith('prepare:')),false);await f.finish();
+});
+for(const purpose of ['old_entry_positive','new_entry_refusal'])test('Task7E H adjacent '+purpose+' pending verifier settles before failure result or next API',async()=>{
+  const d=task5bDeferredV1(),f=task7eAdjacentV1({purpose,verifierPending:d.promise}),out=trackProbePromiseV1(f.run());
+  try{
+    await task7eAdjacentReachedV1(f,'verifier:start');f.controls.clockExpired=true;await task5bPumpV1();
+    assert.equal(out.outcome,null);assert.equal(f.events.includes('verifier:settled'),false);
+    assert.equal(f.events.some(x=>x.startsWith('select:')||x.startsWith('prepare:')||x==='database:close:start'),false);
+    d.resolve();await out.done;assert.ok(task7eProofRefusalV1(out.outcome.error));
+    assert.equal(f.events.includes('verifier:settled'),true);assert.equal(f.events.includes('reconcile:start'),false);
+  }finally{d.resolve();await out.done;await f.finish();}
+});
+test('Task7E H adjacent qualification actual close settles before activation import',async()=>{
+  const d=task5bDeferredV1(),f=task7eAdjacentV1();f.sql.endValue=d.promise;const out=trackProbePromiseV1(f.run());
+  try{await task7eAdjacentReachedV1(f,'qualification:close:start');assert.equal(out.outcome,null);
+    assert.equal(f.events.includes('import:activation'),false);d.resolve();await out.done;assert.equal(out.outcome.error,undefined);
+    task7eBeforeV1(f.events,'qualification:close:settled','import:activation');
+  }finally{d.resolve();await out.done;await f.finish();}
+});
+test('Task7E H adjacent qualification actual close rejection prevents activation import',async()=>{
+  const f=task7eAdjacentV1();f.sql.endRejects=true;await assert.rejects(f.run(),task7eProofRefusalV1);
+  assert.equal(f.events.includes('import:activation'),false);assert.equal(f.sql.calls.ends,1);await f.finish();
+});
+test('Task7E H adjacent old entry shares only two earlier proof pairs and keeps same-client assertions close and result',async()=>{
+  const f=task7eAdjacentV1(),result=await f.run(),start=f.events.indexOf('getSql:unprepared');assert.ok(start>=0);
+  const relevant=f.events.slice(start).filter(x=>x==='context'||x.startsWith('source:')||x.startsWith('prepare:')
+    ||x.startsWith('getSql:')||x.startsWith('entry:assert:')||x.startsWith('database:assert:')||x.startsWith('database:close:'))
+    .map(x=>x==='context'?'local':x.startsWith('source:')?'full':x);
+  assert.deepEqual(relevant,[
+    'getSql:unprepared','local','local','local','full','local','prepare:1','prepare:settled:1','local','full','local',
+    'getSql:1','entry:assert:1','database:assert:1','getSql:2','local','local','local','full','local','prepare:2','prepare:settled:2',
+    'local','full','local','entry:assert:2','database:assert:2','getSql:3','local','full','local',
+    'database:close:start','getSql:closed','database:close:settled','getSql:closed','local','full','local']);
+  assert.deepEqual(task5bPlainV1(result),{state:'old-entry-verified',maintenance:ownedReleaseData(OWN_M),target:ownedReleaseData(OWN_T),
+    installationId:OWN_ID,sameClient:true,entryAssert:true,databaseAssert:true,close:'fulfilled',closedGetter:'refused'});
+  assert.deepEqual(f.events.filter(x=>/^prepare:\d$/.test(x)),['prepare:1','prepare:2']);assert.equal(f.proofs(),21);await f.finish();
+});
+test('Task7E H adjacent new entry keeps actual maintenance refusal namespace close and exact result',async()=>{
+  const f=task7eAdjacentV1({purpose:'new_entry_refusal'}),result=await f.run();
+  assert.deepEqual(task5bPlainV1(result),ownedNewData());assert.deepEqual(f.events.filter(x=>x.startsWith('select:')),['select:true']);
+  assert.deepEqual(f.events.filter(x=>/^prepare:\d$/.test(x)),['prepare:1']);assert.equal(f.events.includes('entry:assert:1'),false);
+  assert.equal(f.events.filter(x=>x==='database:close:start').length,1);assert.equal(f.proofs(),18);await f.finish();
+});
+for(const [name,options,count] of [
+  ['unprepared getter refusal',{unpreparedFault:true},0],['first prepare rejection',{prepareReject:1},1],
+  ['first getSql validation',{getSqlFault:true},1],['first entry assertion',{entryAssertFault:1},1],
+  ['first database assertion',{databaseAssertFault:1},1],['first same-client assertion',{clientFault:true},1],
+  ['first earlier local guard',{firstLocalFault:1},0],['second earlier local guard',{firstLocalFault:2},0],
+  ['third earlier local guard',{secondLocalFault:1},1],['fourth earlier local guard',{secondLocalFault:2},1],
+  ['first later shared Source proof',{sourceBoundary:'prepare:1'},0],['second later shared Source proof',{sourceBoundary:'prepare:2'},1],
+  ['second prepare rejection',{prepareReject:2},2],['second entry assertion',{entryAssertFault:2},2],
+  ['second database assertion',{databaseAssertFault:2},2],['second same-client assertion',{replaceClient:2},2],
+  ['second post-call Source proof',{sourceBoundary:'prepare:postsecond'},2],['final old Source proof',{sourceBoundary:'prepare:final'},2],
+])test('Task7E H adjacent old '+name+' forbids corresponding next prepare or result',async()=>{
+  const f=task7eAdjacentV1(options);await assert.rejects(f.run());assert.equal(f.prepares(),count);
+  assert.equal(f.events.includes('database:close:start'),false,'handler cannot claim closed success after failed preparation boundary');
+  await f.finish();assert.equal(f.events.filter(x=>x==='database:close:start').length,1,'retained namespace still receives actual cleanup');
+});
+test('Task7E H adjacent old post-close Source fault refuses exact success result',async()=>{
+  const f=task7eAdjacentV1({sourceBoundary:'database:postclose'});await assert.rejects(f.run(),task7eProofRefusalV1);
+  assert.equal(f.events.filter(x=>x==='database:close:start').length,1);assert.equal(f.events.includes('getSql:closed'),true);await f.finish();
+});
+test('Task7E H adjacent old later full proof invokes prepare before queued work or another selector',async()=>{
+  const f=task7eAdjacentV1({microtaskAtPrepare:true});await f.run();
+  task7eBeforeV1(f.events,'prepare:1','queued:after-proof');assert.deepEqual(f.events.filter(x=>x.startsWith('select:')),['select:false']);await f.finish();
+});
+for(const n of [1,2])test('Task7E H adjacent old actual prepare '+n+' pending settlement blocks assertions next prepare close and result',async()=>{
+  const d=task5bDeferredV1(),f=task7eAdjacentV1({preparePendingAt:n,preparePending:d.promise}),out=trackProbePromiseV1(f.run());
+  try{await task7eAdjacentReachedV1(f,'prepare:'+n);await task5bPumpV1();assert.equal(out.outcome,null);
+    assert.equal(f.events.includes('prepare:settled:'+n),false);assert.equal(f.events.includes('entry:assert:'+n),false);
+    assert.equal(f.prepares(),n);assert.equal(f.events.includes('database:close:start'),false);
+    f.controls.drift=true;d.resolve();await out.done;assert.ok(task7eProofRefusalV1(out.outcome.error));
+    assert.equal(f.events.includes('prepare:settled:'+n),true);assert.equal(f.events.includes('entry:assert:'+n),false);
+  }finally{d.resolve();await out.done;await f.finish();}
+});
+for(const mode of ['pending','rejection','deadline'])test('Task7E H adjacent old actual database close '+mode+' cannot grant premature result',async()=>{
+  const d=task5bDeferredV1(),f=task7eAdjacentV1({databaseClosePending:d.promise,databaseCloseReject:mode==='rejection'}),out=trackProbePromiseV1(f.run());
+  try{await task7eAdjacentReachedV1(f,'database:close:start');await task5bPumpV1();assert.equal(out.outcome,null);
+    assert.deepEqual(f.events.filter(x=>/^prepare:\d$/.test(x)),['prepare:1','prepare:2']);
+    if(mode==='deadline')task5bDeadlineV1(f.gate);await task5bPumpV1();assert.equal(out.outcome,null,'actual close promise remains retained after deadline');
+    d.resolve();await out.done;if(mode==='pending')assert.equal(out.outcome.value?.state,'old-entry-verified');
+    else assert.ok(task7eProofRefusalV1(out.outcome.error));
+    assert.equal(f.events.filter(x=>x==='database:close:start').length,1);
+  }finally{d.resolve();await out.done;await f.finish();}
 });
 
 function task7eFirstObserverV1(failRoot=null){
@@ -10017,4 +10280,157 @@ test('Task2 F integration cache environment retains exact worker1 policy',()=>{
       task5cDataV1(vm,f.actual),task5cDataV1(vm,f.frame)));vm.check();
   });
   cases.done();assert.equal(vm.timers.length,0);assert.equal(vm.monotonic.state.calls,0);vm.check();
+});
+
+
+// Task7E Task2: controlled acquisition component, never whole-Source success.
+// Breaks: an unregistered first read, omitted import guard, early publication,
+// or a changed terminal/later complete-check composition must remain observable.
+function task7eAcquisitionObserverSuffixV1(options={}){
+  const source=task7dSourceV1(),holder=source.ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='holdManualOrphanOwnedSourcesV1');
+  const outer=holder.body.statements.find(ts.isTryStatement),body=[...outer.tryBlock.statements];
+  const loop=body.findIndex(n=>ts.isForOfStatement(n)&&n.getText(source.ast).includes('await import'));
+  assert.ok(loop>=0,'actual fixed two-release observer loop');
+  const prior=body[loop-1],start=ts.isVariableStatement(prior)&&prior.declarationList.declarations.some(n=>n.name.getText(source.ast)==='source')?loop-1:loop;
+  assert.ok(ts.isReturnStatement(body.at(-1)),'actual frozen owner return terminates acquisition');
+  assert.ok(outer.catchClause,'actual outer acquisition invalidation and cleanup');
+  const prefix=holder.body.statements.slice(0,holder.body.statements.indexOf(outer)).map(n=>n.getText(source.ast)).join('\n');
+  const declarations=['ownedTargetShaV1','ownedSourceFileKeysV1','probeFrameRefusalV1','probeOwnDataV1','probeHexV1',
+    'ownedRequireV1','ownedIntegerV1','ownedDecimalV1','ownedGitShaV1','ownedFileV1','ownedReleaseV1','ownedReleasePairV1','ownedSourcesV1',
+    'ownedSourceCleanupUncertainV1','ownedSourceRefusalV1','ownedSourceRequireV1','ownedSourceHashV1','ownedSourceBuildDataV1',
+    'ownedSourceEqualBuildV1','ownedSourceResourcesV1'].map(source.declaration).join('\n');
+  // Prefix retains actual check/close/cleanup, reentry bits and resource owner.
+  // Only dependencies already acquired before this suffix are finite controls.
+  const wire=ownedSourceData();wire.maintenance.treeHash='1'.repeat(40);wire.target.treeHash='2'.repeat(40);
+  wire.maintenance.buildHash='c'.repeat(64);wire.target.buildHash='d'.repeat(64);
+  const events=[],faults=[],readNames=[],sets=[],controls={...options};let state,pinPass=0,contextPass=0,final=false,nested=false;
+  const guard=fn=>task5bGuardV1(faults,fn),refused=()=>Error('MANUAL_ORPHAN_OWNER_REFUSED');
+  const hit=name=>{events.push(name);if(controls.finalFault===name&&final)throw refused();};
+  const finiteContext=guard(()=>{
+    if(contextPass===0){pinPass=0;final=state.observers.length===2;sets.push(Array.from(state.observers,x=>x.expected===state.maintenance.expected?'M':'T'));}
+    contextPass++;hit('context:'+contextPass);
+    if(contextPass===1&&controls.postImportFault===state.imported)throw refused();
+    if(contextPass===2)contextPass=0;
+  });
+  const finitePins={check:guard(()=>{pinPass++;hit('pin:'+pinPass);})};
+  const owner=name=>({check:guard(()=>hit('owner:'+name)),close:guard(()=>{
+    events.push('close:'+name);if(controls.closeFault===name)throw refused();
+  })});
+  const finiteInitialize=guard(value=>{state=value;
+    for(const name of ['M','anchor','T'])state.resources.add(()=>state.owners[['M','anchor','T'].indexOf(name)].close());
+  });
+  const require=guard(specifier=>{
+    const name=specifier===url.pathToFileURL(SOURCE_M_V1+'/dist/finite-observer.js').href?'M':'T';
+    assert.equal(specifier,url.pathToFileURL((name==='M'?SOURCE_M_V1:SOURCE_T_V1)+'/dist/finite-observer.js').href);
+    state.imported=name;events.push('import:'+name);if(controls.importThrow===name)throw refused();
+    const api={};let actual=function(){
+      events.push('read:'+name);readNames.push(name);
+      events.push('custody:'+name+':active='+Boolean(state.check.active)+':pin='+pinPass);
+      assert.equal(this,api,'actual namespace method receiver');assert.equal(arguments.length,0,'actual zeroarg observer call');
+      if(controls.nested===name&&!nested){nested=true;try{state.check();events.push('nested:accepted');}catch{events.push('nested:refused');}}
+      if(controls.throwRead===name)throw Error('finite opaque observer throw');
+      if(final&&controls.finalFault==='observer:'+name)throw Error('finite terminal observer throw');
+      return state.actual[name];
+    };
+    if(controls.apiRoot===name){if(controls.apiFault==='type')actual=17;if(controls.apiFault==='missing')actual=undefined;
+      if(controls.apiFault==='arity')actual=function(argument){return argument;};}
+    Object.defineProperty(api,'observeCurrentInternalProductionCleanSetfarmSourceBuildV1',{enumerable:true,get:guard(()=>{events.push('api:'+name);return actual;})});
+    return api;
+  });
+  const setup=`
+    const seed=JSON.parse(seedJson),maintenance={expected:Object.freeze(seed.maintenance)},target={expected:Object.freeze(seed.target)},
+      comparisonFiles=seed.files,profileBytes=Buffer.from('finite authenticated profile');
+    for(const key of Object.keys(comparisonFiles))Object.freeze(comparisonFiles[key]);
+    const actual={M:{...maintenance.expected,branch:'main',clean:true,originMainSha:maintenance.expected.sha},
+      T:{...target.expected,branch:'main',clean:true,originMainSha:target.expected.sha}};
+    if(observerFault){actual[observerFault.root][observerFault.field]=observerFault.value;}
+    if(codecFault==='shape')delete comparisonFiles.profile;
+    if(codecFault==='accessor')Object.defineProperty(comparisonFiles,'profile',{enumerable:true,configurable:true,get(){codecGetter();return seed.files.constructor;}});
+    if(codecFault==='proxy')comparisonFiles.profile=new Proxy({...comparisonFiles.profile},{get(){codecGetter();throw Error('proxy trap');}});
+    owners.push(finiteMaintenance,finiteAnchor,finiteTarget);retainedTarget=finiteTarget;
+    pins=finitePins;contextCheck=finiteContext;identityCheck=finiteIdentity;
+    finiteInitialize({resources,owners,observers,maintenance,target,actual,check,close,
+      status:()=>({invalid,closed,ready,unknown:ownedSourceCleanupUncertainV1})});
+  `;
+  const code=declarations+'\nasync function run(){'+prefix+'\n'+setup+'\ntry{'+body.slice(start).map(n=>n.getText(source.ast)).join('\n')+'}'+outer.catchClause.getText(source.ast)+'}';
+  const vm=task7eVmV1(code,['run'],{seedJson:JSON.stringify(wire),maintenanceRoot:SOURCE_M_V1,targetRoot:SOURCE_T_V1,
+    ownedObserverV1:'dist/finite-observer.js',finiteInitialize,finiteContext,finitePins,finiteIdentity:guard(()=>hit('identity')),
+    finiteMaintenance:owner('M'),finiteAnchor:owner('anchor'),finiteTarget:owner('T'),require,
+    observerFault:controls.observerFault??null,codecFault:controls.codecFault??null,codecGetter:guard(()=>events.push('codec:getter')),
+    types:{isProxy:guard(value=>{events.push('codec');return createRequire(import.meta.url)('node:util').types.isProxy(value);})}});
+  return {events,controls,run:vm.api.run,reads:()=>[...readNames],observerSets:()=>sets.map(x=>[...x]),
+    async finish(){
+      if(state.status().unknown)assert.throws(state.close,/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);else state.close();
+      const before=events.filter(x=>x.startsWith('close:'));assert.deepEqual(before,['close:T','close:anchor','close:M']);
+      if(state.status().unknown)assert.throws(state.close,/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);else state.close();
+      assert.deepEqual(events.filter(x=>x.startsWith('close:')),before,'retained closers never retry');
+      assert.equal(state.status().closed,true);assert.deepEqual(faults,[],'no swallowed component assertions');vm.contained();
+    }};
+}
+function task7eAcquisitionRefusalV1(error){return error?.message==='MANUAL_ORPHAN_OWNER_REFUSED';}
+
+test('Task7E Task2 actual acquisition qualifies M3 T1 at the four complete observer boundaries',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1(),owner=await f.run();
+  assert.deepEqual(f.reads(),['M','M','M','T']);assert.deepEqual(f.observerSets(),[[],['M'],['M'],['M','T']]);
+  assert.equal(Object.isFrozen(owner),true);assert.equal(Object.isFrozen(owner.source),true);assert.equal(Object.isFrozen(owner.source.files),true);
+  assert.deepEqual(Object.keys(owner).sort(),['check','close','source']);
+  assert.deepEqual(task5cPlainV1(owner.source.maintenance),{sha:OWN_M,treeHash:'1'.repeat(40),buildHash:'c'.repeat(64)});
+  assert.deepEqual(task5cPlainV1(owner.source.target),{sha:OWN_T,treeHash:'2'.repeat(40),buildHash:'d'.repeat(64)});
+  assert.equal(owner.source.profileSha256,createHash('sha256').update('finite authenticated profile').digest('hex'));
+  assert.deepEqual(Object.keys(owner.source.files).sort(),Object.keys(ownedSourceData().files).sort());
+  assert.ok(f.events.indexOf('codec')<f.events.indexOf('read:T'),'exact Source DATA validation precedes first T invocation');
+  assert.equal(f.events.at(-1),'context:2','terminal complete proof directly precedes publication');
+  assert.equal(owner.check.length,0);assert.equal(owner.close.length,0);await f.finish();
+});
+for(const root of ['M','T'])test('Task7E Task2 first actual '+root+' invocation is inside complete-check pin custody',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1();await f.run();
+  const first=f.events.indexOf('read:'+root);assert.equal(f.events[first+1],'custody:'+root+':active=true:pin=1');
+  const after=f.events.slice(first+2);assert.ok(after.indexOf('pin:2')>=0);assert.ok(after.indexOf('context:2')>after.indexOf('pin:2'));await f.finish();
+});
+for(const root of ['M','T'])test('Task7E Task2 '+root+' post-import guard refuses before API inspection',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({postImportFault:root});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.ok(f.events.includes('import:'+root));assert.equal(f.events.includes('api:'+root),false);assert.equal(f.reads().includes(root),false);await f.finish();
+});
+for(const root of ['M','T'])test('Task7E Task2 '+root+' import rejection never publishes an owner',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({importThrow:root});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.equal(f.events.includes('api:'+root),false);await f.finish();
+});
+for(const root of ['M','T'])for(const apiFault of ['missing','type','arity'])test('Task7E Task2 '+root+' '+apiFault+' API refuses before actual invocation',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({apiRoot:root,apiFault});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.equal(f.reads().includes(root),false);await f.finish();
+});
+for(const root of ['M','T'])for(const [field,value] of [['branch','feature'],['clean',false],['originMainSha','0'.repeat(40)],
+  ['sha','0'.repeat(40)],['treeHash','0'.repeat(40)],['buildHash','0'.repeat(64)]])
+  test('Task7E Task2 first '+root+' '+field+' mismatch refuses with the original independent snapshot',async()=>{
+    const f=task7eAcquisitionObserverSuffixV1({observerFault:{root,field,value}});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+    assert.ok(f.reads().includes(root));await f.finish();
+  });
+for(const root of ['M','T'])test('Task7E Task2 started '+root+' opaque invocation throw burns sticky cleanup UNKNOWN',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({throwRead:root});await assert.rejects(f.run(),/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);
+  assert.ok(f.reads().includes(root));await f.finish();
+});
+for(const finalFault of ['pin:1','pin:2','context:1','context:2','owner:M','owner:anchor','identity','observer:M','observer:T'])
+  test('Task7E Task2 terminal '+finalFault+' refusal prevents publication and closes retained owners',async()=>{
+    const f=task7eAcquisitionObserverSuffixV1({finalFault});await assert.rejects(f.run(),
+      finalFault.startsWith('observer:')?/MANUAL_ORPHAN_CLEANUP_UNKNOWN/:task7eAcquisitionRefusalV1);
+    if(['pin:1','context:1','owner:M','owner:anchor','identity','observer:M'].includes(finalFault))assert.equal(f.reads().includes('T'),false,'unstarted T receives no authority');
+    await f.finish();
+  });
+for(const codecFault of ['shape','accessor','proxy'])test('Task7E Task2 Source DATA '+codecFault+' fault refuses before first T invocation without invented UNKNOWN',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({codecFault});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.equal(f.reads().includes('T'),false);assert.equal(f.events.includes('codec:getter'),false);await f.finish();
+});
+for(const root of ['M','T'])test('Task7E Task2 nested actual check during first '+root+' read invalidates acquisition even when caught',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({nested:root});await assert.rejects(f.run(),task7eAcquisitionRefusalV1);
+  assert.ok(f.events.includes('nested:refused'));assert.equal(f.events.includes('nested:accepted'),false);await f.finish();
+});
+test('Task7E Task2 failed reverse retained close is sticky UNKNOWN and never retried',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1({closeFault:'anchor'}),owner=await f.run();
+  assert.throws(owner.close,/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);assert.throws(owner.check,/MANUAL_ORPHAN_CLEANUP_UNKNOWN/);await f.finish();
+});
+test('Task7E Task2 later public check and successful close retain complete M T composition',async()=>{
+  const f=task7eAcquisitionObserverSuffixV1(),owner=await f.run(),before=f.events.length;
+  owner.check();assert.deepEqual(f.events.slice(before),['context:1','pin:1','owner:M','owner:anchor','identity',
+    'api:M','read:M','custody:M:active=true:pin=1','api:T','read:T','custody:T:active=true:pin=1','pin:2','context:2']);
+  assert.deepEqual(f.reads().slice(-2),['M','T']);const reads=f.reads().length;await f.finish();assert.deepEqual(f.reads().slice(reads),['M','T']);
 });

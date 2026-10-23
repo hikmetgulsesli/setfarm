@@ -1372,6 +1372,7 @@ export async function holdManualOrphanOwnedSourcesV1(){
     check();
     // Every release's complete package inventory and finite resolution has now
     // qualified. These are the FIRST full-observer imports in this process.
+    let source;
     for(const [root,expected] of [[maintenanceRoot,maintenance.expected],[targetRoot,target.expected]]){
       const api=await import(pathToFileURL(path.join(root,ownedObserverV1)).href);check();
       ownedSourceRequireV1(typeof api.observeCurrentInternalProductionCleanSetfarmSourceBuildV1==='function'
@@ -1386,12 +1387,16 @@ export async function holdManualOrphanOwnedSourcesV1(){
         }
         ownedSourceRequireV1(value?.branch==='main'&&value.clean===true&&value.originMainSha===expected.sha);return value;
       };
-      ownedSourceRequireV1(ownedSourceEqualBuildV1(read(),expected));observers.push({read,expected});check();
+      observers.push({read,expected});
+      if(root===targetRoot){
+        source=Object.freeze({maintenance:maintenance.expected,target:target.expected,
+          profileSha256:ownedSourceHashV1(profileBytes),files:Object.freeze(comparisonFiles)});
+        // Validate the exact public data shape without granting codec data authority.
+        ownedSourcesV1(source);
+      }
+      check();
     }
-    const source=Object.freeze({maintenance:maintenance.expected,target:target.expected,
-      profileSha256:ownedSourceHashV1(profileBytes),files:Object.freeze(comparisonFiles)});
-    // Validate the exact public data shape without granting codec data authority.
-    ownedSourcesV1(source);check();ready=true;
+    ready=true;
     return Object.freeze({source,check(){ownedSourceRequireV1(ready);check();},close});
   }catch{
     invalid=true;try{cleanup();}catch{ownedSourceCleanupUncertainV1=true;}
@@ -2707,16 +2712,8 @@ async function activateManualOrphanOwnedPhaseV1(phase){
 }
 async function oldEntryManualOrphanOwnedPhaseV1(phase){
   await phase.qualifyMechanical();
-  const {database,entry}=await phase.select(false);
-  phase.unprepared(database);phase.check();
-  await phase.effect(()=>entry.prepareFreshInstallationOperationalEntryV1());
-  const first=database.getSql();
-  phase.require(first!==null&&(typeof first==='function'||typeof first==='object'));
-  entry.assertFreshInstallationOperationalEntryV1();database.assertSelectedFreshInstallationOperationalDatabaseV1();
-  phase.require(database.getSql()===first);phase.check();
-  await phase.effect(()=>entry.prepareFreshInstallationOperationalEntryV1());
-  entry.assertFreshInstallationOperationalEntryV1();database.assertSelectedFreshInstallationOperationalDatabaseV1();
-  phase.require(database.getSql()===first);phase.check();
+  await phase.select(false);
+  await phase.prepareOldEntryTwice();
   await phase.closeDatabase();phase.check();
   return {state:'old-entry-verified',maintenance:phase.source.maintenance,target:phase.source.target,
     installationId:phase.frame.input.installation.installationId,sameClient:true,entryAssert:true,databaseAssert:true,
@@ -2944,6 +2941,30 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
   const expectedRefusal=(call,code)=>{let refused=false;try{call();}catch(error){refused=error?.message===code;}
     if(!refused)throw Error('MANUAL_ORPHAN_CASE_REFUSED');};
   const unprepared=namespace=>expectedRefusal(()=>namespace.getSql(),'FRESH_INSTALLATION_DATABASE_NOT_PREPARED');
+  const verifyMechanicalActivation=async()=>{
+    check();
+    const activation=await loadNamespaceLocal('activation');
+    localPhaseCheck();localPhaseCheck();
+    check();require(qualified);let verified;
+    try{verified=await activation.verifyFreshInstallationActivationV1(directory);}
+    catch{burn();throw ownedTransportUnknownV1();}
+    check();return verified;
+  };
+  const prepareOldEntryTwice=async()=>{
+    require(frame.purpose==='old_entry_positive'&&selectionMade);
+    const database=moduleCache.get('targetDatabase'),entry=moduleCache.get('targetEntry');
+    unprepared(database);
+    localPhaseCheck();localPhaseCheck();
+    await effect(()=>entry.prepareFreshInstallationOperationalEntryV1());
+    const first=database.getSql();
+    require(first!==null&&(typeof first==='function'||typeof first==='object'));
+    entry.assertFreshInstallationOperationalEntryV1();database.assertSelectedFreshInstallationOperationalDatabaseV1();
+    require(database.getSql()===first);
+    localPhaseCheck();localPhaseCheck();
+    await effect(()=>entry.prepareFreshInstallationOperationalEntryV1());
+    entry.assertFreshInstallationOperationalEntryV1();database.assertSelectedFreshInstallationOperationalDatabaseV1();
+    require(database.getSql()===first);check();
+  };
   const qualifyMechanical=async()=>{
     const installation=frame.input.installation;
     const {prepared:p,activation:active}=readPreparedAndActivationForMechanical();
@@ -2951,7 +2972,7 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
     // Complete SQL identity/baseline qualification closes first.
     const endpoint=deriveManualOrphanPhaseEndpointV1(frame.purpose,derived,frame.input,p);
     await qualify(endpoint,installation,p);await closeQualification();
-    const activation=await load('activation');const verified=await effect(()=>activation.verifyFreshInstallationActivationV1(directory));
+    const verified=await verifyMechanicalActivation();
     // A fresh mechanical phase never had an unactivated absence snapshot.
     // Join actual authenticated observations directly; do not fabricate the
     // transition-only staleAbsenceRefused input of the activation projector.
@@ -3027,7 +3048,7 @@ async function runManualOrphanOwnedPhaseV1(context,frame,policy){
     await loadRecordsAndMigrations();
     const phase={frame,derived,source:holder.source,records,require,check,capacity,load,effect,unknown:burn,
       qualify,catalog,closeQualification,closeDatabase,closeFactory,readPrepared,readActivation,project,
-      qualifyMechanical,select,unprepared,expectedRefusal,
+      qualifyMechanical,select,prepareOldEntryTwice,unprepared,expectedRefusal,
       retainFactory(value){require(factory===null);factory=value;},get prepared(){return prepared;},get directory(){return directory;}};
     if(frame.purpose==='provision')result=await provisionManualOrphanOwnedPhaseV1(phase);
     else if(frame.purpose==='activate')result=await activateManualOrphanOwnedPhaseV1(phase);
