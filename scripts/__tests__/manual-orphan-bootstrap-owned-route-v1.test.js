@@ -8920,10 +8920,23 @@ function task7dPrivateVmV1(fs,scope={}){
   return {...context.unit,contained(){assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));}};
 }
 const TASK7D_METADATA_V1=Object.freeze(['BUILD_INFO.json','PLATFORM_BUILD_OUTPUT_TREE.json','PLATFORM_RELEASE_MANIFEST.json']);
-function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext}={}){
+function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext,outputBytes=[]}={}){
   const root=SOURCE_T_V1,files=new Map(),dirs=new Map(),handles=new Map(),opened=[],events=[],faults=[];
   let inode=100,next=1000,temporary=false,live=true,ownerFault=false,checks=0,activeTemporary=0,maxTemporary=0;
-  const controls={read:null,close:null,held:null,named:null,afterRead:null,afterCheck:null,recycle:false};
+  const controls={read:null,close:null,held:null,named:null,afterRead:null,afterCheck:null,recycle:false,
+    transfer:null,physical:null,observe:false,allocationFault:0,hashFault:false};
+  const allocations=[],io=[];let verification=false;
+  const boundedBuffer=new Proxy(Buffer,{get(target,key){
+    if(!['alloc','allocUnsafe','allocUnsafeSlow','from','concat'].includes(key))return Reflect.get(target,key);
+    return (...args)=>{
+      if(controls.observe&&controls.allocationFault===allocations.length+1)throw Error('FINITE_ALLOCATION');
+      const buffer=Reflect.apply(target[key],target,args);
+      if(controls.observe)allocations.push({method:key,buffer,size:buffer.length,zero:buffer.every(byte=>byte===0)});
+      return buffer;
+    };
+  }});
+  const inReadMode=(mode,fn)=>{const previous=verification;verification=mode;try{return fn();}finally{verification=previous;}};
+  const boundedHash=(...args)=>{if(controls.observe&&controls.hashFault)throw Error('FINITE_HASH');return createHash(...args);};
   const guard=fn=>(...args)=>{try{return fn(...args);}catch(error){
     if(error?.code==='ERR_ASSERTION')faults.push(error.message);throw error;
   }};
@@ -8940,9 +8953,9 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext}={}
   const graphData=fixedGraph?task7eGraphDataV1():null;
   for(let i=0;i<911;i++){
     const locator=graphData?.names[i]??'dist/unit-'+String(i).padStart(4,'0')+'.js';
-    const text=graphData?.text.get(locator)??'aaa';add(root+'/'+locator,text);
+    const text=outputBytes[i]??graphData?.text.get(locator)??'aaa';add(root+'/'+locator,text);
     output.set(locator,{locator,mode:0o644,byteLength:Buffer.byteLength(text),
-      sha256:graphData?createHash('sha256').update(text).digest('hex'):sha});
+      sha256:graphData||outputBytes[i]!==undefined?createHash('sha256').update(text).digest('hex'):sha});
   }
   for(const name of TASK7D_METADATA_V1){const locator=root+'/dist/'+name;add(locator,'aaa');files.get(locator).stat.mode=0o100444n;}
   const keep=root+'/scripts/build-generation-retention.mjs';add(keep,'keep');
@@ -8958,7 +8971,7 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext}={}
     assert.equal(h.closed,false,'no read/stat of burned descriptor');assert.equal(h.foreign,false,'never touch recycled foreign descriptor');return h;
   };
   const fs={constants,
-    realpathSync:guard(locator=>{entry(locator);return locator;}),
+    realpathSync:guard(locator=>{entry(locator);return controls.physical===locator?locator+'/changed':locator;}),
     lstatSync:guard((locator,options)=>{
       assert.equal(options?.bigint,true);events.push(['named',locator]);const item=entry(locator);
       const value=files.has(locator)?item.stat:item;
@@ -8985,13 +8998,25 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext}={}
     readSync:guard((fd,buffer,offset,length,position)=>{
       const h=descriptor(fd);assert.ok(files.has(h.path));assert.ok(Buffer.isBuffer(buffer));
       for(const value of [offset,length,position])assert.ok(Number.isSafeInteger(value)&&value>=0);
-      assert.equal(offset,buffer.length===1?0:position,'exact explicit data/EOF offset');assert.ok(length<=65536);assert.ok(offset+length<=buffer.length);
+      // Only a complete check (including the handoff's internal check) may
+      // use scratch offset zero. Ordinary byte-return calls stay exact.
+      if(verification)assert.ok(offset===position||offset===0,'explicit verification destination');
+      else assert.equal(offset,buffer.length===1?0:position,'exact ordinary data/EOF offset');
+      assert.ok(length<=65536);assert.ok(offset+length<=buffer.length);
       events.push(['read',fd,position,length]);
-      if(h.temporary&&controls.read==='short'&&position===0)return 0;
-      if(h.temporary&&controls.read==='overlong'&&position===0)return length+1;
-      if(h.temporary&&controls.read==='extra-eof'&&position===h.item.bytes.length)return 1;
-      const data=h.temporary&&controls.read==='hash'?Buffer.from('bbb'):h.item.bytes;
-      const n=Math.max(0,Math.min(length,data.length-position));data.copy(buffer,offset,position,position+n);
+      const observation={path:h.path,fd,buffer,offset,length,position,n:null,data:null};
+      if(controls.observe)io.push(observation);
+      let n;
+      if(controls.transfer)n=controls.transfer(h,buffer,offset,length,position);
+      else if(h.temporary&&controls.read==='short'&&position===0)n=0;
+      else if(h.temporary&&controls.read==='overlong'&&position===0)n=length+1;
+      else if(h.temporary&&controls.read==='extra-eof'&&position===h.item.bytes.length)n=1;
+      else{
+        const data=h.temporary&&controls.read==='hash'?Buffer.from('bbb'):h.item.bytes;
+        n=Math.max(0,Math.min(length,data.length-position));data.copy(buffer,offset,position,position+n);
+      }
+      observation.n=n;
+      if(controls.observe&&Number.isSafeInteger(n)&&n>=0&&n<=length)observation.data=Buffer.from(buffer.subarray(offset,offset+n));
       if(h.temporary&&controls.afterRead)controls.afterRead(h,position);
       return n;
     }),
@@ -9005,8 +9030,11 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext}={}
       }
     }),
   };
-  const vm=task7dPrivateVmV1(fs,scope),resources=vm.resources();
-  const pins=sourceContext===undefined?vm.pins(resources,SOURCE_HOME_V1):vm.pins(resources,SOURCE_HOME_V1,sourceContext);
+  const vm=task7dPrivateVmV1(fs,{Buffer:boundedBuffer,createHash:boundedHash,...scope}),resources=vm.resources();
+  const actualPins=sourceContext===undefined?vm.pins(resources,SOURCE_HOME_V1):vm.pins(resources,SOURCE_HOME_V1,sourceContext);
+  const pins={...actualPins,file:(...args)=>inReadMode(false,()=>actualPins.file(...args)),
+    check:()=>inReadMode(true,()=>actualPins.check()),
+    handoffTargetOutput:(...args)=>inReadMode(true,()=>actualPins.handoffTargetOutput(...args))};
   // The seam creates no stock descriptors. The recheck boundary intentionally
   // represents the retained full check, not a fabricated passing Source owner.
   const owner={expected:ownedReleaseData(OWN_T),check:guard(()=>{
@@ -9019,7 +9047,7 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext}={}
   assert.equal(originalTargets.length,914);assert.equal(original.length,915+extraFiles.length);
   const originalCount=opened.length;
   const contained=()=>{assert.deepEqual(faults,[],'no swallowed finite FS/assertion fault');vm.contained();};
-  const api=()=>assert.equal(typeof pins.handoffTargetOutput,'function',
+  const api=()=>assert.equal(typeof actualPins.handoffTargetOutput,'function',
     'Task7D scaffolding RED: missing private pins.handoffTargetOutput; semantic assertions not yet reached');
   const handoff=(candidate=owner,inventory=output,location=root)=>{api();return pins.handoffTargetOutput(location,inventory,candidate);};
   const finish=(unknown=false)=>{
@@ -9032,7 +9060,8 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext}={}
     assert.equal(activeTemporary,0);contained();
   };
   return {root,output,paths,keep,files,dirs,handles,opened,events,controls,pins,resources,owner,originalTargets,originalCount,graphData,
-    api,handoff,finish,contained,checks:()=>checks,maxTemporary:()=>maxTemporary,
+    api,handoff,finish,contained,allocations,io,checks:()=>checks,maxTemporary:()=>maxTemporary,
+    observe(fn){allocations.length=0;io.length=0;controls.observe=true;try{return fn();}finally{controls.observe=false;}},
     delegate(){handoff();temporary=true;},startTemporary(){temporary=true;},stockClosed(){live=false;},stockFault(){ownerFault=true;},
     reads(){return events.filter(e=>e[0]==='read');},closes(){return events.filter(e=>e[0]==='close');}};
 }
@@ -9151,6 +9180,168 @@ test('Task7D private custody failed remaining resource close does not stop rever
   // Catches UNKNOWN resetting or an unrelated closer aborting the resource stack.
   const f=task7dPinsV1();f.delegate();f.controls.close=f.keep;f.controls.recycle=true;
   f.finish(true);assert.ok(f.events.findIndex(e=>e[0]==='close'&&e[2]===f.keep)<f.events.length-1);
+});
+
+// Verification buffers: exercise the actual private pins through the finite
+// seam above. Expected content and digests originate only in fixture bytes.
+const TASK7V_SIZES_V1=Object.freeze([0,1,65535,65536,65537,131077]);
+function task7vBytesV1(size,salt){
+  return Buffer.from(Array.from({length:size},(_,index)=>(index*31+Math.floor(index/251)+salt*73)%256));
+}
+function task7vFixtureV1(delegated,allSizes=false){
+  const sizes=allSizes?TASK7V_SIZES_V1.flatMap(size=>[size,size]):[131077,65537];
+  const f=task7dPinsV1({outputBytes:sizes.map((size,index)=>task7vBytesV1(size,index+1))});
+  // Snapshot BEFORE any adversarial changes; never refresh a current digest.
+  f.expected=new Map([...f.files].map(([locator,item])=>[locator,{
+    bytes:Buffer.from(item.bytes),sha256:createHash('sha256').update(item.bytes).digest('hex'),
+  }]));
+  if(delegated)f.delegate();
+  return f;
+}
+function task7vCopyV1(h,buffer,offset,length,position,limit=length){
+  const n=Math.max(0,Math.min(length,limit,h.item.bytes.length-position));
+  h.item.bytes.copy(buffer,offset,position,position+n);return n;
+}
+function task7vPassV1(f,delegated){
+  const before=f.opened.length,checks=f.checks();
+  assert.equal(f.observe(()=>f.pins.check()),undefined,'complete private check succeeds');
+  // Intentional semantic RED on old H: its successful complete check allocates
+  // one full result and EOF buffer PER FILE, rather than two pass buffers.
+  assert.equal(f.allocations.length,2,'verification allocates exactly one scratch and one EOF buffer per complete pass');
+  assert.deepEqual(f.allocations.map(a=>[a.method,a.size,a.zero]),[['alloc',65536,true],['alloc',1,true]]);
+  const [scratch,eof]=f.allocations.map(a=>a.buffer);assert.notEqual(scratch,eof);
+  assert.equal(f.checks()-checks,delegated?1:0,'same retained stock owner once per complete pass');
+  assert.equal(f.opened.length-before,delegated?914:0,'H_HELD retains descriptors; STOCK_HELD acquires exactly914');
+  const grouped=new Map();
+  for(const read of f.io){if(!grouped.has(read.path))grouped.set(read.path,[]);grouped.get(read.path).push(read);}
+  assert.deepEqual([...grouped.keys()],[...f.expected.keys()],'every original file in order, including residual H_HELD');
+  for(const [locator,expected] of f.expected){
+    const reads=grouped.get(locator),data=reads.slice(0,-1),end=reads.at(-1);
+    let position=0;const hash=createHash('sha256');
+    for(const read of data){
+      assert.equal(read.position,position,'fresh contiguous explicit file position');
+      assert.equal(read.length,Math.min(65536,expected.bytes.length-position),'full remaining chunk requested even after short read');
+      assert.equal(read.offset,0,'scratch destination starts at zero');assert.equal(read.buffer,scratch,'one scratch shared across files');
+      assert.ok(Number.isSafeInteger(read.n)&&read.n>0&&read.n<=read.length);
+      assert.deepEqual(read.data,expected.bytes.subarray(position,position+read.n),'independent byte coverage');
+      hash.update(read.data);position+=read.n;
+    }
+    assert.equal(position,expected.bytes.length,'all bytes covered exactly once');
+    assert.equal(hash.digest('hex'),expected.sha256,'independent digest over observed returned prefixes');
+    assert.equal(end.position,expected.bytes.length);assert.equal(end.length,1);assert.equal(end.offset,0);
+    assert.equal(end.n,0);assert.equal(end.buffer,eof,'one distinct EOF buffer shared across files');
+    assert.equal(reads.filter(read=>read.position===expected.bytes.length).length,1,'exactly one EOF read, including empty files');
+    const descriptor=f.opened.find(h=>h.fd===end.fd);assert.ok(descriptor);
+    assert.equal(descriptor.closed,delegated&&f.paths.includes(locator),'temporary closes before success; retained pin stays open');
+  }
+  if(delegated)assert.equal(f.maxTemporary(),1);f.contained();
+  return [scratch,eof];
+}
+for(const delegated of [false,true]){
+  const state=delegated?'STOCK_HELD':'H_HELD';
+  for(const shortReads of [false,true])test('verification buffers '+state+' all boundary sizes, cross-file reuse and fresh consecutive passes'+(shortReads?' with positive short reads':''),()=>{
+    const f=task7vFixtureV1(delegated,true);
+    if(shortReads)f.controls.transfer=(h,buffer,offset,length,position)=>task7vCopyV1(h,buffer,offset,length,position,position===0?1:8191);
+    const first=task7vPassV1(f,delegated),second=task7vPassV1(f,delegated);
+    for(const buffer of first)assert.ok(!second.includes(buffer),'each pass has fresh buffers');
+    f.finish();
+  });
+  test('verification buffers '+state+' preserve ordinary file byte-return allocations, offsets and fresh bytes',()=>{
+    const f=task7vFixtureV1(delegated,true);
+    for(const locator of f.paths.slice(0,TASK7V_SIZES_V1.length*2)){
+      const expected=f.expected.get(locator),before=f.opened.length,checks=f.checks();
+      const got=f.observe(()=>f.pins.file(locator));
+      assert.deepEqual(got.bytes,expected.bytes);assert.equal(got.sha256,expected.sha256);
+      assert.deepEqual(f.allocations.map(a=>[a.method,a.size]),[['alloc',expected.bytes.length],['alloc',1]],'ordinary full-byte result and EOF remain unchanged');
+      assert.equal(got.bytes,f.allocations[0].buffer);
+      for(const read of f.io)assert.equal(read.offset,read.position===expected.bytes.length?0:read.position,'ordinary destination equals explicit file position');
+      assert.equal(f.checks()-checks,delegated?1:0);assert.equal(f.opened.length-before,delegated?1:0);
+      if(delegated)assert.equal(f.opened.at(-1).closed,true);
+      const again=f.pins.file(locator);assert.deepEqual(again.bytes,expected.bytes);assert.notEqual(again.bytes,got.bytes);
+    }
+    f.finish();
+  });
+  for(const fault of ['zero','negative','fraction','nan','infinity','oversized','throw','trailing-byte',
+    'corrupt-first','corrupt-middle','corrupt-last','pre-named','pre-held','physical','mid-metadata','post-named','post-held',
+    'first-allocation','second-allocation','hash-throw']){
+    test('verification buffers '+state+' permanently refuse '+fault,()=>{
+      const f=task7vFixtureV1(delegated),locator=f.paths[0],item=f.files.get(locator);
+      const badCounts={zero:0,negative:-1,fraction:0.5,nan:NaN,infinity:Infinity};
+      if(fault.startsWith('corrupt-')){
+        const at=fault==='corrupt-first'?0:fault==='corrupt-middle'?65536:item.bytes.length-1;
+        item.bytes[at]^=0xff;
+      }
+      if(fault==='pre-named')f.controls.named=locator;
+      if(fault==='pre-held')f.controls.held=locator;
+      if(fault==='physical')f.controls.physical=locator;
+      if(fault.endsWith('-allocation'))f.controls.allocationFault=fault==='first-allocation'?1:2;
+      if(fault==='hash-throw')f.controls.hashFault=true;
+      f.controls.transfer=(h,buffer,offset,length,position)=>{
+        if(h.path!==locator)return task7vCopyV1(h,buffer,offset,length,position);
+        if(position===0){
+          if(Object.hasOwn(badCounts,fault))return badCounts[fault];
+          if(fault==='oversized')return length+1;
+          if(fault==='throw')throw Error('FINITE_READ');
+        }
+        const n=task7vCopyV1(h,buffer,offset,length,position);
+        if(fault==='trailing-byte'&&position===item.bytes.length){buffer[offset]=91;return 1;}
+        if(fault==='mid-metadata'&&position===0)item.stat={...item.stat,mtimeNs:item.stat.mtimeNs+1n};
+        if(position===item.bytes.length){
+          if(fault==='post-named')f.controls.named=locator;
+          if(fault==='post-held')f.controls.held=locator;
+        }
+        return n;
+      };
+      const before=f.opened.length,checks=f.checks();
+      task7dRefusedV1(()=>f.observe(()=>f.pins.check()));
+      assert.equal(f.checks()-checks,delegated?1:0);
+      if(['pre-named','pre-held','physical','first-allocation'].includes(fault))assert.equal(f.io.length,0,'gate before any file read');
+      if(['pre-named','pre-held','physical'].includes(fault))assert.equal(f.allocations.length,0,'lazy allocation follows first pre-read gate');
+      for(const h of f.opened.slice(before))assert.equal(h.closed,true,'failed temporary closes before refusal');
+      assert.ok(f.opened.length-before<=(delegated?1:0));
+      const events=f.events.length;
+      task7dRefusedV1(()=>f.pins.check());task7dRefusedV1(()=>f.pins.file(locator));
+      assert.equal(f.events.length,events,'permanent refusal does no later IO');f.finish();
+    });
+  }
+  test('verification buffers '+state+' mutation between successful passes refuses instead of retaining digest success',()=>{
+    const f=task7vFixtureV1(delegated);f.observe(()=>f.pins.check());
+    const locator=f.paths[1],item=f.files.get(locator);item.bytes[65536]^=0xff;
+    task7dRefusedV1(()=>f.observe(()=>f.pins.check()));
+    assert.ok(f.io.some(read=>read.path===locator&&read.position===65536),'second check freshly reaches changed final byte');
+    f.finish();
+  });
+  test('verification buffers '+state+' post-close check performs no file IO or allocation',()=>{
+    const f=task7vFixtureV1(delegated);f.resources.close();const before=f.events.length;
+    task7dRefusedV1(()=>f.observe(()=>f.pins.check()));
+    assert.equal(f.events.length,before);assert.equal(f.allocations.length,0);assert.equal(f.io.length,0);f.finish();
+  });
+}
+for(const fault of ['closed-stock','failed-stock'])test('verification buffers '+fault+' refuses before allocation or temporary acquisition',()=>{
+  const f=task7vFixtureV1(true);if(fault==='closed-stock')f.stockClosed();else f.stockFault();
+  const before=f.opened.length,checks=f.checks();task7dRefusedV1(()=>f.observe(()=>f.pins.check()),true);
+  assert.equal(f.checks()-checks,1);assert.equal(f.opened.length,before);assert.equal(f.allocations.length,0);assert.equal(f.io.length,0);f.finish(true);
+});
+for(const combined of ['none','digest','read','allocation'])test('verification buffers temporary close UNKNOWN dominates '+combined+' fault and burns recycled fd once',()=>{
+  const f=task7vFixtureV1(true),locator=f.paths[0];f.controls.close='temporary';f.controls.recycle=true;
+  if(combined==='digest')f.files.get(locator).bytes[65536]^=0xff;
+  if(combined==='read')f.controls.transfer=()=>{throw Error('FINITE_READ');};
+  if(combined==='allocation')f.controls.allocationFault=1;
+  const before=f.opened.length;task7dRefusedV1(()=>f.observe(()=>f.pins.check()),true);
+  assert.equal(f.opened.length,before+1);const h=f.opened.at(-1);
+  assert.equal(h.closed,true);assert.equal(f.handles.get(h.fd).foreign,true);
+  const events=f.events.length;task7dRefusedV1(()=>f.pins.check(),true);task7dRefusedV1(()=>f.pins.file(locator),true);
+  assert.equal(f.events.length,events,'no observation/retry of recycled descriptor');
+  f.finish(true);assert.equal(f.handles.get(h.fd).foreign,true);
+});
+for(const reenter of ['check','file'])test('verification buffers delegated '+reenter+' reentry refuses and closes each acquisition once',()=>{
+  const f=task7vFixtureV1(true);let entered=false;
+  f.controls.transfer=(h,buffer,offset,length,position)=>{
+    if(!entered&&h.temporary){entered=true;if(reenter==='check')f.pins.check();else f.pins.file(f.paths[1]);}
+    return task7vCopyV1(h,buffer,offset,length,position);
+  };
+  const before=f.opened.length;task7dRefusedV1(()=>f.observe(()=>f.pins.check()));assert.equal(entered,true);
+  assert.equal(f.opened.length,before+1);assert.equal(f.opened.at(-1).closed,true);assert.equal(f.maxTemporary(),1);f.finish();
 });
 
 // Actual acquisition ORDER slice only. All selected statements/function bodies
