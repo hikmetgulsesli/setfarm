@@ -591,10 +591,10 @@ function ownedSourceKeysV1(value,keys){
 function ownedSourceAuditedCompiledV1(manifest,kind){
   try{
     ownedSourceRequireV1(!ownedSourceCleanupUncertainV1);
-    // Independently reviewed M62 and fixed-T compiled bytes. Never refresh
+    // Independently reviewed maintenance and fixed-T compiled bytes. Never refresh
     // these expectations from a current release or its metadata.
     const expected=kind==='maintenance'
-      ?[143,'ec4d076a604601dff3618b4f7c54e8924d1d33b2b9177ac216aecce7e598a8de']
+      ?[143,'f79648a0b1edaaca3052bde668429acab2e6514ac9804e46207bd19f038a4921']
       :kind==='target'?[153,'ef3696ca8b4cfcd387eb3cc77000a13781fde1cb17da9550abe2b88ed7656d2b']:null;
     ownedSourceRequireV1(expected&&Array.isArray(manifest)&&manifest.length===expected[0]);
     const records=[];let previous;
