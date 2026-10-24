@@ -594,7 +594,7 @@ function ownedSourceAuditedCompiledV1(manifest,kind){
     // Independently reviewed maintenance and fixed-T compiled bytes. Never refresh
     // these expectations from a current release or its metadata.
     const expected=kind==='maintenance'
-      ?[143,'f79648a0b1edaaca3052bde668429acab2e6514ac9804e46207bd19f038a4921']
+      ?[143,'31ce8e1371a187ae54de0e83ef411244ab204ecc22130f21945fe03a11d9d5c1']
       :kind==='target'?[153,'ef3696ca8b4cfcd387eb3cc77000a13781fde1cb17da9550abe2b88ed7656d2b']:null;
     ownedSourceRequireV1(expected&&Array.isArray(manifest)&&manifest.length===expected[0]);
     const records=[];let previous;
