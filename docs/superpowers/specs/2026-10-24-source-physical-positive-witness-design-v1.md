@@ -14,14 +14,15 @@ Change ONLY the local physical predicate inside ownedSourcePinsV1 in tests/execu
 
 ## Candidate behavior
 
-For an already absolute, already normalized string p, attempt a fresh fs.realpathSync.native(p) at the existing physical-check slot. Only native string equality with the ORIGINAL p satisfies that predicate directly. Mismatch, non-string result, unavailable method or exception invokes exactly one unchanged fs.realpathSync(p), followed by the original ownedSourceRequireV1(result===p). Ineligible inputs also take the unchanged original path. Never normalize the argument/equality target or use the native return as a later path. Catch only the optional native attempt; legacy exceptions and guard refusal escape unchanged. No positive cache, cross-call state or reused witness.
+For an already absolute, already normalized string p without a non-root trailing separator, attempt a fresh fs.realpathSync.native(p) at the existing physical-check slot. Only native string equality with the ORIGINAL p satisfies that predicate directly. Mismatch, non-string result, unavailable method or exception invokes exactly one unchanged fs.realpathSync(p), followed by the original ownedSourceRequireV1(result===p). Ineligible inputs also take the unchanged original path. POSIX normalization preserves trailing separators: explicitly exclude them except the literal filesystem root. The root remains native-eligible. Never normalize the argument/equality target or use the native return as a later path. Catch only the optional native attempt; legacy exceptions and guard refusal escape unchanged. No positive cache, cross-call state or reused witness.
 
-Concrete intended private body (implementation waits for semantic RED):
+Implemented private body after qualified semantic RED and the trailing-separator correction:
 
 ```js
 const physical=locator=>{
   let nativeExact=false;
-  if(typeof locator==='string'&&path.isAbsolute(locator)&&path.normalize(locator)===locator){
+  if(typeof locator==='string'&&path.isAbsolute(locator)&&path.normalize(locator)===locator
+    &&(!locator.endsWith(path.sep)||locator===path.parse(locator).root)){
     try{nativeExact=fs.realpathSync.native(locator)===locator;}catch{}
   }
   ownedSourceRequireV1(nativeExact||fs.realpathSync(locator)===locator);
@@ -47,3 +48,11 @@ Guard tests use the actual pins/resources functions: native equality cannot auth
 After unit GREEN and independent source review, author/review a separate finite real-filesystem matrix under a newly owned private fixture root on this host. Execute actual candidate and legacy predicates on leaf/parent/higher-ancestor/repository-dist-base case and NFC/NFD aliases; hardlink/type controls; symlink at each level/dangling/cycle/dotdot targets; nonnormal and inaccessible/missing paths. Record actual supported filesystem behavior and all outcome/name/code/string/codepoints; unsupported modes remain limits. Existing32 parity rows are historical evidence, not a rerun or universal proof. Require original-child custody, full FD restoration, bounded output/disk and exact fixture ownership/cleanup. No Source owner, DB, service, provider, privilege or existing filesystem mutation belongs to that matrix.
 
 Then normal reviewed PR delivery, new genuine clean-main stock build, independent metadata/full143 confirmation, fresh whole Source admission and one actual unprofiled public point/composition measurement follow. No dirty build, guard override, fake refs, expected-hash refresh or unchanged-test replay. The original120000/5000 bounds and26-check predicate remain. Failed fit means further safe investigation, not completion. Separate Zod security successor remains open.
+
+## Verified bounded Task2 evidence
+
+The final private implementation Hc0412dc1/Jbe4f5707 passed syntax,74 focused controls and2183 safe-script tests (including those74). The separately admitted real-filesystem v2 original, PID77747/session86058, closed naturally with Node0/capture0. All40 actual H/L comparisons matched with stable bookends, all20 stored/read alias pairs identified the same objects, and all8 actual H_HELD mutation controls reached the expected refusal/cleanup gates. Actual permission denial, complete per-row/whole-child FD identity restoration and owned cleanup/independent fixture absence were observed. Root qualification51557B/5f880f7c and independent actual review16081B/6b0748cd are local evidence; the review is C0/I0/M0.
+
+The first matrix original remains failed: its whole-child FD baseline preceded lazy diagnostic-stream setup. V2 records preIO11, initializes only the synchronous stdout/stderr getters before any fixture effect, then records a complete12-identity baseline; final equals that entire baseline. No descriptor or count is exempted. Fixed-tag source supports the initialization explanation; the original opener and installed native/source correspondence are not traced or proven.
+
+This closes only the finite Task2 ordinary-filesystem evidence task and supports normal reviewed delivery. The actual primary-volume/unflagged Node26.4.0 Darwin arm64/uid501/gid20 domain does not qualify alternate mounts/volumes, cross-device drift, special files, VFS/permission modes or arbitrary interleavings. Broader native/initial-TCB, genuine build/full143, new Source point/composition fit, private/full8, Zod/security and rollout remain open. The original failed120000ms composition and every guard remain unchanged.

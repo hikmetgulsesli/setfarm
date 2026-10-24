@@ -9032,11 +9032,12 @@ function task7dPrivateVmV1(fs,scope={}){
   return {...context.unit,contained(){assert.equal(c.calls.forbidden,0,JSON.stringify(c.forbiddenSites));}};
 }
 const TASK7D_METADATA_V1=Object.freeze(['BUILD_INFO.json','PLATFORM_BUILD_OUTPUT_TREE.json','PLATFORM_RELEASE_MANIFEST.json']);
-function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext,outputBytes=[]}={}){
+function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext,outputBytes=[],nativeWitness=false}={}){
   const root=SOURCE_T_V1,files=new Map(),dirs=new Map(),handles=new Map(),opened=[],events=[],faults=[];
   let inode=100,next=1000,temporary=false,live=true,ownerFault=false,checks=0,activeTemporary=0,maxTemporary=0;
   const controls={read:null,close:null,held:null,named:null,afterRead:null,afterCheck:null,recycle:false,
-    transfer:null,physical:null,observe:false,allocationFault:0,hashFault:false};
+    transfer:null,physical:null,observe:false,allocationFault:0,hashFault:false,
+    witness:null,beforeNamed:null,beforeHeld:null,beforeOpen:null,symbolic:null};
   const allocations=[],io=[];let verification=false;
   const boundedBuffer=new Proxy(Buffer,{get(target,key){
     if(!['alloc','allocUnsafe','allocUnsafeSlow','from','concat'].includes(key))return Reflect.get(target,key);
@@ -9077,23 +9078,25 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext,out
     assert.equal(typeof locator,'string');const item=files.get(locator)??dirs.get(locator);
     if(!item){const error=Error('finite absent');error.code='ENOENT';throw error;}return item;
   };
-  const stat=value=>({...value,isFile:()=>value.kind==='file',isDirectory:()=>value.kind==='directory',isSymbolicLink:()=>false});
+  const stat=(value,locator)=>({...value,isFile:()=>value.kind==='file',isDirectory:()=>value.kind==='directory',
+    isSymbolicLink:()=>controls.symbolic===locator});
   const descriptor=fd=>{
     const h=handles.get(fd);assert.ok(h,'only owned fixture descriptors');
     assert.equal(h.closed,false,'no read/stat of burned descriptor');assert.equal(h.foreign,false,'never touch recycled foreign descriptor');return h;
   };
   const fs={constants,
-    realpathSync:guard(locator=>{entry(locator);return controls.physical===locator?locator+'/changed':locator;}),
+    realpathSync:guard(locator=>{if(nativeWitness)events.push(['legacy-physical',locator]);entry(locator);return controls.physical===locator?locator+'/changed':locator;}),
     lstatSync:guard((locator,options)=>{
-      assert.equal(options?.bigint,true);events.push(['named',locator]);const item=entry(locator);
+      assert.equal(options?.bigint,true);events.push(['named',locator]);if(controls.beforeNamed)controls.beforeNamed(locator);const item=entry(locator);
       const value=files.has(locator)?item.stat:item;
-      return stat(controls.named===locator?{...value,ino:value.ino+1n}:value);
+      return stat(controls.named===locator?{...value,ino:value.ino+1n}:value,locator);
     }),
     readdirSync:guard(locator=>{
       assert.ok(dirs.has(locator));events.push(['members',locator]);
       return [...new Set([...files.keys(),...dirs.keys()].filter(p=>p!==locator&&path.dirname(p)===locator).map(p=>path.basename(p)))];
     }),
     openSync:guard((locator,flags)=>{
+      if(controls.beforeOpen)controls.beforeOpen(locator);
       const item=entry(locator),isFile=files.has(locator);
       assert.equal(flags,isFile?constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK:
         constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW,'exact readonly nofollow/nonblock file flags');
@@ -9103,9 +9106,9 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext,out
       return h.fd;
     }),
     fstatSync:guard((fd,options)=>{
-      assert.equal(options?.bigint,true);const h=descriptor(fd);events.push(['held',fd]);
+      assert.equal(options?.bigint,true);const h=descriptor(fd);events.push(['held',fd]);if(controls.beforeHeld)controls.beforeHeld(h);
       const value=files.has(h.path)?h.item.stat:h.item;
-      return stat(controls.held===h.path?{...value,ino:value.ino+1n}:value);
+      return stat(controls.held===h.path?{...value,ino:value.ino+1n}:value,h.path);
     }),
     readSync:guard((fd,buffer,offset,length,position)=>{
       const h=descriptor(fd);assert.ok(files.has(h.path));assert.ok(Buffer.isBuffer(buffer));
@@ -9142,6 +9145,14 @@ function task7dPinsV1({fixedGraph=false,scope={},extraFiles=[],sourceContext,out
       }
     }),
   };
+  // Default-off finite native port: existing fixtures retain their original
+  // JS-only proof path and event traces. This supplies a string witness only;
+  // actual H still owns every metadata/read/topology/cleanup decision.
+  if(nativeWitness)fs.realpathSync.native=guard(locator=>{
+    events.push(['native-physical',locator]);entry(locator);
+    if(controls.witness)controls.witness(locator);
+    return locator;
+  });
   const vm=task7dPrivateVmV1(fs,{Buffer:boundedBuffer,createHash:boundedHash,...scope}),resources=vm.resources();
   const actualPins=sourceContext===undefined?vm.pins(resources,SOURCE_HOME_V1):vm.pins(resources,SOURCE_HOME_V1,sourceContext);
   const pins={...actualPins,file:(...args)=>inReadMode(false,()=>actualPins.file(...args)),
@@ -10737,3 +10748,185 @@ test('Task7E Task2 later public check and successful close retain complete M T c
     'api:M','read:M','custody:M:active=true:pin=1','api:T','read:T','custody:T:active=true:pin=1','pin:2','context:2']);
   assert.deepEqual(f.reads().slice(-2),['M','T']);const reads=f.reads().length;await f.finish();assert.deepEqual(f.reads().slice(reads),['M','T']);
 });
+
+// Task7F: actual private physical closure and actual pins/resources only.
+// The finite native port is a literal-path witness, never identity custody or
+// a Source/stock owner. No candidate implementation is copied into this seam.
+function task7fPhysicalV1({native=locator=>locator,legacy=locator=>locator,unavailable=false}={}){
+  const source=task7dSourceV1(),owner=source.ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='ownedSourcePinsV1');
+  assert.ok(owner?.body,'actual private pins declaration exists before semantic controls');
+  const matches=owner.body.statements.filter(node=>ts.isVariableStatement(node))
+    .flatMap(node=>[...node.declarationList.declarations]).filter(node=>ts.isIdentifier(node.name)&&node.name.text==='physical');
+  assert.equal(matches.length,1,'actual direct physical closure exists before semantic controls');
+  const calls=[],fs={realpathSync:function(locator){calls.push({kind:'legacy',locator,receiver:this});return legacy(locator);}};
+  if(!unavailable)fs.realpathSync.native=function(locator){calls.push({kind:'native',locator,receiver:this});return native(locator);};
+  const context={path,fs};
+  runInNewContext(['ownedSourceCleanupUncertainV1','ownedSourceRefusalV1','ownedSourceRequireV1'].map(source.declaration).join('\n')+
+    '\nconst '+matches[0].getText(source.ast)+';globalThis.physical=physical;',context,
+    {filename:'actual-H-private-physical',timeout:5000});
+  return {run:context.physical,calls,fs};
+}
+function task7fCallsV1(f,kind){return f.calls.filter(call=>call.kind===kind);}
+function task7fFallbackV1(f,locator){
+  const calls=task7fCallsV1(f,'legacy');assert.equal(calls.length,1,'exactly one original JS resolution');
+  assert.equal(calls[0].locator,locator,'original argument identity');assert.equal(calls[0].receiver,f.fs,'original fs method receiver');
+}
+// Break: an exact native result still invokes legacy resolution, or its result
+// becomes the argument/target instead of testing the original literal.
+test('Task7F physical witness exact native literal avoids legacy resolution',()=>{
+  const f=task7fPhysicalV1({legacy:()=>{throw Error('FINITE_LEGACY_MUST_NOT_RUN');}});
+  assert.doesNotThrow(()=>f.run('/fixture/leaf'));
+  assert.deepEqual(f.calls.map(call=>[call.kind,call.locator]),[['native','/fixture/leaf']]);
+  assert.equal(f.calls[0].receiver,f.fs.realpathSync);
+});
+// Break: excluding non-root trailing separators also excludes the literal root.
+test('Task7F physical witness literal root remains native eligible without legacy resolution',()=>{
+  const f=task7fPhysicalV1({legacy:()=>{throw Error('FINITE_ROOT_LEGACY_MUST_NOT_RUN');}});
+  assert.doesNotThrow(()=>f.run('/'));
+  assert.deepEqual(f.calls.map(call=>[call.kind,call.locator]),[['native','/']]);
+  assert.equal(f.calls[0].receiver,f.fs.realpathSync);
+});
+// Break: a positive witness is cached either per path or across paths.
+test('Task7F physical witness same and different paths require fresh native calls',()=>{
+  const f=task7fPhysicalV1();f.run('/fixture/a');f.run('/fixture/a');f.run('/fixture/b');
+  assert.deepEqual(f.calls.map(call=>[call.kind,call.locator]),[
+    ['native','/fixture/a'],['native','/fixture/a'],['native','/fixture/b']]);
+});
+test('Task7F physical witness an earlier native success cannot authorize later mismatch',()=>{
+  let exact=true;
+  const f=task7fPhysicalV1({native:locator=>exact?locator:'/fixture/alias',legacy:()=>'/fixture/refused'});
+  assert.doesNotThrow(()=>f.run('/fixture/a'));exact=false;task7dRefusedV1(()=>f.run('/fixture/a'));
+  assert.deepEqual(f.calls.map(call=>[call.kind,call.locator]),[
+    ['native','/fixture/a'],['native','/fixture/a'],['legacy','/fixture/a']]);
+});
+for(const [name,result] of [
+  ['different literal','/fixture/other'],['case alias','/Fixture/leaf'],['dot alias','/fixture/x/../leaf'],
+  ['empty string',''],['undefined',undefined],['null',null],['number',7],['boolean',true],
+  ['boxed string',new String('/fixture/leaf')],['object',{path:'/fixture/leaf'}],
+])test('Task7F physical witness native '+name+' takes original JS fallback once',()=>{
+  // Break: truthiness, coercion, normalization or mismatch authorizes the path.
+  const f=task7fPhysicalV1({native:()=>result});f.run('/fixture/leaf');task7fFallbackV1(f,'/fixture/leaf');
+  assert.equal(task7fCallsV1(f,'native').length,1);assert.equal(f.calls[0].kind,'native');
+});
+test('Task7F physical witness unavailable native takes original JS fallback once',()=>{
+  const f=task7fPhysicalV1({unavailable:true});f.run('/fixture/leaf');task7fFallbackV1(f,'/fixture/leaf');
+  assert.deepEqual(f.calls.map(call=>call.kind),['legacy']);
+});
+test('Task7F physical witness throwing native takes original JS fallback once',()=>{
+  const f=task7fPhysicalV1({native:()=>{throw Error('FINITE_OPTIONAL_NATIVE');}});
+  f.run('/fixture/leaf');task7fFallbackV1(f,'/fixture/leaf');assert.deepEqual(f.calls.map(call=>call.kind),['native','legacy']);
+});
+for(const [name,native,unavailable] of [
+  ['native mismatch',()=>'/fixture/alias',false],['native throw',()=>{throw Error('FINITE_OPTIONAL_NATIVE');},false],
+  ['native unavailable',undefined,true],
+]){
+  test('Task7F physical witness '+name+' preserves legacy exception identity',()=>{
+    // Break: the optional catch swallows/replaces the legacy exception.
+    const error=Error('FINITE_ORIGINAL_LEGACY'),f=task7fPhysicalV1({native,unavailable,legacy:()=>{throw error;}});
+    assert.throws(()=>f.run('/fixture/leaf'),actual=>actual===error);task7fFallbackV1(f,'/fixture/leaf');
+  });
+  test('Task7F physical witness '+name+' preserves legacy inequality refusal',()=>{
+    // Break: a native miss or completed legacy call is itself treated as proof.
+    const f=task7fPhysicalV1({native,unavailable,legacy:()=>'/fixture/alias'});
+    task7dRefusedV1(()=>f.run('/fixture/leaf'));task7fFallbackV1(f,'/fixture/leaf');
+  });
+}
+for(const [name,locator] of [
+  ['relative','fixture/leaf'],['dot','.'],['dotdot','..'],['absolute dot','/fixture/./leaf'],
+  ['absolute dotdot','/fixture/x/../leaf'],['trailing slash','/fixture/leaf/'],
+  ['duplicate slash','/fixture//leaf'],['boxed argument',new String('/fixture/leaf')],
+  ['buffer argument',Buffer.from('/fixture/leaf')],
+])test('Task7F physical witness '+name+' argument uses unchanged JS path only',()=>{
+  // Break: normalization rewrites the argument/equality target, or the native
+  // branch admits an input outside the original absolute normalized string.
+  const f=task7fPhysicalV1({native:()=>{throw Error('FINITE_INELIGIBLE_NATIVE');}});
+  f.run(locator);task7fFallbackV1(f,locator);assert.deepEqual(f.calls.map(call=>call.kind),['legacy']);
+});
+
+for(const delegated of [false,true]){
+  const state=delegated?'STOCK_HELD':'H_HELD';
+  test('Task7F physical witness '+state+' native equality retains full named held content EOF and topology checks',()=>{
+    // Break: the native witness skips any surrounding physical slot, metadata,
+    // fresh read/digest, membership proof or delegated descriptor cleanup.
+    const f=task7dPinsV1({nativeWitness:true});if(delegated)f.delegate();
+    const eventStart=f.events.length,before=f.opened.length,checks=f.checks();
+    try{
+      f.pins.check();assert.equal(f.checks()-checks,delegated?1:0);
+      assert.equal(f.opened.length-before,delegated?914:0);
+      const observed=f.events.slice(eventStart);
+      assert.equal(observed.some(event=>event[0]==='legacy-physical'),false);
+      for(const locator of [...f.paths,f.keep]){
+        const native=observed.filter(event=>event[0]==='native-physical'&&event[1]===locator);
+        assert.equal(native.length,delegated&&locator!==f.keep?2:1,'all original consume/read physical slots');
+        const h=delegated&&locator!==f.keep?f.opened.slice(before).find(item=>item.path===locator):f.opened.find(item=>item.path===locator);
+        const named=observed.map((event,index)=>event[0]==='named'&&event[1]===locator?index:-1).filter(index=>index>=0);
+        const held=observed.map((event,index)=>event[0]==='held'&&event[1]===h.fd?index:-1).filter(index=>index>=0);
+        assert.equal(named.length,2);assert.equal(held.length,2);assert.ok(named[0]<held[0]&&named[1]<held[1]);
+        const eof=observed.findIndex(event=>event[0]==='read'&&event[1]===h.fd&&event[2]===Number(h.item.stat.size));
+        assert.ok(held[0]<eof&&eof<named[1],'EOF remains between metadata passes');
+        assert.equal(h.closed,delegated&&locator!==f.keep);
+      }
+      assert.ok(observed.some(event=>event[0]==='members'&&event[1]===f.root+'/dist'));
+      assert.ok(observed.some(event=>event[0]==='named'&&event[1]===f.root+'/dist/absent.js'));
+    }finally{f.finish();}
+  });
+  for(const [name,boundary,targetKind,mutate] of [
+    ['same-byte inode replacement','witness','file',(f,p)=>{const old=f.files.get(p);f.files.set(p,{bytes:Buffer.from(old.bytes),stat:{...old.stat,ino:old.stat.ino+1n}});}],
+    ['named inode drift','beforeNamed','file',(f,p)=>{f.controls.named=p;}],
+    ['held inode drift','beforeHeld','file',(f,p)=>{f.controls.held=p;}],
+    ['named type drift','beforeNamed','file',(f,p)=>{const old=f.files.get(p);f.files.set(p,{...old,stat:{...old.stat,kind:'directory'}});}],
+    ['held type drift','beforeHeld','file',(f,p)=>{const h=f.opened.find(item=>item.path===p&&!item.closed);h.item.stat={...h.item.stat,kind:'directory'};}],
+    ['named device drift','beforeNamed','file',(f,p)=>{const old=f.files.get(p);f.files.set(p,{...old,stat:{...old.stat,dev:old.stat.dev+1n}});}],
+    ['held device drift','beforeHeld','file',(f,p)=>{const h=f.opened.find(item=>item.path===p&&!item.closed);h.item.stat={...h.item.stat,dev:h.item.stat.dev+1n};}],
+    ['named link drift','beforeNamed','file',(f,p)=>{const old=f.files.get(p);f.files.set(p,{...old,stat:{...old.stat,nlink:2n}});}],
+    ['held link drift','beforeHeld','file',(f,p)=>{const h=f.opened.find(item=>item.path===p&&!item.closed);h.item.stat={...h.item.stat,nlink:2n};}],
+    ['named symlink transition','beforeNamed','file',(f,p)=>{f.controls.symbolic=p;}],
+    ['content drift at native witness','witness','file',(f,p)=>{f.files.get(p).bytes=Buffer.from('bbb');}],
+    ['extra EOF byte','beforeNamed','file',f=>{f.controls.transfer=(h,buffer,offset,length,position)=>position===h.item.bytes.length?1:task7vCopyV1(h,buffer,offset,length,position);}],
+    ['post-read named drift','beforeNamed','file',(f,p)=>{f.controls.transfer=(h,buffer,offset,length,position)=>{const n=task7vCopyV1(h,buffer,offset,length,position);if(position===h.item.bytes.length)f.controls.named=p;return n;};}],
+    ['post-read held drift','beforeNamed','file',(f,p)=>{f.controls.transfer=(h,buffer,offset,length,position)=>{const n=task7vCopyV1(h,buffer,offset,length,position);if(position===h.item.bytes.length)f.controls.held=p;return n;};}],
+    ['inaccessible named metadata','beforeNamed','file',()=>{throw Object.assign(Error('FINITE_NAMED_REVOKED'),{code:'EACCES'});}],
+    ['ancestor device replacement','witness','ancestor',(f,p)=>{const old=f.dirs.get(p);f.dirs.set(p,{...old,dev:old.dev+1n});}],
+    ['ancestor symlink transition','witness','ancestor',(f,p)=>{f.controls.symbolic=p;}],
+    ['directory membership drift','beforeNamed','ancestor',f=>{f.files.set(f.root+'/dist/intruder.js',f.files.get(f.paths[0]));}],
+    ['absent topology drift','beforeNamed','absent',(f,p)=>{f.files.set(p,f.files.get(f.paths[0]));}],
+  ])test('Task7F physical witness '+state+' '+name+' still invalidates and cleans once',()=>{
+    // Break: native literal equality is promoted into file/directory identity,
+    // metadata/content/topology authority, or failure leaves a reusable pin.
+    const f=task7dPinsV1({nativeWitness:true});if(delegated)f.delegate();const eventStart=f.events.length;
+    const target=targetKind==='ancestor'?f.root+'/dist':targetKind==='absent'?f.root+'/dist/absent.js':f.paths[0];
+    let injected=false;
+    f.controls[boundary]=value=>{const locator=typeof value==='string'?value:value.path;
+      if(!injected&&locator===target){injected=true;mutate(f,target);}};
+    try{
+      task7dRefusedV1(()=>f.pins.check());assert.equal(injected,true,'fault reached its actual logical boundary');
+      const events=f.events.length;task7dRefusedV1(()=>f.pins.check());task7dRefusedV1(()=>f.pins.file(f.paths[0]));
+      assert.equal(f.events.length,events,'invalid pin cannot do later IO');
+      const observed=f.events.slice(eventStart);
+      assert.ok(observed.some(event=>event[0]==='native-physical'),'actual native branch was exercised');
+      assert.equal(observed.some(event=>event[0]==='legacy-physical'),false);
+    }finally{f.finish();}
+  });
+}
+for(const [name,boundary] of [['native witness','witness'],['named metadata','beforeNamed'],['temporary open','beforeOpen']]){
+  test('Task7F physical witness STOCK_HELD '+name+' fault with uncertain close stays UNKNOWN and burns fd once',()=>{
+    // Break: a witness or later boundary fault loses close uncertainty, retries
+    // a recycled numeric FD, or permits IO after cleanup became unknown.
+    const f=task7dPinsV1({nativeWitness:true});f.delegate();const eventStart=f.events.length;
+    const target=f.paths[0],before=f.opened.length;let injected=false;
+    f.controls[boundary]=value=>{const locator=typeof value==='string'?value:value.path;
+      if(!injected&&locator===target){injected=true;f.files.get(target).bytes=Buffer.from('bbb');
+        f.controls.close='temporary';f.controls.recycle=true;}};
+    // Even a failing assertion must attempt the remaining finite resources.
+    // Only the actually injected close fault may establish UNKNOWN.
+    try{
+      task7dRefusedV1(()=>f.pins.check(),true);assert.equal(injected,true);
+      assert.equal(f.opened.length,before+1);const h=f.opened.at(-1);
+      assert.equal(h.closed,true);assert.equal(f.handles.get(h.fd).foreign,true);
+      const events=f.events.length;task7dRefusedV1(()=>f.pins.check(),true);task7dRefusedV1(()=>f.pins.file(target),true);
+      assert.equal(f.events.length,events);const observed=f.events.slice(eventStart);
+      assert.ok(observed.some(event=>event[0]==='native-physical'));
+      assert.equal(observed.some(event=>event[0]==='legacy-physical'),false);
+    }finally{f.finish(injected);}
+  });
+}
