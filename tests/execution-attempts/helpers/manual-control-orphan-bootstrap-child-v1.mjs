@@ -643,7 +643,14 @@ function ownedSourcePinsV1(resources,home,sourceContext=()=>{}){
       custody.state='UNKNOWN';ownedSourceCleanupUncertainV1=true;throw ownedSourceRefusalV1();
     }
   };
-  const physical=locator=>ownedSourceRequireV1(fs.realpathSync(locator)===locator);
+  const physical=locator=>{
+    let nativeExact=false;
+    if(typeof locator==='string'&&path.isAbsolute(locator)&&path.normalize(locator)===locator
+      &&(!locator.endsWith(path.sep)||locator===path.parse(locator).root)){
+      try{nativeExact=fs.realpathSync.native(locator)===locator;}catch{}
+    }
+    ownedSourceRequireV1(nativeExact||fs.realpathSync(locator)===locator);
+  };
   const checkDirectory=pin=>{
     physical(pin.path);
     const named=fs.lstatSync(pin.path,{bigint:true}),held=fs.fstatSync(pin.fd,{bigint:true});
