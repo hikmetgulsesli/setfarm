@@ -43082,8 +43082,8 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       assert.notEqual(duplicateResult.status, 0);
       assert.match(duplicateResult.stderr, /output tree|raw bytes|field/i);
     } finally {
-      rmSync(infoFixture.root, { recursive: true, force: true });
-      rmSync(treeFixture.root, { recursive: true, force: true });
+      removeFixture(infoFixture.root);
+      removeFixture(treeFixture.root);
     }
   });
 
@@ -45738,6 +45738,13 @@ describe("clean Source derived computation parity v1", () => {
     for (const name of ["sortCleanSourceByUtf8V1", "equalCleanSourceStringVectorsV1"]) {
       if (new RegExp(`^function ${name}(?:<|\\()`, "m").test(source)) names.push(name);
     }
+    for (const name of [
+      "resolveCleanSourcePhysicalPathV1", "snapshotDirectoryAfterResolutionV1",
+      "cleanSourceDirectorySnapshotV1", "assertCleanSourceDirectoryV1",
+      "readStableRegularWithDirectoriesV1", "readCleanSourceStableRegularV1",
+    ]) {
+      if (new RegExp(`^function ${name}\\(`, "m").test(source)) names.push(name);
+    }
     const constants = source.split("\n").filter(line =>
       /^const (?:MAX_BUILD_[A-Z0-9_]+|MAX_STITCH_CONVERTER_BYTES_V1|FULL_HASH|SHA256|RFC3339_MILLIS|UTF8) =/.test(line));
     const comparable = topLevelFunctionRegionV1(source, "canonicalComparable")
@@ -46249,7 +46256,7 @@ describe("clean Source derived computation parity v1", () => {
     assert.equal(vectors.length, 0, `strict ordered-key vector canonicalizations: ${vectors.length}`);
   });
 
-  function artifactFixture(sourceText: string, fault = "none") {
+  function artifactFixture(sourceText: string, fault = "none", nativeExact = false) {
     // Real observeArtifacts, directory and stable-read implementations run over
     // finite FS ports. Every open/stat/read/reopen/close/bookend remains visible.
     const vectors: string[][] = [], trace: string[] = [];
@@ -46282,10 +46289,25 @@ describe("clean Source derived computation parity v1", () => {
       return { dev: 1n, ino: BigInt([...directories, ...files.keys()].indexOf(target) + 1), mode: BigInt(file?.mode ?? (fault === "directory-mode" ? 0o700 : 0o755)), uid: 501n, nlink: 1n, size: BigInt(file?.bytes.length ?? 0), mtimeNs: 1n, ctimeNs: 1n,
         isDirectory: () => directory, isSymbolicLink: () => false, isFile: () => !!file };
     };
+    const resolutionOrigins: Array<{ origin: "legacy" | "native"; target: string }> = [];
+    const resolutionCalls: Array<{ origin: "legacy" | "native"; target: string; arity: number; receiver: unknown }> = [];
+    const realpathPort: ((target: string) => string) & { native?: (target: string) => string } = function(this: unknown, target: string): string {
+      resolutionCalls.push({ origin: "legacy", target, arity: arguments.length, receiver: this });
+      resolutionOrigins.push({ origin: "legacy", target });
+      trace.push(`realpath:${target}`);
+      return target;
+    };
+    if (nativeExact) realpathPort.native = function(this: unknown, target: string): string {
+      // Native exceptions are caught by the SUT: record first, assert only outside it.
+      resolutionCalls.push({ origin: "native", target, arity: arguments.length, receiver: this });
+      resolutionOrigins.push({ origin: "native", target });
+      trace.push(`native:${target}`);
+      return target;
+    };
     const reads = new Map<string, number>();
     const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash,
       constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100, O_NONBLOCK: 0x200 },
-      realpathSync: (target: string) => { trace.push(`realpath:${target}`); return target; },
+      realpathSync: realpathPort,
       lstatSync: (target: string) => { trace.push(`lstat:${target}`); return stats(target); },
       readdirSync: (target: string) => { trace.push(`readdir:${target}`); assert.ok(directories.has(target)); return target.endsWith("/cli") ? ["cli.js"] : [...(fault === "malformed-name" ? ["\u0001"] : []), "cli", "PLATFORM_RELEASE_MANIFEST.json", "BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json"]; },
       openSync: (target: string, flags: number) => { trace.push(`open:${target}:${flags}`); assert.ok(files.has(target)); const fd = nextDescriptor++; descriptors.set(fd, target); return fd; },
@@ -46299,7 +46321,12 @@ describe("clean Source derived computation parity v1", () => {
     if (fault === "file-vector") source.outputs = ["dist/cli/wrong.js"];
     const outcome = refusalOrValue(() => loaded.observeArtifacts!(root, source)) as { value?: any; refusal?: string };
     assert.equal(descriptors.size, 0, "all stable-read descriptors close even on refusal");
-    if (outcome.refusal) return { refusal: outcome.refusal, trace, vectors, projection: null };
+    for (const call of resolutionCalls) {
+      assert.equal(call.arity, 1, "raw artifact resolution arity outside native catch");
+      assert.equal(call.receiver, call.origin === "native" ? realpathPort : undefined, "raw artifact resolution receiver outside native catch");
+      assert.ok(directories.has(call.target), `raw artifact resolution target ${call.target}`);
+    }
+    if (outcome.refusal) return { refusal: outcome.refusal, trace, vectors, resolutionOrigins, resolutionCalls, resolutionPort: realpathPort, projection: null };
     const observed = outcome.value;
     assert.deepEqual(observed.outputTree, outputTree);
     assert.deepEqual(observed.manifest, manifest);
@@ -46312,7 +46339,7 @@ describe("clean Source derived computation parity v1", () => {
     for (const target of files.keys()) {
       for (const operation of ["open", "fstat", "read", "close"]) assert.ok(trace.some(item => item.startsWith(`${operation}:${target}`)), `${operation} retained for ${target}`);
     }
-    const directoryTrace = (target: string) => [`realpath:${target}`, `lstat:${target}`];
+    const directoryTrace = (target: string) => [`${nativeExact ? "native" : "realpath"}:${target}`, `lstat:${target}`];
     const stableReadTrace = (target: string) => [
       ...directoryTrace(path.dirname(target)), `open:${target}:768`, `fstat:${target}`, `read:${target}`, `fstat:${target}`, `lstat:${target}`,
       ...directoryTrace(path.dirname(target)), `open:${target}:768`, `fstat:${target}`, `read:${target}`, `fstat:${target}`, `lstat:${target}`,
@@ -46330,7 +46357,7 @@ describe("clean Source derived computation parity v1", () => {
       ...metadata.flatMap(name => stableReadTrace(`${root}/dist/${name}`)),
       ...directoryTrace(`${root}/dist/cli`), ...directoryTrace(`${root}/dist`),
     ]);
-    return { refusal: null, trace, vectors, projection: { buildInfo: observed.buildInfo, outputTree: observed.outputTree, manifest: observed.manifest, buildHash: observed.buildHash,
+    return { refusal: null, trace, vectors, resolutionOrigins, resolutionCalls, resolutionPort: realpathPort, projection: { buildInfo: observed.buildInfo, outputTree: observed.outputTree, manifest: observed.manifest, buildHash: observed.buildHash,
       files: observed.fileSnapshots.map((item: any) => ({ locator: item.locator, mode: item.observed.mode, bytes: item.observed.bytes.toString("base64") })) } };
   }
 
@@ -46353,5 +46380,594 @@ describe("clean Source derived computation parity v1", () => {
       assert.deepEqual(actual.trace, expected.trace, `${fault}: exact original refusal/close prefix`);
       assert.equal(actual.projection, null);
     }
+  });
+
+  describe("clean Source physical witness parity v1", () => {
+    // Test-only ports run actual O declarations. No owner, FS fixture or DB is acquired.
+    function physicalFixture() {
+      const calls: unknown[][] = [], descriptors = new Set<number>();
+      const directory = "/finite-source", file = `${directory}/input.ts`, bytes = Buffer.from("finite-source\n");
+      const directoryStats = { dev: 1n, ino: 2n, mode: 0o40755n, uid: 501n, gid: 20n, nlink: 2n,
+        size: 0n, mtimeNs: 1n, ctimeNs: 1n, isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false };
+      const fileStats = { dev: 1n, ino: 3n, mode: 0o100600n, uid: 501n, gid: 20n, nlink: 1n,
+        size: BigInt(bytes.length), mtimeNs: 1n, ctimeNs: 1n, isDirectory: () => false, isSymbolicLink: () => false, isFile: () => true };
+      const realpathPort = function(this: unknown, target: string): string {
+        assert.equal(target, directory);
+        calls.push(["legacy", target, arguments.length, this]);
+        return target;
+      };
+      realpathPort.native = function(this: unknown, target: string): string {
+        assert.equal(target, directory);
+        calls.push(["native", target, arguments.length, this]);
+        return target;
+      };
+      let nextDescriptor = 40;
+      const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash,
+        constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100, O_NONBLOCK: 0x200 }, realpathSync: realpathPort,
+        lstatSync: (target: string, options: unknown) => {
+          assert.deepEqual(options, { bigint: true });
+          assert.ok(target === directory || target === file, `unexpected physical lstat ${target}`);
+          calls.push(["lstat", target, true]);
+          return target === directory ? directoryStats : fileStats;
+        },
+        openSync: (target: string, flags: number) => {
+          assert.equal(target, file); assert.equal(flags, 0x300);
+          const fd = nextDescriptor++; descriptors.add(fd); calls.push(["open", target, flags, fd]); return fd;
+        },
+        fstatSync: (fd: number, options: unknown) => {
+          assert.ok(descriptors.has(fd), `unowned physical fstat ${fd}`); assert.deepEqual(options, { bigint: true });
+          calls.push(["fstat", fd, true]); return fileStats;
+        },
+        readFileSync: (fd: number) => {
+          assert.ok(descriptors.has(fd), `unowned physical read ${fd}`); calls.push(["read", fd]); return Buffer.from(bytes);
+        },
+        closeSync: (fd: number) => {
+          assert.ok(descriptors.delete(fd), `unowned physical close ${fd}`); calls.push(["close", fd]);
+        },
+      }, []);
+      return { loaded, calls, descriptors, directory, file, bytes, fileStats, realpathPort };
+    }
+
+    it("uses a fresh native-exact directory witness without legacy resolution", () => {
+      // Break caught: actual clean directory slots still perform the legacy resolution.
+      const fixture = physicalFixture();
+      const physical = fixture.loaded.cleanSourceDirectorySnapshotV1 ?? fixture.loaded.directorySnapshot;
+      assert.equal(typeof physical, "function");
+      const observed = physical!("/finite-source", "Setfarm repository", 1n);
+      assert.deepEqual(observed, { identity: { realpath: "/finite-source", devDecimal: "1", inoDecimal: "2", mode: 0o755 }, device: 1n });
+      assert.equal(Object.isFrozen(observed), true); assert.equal(Object.isFrozen(observed.identity), true);
+      assert.deepEqual(fixture.calls, [
+        ["native", "/finite-source", 1, fixture.realpathPort],
+        ["lstat", "/finite-source", true],
+      ]);
+    });
+
+    it("retains two reads and three fresh parent witnesses on every repeated stable read", () => {
+      // Break caught: legacy parent work, skipped read/bookend, wrong close order or cached witness.
+      const fixture = physicalFixture();
+      const physical = fixture.loaded.readCleanSourceStableRegularV1 ?? fixture.loaded.readStableRegular;
+      assert.equal(typeof physical, "function");
+      const first = physical!(fixture.file, 1024, 1n), firstCalls = fixture.calls.slice();
+      const second = physical!(fixture.file, 1024, 1n);
+      for (const observed of [first, second]) {
+        assert.deepEqual(observed.bytes, fixture.bytes); assert.equal(observed.mode, 0o600);
+        assert.equal(observed.stats, fixture.fileStats); assert.equal(Object.isFrozen(observed), true);
+      }
+      assert.equal(fixture.descriptors.size, 0, "both reads restore their actually allocated descriptors");
+      assert.equal(firstCalls.filter(row => row[0] === "native").length, 3, "three fresh native parent witnesses for the first read");
+      assert.equal(fixture.calls.filter(row => row[0] === "native").length, 6, "a repeat performs three additional native witnesses");
+      assert.equal(fixture.calls.filter(row => row[0] === "legacy").length, 0);
+      const readTrace = (firstFd: number, secondFd: number): unknown[][] => [
+        ["native", fixture.directory, 1, fixture.realpathPort], ["lstat", fixture.directory, true],
+        ["open", fixture.file, 768, firstFd], ["fstat", firstFd, true], ["read", firstFd], ["fstat", firstFd, true], ["lstat", fixture.file, true],
+        ["native", fixture.directory, 1, fixture.realpathPort], ["lstat", fixture.directory, true],
+        ["open", fixture.file, 768, secondFd], ["fstat", secondFd, true], ["read", secondFd], ["fstat", secondFd, true], ["lstat", fixture.file, true],
+        ["native", fixture.directory, 1, fixture.realpathPort], ["lstat", fixture.directory, true], ["close", secondFd], ["close", firstFd],
+      ];
+      assert.deepEqual(firstCalls, readTrace(40, 41));
+      assert.deepEqual(fixture.calls, [...readTrace(40, 41), ...readTrace(42, 43)]);
+    });
+
+    it("routes actual observeArtifacts clean slots through native-exact resolution with full trace parity", () => {
+      // Break caught: actual artifact call routing remains on legacy directory/read helpers.
+      const original = artifactFixture(originalSource());
+      const actual = artifactFixture(readFileSync(observerSource, "utf8"), "none", true);
+      assert.equal(actual.refusal, null); assert.deepEqual(actual.projection, original.projection);
+      assert.ok(actual.resolutionOrigins.some(row => row.origin === "native"), "actual clean artifact native witnesses are reached");
+      assert.equal(actual.resolutionOrigins.filter(row => row.origin === "legacy").length, 0, "no actual legacy resolution is hidden by trace relabeling");
+      assert.deepEqual(actual.resolutionOrigins, original.resolutionOrigins.map(row => ({ origin: "native", target: row.target })));
+      assert.deepEqual(actual.trace, original.trace.map(row => row.startsWith("realpath:") ? `native:${row.slice("realpath:".length)}` : row));
+      assert.equal(actual.vectors.length, 0, "existing derived vector computation remains active");
+    });
+
+
+    type NativePortKind = "exact" | "missing" | "nonfunction" | "getter-throw" | "call-throw" | "mismatch" | "boxed";
+    function caughtUnit(operation: () => any) {
+      try { return { threw: false, value: operation(), error: undefined as unknown }; }
+      catch (error) { return { threw: true, value: undefined as any, error }; }
+    }
+    function resolutionUnitPort(kind: NativePortKind, legacyKind: "same" | "different" | "throw" = "same", nativeValue?: (target: any, call: number) => unknown) {
+      const calls: unknown[][] = [], nativeGetError = Object.freeze({ deliberate: "native-get" }),
+        nativeCallError = Object.freeze({ deliberate: "native-call" }), legacyError = Object.freeze({ deliberate: "legacy-call" });
+      let nativeCalls = 0;
+      const port = function(this: unknown, target: any): any {
+        calls.push(["legacy", target, arguments.length, this]);
+        if (legacyKind === "throw") throw legacyError;
+        return legacyKind === "different" ? "/different-legacy" : target;
+      };
+      if (kind !== "missing") Object.defineProperty(port, "native", { get: function(this: unknown) {
+        calls.push(["native:get", arguments.length, this]);
+        if (kind === "getter-throw") throw nativeGetError;
+        if (kind === "nonfunction") return 7;
+        return function(this: unknown, target: any): unknown {
+          calls.push(["native", target, arguments.length, this]); nativeCalls++;
+          if (kind === "call-throw") throw nativeCallError;
+          if (nativeValue) return nativeValue(target, nativeCalls);
+          return kind === "mismatch" ? "/different-native" : kind === "boxed" ? new String(target) : target;
+        };
+      } });
+      return { port, calls, nativeGetError, nativeCallError, legacyError };
+    }
+    function expectedResolutionCalls(route: readonly string[], input: unknown, port: unknown): unknown[][] {
+      return route.map(item => item === "native:get" ? [item, 0, port] : [item, input, 1, item === "native" ? port : undefined]);
+    }
+
+    it("limits native eligibility to unchanged absolute primitive literals and includes the root", () => {
+      // Break caught: native attempted on lexical aliases/non-strings or skipped for root.
+      const loadedSource = readFileSync(observerSource, "utf8");
+      const cases: Array<{ input: unknown; route: string[] }> = [
+        { input: "/finite-source", route: ["native:get", "native"] }, { input: "/", route: ["native:get", "native"] },
+        { input: "finite-source", route: ["legacy"] }, { input: "/finite-source/./item", route: ["legacy"] },
+        { input: "/finite-source/../item", route: ["legacy"] }, { input: "/finite-source//item", route: ["legacy"] },
+        { input: "/finite-source/", route: ["legacy"] }, { input: "//", route: ["legacy"] },
+        { input: Buffer.from("/finite-source"), route: ["legacy"] }, { input: new URL("file:///finite-source"), route: ["legacy"] },
+        { input: new String("/finite-source"), route: ["legacy"] },
+      ];
+      for (const row of cases) for (const legacyKind of ["same", "different", "throw"] as const) {
+        const fixture = resolutionUnitPort("exact", legacyKind);
+        const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash, realpathSync: fixture.port }, [], loadedSource);
+        const outcome = caughtUnit(() => loaded.resolveCleanSourcePhysicalPathV1!(row.input));
+        assert.deepEqual(fixture.calls, expectedResolutionCalls(row.route, row.input, fixture.port));
+        const fallsBack = row.route[0] === "legacy";
+        if (fallsBack && legacyKind === "throw") { assert.equal(outcome.threw, true); assert.equal(outcome.error, fixture.legacyError); }
+        else {
+          assert.equal(outcome.threw, false);
+          assert.equal(outcome.value, fallsBack && legacyKind === "different" ? "/different-legacy" : row.input, "literal/Buffer/URL arguments and legacy result identity are never rewritten");
+        }
+      }
+    });
+
+    it("falls back exactly once with original bare-call arguments and preserves the legacy result or thrown object", () => {
+      // Break caught: swallowed legacy failure, native boxed/mismatched acceptance, or changed call receiver/arity.
+      const cases: Array<{ kind: NativePortKind; input: string; route: string[]; nativeValue?: (target: any, call: number) => unknown }> = [
+        { kind: "missing", input: "/finite-source", route: ["legacy"] },
+        { kind: "nonfunction", input: "/finite-source", route: ["native:get", "legacy"] },
+        { kind: "getter-throw", input: "/finite-source", route: ["native:get", "legacy"] },
+        { kind: "call-throw", input: "/finite-source", route: ["native:get", "native", "legacy"] },
+        { kind: "mismatch", input: "/finite-source", route: ["native:get", "native", "legacy"] },
+        { kind: "boxed", input: "/finite-source", route: ["native:get", "native", "legacy"] },
+        { kind: "exact", input: "/Case", nativeValue: () => "/case", route: ["native:get", "native", "legacy"] },
+        { kind: "exact", input: "/caf\u00e9", nativeValue: () => "/cafe\u0301", route: ["native:get", "native", "legacy"] },
+        { kind: "exact", input: "/cafe\u0301", nativeValue: () => "/caf\u00e9", route: ["native:get", "native", "legacy"] },
+      ];
+      const source = readFileSync(observerSource, "utf8");
+      for (const row of cases) for (const legacyKind of ["same", "different", "throw"] as const) {
+        const fixture = resolutionUnitPort(row.kind, legacyKind, row.nativeValue);
+        const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash, realpathSync: fixture.port }, [], source);
+        const outcome = caughtUnit(() => loaded.resolveCleanSourcePhysicalPathV1!(row.input));
+        assert.deepEqual(fixture.calls, expectedResolutionCalls(row.route, row.input, fixture.port), `${row.kind}/${legacyKind}: raw trace outside native catch`);
+        if (legacyKind === "throw") { assert.equal(outcome.threw, true); assert.equal(outcome.error, fixture.legacyError); }
+        else { assert.equal(outcome.threw, false); assert.equal(outcome.value, legacyKind === "same" ? row.input : "/different-legacy"); }
+      }
+      const exact = resolutionUnitPort("exact", "throw");
+      const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash, realpathSync: exact.port }, [], source);
+      assert.equal(loaded.resolveCleanSourcePhysicalPathV1!("/finite-source"), "/finite-source");
+      assert.deepEqual(exact.calls, expectedResolutionCalls(["native:get", "native"], "/finite-source", exact.port));
+    });
+
+    it("reobserves native on every call and never caches an earlier exact witness", () => {
+      // Break caught: a prior exact result suppresses later native/fallback observation.
+      const fixture = resolutionUnitPort("exact", "same", (target, call) => call === 2 ? "/changed-native" : target);
+      const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash, realpathSync: fixture.port }, []);
+      for (let call = 0; call < 3; call++) assert.equal(loaded.resolveCleanSourcePhysicalPathV1!("/finite-source"), "/finite-source");
+      assert.deepEqual(fixture.calls, expectedResolutionCalls(["native:get", "native", "native:get", "native", "legacy", "native:get", "native"], "/finite-source", fixture.port));
+    });
+
+    type DirectoryUnitPlan = { patch?: Record<string, unknown>; expectedDevice?: bigint; omitDevice?: boolean;
+      legacy?: "same" | "different" | "throw"; native?: NativePortKind; lstatError?: unknown; operation?: "snapshot" | "assert" };
+    function directoryUnit(source: string, route: "legacy" | "clean", plan: DirectoryUnitPlan) {
+      const fixture = resolutionUnitPort(route === "legacy" ? "getter-throw" : plan.native ?? "exact", plan.legacy);
+      const stats = { dev: 1n, ino: 2n, mode: 0o40755n, uid: 501n, gid: 20n, nlink: 2n, size: 0n, mtimeNs: 1n, ctimeNs: 1n,
+        isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false, ...plan.patch };
+      const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash, realpathSync: fixture.port,
+        lstatSync: (target: string, options: unknown) => {
+          fixture.calls.push(["lstat", target, options]);
+          if (Object.hasOwn(plan, "lstatError")) throw plan.lstatError;
+          return stats;
+        },
+      }, [], source);
+      const expected = { identity: { realpath: "/finite-source", devDecimal: "1", inoDecimal: "2", mode: 0o755 }, device: 1n };
+      const name = plan.operation === "assert" ? route === "legacy" ? "assertDirectory" : "assertCleanSourceDirectoryV1"
+        : route === "legacy" ? "directorySnapshot" : "cleanSourceDirectorySnapshotV1";
+      const outcome = caughtUnit(() => plan.operation === "assert" ? loaded[name]!("/finite-source", expected, "finite directory")
+        : plan.omitDevice ? loaded[name]!("/finite-source", "finite directory") : loaded[name]!("/finite-source", "finite directory", plan.expectedDevice ?? 1n));
+      return { ...fixture, outcome, stats };
+    }
+    function assertUnitRefusal(outcome: ReturnType<typeof caughtUnit>, message: string) {
+      assert.equal(outcome.threw, true); assert.ok(outcome.error instanceof Error);
+      assert.equal(outcome.error.message, `INTERNAL_PRODUCTION_SETFARM_SOURCE_BUILD_INVALID:${message}`);
+    }
+
+    it("preserves directory resolution lstat refusal device projection and assertion ordering against the old oracle", () => {
+      // Break caught: lstat skipped/reordered, combined refusal weakened, legacy errors swallowed, or identity projection changed.
+      const lstatError = Object.freeze({ deliberate: "directory-lstat" });
+      const cases: Array<{ plan: DirectoryUnitPlan; refusal?: string; lstat?: boolean; routes: string[]; mode?: number; device?: bigint; thrown?: "legacy" | "lstat" }> = [
+        { plan: {}, routes: ["native:get", "native"], mode: 0o755, device: 1n },
+        { plan: { legacy: "different", native: "mismatch" }, routes: ["native:get", "native", "legacy"], refusal: "finite directory must be one real directory" },
+        { plan: { patch: { isDirectory: () => false } }, routes: ["native:get", "native"], refusal: "finite directory must be one real directory" },
+        { plan: { patch: { isSymbolicLink: () => true } }, routes: ["native:get", "native"], refusal: "finite directory must be one real directory" },
+        { plan: { patch: { dev: 2n } }, routes: ["native:get", "native"], refusal: "finite directory is on the wrong device" },
+        { plan: { patch: { dev: 2n }, omitDevice: true }, routes: ["native:get", "native"], mode: 0o755, device: 2n },
+        { plan: { patch: { mode: 0o42755n } }, routes: ["native:get", "native"], mode: 0o2755, device: 1n },
+        { plan: { patch: { isDirectory: () => false, dev: 2n } }, routes: ["native:get", "native"], refusal: "finite directory must be one real directory" },
+        { plan: { legacy: "throw", native: "getter-throw", patch: { isDirectory: () => false } }, routes: ["native:get", "legacy"], lstat: false, thrown: "legacy" },
+        { plan: { lstatError, legacy: "different", native: "mismatch" }, routes: ["native:get", "native", "legacy"], thrown: "lstat" },
+        { plan: { operation: "assert" }, routes: ["native:get", "native"] },
+        { plan: { operation: "assert", patch: { ino: 3n } }, routes: ["native:get", "native"], refusal: "finite directory identity changed" },
+        { plan: { operation: "assert", patch: { mode: 0o40700n } }, routes: ["native:get", "native"], refusal: "finite directory identity changed" },
+        { plan: { operation: "assert", patch: { dev: 2n } }, routes: ["native:get", "native"], refusal: "finite directory is on the wrong device" },
+      ];
+      const current = readFileSync(observerSource, "utf8"), original = originalSource();
+      for (const row of cases) for (const [source, route] of [[original, "legacy"], [current, "legacy"], [current, "clean"]] as const) {
+        const observed = directoryUnit(source, route, row.plan);
+        const raw = expectedResolutionCalls(route === "clean" ? row.routes : ["legacy"], "/finite-source", observed.port);
+        if (row.lstat !== false) raw.push(["lstat", "/finite-source", { bigint: true }]);
+        assert.deepEqual(observed.calls, raw, "all arguments/receivers/order asserted outside native catch");
+        if (row.thrown) { assert.equal(observed.outcome.threw, true); assert.equal(observed.outcome.error, row.thrown === "legacy" ? observed.legacyError : lstatError); }
+        else if (row.refusal) assertUnitRefusal(observed.outcome, row.refusal);
+        else if (row.plan.operation === "assert") { assert.equal(observed.outcome.threw, false); assert.equal(observed.outcome.value, undefined); }
+        else {
+          assert.equal(observed.outcome.threw, false);
+          assert.deepEqual(observed.outcome.value, { identity: { realpath: "/finite-source", devDecimal: String(row.device), inoDecimal: "2", mode: row.mode }, device: row.device });
+          assert.equal(Object.isFrozen(observed.outcome.value), true); assert.equal(Object.isFrozen(observed.outcome.value.identity), true);
+        }
+      }
+    });
+
+    type ReaderUnitPlan = { throwAt?: string; thrown?: unknown; patchAt?: string; patch?: Record<string, unknown>;
+      readAt?: number; readBytes?: Buffer; parentPatchAt?: number; parentPatch?: Record<string, unknown>; parentRealpathAt?: number;
+      closeErrors?: Record<number, unknown>; cap?: number; filePatch?: Record<string, unknown>; parentBase?: Record<string, unknown>;
+      expectedLinks?: number; omitLinkCount?: boolean };
+    type ReaderUnitWant = { stop?: string; allocated: number[]; closes: number[]; residual?: number[]; refusal?: string; refusalLabel?: string; error?: unknown };
+    const readerUnitCore = [
+      "legacy:/finite-source", "parent:1", "open:1:40", "fstat:1:40", "read:1:40", "fstat:2:40", "named:1",
+      "legacy:/finite-source", "parent:2", "open:2:41", "fstat:3:41", "read:2:41", "fstat:4:41", "named:2",
+      "legacy:/finite-source", "parent:3",
+    ];
+    function readerUnitHarness(source: string, route: "legacy" | "clean") {
+      const directory = "/finite-source", file = `${directory}/input.ts`, bytes = Buffer.from("stable");
+      const nativeTrap = Object.freeze({ deliberate: "forbidden-legacy-native-access" });
+      let state: { plan: ReaderUnitPlan; trace: string[]; raw: unknown[][]; descriptors: Set<number>; allocated: number[]; closes: number[];
+        next: number; opens: number; fstats: number; reads: number; named: number; parents: number; observations: Array<{ stage: string; stats: any }>; readBuffers: Buffer[]; ioCalls: Array<{ name: string; args: unknown[]; receiver: unknown }> };
+      const port = function(this: unknown, target: unknown): unknown {
+        state.raw.push(["legacy", target, arguments.length, this]); state.trace.push(`legacy:${String(target)}`);
+        return state.plan.parentRealpathAt === state.parents + 1 ? "/different-parent" : target;
+      };
+      Object.defineProperty(port, "native", { get: function(this: unknown) {
+        state.raw.push(["native:get", arguments.length, this]); state.trace.push(`native:get:${state.parents + 1}`);
+        if (route === "legacy") throw nativeTrap;
+        return function(this: unknown, target: unknown): unknown {
+          state.raw.push(["native", target, arguments.length, this]); state.trace.push(`native:${state.parents + 1}:${String(target)}`);
+          return state.plan.parentRealpathAt === state.parents + 1 ? "/different-native-parent" : target;
+        };
+      } });
+      const failAt = (stage: string) => { if (state.plan.throwAt === stage) throw state.plan.thrown; };
+      const fileStats = (stage: string) => {
+        const stats = { dev: 1n, ino: 3n, mode: 0o100600n, uid: 501n, gid: 20n, nlink: 1n, size: BigInt(bytes.length), mtimeNs: 1n, ctimeNs: 1n,
+          isDirectory: () => false, isSymbolicLink: () => false, isFile: () => true, ...state.plan.filePatch,
+          ...(state.plan.patchAt === stage ? state.plan.patch : {}) };
+        state.observations.push({ stage, stats }); return stats;
+      };
+      const loaded = loadDerivedFunctions({ Buffer, Object, TextDecoder, path, createHash, hashCanonicalJson: canonicalHash, realpathSync: port,
+        constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100, O_NONBLOCK: 0x200 },
+        lstatSync: function(this: unknown, target: string, options: unknown) {
+          state.ioCalls.push({ name: "lstatSync", args: [...arguments], receiver: this });
+          assert.deepEqual(options, { bigint: true }); assert.ok(target === directory || target === file);
+          if (target === directory) {
+            const stage = `parent:${++state.parents}`; state.trace.push(stage); failAt(stage);
+            return { dev: 1n, ino: 2n, mode: 0o40755n, uid: 501n, gid: 20n, nlink: 2n, size: 0n, mtimeNs: 1n, ctimeNs: 1n,
+              isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false, ...state.plan.parentBase,
+              ...(state.plan.parentPatchAt === state.parents ? state.plan.parentPatch : {}) };
+          }
+          const stage = `named:${++state.named}`; state.trace.push(stage); failAt(stage); return fileStats(stage);
+        },
+        openSync: function(this: unknown, target: string, flags: number) {
+          state.ioCalls.push({ name: "openSync", args: [...arguments], receiver: this });
+          assert.equal(target, file); assert.equal(flags, 768); const stage = `open:${++state.opens}`, fd = state.next;
+          state.trace.push(`${stage}:${fd}`); failAt(stage); state.next++; state.descriptors.add(fd); state.allocated.push(fd); return fd;
+        },
+        fstatSync: function(this: unknown, fd: number, options: unknown) {
+          state.ioCalls.push({ name: "fstatSync", args: [...arguments], receiver: this });
+          assert.ok(state.descriptors.has(fd)); assert.deepEqual(options, { bigint: true });
+          const stage = `fstat:${++state.fstats}`; state.trace.push(`${stage}:${fd}`); failAt(stage); return fileStats(stage);
+        },
+        readFileSync: function(this: unknown, fd: number) {
+          state.ioCalls.push({ name: "readFileSync", args: [...arguments], receiver: this });
+          assert.ok(state.descriptors.has(fd)); const call = ++state.reads, stage = `read:${call}`;
+          state.trace.push(`${stage}:${fd}`); failAt(stage); const value = Buffer.from(state.plan.readAt === call ? state.plan.readBytes! : bytes);
+          state.readBuffers.push(value); return value;
+        },
+        closeSync: function(this: unknown, fd: number) {
+          state.ioCalls.push({ name: "closeSync", args: [...arguments], receiver: this });
+          state.closes.push(fd); state.trace.push(`close:${fd - 39}:${fd}`); assert.ok(state.descriptors.has(fd), `unowned close ${fd}`);
+          // An injected failing close retains that allocated virtual descriptor; no success receipt is fabricated.
+          if (Object.hasOwn(state.plan.closeErrors ?? {}, fd)) throw state.plan.closeErrors![fd];
+          state.descriptors.delete(fd);
+        },
+      }, [], source);
+      return (plan: ReaderUnitPlan = {}) => {
+        state = { plan, trace: [], raw: [], descriptors: new Set(), allocated: [], closes: [], next: 40, opens: 0, fstats: 0, reads: 0,
+          named: 0, parents: 0, observations: [], readBuffers: [], ioCalls: [] };
+        const outcome = caughtUnit(() => route === "clean" ? loaded.readCleanSourceStableRegularV1!(file, plan.cap ?? 1024, 1n)
+          : plan.omitLinkCount === false ? loaded.readStableRegular!(file, plan.cap ?? 1024, 1n, plan.expectedLinks ?? 1)
+          : loaded.readStableRegular!(file, plan.cap ?? 1024, 1n));
+        return { ...state, residual: [...state.descriptors], outcome, port, bytes, file };
+      };
+    }
+    function readerUnitExpectedCore(stop?: string) {
+      if (!stop) return [...readerUnitCore];
+      const at = readerUnitCore.findIndex(row => row === stop || row.startsWith(`${stop}:`));
+      assert.ok(at >= 0, `unknown independent stop ${stop}`); return readerUnitCore.slice(0, at + 1);
+    }
+    function readerUnitCases() {
+      const source = readFileSync(observerSource, "utf8");
+      return [
+        { route: "legacy" as const, run: readerUnitHarness(originalSource(), "legacy"), label: "old" },
+        { route: "legacy" as const, run: readerUnitHarness(source, "legacy"), label: "current legacy" },
+        { route: "clean" as const, run: readerUnitHarness(source, "clean"), label: "current clean" },
+      ];
+    }
+    function assertReaderUnit(cases: ReturnType<typeof readerUnitCases>, plan: ReaderUnitPlan, want: ReaderUnitWant) {
+      for (const entry of cases) {
+        const result = entry.run(plan), core = readerUnitExpectedCore(want.stop), expectedTrace: string[] = [], raw: unknown[][] = [];
+        let parent = 0;
+        for (const row of core) {
+          if (row === "legacy:/finite-source") {
+            parent++;
+            if (entry.route === "clean") {
+              expectedTrace.push(`native:get:${parent}`, `native:${parent}:/finite-source`);
+              raw.push(["native:get", 0, result.port], ["native", "/finite-source", 1, result.port]);
+              if (plan.parentRealpathAt !== parent) continue;
+            }
+            raw.push(["legacy", "/finite-source", 1, undefined]);
+          }
+          expectedTrace.push(row);
+        }
+        expectedTrace.push(...want.closes.map(fd => `close:${fd - 39}:${fd}`));
+        assert.deepEqual(result.trace, expectedTrace, `${entry.label}: exact original operation/close prefix`);
+        assert.deepEqual(result.raw, raw, `${entry.label}: raw native/legacy arguments outside SUT catch`);
+        const ioArity: Record<string, number> = { lstatSync: 2, openSync: 2, fstatSync: 2, readFileSync: 1, closeSync: 1 };
+        assert.equal(result.ioCalls.length, expectedTrace.filter(row => /^(?:parent|named|open|fstat|read|close):/.test(row)).length);
+        for (const call of result.ioCalls) {
+          assert.equal(call.args.length, ioArity[call.name], `${entry.label}: exact ${call.name} arity outside unwind`);
+          assert.equal(call.receiver, undefined, `${entry.label}: original bare ${call.name} receiver`);
+        }
+        assert.deepEqual(result.allocated, want.allocated, `${entry.label}: actual successful allocation ledger`);
+        assert.deepEqual(result.closes, want.closes, `${entry.label}: exact attempted closes`);
+        assert.deepEqual(result.residual, want.residual ?? [], `${entry.label}: honest close-error residual ledger`);
+        if (Object.hasOwn(want, "error")) { assert.equal(result.outcome.threw, true); assert.equal(result.outcome.error, want.error); }
+        else if (want.refusal) assertUnitRefusal(result.outcome, `${want.refusalLabel ?? result.file} ${want.refusal}`);
+        else {
+          assert.equal(result.outcome.threw, false); assert.deepEqual(result.outcome.value.bytes, Buffer.from("stable"));
+          assert.equal(result.outcome.value.bytes, result.readBuffers[1], "actual second read Buffer retained");
+          assert.equal(result.outcome.value.stats, result.observations.find(item => item.stage === "fstat:4")!.stats);
+          assert.equal(result.outcome.value.mode, 0o600); assert.equal(Object.isFrozen(result.outcome.value), true);
+        }
+        if (plan.patchAt) {
+          const observation = result.observations.find(item => item.stage === plan.patchAt);
+          assert.ok(observation, `${entry.label}: mutation stage was actually observed`);
+          for (const [key, value] of Object.entries(plan.patch ?? {})) assert.equal(observation.stats[key], value);
+        }
+      }
+    }
+
+    it("never accesses native from legacy directory assertion and reader entry points even on faults", () => {
+      // Break caught: a later legacy authority caller accidentally selects the native resolver.
+      const source = readFileSync(observerSource, "utf8");
+      for (const operation of ["snapshot", "assert"] as const) {
+        const actual = directoryUnit(source, "legacy", { operation }), old = directoryUnit(originalSource(), "legacy", { operation });
+        assert.equal(actual.outcome.threw, false); assert.deepEqual(actual.calls, old.calls);
+        assert.ok(actual.calls.every(row => row[0] !== "native:get" && row[0] !== "native"));
+      }
+      const cases = readerUnitCases().filter(item => item.route === "legacy");
+      assertReaderUnit(cases, {}, { allocated: [40, 41], closes: [41, 40] });
+      const thrown = Object.freeze({ deliberate: "legacy-second-read" });
+      assertReaderUnit(cases, { throwAt: "read:2", thrown }, { stop: "read:2", allocated: [40, 41], closes: [41, 40], error: thrown });
+    });
+
+    it("preserves every open read fstat named-lstat and parent error identity with exact unwind prefixes", () => {
+      // Break caught: IO errors are swallowed/reordered or an acquired descriptor loses its finally.
+      const cases = readerUnitCases();
+      const rows = [
+        { stage: "parent:1", allocated: [], closes: [] }, { stage: "open:1", allocated: [], closes: [] },
+        ...["fstat:1", "read:1", "fstat:2", "named:1", "parent:2", "open:2"].map(stage => ({ stage, allocated: [40], closes: [40] })),
+        ...["fstat:3", "read:2", "fstat:4", "named:2", "parent:3"].map(stage => ({ stage, allocated: [40, 41], closes: [41, 40] })),
+      ];
+      for (const row of rows) {
+        const thrown = Object.freeze({ deliberate: row.stage });
+        assertReaderUnit(cases, { throwAt: row.stage, thrown }, { stop: row.stage, allocated: row.allocated, closes: row.closes, error: thrown });
+      }
+    });
+
+    it("rejects every checked held metadata drift at all four fstat positions without altering close order", () => {
+      // Break caught: any held dev/ino/mode/uid/nlink/size/time comparison is omitted or weakened.
+      const cases = readerUnitCases(), fields: Array<[string, unknown]> = [
+        ["dev", 2n], ["ino", 4n], ["mode", 0o100640n], ["uid", 502n], ["nlink", 2n], ["size", 7n], ["mtimeNs", 2n], ["ctimeNs", 2n],
+      ];
+      for (const position of [1, 2, 3, 4]) for (const [field, value] of fields) {
+        const firstGate = position === 1 && (field === "dev" || field === "nlink");
+        const stop = firstGate ? "fstat:1" : position <= 2 ? "fstat:2" : `fstat:${position}`;
+        const refusal = firstGate ? "is not one same-device regular link-count-1 file" : position <= 2 ? "changed during read"
+          : position === 3 ? "changed before second open" : "changed during second read";
+        assertReaderUnit(cases, { patchAt: `fstat:${position}`, patch: { [field]: value } }, {
+          stop, allocated: position <= 2 ? [40] : [40, 41], closes: position <= 2 ? [40] : [41, 40], refusal,
+        });
+      }
+      for (const [position, patch, refusal] of [
+        [1, { isFile: () => false }, "is not one same-device regular link-count-1 file"],
+        [1, { isSymbolicLink: () => true }, "is not one same-device regular link-count-1 file"],
+        [3, { isFile: () => false }, "changed before second open"],
+      ] as const) assertReaderUnit(cases, { patchAt: `fstat:${position}`, patch }, {
+        stop: `fstat:${position}`, allocated: position === 1 ? [40] : [40, 41], closes: position === 1 ? [40] : [41, 40], refusal,
+      });
+    });
+
+    it("retains the first named partial gate and the second named full metadata gate exactly", () => {
+      // Break caught: a named comparison drops old evidence or invents a stronger first named gate.
+      const cases = readerUnitCases();
+      for (const [field, value] of [["dev", 2n], ["ino", 4n], ["uid", 502n], ["isFile", () => false], ["isSymbolicLink", () => true]] as const) {
+        assertReaderUnit(cases, { patchAt: "named:1", patch: { [field]: value } }, { stop: "named:1", allocated: [40], closes: [40], refusal: "changed before reopen" });
+      }
+      for (const [field, value] of [["mode", 0o100640n], ["nlink", 2n], ["size", 7n], ["mtimeNs", 2n], ["ctimeNs", 2n]] as const) {
+        // These first-named fields were not compared by old O; later normal observations still qualify.
+        assertReaderUnit(cases, { patchAt: "named:1", patch: { [field]: value } }, { allocated: [40, 41], closes: [41, 40] });
+      }
+      for (const [field, value] of [["dev", 2n], ["ino", 4n], ["mode", 0o100640n], ["uid", 502n], ["nlink", 2n], ["size", 7n],
+        ["mtimeNs", 2n], ["ctimeNs", 2n], ["isFile", () => false], ["isSymbolicLink", () => true]] as const) {
+        assertReaderUnit(cases, { patchAt: "named:2", patch: { [field]: value } }, { stop: "named:2", allocated: [40, 41], closes: [41, 40], refusal: "changed after second read" });
+      }
+    });
+
+    it("retains file caps both EOF-length checks and same-size byte comparison", () => {
+      // Break caught: shortened/oversized reads or same-size content replacement is accepted.
+      const cases = readerUnitCases();
+      assertReaderUnit(cases, { cap: 5 }, { stop: "fstat:1", allocated: [40], closes: [40], refusal: "exceeds the file cap" });
+      for (const value of [Buffer.from("short"), Buffer.from("longer!"), Buffer.from("drift!" )]) {
+        const sameSize = value.length === 6;
+        assertReaderUnit(cases, { readAt: 1, readBytes: value }, sameSize
+          ? { stop: "fstat:4", allocated: [40, 41], closes: [41, 40], refusal: "changed during second read" }
+          : { stop: "fstat:2", allocated: [40], closes: [40], refusal: "changed during read" });
+        assertReaderUnit(cases, { readAt: 2, readBytes: value }, { stop: "fstat:4", allocated: [40, 41], closes: [41, 40], refusal: "changed during second read" });
+      }
+    });
+
+    it("reobserves every parent slot and preserves baseline identity mode device and realpath refusal order", () => {
+      // Break caught: parent snapshot/bookend is cached, moved, or compared against an invented identity.
+      const cases = readerUnitCases();
+      for (const parent of [1, 2, 3]) {
+        for (const [field, value] of [["ino", 4n], ["mode", 0o40700n], ["dev", 2n]] as const) {
+          const at = parent === 1 && field !== "dev" ? 2 : parent;
+          const result = entryParentWant(at, field === "dev" ? "is on the wrong device" : "identity changed");
+          assertReaderUnit(cases, { parentPatchAt: parent, parentPatch: { [field]: value } }, result);
+        }
+        for (const patch of [{ isDirectory: () => false }, { isSymbolicLink: () => true }]) {
+          assertReaderUnit(cases, { parentPatchAt: parent, parentPatch: patch }, entryParentWant(parent, "must be one real directory"));
+        }
+        assertReaderUnit(cases, { parentRealpathAt: parent }, entryParentWant(parent, "must be one real directory"));
+      }
+      // No fixed initial ino/mode guard existed: a consistently observed alternative is retained.
+      assertReaderUnit(cases, { parentBase: { ino: 4n, mode: 0o40700n } }, { allocated: [40, 41], closes: [41, 40] });
+    });
+    function entryParentWant(parent: number, message: string): ReaderUnitWant {
+      return { stop: `parent:${parent}`, allocated: parent === 1 ? [] : parent === 2 ? [40] : [40, 41],
+        closes: parent === 1 ? [] : parent === 2 ? [40] : [41, 40], refusal: message, refusalLabel: "parent of /finite-source/input.ts" };
+    }
+
+    it("preserves inner then outer close attempts and original close-error dominance", () => {
+      // Break caught: close failure hides a live allocation, skips outer finally, or changes winning exception.
+      const cases = readerUnitCases(), close1 = Object.freeze({ deliberate: "close-first" }), close2 = Object.freeze({ deliberate: "close-second" }),
+        read = Object.freeze({ deliberate: "read-second" });
+      const rows: Array<{ plan: ReaderUnitPlan; want: ReaderUnitWant }> = [
+        { plan: { closeErrors: { 40: close1 } }, want: { allocated: [40, 41], closes: [41, 40], residual: [40], error: close1 } },
+        { plan: { closeErrors: { 41: close2 } }, want: { allocated: [40, 41], closes: [41, 40], residual: [41], error: close2 } },
+        { plan: { closeErrors: { 40: close1, 41: close2 } }, want: { allocated: [40, 41], closes: [41, 40], residual: [40, 41], error: close1 } },
+        { plan: { throwAt: "read:2", thrown: read, closeErrors: { 40: close1 } }, want: { stop: "read:2", allocated: [40, 41], closes: [41, 40], residual: [40], error: close1 } },
+        { plan: { throwAt: "read:2", thrown: read, closeErrors: { 41: close2 } }, want: { stop: "read:2", allocated: [40, 41], closes: [41, 40], residual: [41], error: close2 } },
+        { plan: { throwAt: "read:2", thrown: read, closeErrors: { 40: close1, 41: close2 } }, want: { stop: "read:2", allocated: [40, 41], closes: [41, 40], residual: [40, 41], error: close1 } },
+        { plan: { throwAt: "read:1", thrown: read, closeErrors: { 40: close1 } }, want: { stop: "read:1", allocated: [40], closes: [40], residual: [40], error: close1 } },
+      ];
+      for (const row of rows) assertReaderUnit(cases, row.plan, row.want);
+    });
+
+    it("passes the legacy fourth link count while clean reads retain link-count one", () => {
+      // Break caught: thin legacy wrapper drops its fourth argument or clean wrapper admits extra links.
+      const cases = readerUnitCases(), legacy = cases.filter(row => row.route === "legacy"), clean = cases.filter(row => row.route === "clean");
+      assertReaderUnit(legacy, { filePatch: { nlink: 7n }, expectedLinks: 7, omitLinkCount: false }, { allocated: [40, 41], closes: [41, 40] });
+      assertReaderUnit(cases, { filePatch: { nlink: 7n } }, { stop: "fstat:1", allocated: [40], closes: [40], refusal: "is not one same-device regular link-count-1 file" });
+      assertReaderUnit(clean, { filePatch: { nlink: 7n }, expectedLinks: 7, omitLinkCount: false }, { stop: "fstat:1", allocated: [40], closes: [40], refusal: "is not one same-device regular link-count-1 file" });
+    });
+
+    it("keeps private clean routing limited to fourteen slots and the engine to two code-owned wrappers", () => {
+      // Break caught: an authority caller/public selector gains clean routing or a read body is duplicated.
+      const source = readFileSync(observerSource, "utf8");
+      const helpers = ["resolveCleanSourcePhysicalPathV1", "snapshotDirectoryAfterResolutionV1", "cleanSourceDirectorySnapshotV1",
+        "assertCleanSourceDirectoryV1", "readStableRegularWithDirectoriesV1", "readCleanSourceStableRegularV1"];
+      for (const name of helpers) {
+        assert.equal([...source.matchAll(new RegExp(`^function ${name}\\(`, "gm"))].length, 1);
+        assert.doesNotMatch(source, new RegExp(`^export[^\\n]*\\b${name}\\b`, "m"));
+      }
+      const slots = {
+        verifyLiveInputs: { readCleanSourceStableRegularV1: 1 },
+        observeSource: { cleanSourceDirectorySnapshotV1: 1, assertCleanSourceDirectoryV1: 1 },
+        observeArtifacts: { cleanSourceDirectorySnapshotV1: 2, readCleanSourceStableRegularV1: 5, assertCleanSourceDirectoryV1: 2 },
+        observeCurrentInternalProductionCleanSetfarmSourceBuildV1: { assertCleanSourceDirectoryV1: 2 },
+      };
+      for (const [name, expected] of Object.entries(slots)) {
+        const body = topLevelFunctionRegionV1(source, name);
+        for (const helper of ["cleanSourceDirectorySnapshotV1", "assertCleanSourceDirectoryV1", "readCleanSourceStableRegularV1"]) {
+          assert.equal([...body.matchAll(new RegExp(`\\b${helper}\\(`, "g"))].length, (expected as Record<string, number>)[helper] ?? 0, `${name}/${helper}`);
+        }
+        assert.doesNotMatch(body, /\b(?:directorySnapshot|assertDirectory|readStableRegular)\(/);
+      }
+      const legacy = topLevelFunctionRegionV1(source, "readStableRegular"), clean = topLevelFunctionRegionV1(source, "readCleanSourceStableRegularV1");
+      assert.match(legacy, /expectedLinkCount = 1/);
+      assert.match(legacy, /return readStableRegularWithDirectoriesV1\(filePath, maxBytes, device, expectedLinkCount, directorySnapshot, assertDirectory\);/);
+      assert.match(clean, /return readStableRegularWithDirectoriesV1\(filePath, maxBytes, device, 1, cleanSourceDirectorySnapshotV1, assertCleanSourceDirectoryV1\);/);
+      assert.equal([...source.matchAll(/\breadStableRegularWithDirectoriesV1\(/g)].length, 3, "one private definition plus two callers");
+      const allowed = [...Object.keys(slots), ...helpers, "directorySnapshot", "readStableRegular"];
+      let remainder = source;
+      for (const name of allowed) remainder = remainder.replace(topLevelFunctionRegionV1(source, name), "");
+      for (const name of helpers) assert.doesNotMatch(remainder, new RegExp(`\\b${name}\\b`), `no private clean helper outside admitted graph: ${name}`);
+      assert.match(topLevelFunctionRegionV1(source, "fixedRepositoryRoot"), /realpathSync\(fileURLToPath\(import.meta.url\)\)/);
+      assert.match(topLevelFunctionRegionV1(source, "observeSource"), /realpathSync\(topLevel\)/);
+      const observer = topLevelFunctionRegionV1(source, "observeCurrentInternalProductionCleanSetfarmSourceBuildV1");
+      const later = source.slice(source.indexOf(observer) + observer.length);
+      const expectedLater = {
+        directorySnapshot: { ensureCurrentEntryStore: 3, readCurrentEntryStore: 3, publishCurrentEntryRecord: 1, readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1: 2,
+          openSelectedCurrentEntryPrerequisiteRootReaderV1: 1, openFixedLegacyCurrentEntryPrerequisiteRootReaderV1: 1, observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1: 2,
+          readFixedLegacyCurrentEntryStoreIfPresentV1: 3, readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1: 3, observeExactPoisonQuarantinedInventoryV1: 4 },
+        assertDirectory: { readCurrentEntryStore: 2, readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1: 3, openSelectedCurrentEntryPrerequisiteRootReaderV1: 1,
+          openFixedLegacyCurrentEntryPrerequisiteRootReaderV1: 1, observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1: 4,
+          readFixedLegacyCurrentEntryStoreIfPresentV1: 3, readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1: 3, observeExactPoisonQuarantinedInventoryV1: 6 },
+        readStableRegular: { readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1: 1, observeMissionControlEndpointAuthorityPassV1: 1, observeMissionControlListenerV1: 1,
+          observePhaseClosedZeroV1: 1, observeDetachedLaunchPlistV1: 1, observeDetachedSetfarmServiceV1: 2, observeColdSpawnerAbsenceV1: 3 },
+      };
+      const starts = [...later.matchAll(/^(?:export\s+)?(?:async\s+)?function ([A-Za-z0-9_]+)\(/gm)].map(match => ({ index: match.index!, name: match[1]! }));
+      for (const [name, expected] of Object.entries(expectedLater)) {
+        const actual: Record<string, number> = {};
+        for (const call of later.matchAll(new RegExp(`\\b${name}\\(`, "g"))) {
+          let caller = ""; for (const start of starts) { if (start.index > call.index!) break; caller = start.name; }
+          assert.ok(caller, `unowned later ${name}`); actual[caller] = (actual[caller] ?? 0) + 1;
+        }
+        assert.deepEqual(actual, expected, `${name}: exact later legacy caller inventory`);
+      }
+    });
+
+    it("retains native artifact fault outcomes and every non-resolution close prefix against the immutable oracle", () => {
+      // Break caught: clean artifact routing skips/reorders proof or accepts malformed/raw/hash/topology drift.
+      const source = readFileSync(observerSource, "utf8"), original = originalSource();
+      for (const fault of ["malformed-name", "directory-mode", "directory-vector", "file-vector", "output-keys", "output-hash", "manifest-bytes", "info-whitespace", "info-duplicate", "second-read-drift"]) {
+        const expected = artifactFixture(original, fault), actual = artifactFixture(source, fault, true);
+        assert.ok(expected.refusal); assert.equal(actual.refusal, expected.refusal, fault); assert.equal(actual.projection, null);
+        assert.deepEqual(actual.trace, expected.trace.map(row => row.startsWith("realpath:") ? `native:${row.slice("realpath:".length)}` : row), `${fault}: full ordered prefix, no event filtering`);
+        assert.deepEqual(actual.resolutionOrigins, expected.resolutionOrigins.map(row => ({ origin: "native", target: row.target })));
+        assert.ok(actual.resolutionCalls.length > 0);
+        for (const call of actual.resolutionCalls) {
+          assert.equal(call.origin, "native", `${fault}: no hidden legacy fallback`); assert.equal(call.arity, 1);
+          assert.equal(call.receiver, actual.resolutionPort);
+        }
+        assert.equal(actual.vectors.length, 0);
+      }
+    });
   });
 });

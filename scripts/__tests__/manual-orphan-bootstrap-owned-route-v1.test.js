@@ -2980,15 +2980,20 @@ const COMPILED_DATA_T_ONLY_V1=Object.freeze([
 ].map(([locator,sha256])=>Object.freeze({locator,sha256})));
 const COMPILED_DATA_T_V1=Object.freeze([...COMPILED_DATA_HISTORICAL_COMMON_V1,...COMPILED_DATA_T_ONLY_V1]
   .sort((a,b)=>Buffer.compare(Buffer.from(a.locator),Buffer.from(b.locator))));
-// Root's independent compiler-derived records (audit SHA256 2f6fb7c17251fe9b...
-// and independent review SHA256 1d4ee34a34956670...) approve this sole M change.
+// Task7G manifest 6c627394c8c190d9..., compiled semantic review 49fc6ea3aeeaaf67...
+// and final Root qualification f432f10145bdd7c9... approve this sole M change.
+// The full source-derived candidate is retained; this DATA is not genuine stock.
 // These are fixed expected data, never observations read from a future release.
 const COMPILED_DATA_M_OVERRIDES_V1=Object.freeze([
   Object.freeze({locator:'dist/internal-production/baseline-post-handoff-receipt-v1.js',
-    sha256:'a2953ff418ae1a44677eaf0779ea43bb0543bd57ee99024f5a8e49bb06b6b890'}),
+    sha256:'8542d7ced098921fed98ce76dc84d524f1e575ca5013e8ed3ce7a230c11b9d4c'}),
 ]);
 const COMPILED_DATA_M_V1=Object.freeze(COMPILED_DATA_HISTORICAL_COMMON_V1.map(row=>
   COMPILED_DATA_M_OVERRIDES_V1.find(override=>override.locator===row.locator)??row));
+// Prior approved M remains independent immutable stale-denial DATA (f796...4921).
+const COMPILED_DATA_PRIOR_M_V1=Object.freeze(COMPILED_DATA_HISTORICAL_COMMON_V1.map(row=>
+  row.locator==='dist/internal-production/baseline-post-handoff-receipt-v1.js'
+    ?Object.freeze({locator:row.locator,sha256:'a2953ff418ae1a44677eaf0779ea43bb0543bd57ee99024f5a8e49bb06b6b890'}):row));
 function compiledDataVmV1(){
   // The pure predicate needs no Node binary fixture or filesystem facts. Every
   // effect remains the same closed/counted whole-helper boundary.
@@ -3017,7 +3022,7 @@ test('Source compiled DATA-admission simulation accepts the independent approved
   const manifest=compiledManifestCopyV1('maintenance');
   assert.equal(manifest.length,143);
   assert.equal(createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
-    'f79648a0b1edaaca3052bde668429acab2e6514ac9804e46207bd19f038a4921');
+    '31ce8e1371a187ae54de0e83ef411244ab204ecc22130f21945fe03a11d9d5c1');
   assertCompiledDataOutcomeV1(manifest,'maintenance',true);
 });
 test('Source compiled DATA-admission simulation accepts the independent approved T153 manifest',()=>{
@@ -3029,6 +3034,15 @@ test('Source compiled DATA-admission simulation accepts the independent approved
 });
 test('Source compiled DATA-admission simulation refuses one changed M byte hash',()=>{
   const manifest=compiledManifestCopyV1('maintenance');manifest[0].sha256='0'.repeat(64);
+  assertCompiledDataOutcomeV1(manifest,'maintenance',false);
+});
+test('Source compiled DATA-admission simulation refuses an unreviewed observer hash in an otherwise approved M143 manifest',()=>{
+  const manifest=compiledManifestCopyV1('maintenance');
+  const observer=manifest.find(row=>row.locator==='dist/internal-production/baseline-post-handoff-receipt-v1.js');
+  assert.ok(observer,'the actual maintenance observer row must be mutated');
+  observer.sha256='0'.repeat(64);
+  assert.notEqual(observer.sha256,COMPILED_DATA_M_OVERRIDES_V1[0].sha256);
+  assert.equal(manifest.length,143);
   assertCompiledDataOutcomeV1(manifest,'maintenance',false);
 });
 test('Source compiled DATA-admission simulation refuses one changed T-only byte hash',()=>{
@@ -3076,6 +3090,17 @@ test('Source compiled DATA-admission simulation retains immutable independent hi
   assert.equal(targetObserver.sha256,'f9c7755d2cfc69ccc250fc1da08c21b02fce8835b527fe4eb2647534392151ea');
   assert.notEqual(targetObserver.sha256,COMPILED_DATA_M_OVERRIDES_V1[0].sha256);
   assertCompiledDataOutcomeV1(compiledManifestCopyV1('target'),'target',true);
+});
+test('Source compiled DATA-admission simulation refuses the prior approved M143 digest as maintenance',()=>{
+  const manifest=COMPILED_DATA_PRIOR_M_V1.map(row=>({...row}));
+  assert.equal(Object.isFrozen(COMPILED_DATA_PRIOR_M_V1),true);
+  COMPILED_DATA_PRIOR_M_V1.forEach(row=>assert.equal(Object.isFrozen(row),true));
+  assert.equal(manifest.length,143);
+  assert.equal(createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    'f79648a0b1edaaca3052bde668429acab2e6514ac9804e46207bd19f038a4921');
+  assert.equal(manifest.find(row=>row.locator==='dist/internal-production/baseline-post-handoff-receipt-v1.js').sha256,
+    'a2953ff418ae1a44677eaf0779ea43bb0543bd57ee99024f5a8e49bb06b6b890');
+  assertCompiledDataOutcomeV1(manifest,'maintenance',false);
 });
 test('Source compiled DATA-admission simulation refuses the historical shared M143 digest as maintenance',()=>{
   const manifest=COMPILED_DATA_HISTORICAL_COMMON_V1.map(row=>({...row}));

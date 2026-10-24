@@ -408,8 +408,22 @@ function canonicalLocator(locator: string): string {
   return locator;
 }
 
-function directorySnapshot(directoryPath: string, label: string, expectedDevice?: bigint): DirectorySnapshot {
-  const real = realpathSync(directoryPath);
+function resolveCleanSourcePhysicalPathV1(directoryPath: string): string {
+  let nativeExact = false;
+  if (typeof directoryPath === "string" && path.isAbsolute(directoryPath)
+    && path.normalize(directoryPath) === directoryPath
+    && (!directoryPath.endsWith(path.sep) || directoryPath === path.parse(directoryPath).root)) {
+    try { nativeExact = realpathSync.native(directoryPath) === directoryPath; } catch {}
+  }
+  return nativeExact ? directoryPath : realpathSync(directoryPath);
+}
+
+function snapshotDirectoryAfterResolutionV1(
+  directoryPath: string,
+  label: string,
+  expectedDevice: bigint | undefined,
+  real: string,
+): DirectorySnapshot {
   const stats = lstatSync(directoryPath, { bigint: true });
   if (!stats.isDirectory() || stats.isSymbolicLink() || real !== directoryPath) fail(`${label} must be one real directory`);
   if (expectedDevice !== undefined && stats.dev !== expectedDevice) fail(`${label} is on the wrong device`);
@@ -424,6 +438,14 @@ function directorySnapshot(directoryPath: string, label: string, expectedDevice?
   });
 }
 
+function directorySnapshot(directoryPath: string, label: string, expectedDevice?: bigint): DirectorySnapshot {
+  return snapshotDirectoryAfterResolutionV1(directoryPath, label, expectedDevice, realpathSync(directoryPath));
+}
+
+function cleanSourceDirectorySnapshotV1(directoryPath: string, label: string, expectedDevice?: bigint): DirectorySnapshot {
+  return snapshotDirectoryAfterResolutionV1(directoryPath, label, expectedDevice, resolveCleanSourcePhysicalPathV1(directoryPath));
+}
+
 function sameDirectory(left: DirectoryIdentityV1, right: DirectoryIdentityV1): boolean {
   return left.realpath === right.realpath
     && left.devDecimal === right.devDecimal
@@ -433,6 +455,11 @@ function sameDirectory(left: DirectoryIdentityV1, right: DirectoryIdentityV1): b
 
 function assertDirectory(directoryPath: string, expected: DirectorySnapshot, label: string): void {
   const observed = directorySnapshot(directoryPath, label, expected.device);
+  if (!sameDirectory(observed.identity, expected.identity)) fail(`${label} identity changed`);
+}
+
+function assertCleanSourceDirectoryV1(directoryPath: string, expected: DirectorySnapshot, label: string): void {
+  const observed = cleanSourceDirectorySnapshotV1(directoryPath, label, expected.device);
   if (!sameDirectory(observed.identity, expected.identity)) fail(`${label} identity changed`);
 }
 
@@ -522,8 +549,19 @@ function readStableRegular(
   device: bigint,
   expectedLinkCount = 1,
 ): StableRegular {
+  return readStableRegularWithDirectoriesV1(filePath, maxBytes, device, expectedLinkCount, directorySnapshot, assertDirectory);
+}
+
+function readStableRegularWithDirectoriesV1(
+  filePath: string,
+  maxBytes: number,
+  device: bigint,
+  expectedLinkCount: number,
+  snapshotDirectory: typeof directorySnapshot,
+  assertSnapshotDirectory: typeof assertDirectory,
+): StableRegular {
   const parentPath = path.dirname(filePath);
-  const parentBefore = directorySnapshot(parentPath, `parent of ${filePath}`, device);
+  const parentBefore = snapshotDirectory(parentPath, `parent of ${filePath}`, device);
   let descriptor: number | undefined;
   try {
     descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -552,7 +590,7 @@ function readStableRegular(
     ) {
       fail(`${filePath} changed before reopen`);
     }
-    assertDirectory(parentPath, parentBefore, `parent of ${filePath}`);
+    assertSnapshotDirectory(parentPath, parentBefore, `parent of ${filePath}`);
     const secondDescriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const secondBefore = fstatSync(secondDescriptor, { bigint: true });
@@ -566,7 +604,7 @@ function readStableRegular(
       if (secondReopen.isSymbolicLink() || !secondReopen.isFile() || !sameRegularMetadata(secondAfter, secondReopen)) {
         fail(`${filePath} changed after second read`);
       }
-      assertDirectory(parentPath, parentBefore, `parent of ${filePath}`);
+      assertSnapshotDirectory(parentPath, parentBefore, `parent of ${filePath}`);
       return Object.freeze({ bytes: secondBytes, mode: Number(secondAfter.mode & 0o7777n), stats: secondAfter });
     } finally {
       closeSync(secondDescriptor);
@@ -574,6 +612,10 @@ function readStableRegular(
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+function readCleanSourceStableRegularV1(filePath: string, maxBytes: number, device: bigint): StableRegular {
+  return readStableRegularWithDirectoriesV1(filePath, maxBytes, device, 1, cleanSourceDirectorySnapshotV1, assertCleanSourceDirectoryV1);
 }
 
 function readPinnedBlobs(root: string, entries: readonly PinnedEntry[]): ReadonlyMap<string, Buffer> {
@@ -662,7 +704,7 @@ function verifyLiveInputs(root: string, pinned: PinnedSet, device: bigint): void
   for (const entry of pinned.entries) {
     const filePath = path.join(root, ...entry.locator.split("/"));
     if (!filePath.startsWith(`${root}${path.sep}`)) fail("Pinned input escaped the repository");
-    const observed = readStableRegular(filePath, MAX_BUILD_FILE_BYTES_V1, device);
+    const observed = readCleanSourceStableRegularV1(filePath, MAX_BUILD_FILE_BYTES_V1, device);
     if (observed.stats.uid !== BigInt(currentUid) || !isAcceptedPinnedGitPhysicalModeV1(entry.gitMode, observed.mode)) {
       fail(`live tracked mode differs from pinned Git mode: ${entry.locator}`);
     }
@@ -749,7 +791,7 @@ function expectedTopology(pinned: PinnedSet): Readonly<{ outputs: readonly strin
 }
 
 function observeSource(root: string): SourceObservation {
-  const repository = directorySnapshot(root, "Setfarm repository");
+  const repository = cleanSourceDirectorySnapshotV1(root, "Setfarm repository");
   if ((repository.identity.mode & 0o022) !== 0) fail("Setfarm repository is group/world-writable");
   const topLevel = gitLine(root, ["rev-parse", "--show-toplevel"], "Git top-level");
   if (realpathSync(topLevel) !== root) fail("observer module root differs from Git top-level");
@@ -765,7 +807,7 @@ function observeSource(root: string): SourceObservation {
   verifyLiveInputs(root, pinned, repository.device);
   const packageVersion = verifyTopology(pinned);
   const topology = expectedTopology(pinned);
-  assertDirectory(root, repository, "Setfarm repository");
+  assertCleanSourceDirectoryV1(root, repository, "Setfarm repository");
   return Object.freeze({ pinned, originMainSha, repository, packageVersion, ...topology });
 }
 
@@ -825,7 +867,7 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
   directoryIdentities: readonly Readonly<{ locator: string; snapshot: DirectorySnapshot }>[];
 }> {
   const distPath = path.join(root, "dist");
-  const dist = directorySnapshot(distPath, "finalized dist", source.repository.device);
+  const dist = cleanSourceDirectorySnapshotV1(distPath, "finalized dist", source.repository.device);
   if (dist.identity.mode !== 0o755) fail("finalized dist has wrong mode");
   let entryCount = 0;
   let totalBytes = 0;
@@ -844,14 +886,14 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
       const stats = lstatSync(child, { bigint: true });
       if (stats.dev !== source.repository.device || stats.isSymbolicLink()) fail(`invalid finalized dist entry ${locator}`);
       if (stats.isDirectory()) {
-        const identity = directorySnapshot(child, locator, source.repository.device);
+        const identity = cleanSourceDirectorySnapshotV1(child, locator, source.repository.device);
         if (identity.identity.mode !== 0o755) fail(`wrong finalized directory mode ${locator}`);
         directories.push(locator);
         directoryIdentities.push(Object.freeze({ locator, snapshot: identity }));
         visit(child, locator, depth + 1);
       } else if (stats.isFile()) {
         if (stats.nlink !== 1n || stats.size > BigInt(MAX_BUILD_FILE_BYTES_V1)) fail(`invalid finalized file ${locator}`);
-        const observed = readStableRegular(child, MAX_BUILD_FILE_BYTES_V1, source.repository.device);
+        const observed = readCleanSourceStableRegularV1(child, MAX_BUILD_FILE_BYTES_V1, source.repository.device);
         totalBytes += observed.bytes.length;
         if (totalBytes > MAX_BUILD_TOTAL_BYTES_V1) fail("finalized dist exceeds total-byte cap");
         files.push(locator);
@@ -868,7 +910,7 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
 
   const ordinarySnapshots: FileSnapshot[] = [];
   const outputEntries = source.outputs.map((locator) => {
-    const observed = readStableRegular(path.join(root, ...locator.split("/")), MAX_BUILD_FILE_BYTES_V1, source.repository.device);
+    const observed = readCleanSourceStableRegularV1(path.join(root, ...locator.split("/")), MAX_BUILD_FILE_BYTES_V1, source.repository.device);
     const enumerated = enumeratedFiles.get(locator);
     if (!enumerated || !sameRegularMetadata(observed.stats, enumerated.stats) || !observed.bytes.equals(enumerated.bytes)) {
       fail(`ordinary output changed after enumeration ${locator}`);
@@ -879,7 +921,7 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
     return Object.freeze({ locator, mode: expectedMode, byteLength: observed.bytes.length, sha256: sha256(observed.bytes) });
   });
 
-  const infoObserved = readStableRegular(path.join(distPath, "BUILD_INFO.json"), MAX_BUILD_FILE_BYTES_V1, source.repository.device);
+  const infoObserved = readCleanSourceStableRegularV1(path.join(distPath, "BUILD_INFO.json"), MAX_BUILD_FILE_BYTES_V1, source.repository.device);
   const enumeratedInfo = enumeratedFiles.get("dist/BUILD_INFO.json");
   if (!enumeratedInfo || !sameRegularMetadata(infoObserved.stats, enumeratedInfo.stats) || !infoObserved.bytes.equals(enumeratedInfo.bytes)) {
     fail("BUILD_INFO changed after enumeration");
@@ -898,7 +940,7 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
     || new Date(buildInfo.builtAt).toISOString() !== buildInfo.builtAt
   ) fail("BUILD_INFO fields are invalid");
 
-  const outputObserved = readStableRegular(path.join(distPath, "PLATFORM_BUILD_OUTPUT_TREE.json"), MAX_BUILD_FILE_BYTES_V1, source.repository.device);
+  const outputObserved = readCleanSourceStableRegularV1(path.join(distPath, "PLATFORM_BUILD_OUTPUT_TREE.json"), MAX_BUILD_FILE_BYTES_V1, source.repository.device);
   const enumeratedOutputTree = enumeratedFiles.get("dist/PLATFORM_BUILD_OUTPUT_TREE.json");
   if (!enumeratedOutputTree || !sameRegularMetadata(outputObserved.stats, enumeratedOutputTree.stats) || !outputObserved.bytes.equals(enumeratedOutputTree.bytes)) {
     fail("output tree changed after enumeration");
@@ -930,7 +972,7 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
   };
   if (outputTree.outputTreeHash !== hashCanonicalJson(outputProjection)) fail("output tree hash is invalid");
 
-  const manifestObserved = readStableRegular(path.join(distPath, "PLATFORM_RELEASE_MANIFEST.json"), MAX_BUILD_FILE_BYTES_V1, source.repository.device);
+  const manifestObserved = readCleanSourceStableRegularV1(path.join(distPath, "PLATFORM_RELEASE_MANIFEST.json"), MAX_BUILD_FILE_BYTES_V1, source.repository.device);
   const enumeratedManifest = enumeratedFiles.get("dist/PLATFORM_RELEASE_MANIFEST.json");
   if (!enumeratedManifest || !sameRegularMetadata(manifestObserved.stats, enumeratedManifest.stats) || !manifestObserved.bytes.equals(enumeratedManifest.bytes)) {
     fail("release manifest changed after enumeration");
@@ -970,9 +1012,9 @@ function observeArtifacts(root: string, source: SourceObservation): Readonly<{
     fail("finalized file totals changed across stable reads");
   }
   for (const item of directoryIdentities) {
-    assertDirectory(path.join(root, ...item.locator.split("/")), item.snapshot, item.locator);
+    assertCleanSourceDirectoryV1(path.join(root, ...item.locator.split("/")), item.snapshot, item.locator);
   }
-  assertDirectory(distPath, dist, "finalized dist");
+  assertCleanSourceDirectoryV1(distPath, dist, "finalized dist");
   return Object.freeze({
     buildInfo,
     outputTree,
@@ -1024,8 +1066,8 @@ export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(): Int
       fail("finalized directory identities changed across observation");
     }
   }
-  assertDirectory(root, before.repository, "Setfarm repository");
-  assertDirectory(path.join(root, "dist"), artifactsBefore.dist, "finalized dist");
+  assertCleanSourceDirectoryV1(root, before.repository, "Setfarm repository");
+  assertCleanSourceDirectoryV1(path.join(root, "dist"), artifactsBefore.dist, "finalized dist");
   return Object.freeze({
     branch: "main",
     clean: true,
