@@ -31,7 +31,7 @@ Ruling: choose H-only positive witness prospectively over direct Xcode Git or gl
 |1 -> 3| H uncompiled/J test-only; M143 presumed unchanged | Independent genuine build audit confirms full143; no observed-hash rebinding. |
 |3 internal| Normal PR/build/Source effect | Runtime Source execution waits for exact new build/material and native-scope review; clocks stay unchanged. |
 
-### Task1: Actual H witness unit RED/GREEN
+### Task 1: Actual H witness unit RED/GREEN
 
 Files: modify J and later local H physical only. Report: plan workspace/task-1-report.md. Consumes actual H declarations and task7dSourceV1/task7dPrivateVmV1/task7dPinsV1 finite fixture; produces frozen regression controls plus minimal private implementation.
 
@@ -43,7 +43,7 @@ Files: modify J and later local H physical only. Report: plan workspace/task-1-r
 - [ ] Only after that release, replace H physical with the exact spec body. Add no other implementation or interface change. Freeze H/J/report; Root runs H syntax, focused GREEN and the existing safe3 script selection (constructor/owned-route/discovery) with original natural wait/dual streams; prior tests must remain intact and zero skipped. Source author stays frozen through verification.
 - [ ] Independent task review receives complete diff, spec and actual original RED/GREEN/fault results. Same author fixes only findings through scoped iterations. Root updates report/ledger, then Task1 complete. No commit/push/PR by worker.
 
-### Task2: Separate real directory-domain and native-scope review
+### Task 2: Separate real directory-domain and native-scope review
 
 Files: new inert local-log program/collector/report only. Consumes exact frozen H physical/pins Source and legacy original; produces a finite new original matrix and honest native/domain obligations.
 
@@ -53,7 +53,7 @@ Files: new inert local-log program/collector/report only. Consumes exact frozen 
 - [ ] Root full-read/independent review, immutable exact material/launch/evidence admission and one owned original child precede any effect. Existing minimum8GiB initial8.5GiB/complete streams/natural wait/no signals/retries/adoption apply. Writers freeze before capture. Author does not execute.
 - [ ] Root qualifies original complete outcomes, alias/race guards, cleanup and limits; reviewers map the introduced NodeFS native entry to current native/TCB obligations. No all13 closure is invented. If a concrete supported-domain false positive exists, fix/reject candidate; never soften a guard. Unsupported modes remain unqualified.
 
-### Task3: Reviewed delivery and genuine Source measurement
+### Task 3: Reviewed delivery and genuine Source measurement
 
 Files: only approved H/J/spec/plan source diff; new local evidence outside Git. Root-only delivery/effect.
 
