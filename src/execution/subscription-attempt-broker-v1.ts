@@ -389,6 +389,9 @@ async function startCore(
         async function frame(bytes: Buffer): Promise<void> {
           let text: string;
           try { text = decoder.decode(bytes); } catch { throw new Error('UPSTREAM_INVALID'); }
+          // Only LF/CRLF framing is supported. A worker SSE parser may treat a
+          // lone CR as a line break, exposing fields our LF parser would miss.
+          if (/\r(?!\n)/.test(text)) throw new Error('UPSTREAM_INVALID');
           const data: string[] = []; let name = '';
           for (const line of text.split(/\r?\n/)) {
             if (line.startsWith(':') || line === '') continue;

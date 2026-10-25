@@ -487,3 +487,55 @@ test('malformed half-open peer cannot defer parser-refusal drain until attempt d
   assert.equal(observed?.status, 'closed'); assert.equal(observed?.reason, 'refused');
   assert.equal(f.calls.length, 0);
 });
+
+test('bare CR cannot smuggle mixed-escaped credential error data behind an SSE comment', async t => {
+  let escaped = '';
+  const prefix = event('message_start', { message: JSON.parse(message()) });
+  const f = await fixture(t, (_req, res) => {
+    res.setHeader('content-type', 'text/event-stream');
+    const smuggled = `: comment\revent: error\rdata: {"type":"error","error":{"message":"${escaped}"}}\n\n`;
+    const wire = prefix + smuggled + event('message_stop');
+    for (const byte of Buffer.from(wire)) res.write(Buffer.from([byte]));
+    res.end();
+  });
+  escaped = [...f.fakeCredential].map((char, index) => index % 2
+    ? char : `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
+  assert.equal(JSON.parse(`"${escaped}"`) === f.fakeCredential, true);
+  const response = await call(f.broker, body(undefined, { stream: true }));
+  const text = await response.text();
+  assert.equal(text.includes(escaped), false, 'arbitrarily escaped upstream error must not cross the worker boundary');
+  assert.equal(text.includes('event: message_stop'), false, 'invalid framing cannot deliver successful completion');
+  assert.equal(text, prefix + 'event: error\ndata: {"type":"error","error":{"type":"broker_error","message":"UPSTREAM_INVALID"}}\n\n');
+  const receipt = await f.broker.closed;
+  assert.equal(receipt.status, 'closed'); assert.equal(receipt.reason, 'refused');
+  assert.equal(receipt.terminalCode, 'UPSTREAM_INVALID'); assert.equal(f.calls.length, 1);
+});
+
+for (const eol of ['\n', '\r\n']) test(`strict SSE framing preserves valid ${eol === '\n' ? 'LF' : 'CRLF'} bytes`, async t => {
+  const expected = `: comment${eol}${eol}` + event('message_start', { message: JSON.parse(message()) }, eol)
+    + event('content_block_delta', { delta: { type: 'text_delta', text: 'unchanged' } }, eol)
+    + event('message_stop', {}, eol);
+  const f = await fixture(t, (_req, res) => {
+    res.setHeader('content-type', 'text/event-stream');
+    for (const byte of Buffer.from(expected)) res.write(Buffer.from([byte]));
+    res.end();
+  });
+  const response = await call(f.broker, body(undefined, { stream: true }));
+  assert.equal(response.status, 200); assert.equal(await response.text(), expected);
+  const receipt = await f.broker.stop('completed');
+  assert.equal(receipt.status, 'closed'); assert.equal(receipt.terminalCode, null);
+});
+
+test('bare CR cannot expose hidden message_stop before valid upstream EOF', async t => {
+  const prefix = event('message_start', { message: JSON.parse(message()) });
+  const f = await fixture(t, (_req, res) => {
+    res.setHeader('content-type', 'text/event-stream');
+    res.end(prefix + ': comment\rdata: {"type":"message_stop"}\n\n' + 'data: {');
+  });
+  const text = await (await call(f.broker, body(undefined, { stream: true }))).text();
+  assert.equal(text.includes('message_stop'), false, 'a hidden stop cannot precede truncated upstream EOF');
+  assert.equal(text, prefix + 'event: error\ndata: {"type":"error","error":{"type":"broker_error","message":"UPSTREAM_INVALID"}}\n\n');
+  const receipt = await f.broker.closed;
+  assert.equal(receipt.status, 'closed'); assert.equal(receipt.reason, 'refused');
+  assert.equal(receipt.terminalCode, 'UPSTREAM_INVALID');
+});
