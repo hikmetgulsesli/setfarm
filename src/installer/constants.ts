@@ -394,7 +394,7 @@ export const DEFAULT_STORY_MAX_RETRIES = 5;
 export const STORY_FALLBACK_RETRY_THRESHOLD = 2;
 
 /** Fallback model for story retries when the active worker model stalls. */
-export const STORY_FALLBACK_MODEL = "kimi-coding/kimi-for-coding";
+export const STORY_FALLBACK_MODEL = "kimi/k3.1-pro";
 // ── Stories ──────────────────────────────────────────────────────────
 
 /** Maximum number of stories a planner can produce */

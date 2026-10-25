@@ -173,7 +173,7 @@ describe("Product Compiler v3 implementation handoff", () => {
       assert.deepEqual(canonical.handoff.executionProfile, {
         schema: "setfarm.model-execution-profile.v1",
         providerId: "minimax",
-        modelId: "minimax/MiniMax-M3",
+        modelId: "minimax/MiniMax-M3.1-Flash",
         selection: "primary",
       });
       assert.deepEqual(canonical.writeAuthority, { mode: "initial", allowedPaths: ["src/App.tsx"] });
@@ -286,7 +286,7 @@ describe("Product Compiler v3 implementation handoff", () => {
       const context = createV3ImplementationContextV1({ handoff: retryHandoff });
       assert.equal(context.writeAuthority.mode, "operational_retry");
       assert.deepEqual(context.writeAuthority.allowedPaths, ["src/App.tsx"]);
-      assert.equal(context.handoff.executionProfile.modelId, "kimi/kimi-for-coding");
+      assert.equal(context.handoff.executionProfile.modelId, "kimi/k3.1-pro");
       assert.equal(context.handoff.workflowStepId, "implement");
       assert.equal(context.handoff.operationalRetry?.directiveHash, operationalRetry.directiveHash);
       assert.match(context.rules.join("\n"), /typed operational retry.*operationalRetry\.expectedDelta/i);

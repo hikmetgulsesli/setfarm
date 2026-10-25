@@ -40,7 +40,6 @@ function extractRoleFromCronName(name: string, prefix: string): string {
   const match = suffix.match(/^(.+)-(\d+)$/);
   return match ? match[1] : suffix;
 }
-const DEFAULT_POLLING_MODEL = "minimax-openai/MiniMax-M3";
 
 // A disabled legacy gateway still owns stale-cron cleanup. A selected private
 // installation owns NONE of that shared lifecycle, including reads/deletions.

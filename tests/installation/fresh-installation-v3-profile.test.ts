@@ -57,12 +57,12 @@ test("actual V3 primary resolver binds selected qualified Codex identity instead
   const selected = { schema: "setfarm.model-execution-profile.v1", providerId: "codex", modelId: "codex/gpt-6.1-sol", selection: "primary" };
   assert.deepEqual(resolver(() => selected)("primary"), selected);
 });
-test("actual V3 fallback resolver refuses selected unsupported fallback and preserves both legacy profiles", () => {
+test("actual V3 fallback resolver refuses selected unsupported fallback and uses ordinary subscription profiles", () => {
   const selected = { schema: "setfarm.model-execution-profile.v1", providerId: "codex", modelId: "codex/gpt-6.1-sol", selection: "primary" };
   assert.throws(() => resolver(() => selected)("fallback"), /FRESH_V3_FALLBACK_PROFILE_UNAVAILABLE/);
   const legacy = resolver(() => null);
-  assert.deepEqual(legacy("primary"), { schema: "setfarm.model-execution-profile.v1", providerId: "minimax", modelId: "minimax/MiniMax-M3", selection: "primary" });
-  assert.deepEqual(legacy("fallback"), { schema: "setfarm.model-execution-profile.v1", providerId: "kimi", modelId: "kimi/kimi-for-coding", selection: "fallback" });
+  assert.deepEqual(legacy("primary"), { schema: "setfarm.model-execution-profile.v1", providerId: "minimax", modelId: "minimax/MiniMax-M3.1-Flash", selection: "primary" });
+  assert.deepEqual(legacy("fallback"), { schema: "setfarm.model-execution-profile.v1", providerId: "kimi", modelId: "kimi/k3.1-pro", selection: "fallback" });
 });
 
 test("profile module import is inert, while actual selected V3 consumption requires explicit bounded Codex model", () => {

@@ -36,14 +36,14 @@ export type ModelExecutionProfileV1 = z.infer<typeof ModelExecutionProfileV1Sche
 const PRIMARY_EXECUTION_PROFILE = Object.freeze({
   schema: "setfarm.model-execution-profile.v1" as const,
   providerId: "minimax",
-  modelId: "minimax/MiniMax-M3",
+  modelId: "minimax/MiniMax-M3.1-Flash",
   selection: "primary" as const,
 });
 
 const FALLBACK_EXECUTION_PROFILE = Object.freeze({
   schema: "setfarm.model-execution-profile.v1" as const,
   providerId: "kimi",
-  modelId: "kimi/kimi-for-coding",
+  modelId: "kimi/k3.1-pro",
   selection: "fallback" as const,
 });
 
