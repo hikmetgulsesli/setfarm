@@ -5,6 +5,7 @@ import path from "node:path";
 import { fetchWorkflow } from "./workflow-fetch.js";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { provisionAgents } from "./agent-provision.js";
+import { resolveWorkflowAgentModel } from "./agent-model-policy.js";
 import { readOpenClawConfig, writeOpenClawConfig, type OpenClawConfig } from "./openclaw-config.js";
 import { updateMainAgentGuidance } from "./main-agent-guidance.js";
 import { addSubagentAllowlist } from "./subagent-allowlist.js";
@@ -58,13 +59,6 @@ const ALWAYS_DENY = [
 const WEB_TOOL_DENY = ["web_search", "web_fetch"];
 const WORKFLOW_AGENT_BASE_SKILLS = ["setfarm-workflows"];
 const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 6000 } as const;
-const MINIMAX_PROVIDER_ID = "minimax";
-const MINIMAX_MODEL_REF = `${MINIMAX_PROVIDER_ID}/MiniMax-M3`;
-const KIMI_CODING_MODEL_REF = "kimi/kimi-for-coding";
-const MINIMAX_FIRST_AGENT_MODEL = {
-  primary: MINIMAX_MODEL_REF,
-  fallbacks: [KIMI_CODING_MODEL_REF],
-} as const;
 
 const DEFAULT_CRON_SESSION_RETENTION = "24h";
 const DEFAULT_SESSION_MAINTENANCE = {
@@ -259,10 +253,6 @@ function ensureSessionMaintenance(config: OpenClawConfig): void {
   delete (maintenance as Record<string, unknown>).rotateBytes;
 }
 
-function defaultModelForAgent(_agentId: string): Record<string, unknown> {
-  return { ...MINIMAX_FIRST_AGENT_MODEL };
-}
-
 function upsertAgent(
   list: Array<Record<string, unknown>>,
   agent: { id: string; name?: string; model?: string; skills?: string[]; timeoutSeconds?: number; workspaceDir: string; agentDir: string; role: AgentRole },
@@ -284,7 +274,7 @@ function upsertAgent(
     skills,
     skillsLimits: WORKFLOW_AGENT_SKILLS_LIMITS,
   };
-  payload.model = agent.model ?? defaultModelForAgent(agent.id);
+  payload.model = resolveWorkflowAgentModel(agent.model, existing?.model);
   // Note: timeoutSeconds is NOT written to the agent config entry because
   // OpenClaw's agent schema uses .strict() and rejects unknown keys.
   // Timeouts are applied via cron job payload.timeoutSeconds instead.

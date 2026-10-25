@@ -192,7 +192,7 @@ describe("v3 implementation attempt compiler", () => {
     assert.deepEqual(loaded.slice, result.slice);
     assert.deepEqual(loaded.evidencePlan, result.evidencePlan);
     assert.equal(loaded.evidencePlanArtifactHash, result.evidencePlanArtifactHash);
-    assert.equal(result.executionProfile.modelId, "minimax/MiniMax-M3");
+    assert.equal(result.executionProfile.modelId, "minimax/MiniMax-M3.1-Flash");
 
     const operationalRetry = createOperationalRetryDirectiveV1({
       runId: packet.runId,
@@ -248,7 +248,7 @@ describe("v3 implementation attempt compiler", () => {
     });
     assert.equal(retry.attempt.attemptClass, "infrastructure_retry");
     assert.equal(retry.attempt.generation, 2);
-    assert.equal(retry.executionProfile.modelId, "kimi/kimi-for-coding");
+    assert.equal(retry.executionProfile.modelId, "kimi/k3.1-pro");
     assert.equal(retry.operationalRetry?.directive.directiveHash, operationalRetry.directiveHash);
     assert.ok(retry.attempt.evidenceRefs.includes(`setfarm://operational-retry/${operationalRetry.directiveHash}`));
     assert.ok(retry.attempt.evidenceRefs.includes(`setfarm://operational-retry-artifact/${retry.operationalRetry?.artifactHash}`));

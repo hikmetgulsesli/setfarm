@@ -45,7 +45,7 @@ describe("operational retry directive v1", () => {
     assert.deepEqual(directive.executionProfile, {
       schema: "setfarm.model-execution-profile.v1",
       providerId: "kimi",
-      modelId: "kimi/kimi-for-coding",
+      modelId: "kimi/k3.1-pro",
       selection: "fallback",
     });
     assert.equal(parseOperationalRetryDirectiveStoryOutput(serializeOperationalRetryDirectiveV1(directive))?.directiveHash, directive.directiveHash);
@@ -95,11 +95,11 @@ describe("operational retry directive v1", () => {
     );
   });
 
-  it("selects MiniMax M3 initially and Kimi only for the bounded fallback", () => {
+  it("selects MiniMax M3.1 Flash initially and Kimi only for the bounded fallback", () => {
     assert.deepEqual(resolveV3ExecutionProfile("primary"), {
       schema: "setfarm.model-execution-profile.v1",
       providerId: "minimax",
-      modelId: "minimax/MiniMax-M3",
+      modelId: "minimax/MiniMax-M3.1-Flash",
       selection: "primary",
     });
     assert.deepEqual(resolveV3ExecutionProfile("fallback"), fixture().executionProfile);
