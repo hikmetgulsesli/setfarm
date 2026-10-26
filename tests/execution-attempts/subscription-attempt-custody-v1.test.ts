@@ -123,6 +123,58 @@ test('registration failure abandons queued outcomes and removes its lifetime eff
   await flush(); f.controller.abort(); f.workerDone.resolve({status:'closed'});
   t.mock.timers.tick(23500); await flush(); assert.deepEqual(f.events,[]);
 });
+function controlledAbortRegistrations(signal: AbortSignal, failRegistration = false) {
+  const registrations = new Set<unknown>();
+  let additions = 0, removals = 0, callLookups = 0;
+  function add(this: AbortSignal, type: string, callback: unknown, options?: unknown) {
+    assert.equal(this, signal); assert.equal(type, 'abort'); assert.deepEqual(options, { once: true });
+    additions++; registrations.add(callback);
+    if (failRegistration) throw Error('SYNTHETIC_REGISTRATION_FAILURE');
+  }
+  function remove(this: AbortSignal, type: string, callback: unknown) {
+    assert.equal(this, signal); assert.equal(type, 'abort');
+    removals++; assert.equal(registrations.delete(callback), true);
+  }
+  signal.addEventListener = add; signal.removeEventListener = remove;
+  const poisonCall = (callback: Function) => Object.defineProperty(callback, 'call', {
+    get() { callLookups++; throw Error('SYNTHETIC_SIGNAL_CALL_ACCESSOR'); },
+  });
+  return { registrations, add, remove, poisonCall,
+    counts: () => ({ additions, removals, callLookups }) };
+}
+test('shutdown actually removes the captured abort registration despite later own call accessor', async t => {
+  const f = fixture(), ports = controlledAbortRegistrations(f.input.signal);
+  t.after(() => { ports.registrations.clear(); f.settle(); });
+  const o = own(f.input);
+  assert.equal(ports.registrations.size, 1);
+  ports.poisonCall(ports.remove);
+  const resultPromise = o.close('completed'); f.settle(); const result = await resultPromise;
+  assert.equal(ports.registrations.size, 0, 'shutdown must remove its actual registration');
+  assert.deepEqual(ports.counts(), { additions: 1, removals: 1, callLookups: 0 });
+  assert.deepEqual(f.events, ['broker-stop', 'worker-stop', 'publish']);
+  assert.equal(result.status, 'closed'); assert.equal(result.fault, 'none');
+});
+test('captured abort callbacks register and remove using the original signal despite own call accessors', async t => {
+  const f = fixture(), ports = controlledAbortRegistrations(f.input.signal);
+  t.after(() => { ports.registrations.clear(); f.settle(); });
+  ports.poisonCall(ports.add); ports.poisonCall(ports.remove);
+  const o = own(f.input);
+  assert.equal(ports.registrations.size, 1, 'acquisition must register its actual callback');
+  const resultPromise = o.close('completed'); f.settle(); const result = await resultPromise;
+  assert.equal(ports.registrations.size, 0);
+  assert.deepEqual(ports.counts(), { additions: 1, removals: 1, callLookups: 0 });
+  assert.equal(result.status, 'closed');
+});
+test('failed registration rollback actually removes its callback despite own removal call accessor', async t => {
+  const f = fixture(), ports = controlledAbortRegistrations(f.input.signal, true);
+  t.after(() => { ports.registrations.clear(); f.settle(); });
+  f.brokerDone.resolve(receipt()); ports.poisonCall(ports.remove);
+  assert.throws(() => own(f.input), { message: 'SUBSCRIPTION_CUSTODY_INPUT_INVALID' });
+  f.workerDone.resolve({ status: 'closed' }); await flush();
+  assert.equal(ports.registrations.size, 0, 'rollback must remove its actual registration');
+  assert.deepEqual(ports.counts(), { additions: 1, removals: 1, callLookups: 0 });
+  assert.deepEqual(f.events, []);
+});
 test('null-prototype custody records are detached shape data',async()=>{
   const f=fixture();
   const o=own(Object.assign(Object.create(null),f.input,{

@@ -93,7 +93,7 @@ export function ownSubscriptionAttemptCustodyV1(input: SubscriptionAttemptCustod
     const detach = () => {
       if (lifetimeTimer !== undefined) clearTimeout(lifetimeTimer);
       lifetimeTimer = undefined;
-      if (listener) { listener = false; try { removeAbort.call(signal, 'abort', ownerAbort); } catch { /* no new ownership is claimed */ } }
+      if (listener) { listener = false; try { Reflect.apply(removeAbort, signal, ['abort', ownerAbort]); } catch { /* no new ownership is claimed */ } }
     };
     const consume = (promise: unknown, yes: (value: unknown) => void, no: () => void) => {
       if (!nativePromise(promise)) throw new Error('INVALID_PROMISE');
@@ -160,7 +160,7 @@ export function ownSubscriptionAttemptCustodyV1(input: SubscriptionAttemptCustod
     consume(brokerClosed, value => brokerOutcome(value), () => brokerOutcome(undefined, true));
     consume(workerClosed, value => workerOutcome(value), () => workerOutcome(undefined, true));
     // Set the rollback marker before registration, including callbacks that throw after registration.
-    listener = true; addAbort.call(signal, 'abort', ownerAbort, { once: true });
+    listener = true; Reflect.apply(addAbort, signal, ['abort', ownerAbort, { once: true }]);
     lifetimeTimer = setTimeout(() => { if (acquisition === 'committed') close('deadline'); }, SUBSCRIPTION_CUSTODY_LIFETIME_MS_V1);
     acquisition = 'committed';
     if (aborted.call(signal)) close('owner-abort');
