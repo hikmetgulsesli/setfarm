@@ -1,0 +1,3176 @@
+{
+  "schema": "setfarm.synthetic-product-build-authority-wire-corpus.v1",
+  "cases": [
+    {
+      "name": "native_none",
+      "wire": {
+        "schema": "setfarm.product-build-authority.v3",
+        "runId": "synthetic-native-authority-none-stage-a",
+        "disposition": "sealed_packet",
+        "packetAuthority": {
+          "schema": "setfarm.product-build-packet-authority.v3",
+          "runId": "synthetic-native-authority-none-stage-a",
+          "packetHash": "d0200147a1c9694fabae74a06fb98db11a07f1c8222daf27ee42884040e2f10c",
+          "producer": {
+            "pass": "synthetic-authority-stage-a-compiler",
+            "codeSha": "cccccccccccccccccccccccccccccccccccccccc",
+            "toolVersions": {
+              "synthetic-corpus": "1"
+            }
+          },
+          "productSpec": {
+            "schema": "setfarm.product-spec.v2",
+            "product": {
+              "id": "PROD_SYNTHETIC_LABEL_CLI",
+              "name": "Synthetic Label CLI",
+              "class": "developer_tool",
+              "goals": [
+                {
+                  "id": "GOAL_RECORD_LABEL",
+                  "statement": "Record one synthetic label through a public CLI interface."
+                }
+              ],
+              "nonGoals": []
+            },
+            "entities": [],
+            "states": [
+              {
+                "id": "STATE_LABELS",
+                "name": "Labels",
+                "kind": "application",
+                "initialValue": [],
+                "invariants": [
+                  "Each recorded label is a non-empty string."
+                ]
+              }
+            ],
+            "persistencePolicies": [],
+            "routes": [
+              {
+                "id": "ROUTE_SYNTHETIC_CLI",
+                "path": "/synthetic-cli",
+                "rootSurfaceRef": "SURF_SYNTHETIC_TERMINAL",
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_TERMINAL"
+                ],
+                "entry": true
+              }
+            ],
+            "surfaces": [
+              {
+                "id": "SURF_SYNTHETIC_TERMINAL",
+                "name": "Synthetic Terminal",
+                "kind": "terminal",
+                "routeRef": "ROUTE_SYNTHETIC_CLI",
+                "required": true,
+                "composition": {
+                  "kind": "route_root"
+                }
+              }
+            ],
+            "actions": [
+              {
+                "id": "ACT_RECORD_LABEL",
+                "name": "Record Label",
+                "controlPlacements": [],
+                "affectedSurfaceRefs": [
+                  "SURF_SYNTHETIC_TERMINAL"
+                ],
+                "trigger": {
+                  "kind": "user"
+                },
+                "invocationInterface": {
+                  "schema": "setfarm.action-invocation-interface-intent.v1",
+                  "kind": "cli_command",
+                  "subcommandTokens": [
+                    "record"
+                  ],
+                  "fieldBindings": [
+                    {
+                      "fieldName": "label",
+                      "optionalPresence": "not_applicable",
+                      "channel": {
+                        "kind": "argv_flag",
+                        "flag": "--label",
+                        "style": "separate"
+                      }
+                    }
+                  ],
+                  "result": {
+                    "kind": "stdout_json",
+                    "successExitCodes": [
+                      0
+                    ],
+                    "valuePointer": "/record",
+                    "failureCases": [
+                      {
+                        "kind": "input_validation",
+                        "exitCodes": [
+                          2
+                        ],
+                        "channel": "stderr_json",
+                        "errorCode": "INPUT_VALIDATION_FAILED",
+                        "codePointer": "/error/code",
+                        "messagePointer": "/error/message"
+                      },
+                      {
+                        "kind": "action_failure",
+                        "exitCodes": [
+                          1
+                        ],
+                        "channel": "stderr_json",
+                        "errorCode": "ACTION_FAILED",
+                        "codePointer": "/error/code",
+                        "messagePointer": "/error/message"
+                      }
+                    ]
+                  }
+                },
+                "input": {
+                  "fields": [
+                    {
+                      "name": "label",
+                      "valueType": "string",
+                      "required": true
+                    }
+                  ]
+                },
+                "preconditions": [],
+                "evidenceScenario": {
+                  "targetInputValues": {
+                    "label": "Synthetic sample"
+                  },
+                  "prerequisiteSteps": []
+                },
+                "stateDeltas": [
+                  {
+                    "stateRef": "STATE_LABELS",
+                    "operation": "append",
+                    "path": "",
+                    "valueFrom": {
+                      "kind": "input",
+                      "field": "label"
+                    }
+                  }
+                ],
+                "navigation": {
+                  "kind": "stay"
+                },
+                "persistenceEffects": [],
+                "success": {
+                  "stateRefs": [
+                    "STATE_LABELS"
+                  ],
+                  "persistenceRefs": [],
+                  "evidenceRefs": [
+                    "EVID_INVOCATION_6D990EAB3D5C6D3D2D7A3EE5DC954F37AA4C42832E1A628D4266D295E9D30B29",
+                    "EVID_LABEL_RECORDED"
+                  ],
+                  "userVisible": true
+                },
+                "failure": {
+                  "stateRefs": [],
+                  "persistenceRefs": [],
+                  "evidenceRefs": [],
+                  "userVisible": true
+                },
+                "evidenceRefs": [
+                  "EVID_INVOCATION_6D990EAB3D5C6D3D2D7A3EE5DC954F37AA4C42832E1A628D4266D295E9D30B29",
+                  "EVID_LABEL_RECORDED"
+                ],
+                "observableEffects": [
+                  {
+                    "id": "OBS_LABEL_RECORDED",
+                    "selector": {
+                      "kind": "invocation_output",
+                      "coordinate": "result_value",
+                      "pointer": "/label",
+                      "valueContract": {
+                        "valueType": "string",
+                        "expectedFrom": {
+                          "kind": "input",
+                          "fieldName": "label"
+                        }
+                      }
+                    },
+                    "assertions": [
+                      {
+                        "phase": "after",
+                        "property": "value",
+                        "operator": "equals",
+                        "expected": "Synthetic sample"
+                      }
+                    ],
+                    "evidenceRef": "EVID_LABEL_RECORDED"
+                  }
+                ]
+              }
+            ],
+            "evidencePredicates": [
+              {
+                "id": "EVID_LABEL_RECORDED",
+                "kind": "observable_outcome",
+                "required": true,
+                "subjectRef": "OBS_LABEL_RECORDED",
+                "capabilityRefs": [],
+                "assertion": {
+                  "operator": "passes"
+                }
+              },
+              {
+                "id": "EVID_INVOCATION_6D990EAB3D5C6D3D2D7A3EE5DC954F37AA4C42832E1A628D4266D295E9D30B29",
+                "kind": "action_invocation",
+                "required": true,
+                "subjectRef": "ACT_RECORD_LABEL",
+                "capabilityRefs": [],
+                "assertion": {
+                  "operator": "passes"
+                }
+              }
+            ],
+            "assumptions": [],
+            "delivery": {
+              "platform": "cli",
+              "techStack": "node-cli",
+              "uiLanguage": "English",
+              "database": "none",
+              "designRequired": false,
+              "uiVisionSummary": "A synthetic command-line product with one record subcommand, a required label flag, JSON output, and no rendered browser surface."
+            },
+            "requirements": [
+              {
+                "id": "REQ_7FB4BCF7086AD6AB",
+                "normalizedClause": "Provide a synthetic CLI that records a required label and returns that label as JSON.",
+                "clauseHash": "7fb4bcf7086ad6ab69428b42e8503c1a460349e89e54b4a039db2297acb1d798",
+                "sources": [
+                  {
+                    "sourceHash": "7fb4bcf7086ad6ab69428b42e8503c1a460349e89e54b4a039db2297acb1d798",
+                    "locator": "task/input.txt",
+                    "sourceRef": "task/input.txt#chars=0-85",
+                    "span": {
+                      "startOffset": 0,
+                      "endOffset": 85,
+                      "startLine": 1,
+                      "startColumn": 0,
+                      "endLine": 1,
+                      "endColumn": 85
+                    }
+                  }
+                ],
+                "classification": "functional",
+                "expectedSemanticKinds": [
+                  "state",
+                  "route",
+                  "surface",
+                  "action",
+                  "evidence",
+                  "observable"
+                ]
+              }
+            ],
+            "traceability": {
+              "schema": "setfarm.product-requirement-traceability.v2",
+              "sourceTaskHash": "7fb4bcf7086ad6ab69428b42e8503c1a460349e89e54b4a039db2297acb1d798",
+              "bindings": [
+                {
+                  "semanticKind": "action",
+                  "semanticRef": "ACT_RECORD_LABEL",
+                  "requirementRefs": [
+                    "REQ_7FB4BCF7086AD6AB"
+                  ]
+                },
+                {
+                  "semanticKind": "evidence",
+                  "semanticRef": "EVID_INVOCATION_6D990EAB3D5C6D3D2D7A3EE5DC954F37AA4C42832E1A628D4266D295E9D30B29",
+                  "requirementRefs": [
+                    "REQ_7FB4BCF7086AD6AB"
+                  ]
+                },
+                {
+                  "semanticKind": "evidence",
+                  "semanticRef": "EVID_LABEL_RECORDED",
+                  "requirementRefs": [
+                    "REQ_7FB4BCF7086AD6AB"
+                  ]
+                },
+                {
+                  "semanticKind": "goal",
+                  "semanticRef": "GOAL_RECORD_LABEL",
+                  "requirementRefs": [
+                    "REQ_7FB4BCF7086AD6AB"
+                  ]
+                },
+                {
+                  "semanticKind": "observable",
+                  "semanticRef": "OBS_LABEL_RECORDED",
+                  "requirementRefs": [
+                    "REQ_7FB4BCF7086AD6AB"
+                  ]
+                },
+                {
+                  "semanticKind": "route",
+                  "semanticRef": "ROUTE_SYNTHETIC_CLI",
+                  "requirementRefs": [
+                    "REQ_7FB4BCF7086AD6AB"
+                  ]
+                },
+                {
+                  "semanticKind": "state",
+                  "semanticRef": "STATE_LABELS",
+                  "requirementRefs": [
+                    "REQ_7FB4BCF7086AD6AB"
+                  ]
+                },
+                {
+                  "semanticKind": "surface",
+                  "semanticRef": "SURF_SYNTHETIC_TERMINAL",
+                  "requirementRefs": [
+                    "REQ_7FB4BCF7086AD6AB"
+                  ]
+                }
+              ]
+            }
+          },
+          "buildTopology": {
+            "schema": "setfarm.build-topology.v1",
+            "stackPack": {
+              "id": "node-cli",
+              "version": "1.0.0",
+              "contentHash": "5d5017f46514f3c7d61ee2f5308a037cf1b75002f5fd3f11285215926b935f3c"
+            },
+            "repo": {
+              "id": "synthetic-native-authority-stage-a",
+              "baseSha": "dddddddddddddddddddddddddddddddddddddddd",
+              "treeHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            },
+            "owners": [
+              {
+                "id": "OWNER_SYNTHETIC_STORY",
+                "kind": "story",
+                "storyRef": "US-001"
+              }
+            ],
+            "pathBindings": [
+              {
+                "id": "PATH_SYNTHETIC_ENTRY",
+                "path": "src/synthetic.ts",
+                "role": "source",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "presence": "present",
+                "knownContentHash": "92f9fe0586ae768272c816441dbe5e73c315a5f06b3a468412aca51bbc72ad8c"
+              }
+            ],
+            "sharedGrants": [],
+            "entrypoints": [
+              {
+                "id": "ENTRY_SYNTHETIC_CLI",
+                "kind": "cli",
+                "pathRef": "PATH_SYNTHETIC_ENTRY",
+                "mountPoint": ".",
+                "routeRefs": [
+                  "ROUTE_SYNTHETIC_CLI"
+                ]
+              }
+            ],
+            "commands": [
+              {
+                "id": "CMD_SYNTHETIC_BUILD",
+                "kind": "build",
+                "argv": [
+                  "npm",
+                  "run",
+                  "build"
+                ],
+                "cwd": ".",
+                "timeoutMs": 120000,
+                "capabilityRefs": []
+              }
+            ],
+            "capabilities": [
+              {
+                "id": "CAP_SYNTHETIC_CLI",
+                "kind": "cli_interaction",
+                "enabled": true
+              }
+            ],
+            "policies": {
+              "packageManager": "npm",
+              "allowedRoots": [
+                "src"
+              ],
+              "deniedGlobs": [],
+              "buildOutputPaths": [
+                "dist"
+              ]
+            }
+          },
+          "storyPlan": {
+            "schema": "setfarm.story-plan.v2",
+            "productSpecHash": "fcad9ab9187740640fea35009dbf8ddbef7a1b88e09310d93763a8cd1483707c",
+            "designSourceKind": "none",
+            "designGraphHash": null,
+            "buildTopologyHash": "65510ae2a6c7870eec42a89cdda9bf8447465214fa7e03de6c314f35126df8bf",
+            "partitionHash": "456332e6d7b3c12226ada89a230f1e638a5639721765102c8eb33f550a4f96ce",
+            "stories": [
+              {
+                "routeRefs": [
+                  "ROUTE_SYNTHETIC_CLI"
+                ],
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_TERMINAL"
+                ],
+                "controlSlotRefs": [],
+                "controlRefs": [],
+                "actionRefs": [
+                  "ACT_RECORD_LABEL"
+                ],
+                "observableRefs": [
+                  "OBS_LABEL_RECORDED"
+                ],
+                "stateRefs": [
+                  "STATE_LABELS"
+                ],
+                "persistenceRefs": [],
+                "evidenceRefs": [
+                  "EVID_INVOCATION_6D990EAB3D5C6D3D2D7A3EE5DC954F37AA4C42832E1A628D4266D295E9D30B29",
+                  "EVID_LABEL_RECORDED"
+                ],
+                "componentHash": "18f06eab33c10afe6a622ec56098f293ddd8086c980b0c42ab95a43eeada9566",
+                "id": "US-001",
+                "order": 1,
+                "title": "Implement ACT_RECORD_LABEL",
+                "description": "Implement the exact closed ProductSpecV2 semantic component 18f06eab33c10afe6a622ec56098f293ddd8086c980b0c42ab95a43eeada9566 for ACT_RECORD_LABEL.",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "dependsOn": [],
+                "ownedPathRefs": [
+                  "PATH_SYNTHETIC_ENTRY"
+                ],
+                "sharedGrantRefs": []
+              }
+            ],
+            "cardinality": {
+              "stories": 1,
+              "routes": 1,
+              "surfaces": 1,
+              "controlSlots": 0,
+              "physicalControls": 0,
+              "actions": 1,
+              "observables": 1,
+              "states": 1,
+              "persistencePolicies": 0,
+              "requiredEvidence": 2,
+              "ownedPaths": 1,
+              "sharedGrants": 0
+            }
+          },
+          "designSourceClosure": {
+            "schema": "setfarm.design-source-closure.v2",
+            "kind": "none",
+            "reason": "product_delivery_design_not_required"
+          },
+          "implementationSourceMap": {
+            "schema": "setfarm.implementation-source-map.v1",
+            "sourceMapVersion": 1,
+            "productSpecV2PayloadHash": "fcad9ab9187740640fea35009dbf8ddbef7a1b88e09310d93763a8cd1483707c",
+            "buildTopologyV1PayloadHash": "65510ae2a6c7870eec42a89cdda9bf8447465214fa7e03de6c314f35126df8bf",
+            "storyPlanV2PayloadHash": "384a6b026d3430485136c33642abeb6bfaf6b02e64f30889b5a35720d6a69e33",
+            "designSourceClosureV2PayloadHash": "e73eeae1083352673b0dbb24f6cc86dd979d0a8e678ae7f66279992493ef45cf",
+            "designSourceKind": "none",
+            "designGraphV2PayloadHash": null,
+            "screenIndexV2PayloadHash": null,
+            "screenIndexSourceHash": null,
+            "converter": null,
+            "screens": []
+          },
+          "packet": {
+            "schema": "setfarm.product-build-packet.v3",
+            "packetVersion": 3,
+            "parentPacketHashes": [],
+            "designSourceKind": "none",
+            "productSpecV2Hash": "70fefdf2527052188e31d51cb52a25b0b7c907d41b0514be605006b365720cc9",
+            "designGraphV2Hash": null,
+            "buildTopologyV1Hash": "83c8c79723782490f1d557f9162c631c8e89c229b21b462ffe54d5764888fbaf",
+            "storyPlanV2Hash": "bfc03d1517ffc09a21f70be225f6617b5692fe4b46a9d84edc707eac4c31e665",
+            "designSourceClosureV2Hash": "02f6bc4814ad22a5dcfb60373fa1f59019f4f09f17d5923dd003a7544665e7e5",
+            "implementationSourceMapV1Hash": "e67d523505d2a23a4e9e5a2f62a20f3e8e6a0f8351a71ec1896739da8dec8024",
+            "compiler": {
+              "version": "synthetic-stage-a.1",
+              "codeSha": "cccccccccccccccccccccccccccccccccccccccc"
+            },
+            "validationIds": [
+              "SYNTHETIC_STAGE_A_VALIDATION"
+            ]
+          },
+          "compilationReport": {
+            "schema": "setfarm.product-compilation-report.v3",
+            "compiler": {
+              "version": "synthetic-stage-a.1",
+              "codeSha": "cccccccccccccccccccccccccccccccccccccccc"
+            },
+            "inputHashes": [
+              "fcad9ab9187740640fea35009dbf8ddbef7a1b88e09310d93763a8cd1483707c"
+            ],
+            "diagnostics": [],
+            "validationIds": [
+              "SYNTHETIC_STAGE_A_VALIDATION"
+            ],
+            "status": "sealed",
+            "artifactHashes": {
+              "productSpecV2": "70fefdf2527052188e31d51cb52a25b0b7c907d41b0514be605006b365720cc9",
+              "designGraphV2": null,
+              "buildTopologyV1": "83c8c79723782490f1d557f9162c631c8e89c229b21b462ffe54d5764888fbaf",
+              "storyPlanV2": "bfc03d1517ffc09a21f70be225f6617b5692fe4b46a9d84edc707eac4c31e665",
+              "designSourceClosureV2": "02f6bc4814ad22a5dcfb60373fa1f59019f4f09f17d5923dd003a7544665e7e5",
+              "implementationSourceMapV1": "e67d523505d2a23a4e9e5a2f62a20f3e8e6a0f8351a71ec1896739da8dec8024"
+            },
+            "packetHash": "d0200147a1c9694fabae74a06fb98db11a07f1c8222daf27ee42884040e2f10c"
+          },
+          "designGraph": null,
+          "refs": {
+            "productSpec": "70fefdf2527052188e31d51cb52a25b0b7c907d41b0514be605006b365720cc9",
+            "buildTopology": "83c8c79723782490f1d557f9162c631c8e89c229b21b462ffe54d5764888fbaf",
+            "storyPlan": "bfc03d1517ffc09a21f70be225f6617b5692fe4b46a9d84edc707eac4c31e665",
+            "designSourceClosure": "02f6bc4814ad22a5dcfb60373fa1f59019f4f09f17d5923dd003a7544665e7e5",
+            "implementationSourceMap": "e67d523505d2a23a4e9e5a2f62a20f3e8e6a0f8351a71ec1896739da8dec8024",
+            "designGraph": null,
+            "packet": "d0200147a1c9694fabae74a06fb98db11a07f1c8222daf27ee42884040e2f10c",
+            "compilationReport": "7112e6643c010ab3e0fc6ed502733185f0bacafad68f21a36b12b6e8c6605074"
+          },
+          "authorityHash": "5c098b23eac91c311e7ca04a5b7f2431d613f8cf9480218cd89bc0aa367f3552"
+        },
+        "refusal": null,
+        "authorityHash": "f2c433beff4379d8324ca17d4de83e6673d871050ac25c5e2056a119f8be2a17"
+      }
+    },
+    {
+      "name": "native_stitch",
+      "wire": {
+        "schema": "setfarm.product-build-authority.v3",
+        "runId": "synthetic-native-authority-stitch-stage-b",
+        "disposition": "sealed_packet",
+        "packetAuthority": {
+          "schema": "setfarm.product-build-packet-authority.v3",
+          "runId": "synthetic-native-authority-stitch-stage-b",
+          "packetHash": "d75a918adb81076c76ef471b0543b7a0828f7baeaeb0db46c2f01bc0889d427b",
+          "producer": {
+            "pass": "synthetic-authority-stage-a-compiler",
+            "codeSha": "cccccccccccccccccccccccccccccccccccccccc",
+            "toolVersions": {
+              "synthetic-corpus": "1"
+            }
+          },
+          "productSpec": {
+            "schema": "setfarm.product-spec.v2",
+            "product": {
+              "id": "PROD_SYNTHETIC_READY",
+              "name": "Synthetic Ready Panel",
+              "class": "utility",
+              "goals": [
+                {
+                  "id": "GOAL_READY",
+                  "statement": "Record readiness using one synthetic visible action."
+                }
+              ],
+              "nonGoals": []
+            },
+            "entities": [],
+            "states": [
+              {
+                "id": "STATE_READY",
+                "name": "Readiness",
+                "kind": "application",
+                "initialValue": false,
+                "invariants": [
+                  "Readiness is a boolean value."
+                ]
+              }
+            ],
+            "persistencePolicies": [],
+            "routes": [
+              {
+                "id": "ROUTE_SYNTHETIC_READY",
+                "path": "/ready",
+                "rootSurfaceRef": "SURF_SYNTHETIC_READY",
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ],
+                "entry": true
+              }
+            ],
+            "surfaces": [
+              {
+                "id": "SURF_SYNTHETIC_READY",
+                "name": "Ready Panel",
+                "kind": "page",
+                "routeRef": "ROUTE_SYNTHETIC_READY",
+                "required": true,
+                "composition": {
+                  "kind": "route_root"
+                }
+              }
+            ],
+            "actions": [
+              {
+                "id": "ACT_MARK_READY",
+                "name": "Mark Ready",
+                "controlPlacements": [
+                  {
+                    "id": "CSLOT_MARK_READY_PRIMARY",
+                    "surfaceRef": "SURF_SYNTHETIC_READY",
+                    "controlHint": "primary_button"
+                  }
+                ],
+                "affectedSurfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ],
+                "trigger": {
+                  "kind": "user"
+                },
+                "invocationInterface": {
+                  "schema": "setfarm.action-invocation-interface-intent.v1",
+                  "kind": "rendered_control"
+                },
+                "input": {
+                  "fields": []
+                },
+                "preconditions": [],
+                "evidenceScenario": {
+                  "controlSlotRef": "CSLOT_MARK_READY_PRIMARY",
+                  "targetInputValues": {},
+                  "prerequisiteSteps": []
+                },
+                "stateDeltas": [
+                  {
+                    "stateRef": "STATE_READY",
+                    "operation": "set",
+                    "path": "",
+                    "valueFrom": {
+                      "kind": "literal",
+                      "value": true
+                    }
+                  }
+                ],
+                "navigation": {
+                  "kind": "stay"
+                },
+                "persistenceEffects": [],
+                "success": {
+                  "stateRefs": [
+                    "STATE_READY"
+                  ],
+                  "persistenceRefs": [],
+                  "evidenceRefs": [
+                    "EVID_INVOCATION_6AE6D589578C507DD60BA06A27967160A28B99246847AE4A9BD027C19055729A",
+                    "EVID_READY"
+                  ],
+                  "userVisible": true
+                },
+                "failure": {
+                  "stateRefs": [],
+                  "persistenceRefs": [],
+                  "evidenceRefs": [],
+                  "userVisible": true
+                },
+                "evidenceRefs": [
+                  "EVID_INVOCATION_6AE6D589578C507DD60BA06A27967160A28B99246847AE4A9BD027C19055729A",
+                  "EVID_READY"
+                ],
+                "observableEffects": [
+                  {
+                    "id": "OBS_READY",
+                    "selector": {
+                      "kind": "control",
+                      "controlSlotRef": "CSLOT_MARK_READY_PRIMARY"
+                    },
+                    "assertions": [
+                      {
+                        "phase": "after",
+                        "property": "visible_text",
+                        "operator": "equals",
+                        "expected": "Ready"
+                      }
+                    ],
+                    "evidenceRef": "EVID_READY"
+                  }
+                ]
+              }
+            ],
+            "evidencePredicates": [
+              {
+                "id": "EVID_READY",
+                "kind": "observable_outcome",
+                "required": true,
+                "subjectRef": "OBS_READY",
+                "capabilityRefs": [],
+                "assertion": {
+                  "operator": "passes"
+                }
+              },
+              {
+                "id": "EVID_INVOCATION_6AE6D589578C507DD60BA06A27967160A28B99246847AE4A9BD027C19055729A",
+                "kind": "action_invocation",
+                "required": true,
+                "subjectRef": "ACT_MARK_READY",
+                "capabilityRefs": [],
+                "assertion": {
+                  "operator": "passes"
+                }
+              }
+            ],
+            "assumptions": [],
+            "delivery": {
+              "platform": "web",
+              "techStack": "vite-react",
+              "uiLanguage": "English",
+              "database": "none",
+              "designRequired": true,
+              "uiVisionSummary": "A synthetic ready panel with a single visible button and exact rendered control and outcome identity."
+            },
+            "requirements": [
+              {
+                "id": "REQ_6A1E0155D4668BCC",
+                "normalizedClause": "Show a synthetic ready button that records readiness and presents its exact visible outcome.",
+                "clauseHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+                "sources": [
+                  {
+                    "sourceHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+                    "locator": "task/input.txt",
+                    "sourceRef": "task/input.txt#chars=0-92",
+                    "span": {
+                      "startOffset": 0,
+                      "endOffset": 92,
+                      "startLine": 1,
+                      "startColumn": 0,
+                      "endLine": 1,
+                      "endColumn": 92
+                    }
+                  }
+                ],
+                "classification": "functional",
+                "expectedSemanticKinds": [
+                  "state",
+                  "route",
+                  "surface",
+                  "action",
+                  "control_placement",
+                  "evidence",
+                  "observable"
+                ]
+              }
+            ],
+            "traceability": {
+              "schema": "setfarm.product-requirement-traceability.v2",
+              "sourceTaskHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+              "bindings": [
+                {
+                  "semanticKind": "action",
+                  "semanticRef": "ACT_MARK_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "control_placement",
+                  "semanticRef": "CSLOT_MARK_READY_PRIMARY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "evidence",
+                  "semanticRef": "EVID_INVOCATION_6AE6D589578C507DD60BA06A27967160A28B99246847AE4A9BD027C19055729A",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "evidence",
+                  "semanticRef": "EVID_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "goal",
+                  "semanticRef": "GOAL_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "observable",
+                  "semanticRef": "OBS_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "route",
+                  "semanticRef": "ROUTE_SYNTHETIC_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "state",
+                  "semanticRef": "STATE_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "surface",
+                  "semanticRef": "SURF_SYNTHETIC_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                }
+              ]
+            }
+          },
+          "designGraph": {
+            "schema": "setfarm.design-interaction-graph.v2",
+            "productSpecHash": "c8a922bfca072d782972f868eed0e565e36a6f84584a2d6232fae1d3c0a19354",
+            "generationTargetsHash": "27722f03b3a8650635660c2d2e0ef91934eb12ba49a6d61a68d7124286c8ab05",
+            "renderedSemanticsHash": "21eb33b5cfd7372c734ab5dd8a33941b24195cbdbde3d9997549625ad60eb3e9",
+            "candidateSelectionHash": "8df8b6fa007663030823bf5f40b4bf9562cc1eb617e846c2b52b33d0bccfda29",
+            "responseBindingsHash": "0b7fac1d7381dcdf5600ec5e9eab8f5ce847e652e9d0544d402336d66b7831c7",
+            "rawArtifactHashes": [
+              "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+              "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152"
+            ],
+            "sourceAuthorities": [
+              {
+                "targetRef": "TARGET_SYNTHETIC_READY",
+                "targetHash": "f23e6aa60210f0f1c087a96b5c9528a1c80e6d393b43c5bcd282bd2935ac1c7b",
+                "responseScreenId": "synthetic-ready-screen",
+                "stageId": "synthetic-ready-stage",
+                "htmlSourceRefHash": "efd4c9202ad025f61cd75bcb1559f83ba6c156a5991b6228dc1b98e3f5f8ffb2",
+                "screenshotSourceRefHash": "e9a7e2f764ea5de29c272c655ef01fdef4071d6c911363fe52f8a44accb9ac62",
+                "htmlDownloadedArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                "screenshotDownloadedArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                "renderedHtmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                "renderedScreenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                "semanticDomHash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                "semanticObservationHash": "baca8c084fbf2c2b96c97c9d21a8e3548efa2ab3ff3b8b69c12e34cf475ed3e8",
+                "roleReceiptSetHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+                "sourceHash": "4123994c771bd90c987a59958e9270dab6f06e715df75b7a6abbabd0122a3376"
+              }
+            ],
+            "surfaces": [
+              {
+                "surfaceRef": "SURF_SYNTHETIC_READY",
+                "productSurfaceHash": "d9ad732429791affe63f3f59afc2295ccef87f4672ecbf95cbf3ab10a1e6c580",
+                "designSurfaceRef": "DSURF_SYNTHETIC_READY",
+                "routeRef": "ROUTE_SYNTHETIC_READY",
+                "kind": "page",
+                "required": true,
+                "composition": {
+                  "kind": "route_root"
+                },
+                "source": {
+                  "targetRef": "TARGET_SYNTHETIC_READY",
+                  "responseScreenId": "synthetic-ready-screen",
+                  "sourceHash": "4123994c771bd90c987a59958e9270dab6f06e715df75b7a6abbabd0122a3376",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "semanticDomHash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                  "semanticObservationHash": "baca8c084fbf2c2b96c97c9d21a8e3548efa2ab3ff3b8b69c12e34cf475ed3e8"
+                },
+                "elementRef": "E000001",
+                "elementHash": "81b2702898bb8b09c6c4e96b8ea69aca4339b2c25112d4ac33559bb4a3078b1c"
+              }
+            ],
+            "actions": [
+              {
+                "actionRef": "ACT_MARK_READY",
+                "productActionHash": "68c99d3bf54e6cd8f9cdaa3456bc04a7e28b075cfdc59165f9de3782c22c25c6",
+                "triggerKind": "user",
+                "navigation": {
+                  "kind": "stay"
+                },
+                "controlSlotRefs": [
+                  "CSLOT_MARK_READY_PRIMARY"
+                ],
+                "controlRefs": [
+                  "CTRL_b7d0099749e45ee4"
+                ],
+                "affectedSurfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ],
+                "observableRefs": [
+                  "OBS_READY"
+                ]
+              }
+            ],
+            "controls": [
+              {
+                "id": "CTRL_b7d0099749e45ee4",
+                "identity": {
+                  "schema": "setfarm.design-control-identity.v2",
+                  "controlSlotRef": "CSLOT_MARK_READY_PRIMARY",
+                  "actionRef": "ACT_MARK_READY",
+                  "routeRef": "ROUTE_SYNTHETIC_READY",
+                  "surfaceRef": "SURF_SYNTHETIC_READY",
+                  "identityHash": "b7d0099749e45ee4110e0c4d1fbb6d89fdc0e820243467f9451e65c0fdcd0512"
+                },
+                "controlPlacementHash": "216dbed67f97695bc281bcbbfd941b1c1787619e88f2701a0fe074659d11930c",
+                "source": {
+                  "targetRef": "TARGET_SYNTHETIC_READY",
+                  "responseScreenId": "synthetic-ready-screen",
+                  "sourceHash": "4123994c771bd90c987a59958e9270dab6f06e715df75b7a6abbabd0122a3376",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "semanticDomHash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                  "semanticObservationHash": "baca8c084fbf2c2b96c97c9d21a8e3548efa2ab3ff3b8b69c12e34cf475ed3e8"
+                },
+                "elementRef": "E000002",
+                "elementHash": "ee60f6acc7a26e5b06a48a59c09047a96366ac1bc7895e896c95120631f0b371",
+                "dataAction": "ACT_MARK_READY",
+                "dataControlSlot": "CSLOT_MARK_READY_PRIMARY",
+                "tagName": "button",
+                "nativeControlKind": "button",
+                "role": null,
+                "ariaLabel": null,
+                "href": null,
+                "interactiveRole": false,
+                "renderState": "rendered",
+                "enabled": true,
+                "pointerOperable": true,
+                "actionInputBindings": []
+              }
+            ],
+            "observables": [
+              {
+                "observableRef": "OBS_READY",
+                "productObservableHash": "b6afa9543933ccf765c66781bb543924b416a5bc36357131b887abbb88b67fd2",
+                "actionRef": "ACT_MARK_READY",
+                "selector": {
+                  "kind": "control",
+                  "controlSlotRef": "CSLOT_MARK_READY_PRIMARY"
+                },
+                "selectorHash": "8595d42079258654cc531c82639109b6427df42e66a1175cbf0fdb9dba8c8207",
+                "assertions": [
+                  {
+                    "phase": "after",
+                    "property": "visible_text",
+                    "operator": "equals",
+                    "expected": "Ready"
+                  }
+                ],
+                "assertionsHash": "cf8d5bbbc907438ed4286f12b609e529c26be68a98550d4dd4eb2140cb36fefe",
+                "evidenceRef": "EVID_READY",
+                "source": {
+                  "targetRef": "TARGET_SYNTHETIC_READY",
+                  "responseScreenId": "synthetic-ready-screen",
+                  "sourceHash": "4123994c771bd90c987a59958e9270dab6f06e715df75b7a6abbabd0122a3376",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "semanticDomHash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                  "semanticObservationHash": "baca8c084fbf2c2b96c97c9d21a8e3548efa2ab3ff3b8b69c12e34cf475ed3e8"
+                },
+                "elementBindings": [
+                  {
+                    "elementRef": "E000002",
+                    "elementHash": "ee60f6acc7a26e5b06a48a59c09047a96366ac1bc7895e896c95120631f0b371"
+                  }
+                ],
+                "roleReceipt": null
+              }
+            ],
+            "cardinality": {
+              "rawArtifacts": 2,
+              "sourceAuthorities": 1,
+              "surfaces": 1,
+              "actions": 1,
+              "userActions": 1,
+              "controlSlots": 1,
+              "physicalControls": 1,
+              "actionInputBindings": 0,
+              "observables": 1
+            }
+          },
+          "buildTopology": {
+            "schema": "setfarm.build-topology.v1",
+            "stackPack": {
+              "id": "vite-react-web-app",
+              "version": "1.0.0",
+              "contentHash": "5d5017f46514f3c7d61ee2f5308a037cf1b75002f5fd3f11285215926b935f3c"
+            },
+            "repo": {
+              "id": "synthetic-ready-native-authority",
+              "baseSha": "dddddddddddddddddddddddddddddddddddddddd",
+              "treeHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            },
+            "owners": [
+              {
+                "id": "OWNER_SYNTHETIC_STORY",
+                "kind": "story",
+                "storyRef": "US-001"
+              }
+            ],
+            "pathBindings": [
+              {
+                "id": "PATH_SYNTHETIC_ENTRY",
+                "path": "src/SyntheticReady.tsx",
+                "role": "source",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "presence": "present",
+                "knownContentHash": "92f9fe0586ae768272c816441dbe5e73c315a5f06b3a468412aca51bbc72ad8c"
+              }
+            ],
+            "sharedGrants": [],
+            "entrypoints": [
+              {
+                "id": "ENTRY_SYNTHETIC_CLI",
+                "kind": "web",
+                "pathRef": "PATH_SYNTHETIC_ENTRY",
+                "mountPoint": "/ready",
+                "routeRefs": [
+                  "ROUTE_SYNTHETIC_READY"
+                ]
+              }
+            ],
+            "commands": [
+              {
+                "id": "CMD_SYNTHETIC_BUILD",
+                "kind": "build",
+                "argv": [
+                  "npm",
+                  "run",
+                  "build"
+                ],
+                "cwd": ".",
+                "timeoutMs": 120000,
+                "capabilityRefs": []
+              }
+            ],
+            "capabilities": [
+              {
+                "id": "CAP_SYNTHETIC_CLI",
+                "kind": "cli_interaction",
+                "enabled": true
+              }
+            ],
+            "policies": {
+              "packageManager": "npm",
+              "allowedRoots": [
+                "src"
+              ],
+              "deniedGlobs": [],
+              "buildOutputPaths": [
+                "dist"
+              ]
+            }
+          },
+          "storyPlan": {
+            "schema": "setfarm.story-plan.v2",
+            "productSpecHash": "c8a922bfca072d782972f868eed0e565e36a6f84584a2d6232fae1d3c0a19354",
+            "designSourceKind": "stitch",
+            "designGraphHash": "a4dac323caf9cda97a08f161e1a3416a6982373cd5f280ceec76bea930411586",
+            "buildTopologyHash": "0e678124cc6dccd736b2e47e5b8e31c4ec92ce6decaa6c27b4baa2554695856a",
+            "partitionHash": "b777a7519752d045deedae0e1257adac206ea5e7658ad197fb655f0d999e4680",
+            "stories": [
+              {
+                "routeRefs": [
+                  "ROUTE_SYNTHETIC_READY"
+                ],
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ],
+                "controlSlotRefs": [
+                  "CSLOT_MARK_READY_PRIMARY"
+                ],
+                "controlRefs": [
+                  "CTRL_b7d0099749e45ee4"
+                ],
+                "actionRefs": [
+                  "ACT_MARK_READY"
+                ],
+                "observableRefs": [
+                  "OBS_READY"
+                ],
+                "stateRefs": [
+                  "STATE_READY"
+                ],
+                "persistenceRefs": [],
+                "evidenceRefs": [
+                  "EVID_INVOCATION_6AE6D589578C507DD60BA06A27967160A28B99246847AE4A9BD027C19055729A",
+                  "EVID_READY"
+                ],
+                "componentHash": "23e29b5cca99fd10f851b14c8c6a749ddd61fde4492e42b173b4c157e76a471b",
+                "id": "US-001",
+                "order": 1,
+                "title": "Implement ACT_MARK_READY",
+                "description": "Implement the exact closed ProductSpecV2 semantic component 23e29b5cca99fd10f851b14c8c6a749ddd61fde4492e42b173b4c157e76a471b for ACT_MARK_READY.",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "dependsOn": [],
+                "ownedPathRefs": [
+                  "PATH_SYNTHETIC_ENTRY"
+                ],
+                "sharedGrantRefs": []
+              }
+            ],
+            "cardinality": {
+              "stories": 1,
+              "routes": 1,
+              "surfaces": 1,
+              "controlSlots": 1,
+              "physicalControls": 1,
+              "actions": 1,
+              "observables": 1,
+              "states": 1,
+              "persistencePolicies": 0,
+              "requiredEvidence": 2,
+              "ownedPaths": 1,
+              "sharedGrants": 0
+            }
+          },
+          "designSourceClosure": {
+            "schema": "setfarm.design-source-closure.v2",
+            "kind": "stitch",
+            "generationTargets": {
+              "artifactType": "setfarm.design-generation-targets.v2",
+              "envelopeHash": "d46e8e843d3e7526ef2232bd3910debfbb5d5c472b9b9e8dd63b1aee1ff02d57",
+              "payloadHash": "27722f03b3a8650635660c2d2e0ef91934eb12ba49a6d61a68d7124286c8ab05"
+            },
+            "directResponseEvidence": {
+              "artifactType": "setfarm.stitch-direct-response-evidence.v2",
+              "envelopeHash": "efb2a94b379b57a35b52c6d591b13f8bf73ee282bec7e57103ea849d17b8fa1c",
+              "payloadHash": "7379ff7840baf42983a6f74ed027f356dbd5022ec27de26599c308713f6e4c81"
+            },
+            "renderedSemantics": {
+              "artifactType": "setfarm.stitch-rendered-semantics.v2",
+              "envelopeHash": "28524b16a78705e387e2dad8b146f17e8c6f2a51b33ac6c82049d52aab843c78",
+              "payloadHash": "21eb33b5cfd7372c734ab5dd8a33941b24195cbdbde3d9997549625ad60eb3e9"
+            },
+            "candidateSelection": {
+              "artifactType": "setfarm.stitch-target-candidate-selection.v2",
+              "envelopeHash": "c22d3fa6b1dac26b3123ced63ec5e7cc6ed714aa68bd5a0a5bf6801ba4f00bc7",
+              "payloadHash": "8df8b6fa007663030823bf5f40b4bf9562cc1eb617e846c2b52b33d0bccfda29"
+            },
+            "responseBindings": {
+              "artifactType": "setfarm.stitch-target-response-bindings.v3",
+              "envelopeHash": "ea6ba504ec5988186cdf6f00264d8765fa997ce52333eb12dbd3dd1caac044f2",
+              "payloadHash": "0b7fac1d7381dcdf5600ec5e9eab8f5ce847e652e9d0544d402336d66b7831c7"
+            },
+            "designGraph": {
+              "artifactType": "setfarm.design-interaction-graph.v2",
+              "envelopeHash": "5ac0c4193f8d3b5e80f19996f3f041eb54016c3a9ef78af43a6f19030e652539",
+              "payloadHash": "a4dac323caf9cda97a08f161e1a3416a6982373cd5f280ceec76bea930411586"
+            },
+            "acceptedAttempt": {
+              "attemptRef": "PCA_4db1e50a22f7a7c11c1908d1ca8a4e5421eefd00d0941bb10d8227c8ce5d7d95",
+              "outputSealHash": "272e83a68b89e049bec65860ba02f2f11f42feac6bd463f7d169727363e97d47"
+            },
+            "artifactManifest": {
+              "artifactType": "setfarm.product-compilation-artifact-manifest.v1",
+              "artifactHash": "9700f79e203ca14644120c40d5be7e4d293541f8c21bd835c04f4f1ee9737c33"
+            },
+            "projectionReceipt": {
+              "artifactType": "setfarm.product-compilation-projection-receipt.v1",
+              "artifactHash": "dd6f4191c95f38b289fe5a7f124b3d22f6c6296420ea2d93695074e51052faaf"
+            }
+          },
+          "implementationSourceMap": {
+            "schema": "setfarm.implementation-source-map.v1",
+            "sourceMapVersion": 1,
+            "productSpecV2PayloadHash": "c8a922bfca072d782972f868eed0e565e36a6f84584a2d6232fae1d3c0a19354",
+            "designGraphV2PayloadHash": "a4dac323caf9cda97a08f161e1a3416a6982373cd5f280ceec76bea930411586",
+            "buildTopologyV1PayloadHash": "0e678124cc6dccd736b2e47e5b8e31c4ec92ce6decaa6c27b4baa2554695856a",
+            "storyPlanV2PayloadHash": "ef1a5c8ff1aaf4502593f854462df51d0260dc3a1c23d8536fd62bd3081f414a",
+            "designSourceClosureV2PayloadHash": "ed9f43a5fd323ee78176e01f8a3739a54cef7df29df3c4b33625722727b13af6",
+            "designSourceKind": "stitch",
+            "screenIndexV2PayloadHash": "91dc3db26bdde961c0471c90715bfd02e40195e82b6904c159e93bb4a2fe21e2",
+            "screenIndexSourceHash": "618ef1ef61e85ddfd0b5246437e1fb978f0ddff99f207cb08f1231aeee83883b",
+            "converter": {
+              "schema": "setfarm.implementation-source-converter.v1",
+              "converterId": "setfarm.stitch-to-jsx",
+              "contractVersion": 1,
+              "componentApiSchema": "setfarm.generated-screen-component-api.v1",
+              "sourceHash": "33f638cbbb9a37e8fdaaa68361e890b9a31359f9d5f54d5474b72e52584e0845",
+              "sourceByteLength": 64
+            },
+            "screens": [
+              {
+                "targetRef": "TARGET_SYNTHETIC_READY",
+                "responseScreenId": "synthetic-ready-screen",
+                "routeRef": "ROUTE_SYNTHETIC_READY",
+                "rootSurface": {
+                  "surfaceRef": "SURF_SYNTHETIC_READY",
+                  "sourceElementRef": "E000001",
+                  "sourceElementHash": "81b2702898bb8b09c6c4e96b8ea69aca4339b2c25112d4ac33559bb4a3078b1c"
+                },
+                "containedSurfaces": [],
+                "pathRef": "PATH_SYNTHETIC_ENTRY",
+                "path": "src/SyntheticReady.tsx",
+                "contentHash": "081f9bd9ac29aebfdef1237ff2299ee2fe2af79ff9bfbddfda96ff7b26cc6daa",
+                "sourceByteLength": 128,
+                "componentName": "SyntheticReady",
+                "componentApi": {
+                  "schema": "setfarm.generated-screen-component-api.v1",
+                  "actionsPropName": "actions",
+                  "actionBindings": [
+                    {
+                      "generatedLocalId": "ready_button",
+                      "actionRef": "ACT_MARK_READY",
+                      "inputFields": []
+                    }
+                  ],
+                  "inputTransports": []
+                },
+                "targetHash": "f23e6aa60210f0f1c087a96b5c9528a1c80e6d393b43c5bcd282bd2935ac1c7b",
+                "responseBindingHash": "46f0cddaa0eb4c40b5b4c9c18356565fc201cec21202f3f29507f0fe56e99287",
+                "storyId": "US-001",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "controls": [
+                  {
+                    "controlSlotRef": "CSLOT_MARK_READY_PRIMARY",
+                    "actionRef": "ACT_MARK_READY",
+                    "placement": {
+                      "id": "CSLOT_MARK_READY_PRIMARY",
+                      "surfaceRef": "SURF_SYNTHETIC_READY",
+                      "controlHint": "primary_button"
+                    },
+                    "controlPlacementHash": "216dbed67f97695bc281bcbbfd941b1c1787619e88f2701a0fe074659d11930c",
+                    "affectedSurfaceRefs": [
+                      "SURF_SYNTHETIC_READY"
+                    ],
+                    "physicalControlRef": "CTRL_b7d0099749e45ee4",
+                    "sourceElementRef": "E000002",
+                    "sourceElementHash": "ee60f6acc7a26e5b06a48a59c09047a96366ac1bc7895e896c95120631f0b371",
+                    "generatedLocalId": "ready_button",
+                    "generatedSelector": "[data-synthetic-ready]",
+                    "generatedKind": "button",
+                    "tagName": "button",
+                    "nativeControlKind": "button",
+                    "role": null,
+                    "ariaLabel": null,
+                    "href": null,
+                    "interactiveRole": false,
+                    "handlerBinding": {
+                      "actionsPropName": "actions",
+                      "callbackKey": "ready_button",
+                      "event": "click",
+                      "preventsDefault": false,
+                      "inputFields": []
+                    }
+                  }
+                ],
+                "actionInputs": [],
+                "observables": [
+                  {
+                    "observableRef": "OBS_READY",
+                    "actionRef": "ACT_MARK_READY",
+                    "selector": {
+                      "kind": "control",
+                      "controlSlotRef": "CSLOT_MARK_READY_PRIMARY"
+                    },
+                    "selectorHash": "8595d42079258654cc531c82639109b6427df42e66a1175cbf0fdb9dba8c8207",
+                    "evidenceRef": "EVID_READY",
+                    "sourceElementRef": "E000002",
+                    "sourceElementHash": "ee60f6acc7a26e5b06a48a59c09047a96366ac1bc7895e896c95120631f0b371",
+                    "generatedSelector": "[data-synthetic-ready]",
+                    "assertionsHash": "cf8d5bbbc907438ed4286f12b609e529c26be68a98550d4dd4eb2140cb36fefe"
+                  }
+                ],
+                "rejectedControls": [],
+                "cardinality": {
+                  "raw": {
+                    "buttons": 1,
+                    "links": 0,
+                    "inputs": 0,
+                    "textareas": 0,
+                    "selects": 0
+                  },
+                  "accepted": {
+                    "buttons": 1,
+                    "links": 0,
+                    "inputs": 0,
+                    "textareas": 0,
+                    "selects": 0
+                  },
+                  "rejected": {
+                    "buttons": 0,
+                    "links": 0,
+                    "inputs": 0,
+                    "textareas": 0,
+                    "selects": 0
+                  }
+                }
+              }
+            ]
+          },
+          "packet": {
+            "schema": "setfarm.product-build-packet.v3",
+            "packetVersion": 3,
+            "parentPacketHashes": [],
+            "designSourceKind": "stitch",
+            "productSpecV2Hash": "9266f7429bc239615a355d674213e94539f0650d83a188a28b06fe598954bb1b",
+            "designGraphV2Hash": "5ac0c4193f8d3b5e80f19996f3f041eb54016c3a9ef78af43a6f19030e652539",
+            "buildTopologyV1Hash": "7f10b286b95ab1210628cbed0cfe160577b86a4a1c2fedc7a5931f5c87195c51",
+            "storyPlanV2Hash": "96fe4646e3e1a8da4917b068b3d93d8391c5662aeaf72d6d699cb7a4025f2408",
+            "designSourceClosureV2Hash": "dedc5b1aa95830ea86ac30c1c3f298a6476f845246827b1f323d0d5770afba57",
+            "implementationSourceMapV1Hash": "9aa9ee45ddc004bdeea54ca27d809d36943042e2172482ec736edfc28de06893",
+            "compiler": {
+              "version": "synthetic-stage-a.1",
+              "codeSha": "cccccccccccccccccccccccccccccccccccccccc"
+            },
+            "validationIds": [
+              "SYNTHETIC_STAGE_A_VALIDATION"
+            ]
+          },
+          "compilationReport": {
+            "schema": "setfarm.product-compilation-report.v3",
+            "compiler": {
+              "version": "synthetic-stage-a.1",
+              "codeSha": "cccccccccccccccccccccccccccccccccccccccc"
+            },
+            "inputHashes": [
+              "c8a922bfca072d782972f868eed0e565e36a6f84584a2d6232fae1d3c0a19354"
+            ],
+            "diagnostics": [],
+            "validationIds": [
+              "SYNTHETIC_STAGE_A_VALIDATION"
+            ],
+            "status": "sealed",
+            "artifactHashes": {
+              "productSpecV2": "9266f7429bc239615a355d674213e94539f0650d83a188a28b06fe598954bb1b",
+              "designGraphV2": "5ac0c4193f8d3b5e80f19996f3f041eb54016c3a9ef78af43a6f19030e652539",
+              "buildTopologyV1": "7f10b286b95ab1210628cbed0cfe160577b86a4a1c2fedc7a5931f5c87195c51",
+              "storyPlanV2": "96fe4646e3e1a8da4917b068b3d93d8391c5662aeaf72d6d699cb7a4025f2408",
+              "designSourceClosureV2": "dedc5b1aa95830ea86ac30c1c3f298a6476f845246827b1f323d0d5770afba57",
+              "implementationSourceMapV1": "9aa9ee45ddc004bdeea54ca27d809d36943042e2172482ec736edfc28de06893"
+            },
+            "packetHash": "d75a918adb81076c76ef471b0543b7a0828f7baeaeb0db46c2f01bc0889d427b"
+          },
+          "designSources": {
+            "generationTargets": {
+              "schema": "setfarm.design-generation-targets.v2",
+              "productSpecHash": "c8a922bfca072d782972f868eed0e565e36a6f84584a2d6232fae1d3c0a19354",
+              "targets": [
+                {
+                  "targetId": "TARGET_SYNTHETIC_READY",
+                  "designSurfaceId": "DSURF_SYNTHETIC_READY",
+                  "routeRef": "ROUTE_SYNTHETIC_READY",
+                  "surfaceRef": "SURF_SYNTHETIC_READY",
+                  "containedSurfaceRefs": [],
+                  "requestScreenKey": "synthetic-ready",
+                  "expectedScreenTitle": "Synthetic Ready",
+                  "requiredControlPlacements": [
+                    {
+                      "controlSlotRef": "CSLOT_MARK_READY_PRIMARY",
+                      "actionRef": "ACT_MARK_READY",
+                      "surfaceRef": "SURF_SYNTHETIC_READY",
+                      "controlHint": "primary_button",
+                      "inputFields": []
+                    }
+                  ],
+                  "affectingActionRefs": [
+                    "ACT_MARK_READY"
+                  ],
+                  "requiredObservableSelectors": [
+                    {
+                      "observableRef": "OBS_READY",
+                      "actionRef": "ACT_MARK_READY",
+                      "selector": {
+                        "kind": "control",
+                        "controlSlotRef": "CSLOT_MARK_READY_PRIMARY"
+                      },
+                      "assertions": [
+                        {
+                          "phase": "after",
+                          "property": "visible_text",
+                          "operator": "equals",
+                          "expected": "Ready"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "directResponseEvidence": {
+              "schema": "setfarm.stitch-direct-response-evidence.v2",
+              "projectId": "synthetic-ready-project",
+              "batches": [
+                {
+                  "stageId": "synthetic-ready-stage",
+                  "targetRefs": [
+                    "TARGET_SYNTHETIC_READY"
+                  ],
+                  "source": "direct",
+                  "candidates": [
+                    {
+                      "screenId": "synthetic-ready-screen",
+                      "title": "Synthetic Ready",
+                      "responsePaths": [
+                        "/synthetic/ready"
+                      ],
+                      "htmlAvailable": true,
+                      "screenshotAvailable": true,
+                      "htmlSourceRefHash": "efd4c9202ad025f61cd75bcb1559f83ba6c156a5991b6228dc1b98e3f5f8ffb2",
+                      "screenshotSourceRefHash": "e9a7e2f764ea5de29c272c655ef01fdef4071d6c911363fe52f8a44accb9ac62",
+                      "htmlDownloadedArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                      "screenshotDownloadedArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                      "identityConflicts": [],
+                      "disposition": "admitted_renderable_screen",
+                      "missingEvidence": []
+                    }
+                  ]
+                }
+              ]
+            },
+            "renderedSemantics": {
+              "schema": "setfarm.stitch-rendered-semantics.v2",
+              "policy": "chromium-offline-role-receipts-control-slots.v2",
+              "generationTargetsHash": "27722f03b3a8650635660c2d2e0ef91934eb12ba49a6d61a68d7124286c8ab05",
+              "directResponseEvidenceHash": "7379ff7840baf42983a6f74ed027f356dbd5022ec27de26599c308713f6e4c81",
+              "renderer": {
+                "engine": "chromium",
+                "playwrightVersion": "1.0.0",
+                "chromiumRevision": "1",
+                "chromiumVersion": "1.0.0"
+              },
+              "profile": {
+                "id": "desktop-1280x800.v1",
+                "deviceType": "DESKTOP",
+                "width": 1280,
+                "height": 800,
+                "deviceScaleFactor": 1,
+                "locale": "en-US",
+                "timezoneId": "UTC",
+                "colorScheme": "light",
+                "reducedMotion": "reduce"
+              },
+              "resources": [],
+              "candidates": [
+                {
+                  "stageId": "synthetic-ready-stage",
+                  "screenId": "synthetic-ready-screen",
+                  "targetRef": "TARGET_SYNTHETIC_READY",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "semanticDom": {
+                    "locator": "synthetic/ready.dom.html",
+                    "hash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                    "byteLength": 100
+                  },
+                  "resourceRefs": [],
+                  "status": "rendered",
+                  "failureCodes": [],
+                  "elements": [
+                    {
+                      "elementRef": "E000001",
+                      "sourceOrdinal": 0,
+                      "tagName": "main",
+                      "ownSurfaceRef": "SURF_SYNTHETIC_READY",
+                      "nearestSurfaceRef": "SURF_SYNTHETIC_READY",
+                      "dataAction": null,
+                      "dataActionInput": null,
+                      "dataControlSlot": null,
+                      "role": null,
+                      "ariaLabel": null,
+                      "href": null,
+                      "nativeControlKind": null,
+                      "interactiveRole": false,
+                      "renderState": "rendered",
+                      "renderBlockers": [],
+                      "enabled": true,
+                      "pointerOperable": true
+                    },
+                    {
+                      "elementRef": "E000002",
+                      "sourceOrdinal": 1,
+                      "tagName": "button",
+                      "ownSurfaceRef": null,
+                      "nearestSurfaceRef": "SURF_SYNTHETIC_READY",
+                      "dataAction": "ACT_MARK_READY",
+                      "dataActionInput": null,
+                      "dataControlSlot": "CSLOT_MARK_READY_PRIMARY",
+                      "role": null,
+                      "ariaLabel": null,
+                      "href": null,
+                      "nativeControlKind": "button",
+                      "interactiveRole": false,
+                      "renderState": "rendered",
+                      "renderBlockers": [],
+                      "enabled": true,
+                      "pointerOperable": true
+                    }
+                  ],
+                  "roleReceipts": [],
+                  "observationHash": "baca8c084fbf2c2b96c97c9d21a8e3548efa2ab3ff3b8b69c12e34cf475ed3e8"
+                }
+              ]
+            },
+            "candidateSelection": {
+              "schema": "setfarm.stitch-target-candidate-selection.v2",
+              "policy": "exact-v2-rendered-slots-surfaces-role-receipts-hash-ranked.v2",
+              "generationTargetsHash": "27722f03b3a8650635660c2d2e0ef91934eb12ba49a6d61a68d7124286c8ab05",
+              "directResponseEvidenceHash": "7379ff7840baf42983a6f74ed027f356dbd5022ec27de26599c308713f6e4c81",
+              "renderedSemanticsHash": "21eb33b5cfd7372c734ab5dd8a33941b24195cbdbde3d9997549625ad60eb3e9",
+              "candidates": [
+                {
+                  "stageId": "synthetic-ready-stage",
+                  "targetRefs": [
+                    "TARGET_SYNTHETIC_READY"
+                  ],
+                  "screenId": "synthetic-ready-screen",
+                  "title": "Synthetic Ready",
+                  "responsePaths": [
+                    "/synthetic/ready"
+                  ],
+                  "renderDisposition": "admitted_renderable_screen",
+                  "identityConflicts": [],
+                  "missingEvidence": [],
+                  "htmlAvailable": true,
+                  "screenshotAvailable": true,
+                  "htmlSourceRefHash": "efd4c9202ad025f61cd75bcb1559f83ba6c156a5991b6228dc1b98e3f5f8ffb2",
+                  "screenshotSourceRefHash": "e9a7e2f764ea5de29c272c655ef01fdef4071d6c911363fe52f8a44accb9ac62",
+                  "htmlDownloadedArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotDownloadedArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "htmlArtifactValidity": "valid",
+                  "screenshotArtifactValidity": "valid",
+                  "renderedStatus": "rendered",
+                  "renderedTargetRef": "TARGET_SYNTHETIC_READY",
+                  "renderedHtmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "renderedScreenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "semanticDomHash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                  "semanticObservationHash": "baca8c084fbf2c2b96c97c9d21a8e3548efa2ab3ff3b8b69c12e34cf475ed3e8",
+                  "roleReceiptSetHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+                  "semanticFailureCodes": []
+                }
+              ],
+              "selections": [
+                {
+                  "targetRef": "TARGET_SYNTHETIC_READY",
+                  "stageId": "synthetic-ready-stage",
+                  "evaluations": [
+                    {
+                      "screenId": "synthetic-ready-screen",
+                      "qualificationTier": "exact_target_semantics",
+                      "rejectionCodes": [],
+                      "semanticChecks": [
+                        {
+                          "kind": "screen_title",
+                          "semanticRef": "TARGET_SYNTHETIC_READY",
+                          "expectedValue": "Synthetic Ready",
+                          "observedValue": "Synthetic Ready",
+                          "expectedCount": 1,
+                          "observedCount": 1,
+                          "elementRefs": [],
+                          "disposition": "exact"
+                        },
+                        {
+                          "kind": "target_identity",
+                          "semanticRef": "TARGET_SYNTHETIC_READY",
+                          "expectedValue": "TARGET_SYNTHETIC_READY",
+                          "observedValue": "TARGET_SYNTHETIC_READY",
+                          "expectedCount": 1,
+                          "observedCount": 1,
+                          "elementRefs": [],
+                          "disposition": "exact"
+                        }
+                      ]
+                    }
+                  ],
+                  "rankedQualifiedScreenIds": [
+                    "synthetic-ready-screen"
+                  ],
+                  "status": "selected",
+                  "selectedScreenId": "synthetic-ready-screen"
+                }
+              ]
+            },
+            "responseBindings": {
+              "schema": "setfarm.stitch-target-response-bindings.v3",
+              "generationTargetsHash": "27722f03b3a8650635660c2d2e0ef91934eb12ba49a6d61a68d7124286c8ab05",
+              "directResponseEvidenceHash": "7379ff7840baf42983a6f74ed027f356dbd5022ec27de26599c308713f6e4c81",
+              "candidateSelectionHash": "8df8b6fa007663030823bf5f40b4bf9562cc1eb617e846c2b52b33d0bccfda29",
+              "renderedSemanticsHash": "21eb33b5cfd7372c734ab5dd8a33941b24195cbdbde3d9997549625ad60eb3e9",
+              "bindings": [
+                {
+                  "targetRef": "TARGET_SYNTHETIC_READY",
+                  "targetHash": "f23e6aa60210f0f1c087a96b5c9528a1c80e6d393b43c5bcd282bd2935ac1c7b",
+                  "requestScreenKey": "synthetic-ready",
+                  "expectedScreenTitle": "Synthetic Ready",
+                  "responseScreenId": "synthetic-ready-screen",
+                  "responseTitle": "Synthetic Ready",
+                  "stageId": "synthetic-ready-stage",
+                  "htmlSourceRefHash": "efd4c9202ad025f61cd75bcb1559f83ba6c156a5991b6228dc1b98e3f5f8ffb2",
+                  "screenshotSourceRefHash": "e9a7e2f764ea5de29c272c655ef01fdef4071d6c911363fe52f8a44accb9ac62",
+                  "htmlDownloadedArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotDownloadedArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "renderedHtmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "renderedScreenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "semanticDomHash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                  "semanticObservationHash": "baca8c084fbf2c2b96c97c9d21a8e3548efa2ab3ff3b8b69c12e34cf475ed3e8",
+                  "roleReceiptSetHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+                  "surfaceBindings": [
+                    {
+                      "surfaceRef": "SURF_SYNTHETIC_READY",
+                      "elementRef": "E000001",
+                      "elementHash": "81b2702898bb8b09c6c4e96b8ea69aca4339b2c25112d4ac33559bb4a3078b1c"
+                    }
+                  ],
+                  "controlSlotBindings": [
+                    {
+                      "controlSlotRef": "CSLOT_MARK_READY_PRIMARY",
+                      "actionRef": "ACT_MARK_READY",
+                      "surfaceRef": "SURF_SYNTHETIC_READY",
+                      "actionInputRefs": [],
+                      "elementRef": "E000002",
+                      "elementHash": "ee60f6acc7a26e5b06a48a59c09047a96366ac1bc7895e896c95120631f0b371"
+                    }
+                  ],
+                  "actionInputBindings": [],
+                  "observableBindings": [
+                    {
+                      "observableRef": "OBS_READY",
+                      "actionRef": "ACT_MARK_READY",
+                      "selectorKind": "control",
+                      "selectorHash": "8595d42079258654cc531c82639109b6427df42e66a1175cbf0fdb9dba8c8207",
+                      "elementRefs": [
+                        "E000002"
+                      ],
+                      "elementHashes": [
+                        "ee60f6acc7a26e5b06a48a59c09047a96366ac1bc7895e896c95120631f0b371"
+                      ],
+                      "roleReceiptHash": null
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "refs": {
+            "productSpec": "9266f7429bc239615a355d674213e94539f0650d83a188a28b06fe598954bb1b",
+            "designGraph": "5ac0c4193f8d3b5e80f19996f3f041eb54016c3a9ef78af43a6f19030e652539",
+            "buildTopology": "7f10b286b95ab1210628cbed0cfe160577b86a4a1c2fedc7a5931f5c87195c51",
+            "storyPlan": "96fe4646e3e1a8da4917b068b3d93d8391c5662aeaf72d6d699cb7a4025f2408",
+            "designSourceClosure": "dedc5b1aa95830ea86ac30c1c3f298a6476f845246827b1f323d0d5770afba57",
+            "implementationSourceMap": "9aa9ee45ddc004bdeea54ca27d809d36943042e2172482ec736edfc28de06893",
+            "packet": "d75a918adb81076c76ef471b0543b7a0828f7baeaeb0db46c2f01bc0889d427b",
+            "compilationReport": "d09efc26d2ce7d0caf9f5aa974d2e83f613c253eea231a938bd6a9565dfa8db0"
+          },
+          "authorityHash": "1173383514e9a21d611d854c874835c9cb888a32a330bdbed474290dcdb42f70"
+        },
+        "refusal": null,
+        "authorityHash": "0d86482be700980e249ad2f7110e4ee2ba3e6553abb98e0219b6a9c01f6147a1"
+      }
+    },
+    {
+      "name": "legacy1",
+      "wire": {
+        "schema": "setfarm.product-build-authority.v3",
+        "runId": "synthetic-authority-legacy1",
+        "disposition": "sealed_packet",
+        "packetAuthority": {
+          "schema": "setfarm.product-build-authority.v1",
+          "runId": "synthetic-authority-legacy1",
+          "packetHash": "52762c96ab905deb4795b2b7b098918ecadc6b967a6538d9270440199e62ae75",
+          "producer": {
+            "pass": "synthetic-authority-stage-a-compiler",
+            "codeSha": "cccccccccccccccccccccccccccccccccccccccc",
+            "toolVersions": {
+              "synthetic-corpus": "1"
+            }
+          },
+          "productSpec": {
+            "schema": "setfarm.product-spec.v1",
+            "product": {
+              "id": "PROD_SYNTHETIC_READY",
+              "name": "Synthetic Ready Panel",
+              "class": "utility",
+              "goals": [
+                {
+                  "id": "GOAL_READY",
+                  "statement": "Record readiness using one synthetic visible action."
+                }
+              ],
+              "nonGoals": []
+            },
+            "entities": [],
+            "states": [
+              {
+                "id": "STATE_READY",
+                "name": "Readiness",
+                "kind": "application",
+                "initialValue": false,
+                "invariants": [
+                  "Readiness is a boolean value."
+                ]
+              }
+            ],
+            "persistencePolicies": [],
+            "routes": [
+              {
+                "id": "ROUTE_SYNTHETIC_READY",
+                "path": "/ready",
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ],
+                "entry": true
+              }
+            ],
+            "surfaces": [
+              {
+                "id": "SURF_SYNTHETIC_READY",
+                "name": "Ready Panel",
+                "kind": "page",
+                "routeRef": "ROUTE_SYNTHETIC_READY",
+                "required": true
+              }
+            ],
+            "actions": [
+              {
+                "id": "ACT_MARK_READY",
+                "name": "Mark Ready",
+                "trigger": {
+                  "kind": "user"
+                },
+                "input": {
+                  "fields": []
+                },
+                "preconditions": [],
+                "evidenceScenario": {
+                  "targetInputValues": {},
+                  "prerequisiteSteps": []
+                },
+                "stateDeltas": [
+                  {
+                    "stateRef": "STATE_READY",
+                    "operation": "set",
+                    "path": "",
+                    "valueFrom": {
+                      "kind": "literal",
+                      "value": true
+                    }
+                  }
+                ],
+                "navigation": {
+                  "kind": "stay"
+                },
+                "persistenceEffects": [],
+                "success": {
+                  "stateRefs": [
+                    "STATE_READY"
+                  ],
+                  "persistenceRefs": [],
+                  "evidenceRefs": [
+                    "EVID_READY"
+                  ],
+                  "userVisible": true
+                },
+                "failure": {
+                  "stateRefs": [],
+                  "persistenceRefs": [],
+                  "evidenceRefs": [],
+                  "userVisible": true
+                },
+                "evidenceRefs": [
+                  "EVID_READY"
+                ],
+                "observableEffects": [
+                  {
+                    "id": "OBS_READY",
+                    "selector": {
+                      "kind": "control",
+                      "actionRef": "ACT_MARK_READY"
+                    },
+                    "assertions": [
+                      {
+                        "phase": "after",
+                        "property": "visible_text",
+                        "operator": "equals",
+                        "expected": "Ready"
+                      }
+                    ],
+                    "evidenceRef": "EVID_READY"
+                  }
+                ],
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ]
+              }
+            ],
+            "evidencePredicates": [
+              {
+                "id": "EVID_READY",
+                "kind": "observable_outcome",
+                "required": true,
+                "subjectRef": "OBS_READY",
+                "capabilityRefs": [],
+                "assertion": {
+                  "operator": "passes"
+                }
+              }
+            ],
+            "assumptions": [],
+            "delivery": {
+              "platform": "web",
+              "techStack": "vite-react",
+              "uiLanguage": "English",
+              "database": "none",
+              "designRequired": true,
+              "uiVisionSummary": "A synthetic ready panel with a single visible button and exact rendered control and outcome identity."
+            },
+            "requirements": [
+              {
+                "id": "REQ_6A1E0155D4668BCC",
+                "normalizedClause": "Show a synthetic ready button that records readiness and presents its exact visible outcome.",
+                "clauseHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+                "sources": [
+                  {
+                    "sourceHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+                    "locator": "task/input.txt",
+                    "sourceRef": "task/input.txt#chars=0-92",
+                    "span": {
+                      "startOffset": 0,
+                      "endOffset": 92,
+                      "startLine": 1,
+                      "startColumn": 0,
+                      "endLine": 1,
+                      "endColumn": 92
+                    }
+                  }
+                ],
+                "classification": "functional",
+                "expectedSemanticKinds": [
+                  "action"
+                ]
+              }
+            ],
+            "traceability": {
+              "schema": "setfarm.product-requirement-traceability.v1",
+              "sourceTaskHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+              "bindings": [
+                {
+                  "semanticKind": "action",
+                  "semanticRef": "ACT_MARK_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "evidence",
+                  "semanticRef": "EVID_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "goal",
+                  "semanticRef": "GOAL_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "observable",
+                  "semanticRef": "OBS_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "route",
+                  "semanticRef": "ROUTE_SYNTHETIC_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "state",
+                  "semanticRef": "STATE_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "surface",
+                  "semanticRef": "SURF_SYNTHETIC_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                }
+              ]
+            }
+          },
+          "designGraph": {
+            "schema": "setfarm.design-interaction-graph.v1",
+            "rawArtifactHashes": [
+              "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+              "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152"
+            ],
+            "surfaces": [
+              {
+                "id": "DSURF_SYNTHETIC_READY",
+                "surfaceRef": "SURF_SYNTHETIC_READY",
+                "sourceArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                "sourceLocator": "synthetic/ready.html"
+              }
+            ],
+            "controls": [
+              {
+                "id": "CTRL_SYNTHETIC_READY",
+                "identity": {
+                  "kind": "explicit",
+                  "provenance": [
+                    {
+                      "schema": "setfarm.provenance-ref.v1",
+                      "sourceHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                      "locator": "synthetic/ready.html",
+                      "confidence": "exact"
+                    }
+                  ]
+                },
+                "generatedLocalId": "ready_button",
+                "kind": "button",
+                "label": "Ready",
+                "accessibility": {
+                  "role": "button",
+                  "name": "Ready"
+                },
+                "surfaceRef": "SURF_SYNTHETIC_READY",
+                "interactive": true,
+                "source": {
+                  "artifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "locator": "synthetic/ready.html",
+                  "selector": "[data-action=\"ACT_MARK_READY\"]"
+                }
+              }
+            ],
+            "bindings": [
+              {
+                "controlRef": "CTRL_SYNTHETIC_READY",
+                "disposition": "action",
+                "actionRef": "ACT_MARK_READY",
+                "routeRef": "ROUTE_SYNTHETIC_READY",
+                "inputBindings": [],
+                "stateRefs": [
+                  "STATE_READY"
+                ],
+                "persistenceRefs": [],
+                "evidenceRefs": [
+                  "EVID_READY"
+                ]
+              }
+            ],
+            "unresolvedBindings": [],
+            "observableBindings": [
+              {
+                "observableRef": "OBS_READY",
+                "actionRef": "ACT_MARK_READY",
+                "evidenceRef": "EVID_READY",
+                "target": {
+                  "kind": "control",
+                  "controlRef": "CTRL_SYNTHETIC_READY"
+                }
+              }
+            ]
+          },
+          "buildTopology": {
+            "schema": "setfarm.build-topology.v1",
+            "stackPack": {
+              "id": "vite-react-web-app",
+              "version": "1.0.0",
+              "contentHash": "5d5017f46514f3c7d61ee2f5308a037cf1b75002f5fd3f11285215926b935f3c"
+            },
+            "repo": {
+              "id": "synthetic-ready-native-authority",
+              "baseSha": "dddddddddddddddddddddddddddddddddddddddd",
+              "treeHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            },
+            "owners": [
+              {
+                "id": "OWNER_SYNTHETIC_STORY",
+                "kind": "story",
+                "storyRef": "US-001"
+              }
+            ],
+            "pathBindings": [
+              {
+                "id": "PATH_SYNTHETIC_ENTRY",
+                "path": "src/SyntheticReady.tsx",
+                "role": "source",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "presence": "present",
+                "knownContentHash": "92f9fe0586ae768272c816441dbe5e73c315a5f06b3a468412aca51bbc72ad8c"
+              }
+            ],
+            "sharedGrants": [],
+            "entrypoints": [
+              {
+                "id": "ENTRY_SYNTHETIC_CLI",
+                "kind": "web",
+                "pathRef": "PATH_SYNTHETIC_ENTRY",
+                "mountPoint": "/ready",
+                "routeRefs": [
+                  "ROUTE_SYNTHETIC_READY"
+                ]
+              }
+            ],
+            "commands": [
+              {
+                "id": "CMD_SYNTHETIC_BUILD",
+                "kind": "build",
+                "argv": [
+                  "npm",
+                  "run",
+                  "build"
+                ],
+                "cwd": ".",
+                "timeoutMs": 120000,
+                "capabilityRefs": []
+              },
+              {
+                "id": "CMD_SYNTHETIC_PREVIEW",
+                "kind": "preview",
+                "argv": [
+                  "npm",
+                  "run",
+                  "preview",
+                  "--",
+                  "--host",
+                  "{{HOST}}",
+                  "--port",
+                  "{{PORT}}",
+                  "--strictPort"
+                ],
+                "cwd": ".",
+                "timeoutMs": 120000,
+                "capabilityRefs": []
+              }
+            ],
+            "capabilities": [
+              {
+                "id": "CAP_SYNTHETIC_CLI",
+                "kind": "cli_interaction",
+                "enabled": true
+              }
+            ],
+            "policies": {
+              "packageManager": "npm",
+              "allowedRoots": [
+                "src"
+              ],
+              "deniedGlobs": [],
+              "buildOutputPaths": [
+                "dist"
+              ]
+            },
+            "runtimeDataContract": {
+              "schema": "setfarm.runtime-data-contract.v1",
+              "contractVersion": 1,
+              "sourceProductSpecHash": "73c6cae766934c67345dd0c7e2686651d41714c66a54d330ec44fb0dea59e1ef",
+              "delivery": {
+                "platform": "web",
+                "techStack": "vite-react",
+                "database": "none"
+              },
+              "policyBindings": [],
+              "authorities": [
+                {
+                  "id": "AUTH_DATA_STATELESS_NONE",
+                  "kind": "stateless",
+                  "durability": "none",
+                  "persistenceRefs": []
+                }
+              ],
+              "writableVolumes": [],
+              "scratch": {
+                "kind": "none"
+              }
+            },
+            "runtimeDataContractHash": "c360added4422b3fccdb5a331c3f1796d686174f3a67dbb82d3c543448186769",
+            "runtimeEvidenceContract": {
+              "schema": "setfarm.runtime-evidence-contract.v1",
+              "adapter": "browser-service",
+              "stackPackId": "vite-react-web-app",
+              "server": {
+                "argv": [
+                  "npm",
+                  "run",
+                  "preview",
+                  "--",
+                  "--host",
+                  "{{HOST}}",
+                  "--port",
+                  "{{PORT}}",
+                  "--strictPort"
+                ],
+                "cwd": ".",
+                "timeoutMs": 120000
+              },
+              "readiness": {
+                "method": "GET",
+                "path": "/ready",
+                "expectedStatus": 200,
+                "timeoutMs": 120000
+              },
+              "capture": {
+                "schema": "setfarm.browser-state-capture.v1",
+                "globalName": "__SETFARM_TEST_BRIDGE__",
+                "actionInvocation": {
+                  "schema": "setfarm.browser-action-invocation.v1",
+                  "method": "invokeAction"
+                },
+                "scenarioMode": {
+                  "schema": "setfarm.browser-scenario-mode.v1",
+                  "globalName": "__SETFARM_SCENARIO_MODE__",
+                  "value": "manual"
+                },
+                "stateBindings": [
+                  {
+                    "stateRef": "STATE_READY",
+                    "pointer": "/states/STATE_READY"
+                  }
+                ]
+              },
+              "flowIsolation": {
+                "schema": "setfarm.browser-flow-isolation.v1",
+                "method": "clear-local-session-storage-and-reload"
+              }
+            },
+            "runtimeEvidenceContractHash": "93dde177def80018511d094a16586574c292c71bc4575f850b88bc65a6395719"
+          },
+          "storyPlan": {
+            "schema": "setfarm.story-plan.v1",
+            "stories": [
+              {
+                "id": "US-001",
+                "order": 1,
+                "title": "Implement synthetic readiness",
+                "description": "Implement the exact synthetic ready action and visible outcome.",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "dependsOn": [],
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ],
+                "controlRefs": [
+                  "CTRL_SYNTHETIC_READY"
+                ],
+                "actionRefs": [
+                  "ACT_MARK_READY"
+                ],
+                "stateRefs": [
+                  "STATE_READY"
+                ],
+                "persistenceRefs": [],
+                "evidenceRefs": [
+                  "EVID_READY"
+                ],
+                "ownedPathRefs": [
+                  "PATH_SYNTHETIC_ENTRY"
+                ],
+                "sharedGrantRefs": []
+              }
+            ]
+          },
+          "packet": {
+            "schema": "setfarm.product-build-packet.v1",
+            "packetVersion": 1,
+            "parentPacketHashes": [],
+            "productSpecHash": "03353093f2973627e3d7018f6903c2be63dc843ba51f2b475308377dafed0f6a",
+            "designGraphHash": "bd234cbe1f1d215533fa04d2853f035778d9c22f0c4ed90ae725e0cedc86904e",
+            "buildTopologyHash": "6d35fa62110a781e095b40811ada828ebfa5eb5ac94209a53cda96229d4ee55f",
+            "storyPlanHash": "239d74282c23515734137014af50dad200ac178627355c587362eb2cc67be300",
+            "runtimeDataContractHash": "c360added4422b3fccdb5a331c3f1796d686174f3a67dbb82d3c543448186769",
+            "runtimeEvidenceContractHash": "93dde177def80018511d094a16586574c292c71bc4575f850b88bc65a6395719",
+            "compiler": {
+              "version": "synthetic-stage-a.1",
+              "codeSha": "cccccccccccccccccccccccccccccccccccccccc"
+            },
+            "validationIds": [
+              "SYNTHETIC_STAGE_A_VALIDATION"
+            ]
+          },
+          "compilationReport": {
+            "schema": "setfarm.product-compilation-report.v1",
+            "compiler": {
+              "version": "synthetic-stage-a.1",
+              "codeSha": "cccccccccccccccccccccccccccccccccccccccc"
+            },
+            "inputHashes": [
+              "73c6cae766934c67345dd0c7e2686651d41714c66a54d330ec44fb0dea59e1ef"
+            ],
+            "diagnostics": [],
+            "validationIds": [
+              "SYNTHETIC_STAGE_A_VALIDATION"
+            ],
+            "status": "sealed",
+            "artifactHashes": {
+              "productSpec": "03353093f2973627e3d7018f6903c2be63dc843ba51f2b475308377dafed0f6a",
+              "designGraph": "bd234cbe1f1d215533fa04d2853f035778d9c22f0c4ed90ae725e0cedc86904e",
+              "buildTopology": "6d35fa62110a781e095b40811ada828ebfa5eb5ac94209a53cda96229d4ee55f",
+              "storyPlan": "239d74282c23515734137014af50dad200ac178627355c587362eb2cc67be300"
+            },
+            "packetHash": "52762c96ab905deb4795b2b7b098918ecadc6b967a6538d9270440199e62ae75"
+          },
+          "refs": {
+            "productSpec": "03353093f2973627e3d7018f6903c2be63dc843ba51f2b475308377dafed0f6a",
+            "designGraph": "bd234cbe1f1d215533fa04d2853f035778d9c22f0c4ed90ae725e0cedc86904e",
+            "buildTopology": "6d35fa62110a781e095b40811ada828ebfa5eb5ac94209a53cda96229d4ee55f",
+            "storyPlan": "239d74282c23515734137014af50dad200ac178627355c587362eb2cc67be300",
+            "packet": "52762c96ab905deb4795b2b7b098918ecadc6b967a6538d9270440199e62ae75",
+            "compilationReport": "62b7389e0ee8990faf94f483457338bce854ecd8a8dda8e5b2cac46be02ddd0a"
+          },
+          "authorityHash": "7c900bd455c2dba5e71c36a28a9d5b280820ab37e39c2207f823c08f4bff15dc"
+        },
+        "refusal": null,
+        "authorityHash": "1da84ced74e91921cf26397f48191e7e189bd25ec4be167a29a5e9085d2fa202"
+      }
+    },
+    {
+      "name": "legacy2",
+      "wire": {
+        "schema": "setfarm.product-build-authority.v3",
+        "runId": "synthetic-authority-legacy2",
+        "disposition": "sealed_packet",
+        "packetAuthority": {
+          "schema": "setfarm.product-build-authority.v1",
+          "runId": "synthetic-authority-legacy2",
+          "packetHash": "435867c525d3655a6d7701551537e710b9719ff3b3dda68eb79f883f6d12fc59",
+          "producer": {
+            "pass": "synthetic-authority-stage-a-compiler",
+            "codeSha": "cccccccccccccccccccccccccccccccccccccccc",
+            "toolVersions": {
+              "synthetic-corpus": "1"
+            }
+          },
+          "productSpec": {
+            "schema": "setfarm.product-spec.v1",
+            "product": {
+              "id": "PROD_SYNTHETIC_READY",
+              "name": "Synthetic Ready Panel",
+              "class": "utility",
+              "goals": [
+                {
+                  "id": "GOAL_READY",
+                  "statement": "Record readiness using one synthetic visible action."
+                }
+              ],
+              "nonGoals": []
+            },
+            "entities": [],
+            "states": [
+              {
+                "id": "STATE_READY",
+                "name": "Readiness",
+                "kind": "application",
+                "initialValue": false,
+                "invariants": [
+                  "Readiness is a boolean value."
+                ]
+              }
+            ],
+            "persistencePolicies": [],
+            "routes": [
+              {
+                "id": "ROUTE_SYNTHETIC_READY",
+                "path": "/ready",
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ],
+                "entry": true
+              }
+            ],
+            "surfaces": [
+              {
+                "id": "SURF_SYNTHETIC_READY",
+                "name": "Ready Panel",
+                "kind": "page",
+                "routeRef": "ROUTE_SYNTHETIC_READY",
+                "required": true
+              }
+            ],
+            "actions": [
+              {
+                "id": "ACT_MARK_READY",
+                "name": "Mark Ready",
+                "trigger": {
+                  "kind": "user"
+                },
+                "input": {
+                  "fields": []
+                },
+                "preconditions": [],
+                "evidenceScenario": {
+                  "targetInputValues": {},
+                  "prerequisiteSteps": []
+                },
+                "stateDeltas": [
+                  {
+                    "stateRef": "STATE_READY",
+                    "operation": "set",
+                    "path": "",
+                    "valueFrom": {
+                      "kind": "literal",
+                      "value": true
+                    }
+                  }
+                ],
+                "navigation": {
+                  "kind": "stay"
+                },
+                "persistenceEffects": [],
+                "success": {
+                  "stateRefs": [
+                    "STATE_READY"
+                  ],
+                  "persistenceRefs": [],
+                  "evidenceRefs": [
+                    "EVID_READY"
+                  ],
+                  "userVisible": true
+                },
+                "failure": {
+                  "stateRefs": [],
+                  "persistenceRefs": [],
+                  "evidenceRefs": [],
+                  "userVisible": true
+                },
+                "evidenceRefs": [
+                  "EVID_READY"
+                ],
+                "observableEffects": [
+                  {
+                    "id": "OBS_READY",
+                    "selector": {
+                      "kind": "control",
+                      "actionRef": "ACT_MARK_READY"
+                    },
+                    "assertions": [
+                      {
+                        "phase": "after",
+                        "property": "visible_text",
+                        "operator": "equals",
+                        "expected": "Ready"
+                      }
+                    ],
+                    "evidenceRef": "EVID_READY"
+                  }
+                ],
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ]
+              }
+            ],
+            "evidencePredicates": [
+              {
+                "id": "EVID_READY",
+                "kind": "observable_outcome",
+                "required": true,
+                "subjectRef": "OBS_READY",
+                "capabilityRefs": [],
+                "assertion": {
+                  "operator": "passes"
+                }
+              }
+            ],
+            "assumptions": [],
+            "delivery": {
+              "platform": "web",
+              "techStack": "vite-react",
+              "uiLanguage": "English",
+              "database": "none",
+              "designRequired": true,
+              "uiVisionSummary": "A synthetic ready panel with a single visible button and exact rendered control and outcome identity."
+            },
+            "requirements": [
+              {
+                "id": "REQ_6A1E0155D4668BCC",
+                "normalizedClause": "Show a synthetic ready button that records readiness and presents its exact visible outcome.",
+                "clauseHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+                "sources": [
+                  {
+                    "sourceHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+                    "locator": "task/input.txt",
+                    "sourceRef": "task/input.txt#chars=0-92",
+                    "span": {
+                      "startOffset": 0,
+                      "endOffset": 92,
+                      "startLine": 1,
+                      "startColumn": 0,
+                      "endLine": 1,
+                      "endColumn": 92
+                    }
+                  }
+                ],
+                "classification": "functional",
+                "expectedSemanticKinds": [
+                  "action"
+                ]
+              }
+            ],
+            "traceability": {
+              "schema": "setfarm.product-requirement-traceability.v1",
+              "sourceTaskHash": "6a1e0155d4668bcce28ffbb98fc719aa3dca890b9d32ea87ecea815ffc3d1edf",
+              "bindings": [
+                {
+                  "semanticKind": "action",
+                  "semanticRef": "ACT_MARK_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "evidence",
+                  "semanticRef": "EVID_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "goal",
+                  "semanticRef": "GOAL_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "observable",
+                  "semanticRef": "OBS_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "route",
+                  "semanticRef": "ROUTE_SYNTHETIC_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "state",
+                  "semanticRef": "STATE_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                },
+                {
+                  "semanticKind": "surface",
+                  "semanticRef": "SURF_SYNTHETIC_READY",
+                  "requirementRefs": [
+                    "REQ_6A1E0155D4668BCC"
+                  ]
+                }
+              ]
+            }
+          },
+          "designGraph": {
+            "schema": "setfarm.design-interaction-graph.v1",
+            "rawArtifactHashes": [
+              "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+              "3f31035298b9451516bcea2163205e02f1fb9dea9a3f0d80f8afc63c83fd9b80",
+              "4e0f2f4b520e3289b622c021ccb174b926af15f96f1d17a88c304d993552ab0d",
+              "7379ff7840baf42983a6f74ed027f356dbd5022ec27de26599c308713f6e4c81",
+              "b1b97202e2f4b123c6f8cd4853be6366a36b9f3a3410a18417c12d51374b712f",
+              "d99184b8ff426081f867b8c64378ae20cf5093ec793148dc862885be6b94839a",
+              "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152"
+            ],
+            "surfaces": [
+              {
+                "id": "DSURF_SYNTHETIC_READY",
+                "surfaceRef": "SURF_SYNTHETIC_READY",
+                "sourceArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                "sourceLocator": "synthetic/ready.html"
+              }
+            ],
+            "controls": [
+              {
+                "id": "CTRL_SYNTHETIC_READY",
+                "identity": {
+                  "kind": "explicit",
+                  "provenance": [
+                    {
+                      "schema": "setfarm.provenance-ref.v1",
+                      "sourceHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                      "locator": "synthetic/ready.html",
+                      "confidence": "exact"
+                    }
+                  ]
+                },
+                "generatedLocalId": "ready_button",
+                "kind": "button",
+                "label": "Ready",
+                "accessibility": {
+                  "role": "button",
+                  "name": "Ready"
+                },
+                "surfaceRef": "SURF_SYNTHETIC_READY",
+                "interactive": true,
+                "source": {
+                  "artifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "locator": "synthetic/ready.html",
+                  "selector": "[data-action=\"ACT_MARK_READY\"]"
+                }
+              }
+            ],
+            "bindings": [
+              {
+                "controlRef": "CTRL_SYNTHETIC_READY",
+                "disposition": "action",
+                "actionRef": "ACT_MARK_READY",
+                "routeRef": "ROUTE_SYNTHETIC_READY",
+                "inputBindings": [],
+                "stateRefs": [
+                  "STATE_READY"
+                ],
+                "persistenceRefs": [],
+                "evidenceRefs": [
+                  "EVID_READY"
+                ]
+              }
+            ],
+            "unresolvedBindings": [],
+            "observableBindings": [
+              {
+                "observableRef": "OBS_READY",
+                "actionRef": "ACT_MARK_READY",
+                "evidenceRef": "EVID_READY",
+                "target": {
+                  "kind": "control",
+                  "controlRef": "CTRL_SYNTHETIC_READY"
+                }
+              }
+            ]
+          },
+          "buildTopology": {
+            "schema": "setfarm.build-topology.v1",
+            "stackPack": {
+              "id": "vite-react-web-app",
+              "version": "1.0.0",
+              "contentHash": "5d5017f46514f3c7d61ee2f5308a037cf1b75002f5fd3f11285215926b935f3c"
+            },
+            "repo": {
+              "id": "synthetic-ready-native-authority",
+              "baseSha": "dddddddddddddddddddddddddddddddddddddddd",
+              "treeHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            },
+            "owners": [
+              {
+                "id": "OWNER_SYNTHETIC_STORY",
+                "kind": "story",
+                "storyRef": "US-001"
+              }
+            ],
+            "pathBindings": [
+              {
+                "id": "PATH_SYNTHETIC_ENTRY",
+                "path": "src/SyntheticReady.tsx",
+                "role": "source",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "presence": "present",
+                "knownContentHash": "92f9fe0586ae768272c816441dbe5e73c315a5f06b3a468412aca51bbc72ad8c"
+              }
+            ],
+            "sharedGrants": [],
+            "entrypoints": [
+              {
+                "id": "ENTRY_SYNTHETIC_CLI",
+                "kind": "web",
+                "pathRef": "PATH_SYNTHETIC_ENTRY",
+                "mountPoint": "/ready",
+                "routeRefs": [
+                  "ROUTE_SYNTHETIC_READY"
+                ]
+              }
+            ],
+            "commands": [
+              {
+                "id": "CMD_SYNTHETIC_BUILD",
+                "kind": "build",
+                "argv": [
+                  "npm",
+                  "run",
+                  "build"
+                ],
+                "cwd": ".",
+                "timeoutMs": 120000,
+                "capabilityRefs": []
+              },
+              {
+                "id": "CMD_SYNTHETIC_PREVIEW",
+                "kind": "preview",
+                "argv": [
+                  "npm",
+                  "run",
+                  "preview",
+                  "--",
+                  "--host",
+                  "{{HOST}}",
+                  "--port",
+                  "{{PORT}}",
+                  "--strictPort"
+                ],
+                "cwd": ".",
+                "timeoutMs": 120000,
+                "capabilityRefs": []
+              }
+            ],
+            "capabilities": [
+              {
+                "id": "CAP_SYNTHETIC_CLI",
+                "kind": "cli_interaction",
+                "enabled": true
+              }
+            ],
+            "policies": {
+              "packageManager": "npm",
+              "allowedRoots": [
+                "src"
+              ],
+              "deniedGlobs": [],
+              "buildOutputPaths": [
+                "dist"
+              ]
+            },
+            "runtimeDataContract": {
+              "schema": "setfarm.runtime-data-contract.v1",
+              "contractVersion": 1,
+              "sourceProductSpecHash": "73c6cae766934c67345dd0c7e2686651d41714c66a54d330ec44fb0dea59e1ef",
+              "delivery": {
+                "platform": "web",
+                "techStack": "vite-react",
+                "database": "none"
+              },
+              "policyBindings": [],
+              "authorities": [
+                {
+                  "id": "AUTH_DATA_STATELESS_NONE",
+                  "kind": "stateless",
+                  "durability": "none",
+                  "persistenceRefs": []
+                }
+              ],
+              "writableVolumes": [],
+              "scratch": {
+                "kind": "none"
+              }
+            },
+            "runtimeDataContractHash": "c360added4422b3fccdb5a331c3f1796d686174f3a67dbb82d3c543448186769",
+            "runtimeEvidenceContract": {
+              "schema": "setfarm.runtime-evidence-contract.v1",
+              "adapter": "browser-service",
+              "stackPackId": "vite-react-web-app",
+              "server": {
+                "argv": [
+                  "npm",
+                  "run",
+                  "preview",
+                  "--",
+                  "--host",
+                  "{{HOST}}",
+                  "--port",
+                  "{{PORT}}",
+                  "--strictPort"
+                ],
+                "cwd": ".",
+                "timeoutMs": 120000
+              },
+              "readiness": {
+                "method": "GET",
+                "path": "/ready",
+                "expectedStatus": 200,
+                "timeoutMs": 120000
+              },
+              "capture": {
+                "schema": "setfarm.browser-state-capture.v1",
+                "globalName": "__SETFARM_TEST_BRIDGE__",
+                "actionInvocation": {
+                  "schema": "setfarm.browser-action-invocation.v1",
+                  "method": "invokeAction"
+                },
+                "scenarioMode": {
+                  "schema": "setfarm.browser-scenario-mode.v1",
+                  "globalName": "__SETFARM_SCENARIO_MODE__",
+                  "value": "manual"
+                },
+                "stateBindings": [
+                  {
+                    "stateRef": "STATE_READY",
+                    "pointer": "/states/STATE_READY"
+                  }
+                ]
+              },
+              "flowIsolation": {
+                "schema": "setfarm.browser-flow-isolation.v1",
+                "method": "clear-local-session-storage-and-reload"
+              }
+            },
+            "runtimeEvidenceContractHash": "93dde177def80018511d094a16586574c292c71bc4575f850b88bc65a6395719"
+          },
+          "storyPlan": {
+            "schema": "setfarm.story-plan.v1",
+            "stories": [
+              {
+                "id": "US-001",
+                "order": 1,
+                "title": "Implement synthetic readiness",
+                "description": "Implement the exact synthetic ready action and visible outcome.",
+                "ownerRef": "OWNER_SYNTHETIC_STORY",
+                "dependsOn": [],
+                "surfaceRefs": [
+                  "SURF_SYNTHETIC_READY"
+                ],
+                "controlRefs": [
+                  "CTRL_SYNTHETIC_READY"
+                ],
+                "actionRefs": [
+                  "ACT_MARK_READY"
+                ],
+                "stateRefs": [
+                  "STATE_READY"
+                ],
+                "persistenceRefs": [],
+                "evidenceRefs": [
+                  "EVID_READY"
+                ],
+                "ownedPathRefs": [
+                  "PATH_SYNTHETIC_ENTRY"
+                ],
+                "sharedGrantRefs": []
+              }
+            ]
+          },
+          "designSourceClosure": {
+            "schema": "setfarm.design-source-closure.v1",
+            "kind": "stitch",
+            "generationTargets": {
+              "artifactType": "setfarm.design-generation-targets.v1",
+              "envelopeHash": "eb759978e014c801b43b1460d9e7c83aa312b3a3213efba6728338b663d2b8aa",
+              "payloadHash": "d99184b8ff426081f867b8c64378ae20cf5093ec793148dc862885be6b94839a"
+            },
+            "directResponseEvidence": {
+              "artifactType": "setfarm.stitch-direct-response-evidence.v2",
+              "envelopeHash": "29479544d207778256bdf79eec8b1eec9f2a641719ae75ff507ebc03a93f19a0",
+              "payloadHash": "7379ff7840baf42983a6f74ed027f356dbd5022ec27de26599c308713f6e4c81"
+            },
+            "renderedSemantics": {
+              "artifactType": "setfarm.stitch-rendered-semantics.v1",
+              "envelopeHash": "0939e1fd17d6eee4c14c5be5de56d4d41127848ed1fb7462890a10773be96d9f",
+              "payloadHash": "4e0f2f4b520e3289b622c021ccb174b926af15f96f1d17a88c304d993552ab0d"
+            },
+            "candidateSelection": {
+              "artifactType": "setfarm.stitch-target-candidate-selection.v1",
+              "envelopeHash": "6d18e2d23923c96c6c82a78880ace01ca3d934b42e00db9494202ef757719e21",
+              "payloadHash": "3f31035298b9451516bcea2163205e02f1fb9dea9a3f0d80f8afc63c83fd9b80"
+            },
+            "responseBindings": {
+              "artifactType": "setfarm.stitch-target-response-bindings.v2",
+              "envelopeHash": "fcca81e88198d58f61242718a0c222265192122f9eafbb98310b795374e19eca",
+              "payloadHash": "b1b97202e2f4b123c6f8cd4853be6366a36b9f3a3410a18417c12d51374b712f"
+            }
+          },
+          "packet": {
+            "schema": "setfarm.product-build-packet.v2",
+            "packetVersion": 2,
+            "parentPacketHashes": [],
+            "productSpecHash": "03353093f2973627e3d7018f6903c2be63dc843ba51f2b475308377dafed0f6a",
+            "designGraphHash": "93f07da5949692bee4f342f0399407071a0af85f3e2599a69fc71967efadf271",
+            "buildTopologyHash": "6d35fa62110a781e095b40811ada828ebfa5eb5ac94209a53cda96229d4ee55f",
+            "storyPlanHash": "239d74282c23515734137014af50dad200ac178627355c587362eb2cc67be300",
+            "runtimeDataContractHash": "c360added4422b3fccdb5a331c3f1796d686174f3a67dbb82d3c543448186769",
+            "runtimeEvidenceContractHash": "93dde177def80018511d094a16586574c292c71bc4575f850b88bc65a6395719",
+            "compiler": {
+              "version": "synthetic-stage-a.1",
+              "codeSha": "cccccccccccccccccccccccccccccccccccccccc"
+            },
+            "validationIds": [
+              "SYNTHETIC_STAGE_A_VALIDATION"
+            ],
+            "designSourceClosureHash": "ae1ef83fa614085d4edfc3afad958bed96edc95970ea8f916c8d6f28b58a8f13"
+          },
+          "compilationReport": {
+            "schema": "setfarm.product-compilation-report.v2",
+            "compiler": {
+              "version": "synthetic-stage-a.1",
+              "codeSha": "cccccccccccccccccccccccccccccccccccccccc"
+            },
+            "inputHashes": [
+              "73c6cae766934c67345dd0c7e2686651d41714c66a54d330ec44fb0dea59e1ef"
+            ],
+            "diagnostics": [],
+            "validationIds": [
+              "SYNTHETIC_STAGE_A_VALIDATION"
+            ],
+            "status": "sealed",
+            "artifactHashes": {
+              "productSpec": "03353093f2973627e3d7018f6903c2be63dc843ba51f2b475308377dafed0f6a",
+              "designGraph": "93f07da5949692bee4f342f0399407071a0af85f3e2599a69fc71967efadf271",
+              "buildTopology": "6d35fa62110a781e095b40811ada828ebfa5eb5ac94209a53cda96229d4ee55f",
+              "storyPlan": "239d74282c23515734137014af50dad200ac178627355c587362eb2cc67be300",
+              "designSourceClosure": "ae1ef83fa614085d4edfc3afad958bed96edc95970ea8f916c8d6f28b58a8f13"
+            },
+            "packetHash": "435867c525d3655a6d7701551537e710b9719ff3b3dda68eb79f883f6d12fc59"
+          },
+          "refs": {
+            "productSpec": "03353093f2973627e3d7018f6903c2be63dc843ba51f2b475308377dafed0f6a",
+            "designGraph": "93f07da5949692bee4f342f0399407071a0af85f3e2599a69fc71967efadf271",
+            "buildTopology": "6d35fa62110a781e095b40811ada828ebfa5eb5ac94209a53cda96229d4ee55f",
+            "storyPlan": "239d74282c23515734137014af50dad200ac178627355c587362eb2cc67be300",
+            "designSourceClosure": "ae1ef83fa614085d4edfc3afad958bed96edc95970ea8f916c8d6f28b58a8f13",
+            "packet": "435867c525d3655a6d7701551537e710b9719ff3b3dda68eb79f883f6d12fc59",
+            "compilationReport": "1f5fbbb5c47adea05b817a8dbae22697a6f458bf2c25e06a321d35a980d6168c"
+          },
+          "designSources": {
+            "generationTargets": {
+              "schema": "setfarm.design-generation-targets.v1",
+              "productSpecHash": "73c6cae766934c67345dd0c7e2686651d41714c66a54d330ec44fb0dea59e1ef",
+              "targets": [
+                {
+                  "targetId": "TARGET_SYNTHETIC_READY",
+                  "designSurfaceId": "DSURF_SYNTHETIC_READY",
+                  "surfaceRef": "SURF_SYNTHETIC_READY",
+                  "requestScreenKey": "synthetic-ready",
+                  "expectedScreenTitle": "Synthetic Ready",
+                  "requiredActionRefs": [
+                    "ACT_MARK_READY"
+                  ],
+                  "requiredActionInputs": [],
+                  "requiredObservableSelectors": [
+                    {
+                      "observableRef": "OBS_READY",
+                      "actionRef": "ACT_MARK_READY",
+                      "selector": {
+                        "kind": "control",
+                        "actionRef": "ACT_MARK_READY"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "directResponseEvidence": {
+              "schema": "setfarm.stitch-direct-response-evidence.v2",
+              "projectId": "synthetic-ready-project",
+              "batches": [
+                {
+                  "stageId": "synthetic-ready-stage",
+                  "targetRefs": [
+                    "TARGET_SYNTHETIC_READY"
+                  ],
+                  "source": "direct",
+                  "candidates": [
+                    {
+                      "screenId": "synthetic-ready-screen",
+                      "title": "Synthetic Ready",
+                      "responsePaths": [
+                        "/synthetic/ready"
+                      ],
+                      "htmlAvailable": true,
+                      "screenshotAvailable": true,
+                      "htmlSourceRefHash": "efd4c9202ad025f61cd75bcb1559f83ba6c156a5991b6228dc1b98e3f5f8ffb2",
+                      "screenshotSourceRefHash": "e9a7e2f764ea5de29c272c655ef01fdef4071d6c911363fe52f8a44accb9ac62",
+                      "htmlDownloadedArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                      "screenshotDownloadedArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                      "identityConflicts": [],
+                      "disposition": "admitted_renderable_screen",
+                      "missingEvidence": []
+                    }
+                  ]
+                }
+              ]
+            },
+            "renderedSemantics": {
+              "schema": "setfarm.stitch-rendered-semantics.v1",
+              "policy": "chromium-css-cascade-contract-elements.v1",
+              "generationTargetsHash": "d99184b8ff426081f867b8c64378ae20cf5093ec793148dc862885be6b94839a",
+              "directResponseEvidenceHash": "7379ff7840baf42983a6f74ed027f356dbd5022ec27de26599c308713f6e4c81",
+              "renderer": {
+                "engine": "chromium",
+                "playwrightVersion": "1.0.0",
+                "chromiumRevision": "1",
+                "chromiumVersion": "1.0.0"
+              },
+              "profile": {
+                "id": "desktop-1280x800.v1",
+                "deviceType": "DESKTOP",
+                "width": 1280,
+                "height": 800,
+                "deviceScaleFactor": 1,
+                "locale": "en-US",
+                "timezoneId": "UTC",
+                "colorScheme": "light",
+                "reducedMotion": "reduce"
+              },
+              "resources": [],
+              "candidates": [
+                {
+                  "stageId": "synthetic-ready-stage",
+                  "screenId": "synthetic-ready-screen",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "semanticDom": {
+                    "locator": "synthetic/ready.dom.html",
+                    "hash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                    "byteLength": 100
+                  },
+                  "resourceRefs": [],
+                  "status": "rendered",
+                  "failureCodes": [],
+                  "elements": [
+                    {
+                      "elementRef": "E000001",
+                      "sourceOrdinal": 0,
+                      "tagName": "main",
+                      "ownSurfaceRef": "SURF_SYNTHETIC_READY",
+                      "nearestSurfaceRef": "SURF_SYNTHETIC_READY",
+                      "dataAction": null,
+                      "dataActionInput": null,
+                      "role": null,
+                      "ariaLabel": null,
+                      "href": null,
+                      "nativeControlKind": null,
+                      "interactiveRole": false,
+                      "renderState": "rendered",
+                      "renderBlockers": [],
+                      "enabled": true,
+                      "pointerOperable": true
+                    },
+                    {
+                      "elementRef": "E000002",
+                      "sourceOrdinal": 1,
+                      "tagName": "button",
+                      "ownSurfaceRef": null,
+                      "nearestSurfaceRef": "SURF_SYNTHETIC_READY",
+                      "dataAction": "ACT_MARK_READY",
+                      "dataActionInput": null,
+                      "role": null,
+                      "ariaLabel": null,
+                      "href": null,
+                      "nativeControlKind": "button",
+                      "interactiveRole": false,
+                      "renderState": "rendered",
+                      "renderBlockers": [],
+                      "enabled": true,
+                      "pointerOperable": true
+                    }
+                  ],
+                  "observationHash": "db9612ce058f8b14abe22f45b086abab2ac2925fa70f674bbae31ce4d0513a53"
+                }
+              ]
+            },
+            "candidateSelection": {
+              "schema": "setfarm.stitch-target-candidate-selection.v1",
+              "policy": "exact-target-browser-semantics-html-screenshot-screen-id-asc.v1",
+              "generationTargetsHash": "d99184b8ff426081f867b8c64378ae20cf5093ec793148dc862885be6b94839a",
+              "directResponseEvidenceHash": "7379ff7840baf42983a6f74ed027f356dbd5022ec27de26599c308713f6e4c81",
+              "renderedSemanticsHash": "4e0f2f4b520e3289b622c021ccb174b926af15f96f1d17a88c304d993552ab0d",
+              "candidates": [
+                {
+                  "stageId": "synthetic-ready-stage",
+                  "targetRefs": [
+                    "TARGET_SYNTHETIC_READY"
+                  ],
+                  "screenId": "synthetic-ready-screen",
+                  "title": "Synthetic Ready",
+                  "responsePaths": [
+                    "/synthetic/ready"
+                  ],
+                  "renderDisposition": "admitted_renderable_screen",
+                  "identityConflicts": [],
+                  "missingEvidence": [],
+                  "htmlSourceRefHash": "efd4c9202ad025f61cd75bcb1559f83ba6c156a5991b6228dc1b98e3f5f8ffb2",
+                  "screenshotSourceRefHash": "e9a7e2f764ea5de29c272c655ef01fdef4071d6c911363fe52f8a44accb9ac62",
+                  "htmlDownloadedArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotDownloadedArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "htmlArtifactValidity": "valid",
+                  "screenshotArtifactValidity": "valid",
+                  "semanticDomHash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                  "semanticObservationHash": "db9612ce058f8b14abe22f45b086abab2ac2925fa70f674bbae31ce4d0513a53",
+                  "semanticFailureCodes": [],
+                  "semanticEvidenceStatus": "browser_rendered"
+                }
+              ],
+              "selections": [
+                {
+                  "targetRef": "TARGET_SYNTHETIC_READY",
+                  "stageId": "synthetic-ready-stage",
+                  "evaluations": [
+                    {
+                      "screenId": "synthetic-ready-screen",
+                      "qualificationTier": "exact_target_semantics",
+                      "rejectionCodes": [],
+                      "semanticChecks": [
+                        {
+                          "kind": "screen_title",
+                          "semanticRef": "TARGET_SYNTHETIC_READY",
+                          "expectedValue": "Synthetic Ready",
+                          "observedValue": "Synthetic Ready",
+                          "expectedCount": 1,
+                          "observedCount": 1,
+                          "elementRefs": [],
+                          "disposition": "exact"
+                        },
+                        {
+                          "kind": "control",
+                          "semanticRef": "ACT_MARK_READY",
+                          "expectedCount": 1,
+                          "observedCount": 1,
+                          "elementRefs": [
+                            "E000002"
+                          ],
+                          "disposition": "exact"
+                        }
+                      ]
+                    }
+                  ],
+                  "rankedQualifiedScreenIds": [
+                    "synthetic-ready-screen"
+                  ],
+                  "status": "selected",
+                  "selectedScreenId": "synthetic-ready-screen"
+                }
+              ],
+              "semanticEvidencePolicy": "browser_rendered_v1",
+              "downloadReceiptPolicy": "required"
+            },
+            "responseBindings": {
+              "schema": "setfarm.stitch-target-response-bindings.v2",
+              "generationTargetsHash": "d99184b8ff426081f867b8c64378ae20cf5093ec793148dc862885be6b94839a",
+              "candidateSelectionHash": "3f31035298b9451516bcea2163205e02f1fb9dea9a3f0d80f8afc63c83fd9b80",
+              "renderedSemanticsHash": "4e0f2f4b520e3289b622c021ccb174b926af15f96f1d17a88c304d993552ab0d",
+              "bindings": [
+                {
+                  "targetRef": "TARGET_SYNTHETIC_READY",
+                  "requestScreenKey": "synthetic-ready",
+                  "expectedScreenTitle": "Synthetic Ready",
+                  "responseScreenId": "synthetic-ready-screen",
+                  "responseTitle": "Synthetic Ready",
+                  "stageId": "synthetic-ready-stage",
+                  "htmlArtifactHash": "3d55f56a250326ee150bcb7b395eda85639a9d63bcc3011307c17a5b5cb92d8a",
+                  "screenshotArtifactHash": "e7043423e9fc9c20187baca541a9d49344587a4345e6df0fc08237fb87027152",
+                  "semanticDomHash": "6f99bcb41ed7dc8efbf6f5090d29732b7fdde9481172298535da621fc5221304",
+                  "semanticObservationHash": "db9612ce058f8b14abe22f45b086abab2ac2925fa70f674bbae31ce4d0513a53",
+                  "contractElementRefs": [
+                    "E000002"
+                  ]
+                }
+              ]
+            }
+          },
+          "authorityHash": "38b6762001018e039f54d2320a002a0cc9373b99bbbec9759d7d2c8caf3394f3"
+        },
+        "refusal": null,
+        "authorityHash": "e32a4db1792ddac6211722fa2155d4b3138d831e2eff534b46c87f967d351e93"
+      }
+    },
+    {
+      "name": "refused_before_packet",
+      "wire": {
+        "schema": "setfarm.product-build-authority.v3",
+        "runId": "synthetic-refused-authority",
+        "disposition": "refused_before_packet",
+        "packetAuthority": null,
+        "refusal": {
+          "terminationRequestRef": "setfarm://run-termination/synthetic-refusal-request",
+          "failureIdentity": {
+            "schema": "setfarm.operational-failure-identity.v2",
+            "requestedBy": "setfarm.product-compiler.design-refusal",
+            "evidenceSchema": "setfarm.v3-design-candidate-authority-termination.v1",
+            "operationalCause": {
+              "schema": "setfarm.operational-failure-cause.v1",
+              "workflowStepId": "design",
+              "boundary": "product_compiler.design_candidate_authority",
+              "failureClass": "generated_artifact_invalid",
+              "failureCode": "V3_DESIGN_CANDIDATE_AUTHORITY_UNRESOLVED"
+            },
+            "operationalCauseHash": "1fbf206d3283376811b8727dc7ea4f1b2db80fdb784b37941dd2188881e120f9",
+            "exactFailure": {
+              "schema": "setfarm.operational-exact-failure-identity.v2",
+              "kind": "stitch_target_candidate_selection",
+              "refKey": "STITCH_TARGET_CANDIDATE_SELECTION_FAILURE",
+              "artifactType": "setfarm.stitch-target-candidate-selection-failure.v1",
+              "failureArtifactHash": "1dae480b9e91a2b6e2f8763f1fd9e5ba7300d24c57e8cbb52682e962eeeb65b5",
+              "failureFingerprint": "bc7d554b11c8893d763ef9137fdb04a2ce6c68536a0fcb874ebc61b8c7b2cc0e",
+              "candidateSelectionHash": "a2ef978cb63d4034408a4e64456142fec1a5ae1982ed316a12e2709a8f0d65ef"
+            }
+          },
+          "failureArtifact": {
+            "refKey": "STITCH_TARGET_CANDIDATE_SELECTION_FAILURE",
+            "artifactHash": "1dae480b9e91a2b6e2f8763f1fd9e5ba7300d24c57e8cbb52682e962eeeb65b5",
+            "envelope": {
+              "schema": "setfarm.semantic-artifact-envelope.v1",
+              "artifactType": "setfarm.stitch-target-candidate-selection-failure.v1",
+              "producer": {
+                "pass": "synthetic-refusal-producer",
+                "codeSha": "cccccccccccccccccccccccccccccccccccccccc",
+                "toolVersions": {
+                  "synthetic-corpus": "1"
+                }
+              },
+              "payload": {
+                "schema": "setfarm.stitch-target-candidate-selection-failure.v1",
+                "generationTargetsHash": "4b60713e42b1f205cab9641bdd154bb670198a424576a8ca0df6bd07d4eaaf71",
+                "directResponseEvidenceHash": "50efdfdf393d9ea9928a46bb25b6c8c0b4444f2b3b994e7cc94c84b192ec0061",
+                "candidateSelectionHash": "a2ef978cb63d4034408a4e64456142fec1a5ae1982ed316a12e2709a8f0d65ef",
+                "targetFailures": [
+                  {
+                    "targetRef": "TARGET_SYNTHETIC_REFUSAL",
+                    "stageId": "synthetic-refusal-stage",
+                    "evaluations": [
+                      {
+                        "screenId": "synthetic-rejected-screen",
+                        "qualificationTier": "exact_title_incomplete_semantics",
+                        "rejectionCodes": [
+                          "CANDIDATE_TITLE_MISMATCH"
+                        ],
+                        "semanticChecks": [
+                          {
+                            "kind": "screen_title",
+                            "semanticRef": "TARGET_SYNTHETIC_REFUSAL",
+                            "expectedValue": "Expected Synthetic Screen",
+                            "observedValue": "Different Synthetic Screen",
+                            "expectedCount": 1,
+                            "observedCount": 1,
+                            "elementRefs": [],
+                            "disposition": "mismatch"
+                          }
+                        ]
+                      }
+                    ],
+                    "rejectionCodes": [
+                      "CANDIDATE_TITLE_MISMATCH"
+                    ]
+                  }
+                ],
+                "expectedDelta": {
+                  "kind": "candidate_authority_change",
+                  "targetRefs": [
+                    "TARGET_SYNTHETIC_REFUSAL"
+                  ],
+                  "rejectionCodesToClear": [
+                    "CANDIDATE_TITLE_MISMATCH"
+                  ],
+                  "requiredAuthorityHash": "candidateSelectionHash",
+                  "fromCandidateSelectionHash": "a2ef978cb63d4034408a4e64456142fec1a5ae1982ed316a12e2709a8f0d65ef"
+                },
+                "owner": "stitch_generation_orchestrator",
+                "retry": {
+                  "disposition": "retry_after_authority_delta",
+                  "sameAuthorityRetryForbidden": true,
+                  "maxAttempts": 1
+                },
+                "fingerprint": "bc7d554b11c8893d763ef9137fdb04a2ce6c68536a0fcb874ebc61b8c7b2cc0e"
+              }
+            }
+          }
+        },
+        "authorityHash": "8e11e3d2d064cba462675c6bb657d5e67ebe47aa670ef1fb72ca93283c13eeaa"
+      }
+    }
+  ]
+}

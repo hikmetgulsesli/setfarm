@@ -252,7 +252,7 @@ assert.deepEqual(result.authority, nativeWire);
 | Native active/terminal-cancelled/failed | Task1 actual reader with synthetic status records + Task2 response |
 | Native graphless | Task1 null/type/hash invariants + Task3 parser + Task4 render |
 | Legacy v1/v2 meaning | Task1 exact legacy nesting + Task2 default/explicit + Tasks3/4 old backend/render |
-| Verified prepacket refusal | Task1 actual refusal reader + v3 schema + Tasks3/4 parser/render |
+| Verified prepacket refusal | Partial selected evidence: pure V3 refusal composition + actual no-row/early-error delegation + unchanged reader source; Tasks3/4 parser/render. Successful configured refusal and post-mode integration remain UNVERIFIED/PENDING. |
 | Missing/unsealed/unknown status | Task1 exact reader failures + Task2 HTTP classification |
 | Wrong type/hash/release/producer/closure/source map | Task1 real reader and rehashed schema mutations + Task3 rehashed wire mutations |
 | Unknown/incompatible backend | Task3 injected fetch + Task4 response rendering |
@@ -260,3 +260,30 @@ assert.deepEqual(result.authority, nativeWire);
 | No invented deploy/final acceptance | Schema absence, renderer assertions, whole-branch review |
 
 Static plan acceptance is independent review plus Root adoption. Source fix acceptance requires reviewed source and original focused tests/build results. Runtime success is not a claim available to this phase; historical packet closure may still legitimately fail after compatibility is implemented.
+
+
+## Root Stage A SF isolation refinement
+
+Actual Task1 static import audit found eager runtime-config.ts/fresh-installation-selection-v1.ts evaluation. Add test-only `tests/fixtures/product-authority-sf-inert-import-guard.mjs` and `tests/product-authority-sf-import-isolation.test.ts` to Task1. Before production imports, exact resolver/load interception supplies only otherwise-unused `resolveArtifactStorePublicationAuthorityMode` and `selectedFreshInstallationRootV1` exports which throw on any invocation; they never return mode/selection/authority. Prove actual module bodies do not evaluate and selected standalone controls make zero calls. No production guard/validator/hash is replaced; hybrid/refusal/selection behavior is not qualified. Independent source/import review precedes execution.
+
+The Stage A SF command is `node --import ./tests/fixtures/product-authority-sf-inert-import-guard.mjs --import tsx --test --test-concurrency=1 tests/product-authority-sf-import-isolation.test.ts tests/product-build-authority-v3.test.ts`. Isolation PASS and actual exact-reader control PASS remain separate prerequisites for expected old-dispatcher semantic FAIL; setup/import/control errors never count RED. Later branches require a fresh flow review if either otherwise-unused function is needed. Detailed Root coordination amendment is retained privately; no source/runtime/input action follows from the plan alone.
+
+## Root Task1 selected-verification refinement: unchanged refusal boundary
+
+Status: ADOPTED by Root after independent scoped review C0/I0/M0; see root-task-1-refusal-verification-adoption-v1.json. This section supersedes only Task1's selected-campaign promise of a successful runtime-dependent refusal-reader test and its post-mode CAS mutation cases. It does not change product behavior, authority semantics, runtime guards or the existing refusal reader API/body.
+
+The existing readVerifiedDesignCandidateRefusal always resolves actual runtime publication mode after termination/ref/index validation. Current admitted isolation throws on that call and must continue doing so. Passing an artifact port does not bypass that mode check. Do not add a mode override, injectable successful refusal resolver, skip flag, alternative default, or short-circuit to satisfy tests.
+
+Selected Task1 acceptance is:
+- Actual pure V3 refusal producer/schema preserve the complete authored synthetic refusal, exclusivity and canonical outer hash. Rehashed inner mutations must exercise existing refusal refinements, not merely an obsolete outer digest.
+- Actual V3 dispatcher/exact-reader orchestration delegates NOT_SEALED into the unchanged refusal reader. No termination row rethrows the original NOT_SEALED; real early malformed/ambiguous termination/ref/index cases retain exact errors before mode resolution. Runtime-mode and installation-selection calls remain zero.
+- Packet type/hash/release/closure/source-map failures retain their errors and never invoke refusal lookup. Existing native/legacy real-reader regressions and original StageA assertions remain required.
+- Source review must establish the existing refusal reader body is unchanged, default/hybrid/store/provenance enforcement remains, and V3 delegates only NOT_SEALED, preserves null/errors, and produces refused authority only from that verified result.
+
+Explicitly UNVERIFIED by this selected campaign: successful configured refusal reading; default/hybrid-required store selection and brand acceptance/rejection; store.get failure mapping; post-mode stored/index byte length, producer and envelope hash comparison; runtime reader fingerprint/candidate equality. Pure wire tests do not establish those facts. Existing test source is not historical PASS evidence. Keep these as later runtime-capable verification work before any broad claim of full refusal/runtime readiness. Do not count intentional guard throws as successful refusal tests.
+
+No production File Map additions are needed. Author test changes stay in current Task1 paths. Root alone runs the exact independently reviewed selector; Task1 completion may mean only reviewed native-compatibility source and selected tests, with the above integration limits carried to Task5/final delivery and continuity. Overall/startup completion remains false.
+
+Ruling: keep the unchanged configured refusal reader and the throw-only test boundary; replace the selected success/post-mode test promise with pure V3 composition, real safe delegation/early errors and source conservation, and retain the unavailable integration coverage explicitly — the causal fix is native type compatibility and a test-driven production authority override would expand scope without establishing runtime truth — cost if wrong: a configuration-dependent successful refusal regression can remain undetected until later eligible integration verification; no full refusal/runtime readiness claim is allowed meanwhile.
+
+Task5/final claim constraint: carry successful configured refusal and post-mode integration as UNVERIFIED/PENDING; no full refusal or runtime readiness claim until separately eligible actual integration evidence.
