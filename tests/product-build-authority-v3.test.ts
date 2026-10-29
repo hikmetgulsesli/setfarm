@@ -250,3 +250,120 @@ for (const status of ["cancelled", "failed"] as const) {
     } finally { await fixture.close(); }
   });
 }
+
+// Final I1 regression: SF permits omitted outcome metadata. MC must accept the
+// same exact authority without filling absent fields or dropping hash checks.
+type OutcomeSide = "success" | "failure";
+type OptionalOutcomeField = "persistenceRefs" | "userVisible";
+const outcomeOmissions: Array<{ name: string; sides: OutcomeSide[]; fields: OptionalOutcomeField[] }> = [
+  { name: "success persistenceRefs", sides: ["success"], fields: ["persistenceRefs"] },
+  { name: "success userVisible", sides: ["success"], fields: ["userVisible"] },
+  { name: "success both optional fields", sides: ["success"], fields: ["persistenceRefs", "userVisible"] },
+  { name: "failure persistenceRefs", sides: ["failure"], fields: ["persistenceRefs"] },
+  { name: "failure userVisible", sides: ["failure"], fields: ["userVisible"] },
+  { name: "failure both optional fields", sides: ["failure"], fields: ["persistenceRefs", "userVisible"] },
+  { name: "both outcomes both optional fields", sides: ["success", "failure"], fields: ["persistenceRefs", "userVisible"] },
+];
+
+// Only the graphless/no-persistence fixture is eligible for this construction:
+// empty persistence refs do not affect the deterministic story partition, and
+// userVisible is not a partition input. No closure/source/producer is rebuilt.
+function rebindOutcomeWire(wire: any): void {
+  const native = wire.packetAuthority;
+  assert.equal(native.designGraph, null);
+  assert.equal(native.refs.designGraph, null);
+  assert.deepEqual(native.productSpec.persistencePolicies, []);
+  assert.deepEqual(native.implementationSourceMap.screens, []);
+  const specHash = hashCanonicalJson(native.productSpec);
+  native.storyPlan.productSpecHash = specHash;
+  native.implementationSourceMap.productSpecV2PayloadHash = specHash;
+  native.implementationSourceMap.storyPlanV2PayloadHash = hashCanonicalJson(native.storyPlan);
+  // This authored fixture's sole report input is the spec payload, not an
+  // unrelated task/source identity. Rebind it explicitly with the changed spec.
+  native.compilationReport.inputHashes = [specHash];
+  const envelopeHash = (payload: any) => payload === null ? null : hashCanonicalJson({
+    schema: "setfarm.semantic-artifact-envelope.v1", artifactType: payload.schema,
+    producer: native.producer, payload,
+  });
+  for (const [field, packetField, reportField] of [
+    ["productSpec", "productSpecV2Hash", "productSpecV2"],
+    ["designGraph", "designGraphV2Hash", "designGraphV2"],
+    ["buildTopology", "buildTopologyV1Hash", "buildTopologyV1"],
+    ["storyPlan", "storyPlanV2Hash", "storyPlanV2"],
+    ["designSourceClosure", "designSourceClosureV2Hash", "designSourceClosureV2"],
+    ["implementationSourceMap", "implementationSourceMapV1Hash", "implementationSourceMapV1"],
+  ] as const) {
+    native.refs[field] = envelopeHash(native[field]);
+    native.packet[packetField] = native.refs[field];
+    native.compilationReport.artifactHashes[reportField] = native.refs[field];
+  }
+  native.packetHash = native.refs.packet = envelopeHash(native.packet);
+  native.compilationReport.packetHash = native.packetHash;
+  native.refs.compilationReport = envelopeHash(native.compilationReport);
+  rehashWire(wire);
+}
+
+for (const omission of outcomeOmissions) {
+  test(`Final I1 SF actual schema and exact-reader accept omitted ${omission.name}`, async () => {
+    const fixture = await createSyntheticAuthorityFixture({ kind: "none" });
+    try {
+      assert.deepEqual(ProductBuildAuthorityV3Schema.parse(fixture.expectedWire), fixture.expectedWire, "Unchanged SF baseline remains valid");
+      const wire = structuredClone(fixture.expectedWire);
+      const native = wire.packetAuthority;
+      const action = native.productSpec.actions[0];
+      assert.deepEqual(native.compilationReport.inputHashes, [hashCanonicalJson(native.productSpec)], "Confirm authored report input identity before rebinding");
+      for (const side of omission.sides) {
+        assert.deepEqual(action[side].persistenceRefs, [], "Only empty, unused persistence refs may be omitted");
+        for (const field of omission.fields) delete action[side][field];
+      }
+      rebindOutcomeWire(wire);
+      assert.notEqual(wire.authorityHash, fixture.expectedWire.authorityHash);
+      const parsed = ProductBuildAuthorityV3Schema.parse(wire);
+      assert.deepEqual(parsed, wire, "Actual SF schema accepts exact omissions without defaults");
+      if (parsed.disposition !== "sealed_packet" || parsed.packetAuthority.schema !== "setfarm.product-build-packet-authority.v3") throw new Error("Expected native omission control");
+      for (const side of omission.sides) for (const field of omission.fields) {
+        assert.equal(Object.hasOwn(parsed.packetAuthority.productSpec.actions[0]![side], field), false);
+      }
+      await fixture.replaceArtifact("PRODUCT_SPEC", { payload: native.productSpec });
+      await fixture.replaceArtifact("STORY_PLAN", { payload: native.storyPlan });
+      await fixture.replaceArtifact("IMPLEMENTATION_SOURCE_MAP", { payload: native.implementationSourceMap });
+      await fixture.replaceArtifact("COMPILATION_REPORT", { payload: native.compilationReport });
+      const records = fixture.records();
+      assert.equal(records.run.packet_hash, native.packetHash, "Synthetic run points to the new exact packet");
+      assert.equal(records.refs.PRODUCT_SPEC.artifact_hash, native.refs.productSpec);
+      assert.equal(records.refs.STORY_PLAN.artifact_hash, native.refs.storyPlan);
+      assert.equal(records.refs.IMPLEMENTATION_SOURCE_MAP.artifact_hash, native.refs.implementationSourceMap);
+      assert.equal(records.refs.COMPILATION_REPORT.artifact_hash, native.refs.compilationReport);
+      const exact = await fixture.reader.readExactSealedPacket(fixture.runId);
+      const { schema: _schema, authorityHash: _hash, ...expectedExact } = native;
+      assert.deepEqual(exact, expectedExact, "Unchanged real reader reproduces the story and reads the exact reindexed CAS payloads");
+      assert.deepEqual(produceSealedProductBuildAuthorityV3(exact), wire, "Existing native producer preserves every omitted key and rebound hash");
+      fixture.assertUnusedConfiguration("Final I1 native omission control");
+    } finally { await fixture.close(); }
+  });
+}
+
+for (const side of ["success", "failure"] as const) {
+  for (const control of [
+    { name: "wrong persistenceRefs type", change: (outcome: any) => { outcome.persistenceRefs = "invalid-list"; } },
+    { name: "wrong userVisible type", change: (outcome: any) => { outcome.userVisible = "true"; } },
+    { name: "missing required stateRefs", change: (outcome: any) => { delete outcome.stateRefs; } },
+    { name: "missing required evidenceRefs", change: (outcome: any) => { delete outcome.evidenceRefs; } },
+    { name: "unknown outcome key", change: (outcome: any) => { outcome.futureOutcome = true; } },
+  ]) {
+    test(`Final I1 SF actual schema rejects ${side} ${control.name} with all hashes rebound`, async () => {
+      const fixture = await createSyntheticAuthorityFixture({ kind: "none" });
+      try {
+        const wire = structuredClone(fixture.expectedWire);
+        assert.equal(ProductBuildAuthorityV3Schema.safeParse(wire).success, true);
+        control.change(wire.packetAuthority.productSpec.actions[0][side]);
+        rebindOutcomeWire(wire);
+        const result = ProductBuildAuthorityV3Schema.safeParse(wire);
+        assert.equal(result.success, false);
+        if (result.success) throw new Error("Expected invalid native outcome");
+        assert.ok(result.error.issues.some(issue => issue.path.includes(side)), "Failure must concern the changed outcome, not a stale hash");
+        fixture.assertUnusedConfiguration("Final I1 native invalid-outcome control");
+      } finally { await fixture.close(); }
+    });
+  }
+}

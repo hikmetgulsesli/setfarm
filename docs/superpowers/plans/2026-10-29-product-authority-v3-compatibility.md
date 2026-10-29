@@ -422,3 +422,22 @@ The adapter catches only schema resolution and returns400 with unsupported_schem
 The old render future-v3 sentinel becomes known-malformed-v3 invalid_payload while a v99 counterpart preserves unknown-schema/render rejection. This is schema-coverage coherence after Task3, not a fabricated observed RED. Current Task4 source and the complete six-file group separately require actual Root results and review; normal genuine browser/project outputs, stock builds, whole-branch delivery and runtime gates remain.
 
 Ruling: resolveProductBuildAuthoritySchema consumes req.query.schema, and a narrow pure resolveProductBuildAuthorityHttpRequest(runId,schemaQuery,client) executes negotiation/result mapping for the real operational route and injected tests — the query-value interface was ambiguous and selected tests must not import the operational router — cost if wrong: adapter/error classification drift could change HTTP behavior; test missing/defaultv2, explicitversions, array/object/unknown400-beforeclient, and preserve unexpectedclient errors for the existingroute503 catch. No configured module is imported by selectedtests.
+
+# Task5 final native-outcome compatibility correction
+
+Final whole-branch review found one compatibility defect, C0/I1/M0: MC's common native outcome shape/declarations required persistenceRefs/userVisible although authoritative SF ActionOutcomeV1Schema makes both optional and ProductActionV2 inherits them unchanged. This is causally necessary to the same native-authority objective: a valid sealed producer packet could otherwise be rejected by both consumers. No new capability, dependency, wire version or operational authority is introduced.
+
+Existing File Map responsibilities extend within Task5's ONE final fix wave only:
+
+| Existing path | Final corrective responsibility |
+|---|---|
+| SF tests/product-build-authority-v3.test.ts | Actual native-schema and standalone exact-reader acceptance for seven optional-outcome omission variants; strict present-type/required/unknown controls. SF production unchanged. |
+| MC tests/product-build-authority-v3-stage-a.test.ts | Same fully rebound omission variants through actual server parser, standalone browser predicate and existing response dispatch, with baseline/negative/no-normalization controls. Mixed tests stay outside server project. |
+| MC server/services/product-build-authority-v3-structure.ts | Required stateRefs/evidenceRefs; optional, validated-when-present persistenceRefs/userVisible. Preserve strict extras and all hash/relationship checks. |
+| MC shared/product-build-authority-v3-wire.d.ts | Matching optional two properties, still declaration-only; no runtime import or default construction. |
+
+Root first recorded actual unfiltered SF79PASS, including all7 schema/exact-reader positives and10 malformed controls, then unchanged MC79tests/58PASS/21 omission failures across3consumers. Those21 are one root cause. Causal receipt root-final-fix-causal-original-v1.json4155B SHA2560abca00484af07c7ed4cae63ec0e5883bcdfaa34de5d0432f2e6fd5eb091802a; no missing-export/setup/hash failure was counted as causal. The same sole fix author then changed exactly2 MC production lines. No defaults or normalized reconstruction were added; wrong present values, missing required fields and extras stay rejected. Both original corpus files remain byte-identical3cea87be; production SF schemas/reader and guards stay unchanged.
+
+Root's complete named focused groups now observe SF127PASS and MC159PASS, zero failures/skips, with only expected guarded-plan diagnostics and no ordinary suite. These are current campaign counts, not sums with historical79/105/110. Changed neutral declarations are strictly checked with skipLibCheckfalse; normal genuine server emit and full unchanged browser-project checks qualify final bytes separately. The ONE scoped final re-review remains required after actual GREEN; no second whole-branch review/fix wave is created. Final stock-build/bundle, reviewed PR delivery and eligible guarded runtime gates remain separate; current working-tree compiler outputs are UNADMITTED and may retain old noncompiler identity/assets.
+
+Configured refusal/default-hybrid/postmode remains UNVERIFIED_PENDING. Full8UNKNOWN/reservation, annualpending/no paygo, extraNEWworkerCANCELLED_NOT_PASSED, startup/overallfalse and P3NOT_CLEAR remain. This correction does not revive cancelled work or permit any guard bypass or service mutation.
