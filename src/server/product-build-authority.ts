@@ -1,4 +1,6 @@
 import type postgres from "postgres";
+import type { ExactProductBuildAuthorityReader } from "./product-build-authority-v3.js";
+import type { ProductBuildAuthorityV3 } from "./schemas/product-build-authority-v3.js";
 
 import type { ArtifactCapacityLimits } from "../product-compiler/artifact-capacity.js";
 import {
@@ -401,13 +403,22 @@ export async function readProductBuildAuthorityV2(
   }
 }
 
-/** Default operational reader is v2; v1 remains an explicit migration view. */
-export async function readVersionedProductBuildAuthority(input: Readonly<{
-  schema?: "v1" | "v2";
-  reader: ProductBuildAuthorityReader;
+type VersionedAuthorityReadContext = Readonly<{
   runId: string;
   refusalOptions: VerifiedDesignCandidateRefusalReadOptions;
-}>): Promise<ProductBuildAuthorityV1 | ProductBuildAuthorityV2> {
+}>;
+
+export type VersionedProductBuildAuthorityReadInput = VersionedAuthorityReadContext & (
+  | Readonly<{ schema?: "v1" | "v2"; reader: ProductBuildAuthorityReader }>
+  | Readonly<{ schema: "v3"; reader: ExactProductBuildAuthorityReader }>
+);
+
+/** Missing schema remains v2; exact native authority requires explicit v3. */
+export async function readVersionedProductBuildAuthority(input: VersionedProductBuildAuthorityReadInput): Promise<ProductBuildAuthorityV1 | ProductBuildAuthorityV2 | ProductBuildAuthorityV3> {
+  if (input.schema === "v3") {
+    const { readProductBuildAuthorityV3 } = await import("./product-build-authority-v3.js");
+    return readProductBuildAuthorityV3(input.reader, input.runId, input.refusalOptions);
+  }
   return input.schema === "v1"
     ? readProductBuildAuthorityV1(input.reader, input.runId)
     : readProductBuildAuthorityV2(input.reader, input.runId, input.refusalOptions);
