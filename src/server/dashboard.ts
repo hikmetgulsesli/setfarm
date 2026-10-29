@@ -16,14 +16,8 @@ import { getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { readSupervisorArtifactSummary } from "./supervisor-summary.js";
 import { getRunOperationalModel } from "./run-operational-model.js";
 import { buildRunOperationalSnapshot } from "./run-operational-snapshot.js";
-import {
-  ProductBuildAuthorityV2Error,
-  readVersionedProductBuildAuthority,
-} from "./product-build-authority.js";
-import {
-  RuntimeArtifactReaderError,
-  createRuntimeArtifactReader,
-} from "../product-compiler/runtime-artifact-reader.js";
+import { readProductBuildAuthorityHttp } from "./product-build-authority-http.js";
+import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
 import {
   resolveProductArtifactCapacity,
   resolveProductArtifactDir,
@@ -449,53 +443,21 @@ function createDashboardServer(port: number, options: DashboardOptions): http.Se
     const productBuildAuthorityMatch = p.match(/^\/api\/runs\/([^/]+)\/product-build-authority$/);
     if (productBuildAuthorityMatch && req.method === "GET") {
       const runId = productBuildAuthorityMatch[1];
-      const legacyV1 = url.searchParams.get("schema") === "v1";
-      const sql = getSql();
-      const artifactRoot = resolveProductArtifactDir();
-      const artifactLimits = resolveProductArtifactCapacity();
-      try {
-        const reader = createRuntimeArtifactReader({ sql, artifactRoot, artifactLimits });
-        const authority = await readVersionedProductBuildAuthority({
-          schema: legacyV1 ? "v1" : "v2",
-          reader,
-          runId,
-          refusalOptions: {
-            sql,
-            artifactRoot,
-            artifactLimits,
-            artifactReadPort: reader.store,
-          },
-        });
-        return json(res, authority);
-      } catch (error) {
-        if (error instanceof ProductBuildAuthorityV2Error) {
-          return json(res, {
-            schema: "setfarm.product-build-authority-error.v2",
-            runId,
-            code: error.code,
-          }, 503);
-        }
-        if (error instanceof RuntimeArtifactReaderError) {
-          const status = error.code === "RUNTIME_PACKET_RUN_NOT_FOUND"
-            ? 404
-            : [
-                "RUNTIME_PACKET_RUN_NOT_V3",
-                "RUNTIME_PACKET_NOT_ACTIVE",
-                "RUNTIME_PACKET_NOT_TERMINAL",
-                "RUNTIME_PACKET_NOT_SEALED",
-              ].includes(error.code)
-              ? 409
-              : 503;
-          return json(res, {
-            schema: legacyV1
-              ? "setfarm.product-build-authority-error.v1"
-              : "setfarm.product-build-authority-error.v2",
-            runId,
-            code: error.code,
-          }, status);
-        }
-        throw error;
-      }
+      const result = await readProductBuildAuthorityHttp({
+        query: url.searchParams,
+        runId,
+        createReadContext: () => {
+          const sql = getSql();
+          const artifactRoot = resolveProductArtifactDir();
+          const artifactLimits = resolveProductArtifactCapacity();
+          const reader = createRuntimeArtifactReader({ sql, artifactRoot, artifactLimits });
+          return {
+            reader,
+            refusalOptions: { sql, artifactRoot, artifactLimits, artifactReadPort: reader.store },
+          };
+        },
+      });
+      return json(res, result.body, result.statusCode);
     }
 
     const deploymentObservationMatch = p.match(/^\/api\/runs\/([^/]+)\/deployment-observation$/);
