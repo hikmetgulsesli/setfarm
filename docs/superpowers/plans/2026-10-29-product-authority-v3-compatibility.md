@@ -35,6 +35,7 @@
 | SF tests/product-build-authority-http.test.ts | Create direct pure request tests with injected readers/refusal data; no dashboard import/server listener | 2 |
 | SF tests/fixtures/product-build-authority-v3-wire.json | Create versioned golden authority corpus from synthetic data, validated against real reader/schema | 1 |
 | MC tests/fixtures/product-build-authority-v3-wire.json | Create identical consumer copy, byte identity reviewed by Root | 3 |
+| MC/shared/product-build-authority-v3-wire.d.ts | Task3B neutral declaration-only native wire/generic legacy-refusal wrapper; type-only consumers, no runtime module | 3B |
 | MC src/lib/product-build-authority-v3.ts | Create native wire/render types and render-shape predicate | 3 |
 | MC server/services/product-build-authority-v3-parser.ts | Create pure native/wrapper parser accepting existing legacy/refusal callbacks | 3 |
 | MC server/services/setfarm-product-build-authority.ts | Retain production configuration/defaults/singleton in compatibility facade, re-export pure parser/types and configured client | 3 |
@@ -54,6 +55,12 @@
 | MC src/components/run-detail/NativeProductBuildAuthority.tsx | Create native graph/actions/observables/source-map display, honest none branch | 4 |
 | MC tests/product-build-authority-v3-http.test.ts | Create pure route/result/request tests without importing operational router | 4 |
 | MC tests/product-build-authority-render.test.tsx | Extend actual render/parser regression suite for native/none/refusal/old versions | 4 |
+| SF package.json | Scripts-only isolated PBA package entrypoint; preserve exact existing downstream chain | 2 follow-up |
+| SF scripts/run-product-authority-test-groups.mjs | Built-in-only required group partition, guarded child and fail-closed results | 2 follow-up |
+| SF scripts/__tests__/product-authority-test-runner.test.mjs | Inert runner inventory, isolation and result propagation tests | 2 follow-up |
+| MC package.json | Scripts-only isolated PBA package entrypoint after all pure/native tests exist | 4 follow-up |
+| MC scripts/run-product-authority-test-groups.mjs | Built-in-only required group partition, guarded child and fail-closed results | 4 follow-up |
+| MC scripts/__tests__/product-authority-test-runner.test.mjs | Inert runner inventory, isolation and result propagation tests | 4 follow-up |
 | SF docs/superpowers/specs/2026-10-29-product-authority-v3-compatibility-design.md | Root promotes independently reviewed exact design | 0 |
 | SF docs/superpowers/plans/2026-10-29-product-authority-v3-compatibility.md | Root promotes independently reviewed exact plan | 0 |
 
@@ -287,3 +294,102 @@ No production File Map additions are needed. Author test changes stay in current
 Ruling: keep the unchanged configured refusal reader and the throw-only test boundary; replace the selected success/post-mode test promise with pure V3 composition, real safe delegation/early errors and source conservation, and retain the unavailable integration coverage explicitly — the causal fix is native type compatibility and a test-driven production authority override would expand scope without establishing runtime truth — cost if wrong: a configuration-dependent successful refusal regression can remain undetected until later eligible integration verification; no full refusal/runtime readiness claim is allowed meanwhile.
 
 Task5/final claim constraint: carry successful configured refusal and post-mode integration as UNVERIFIED/PENDING; no full refusal or runtime readiness claim until separately eligible actual integration evidence.
+
+# Root proposed refinement: package integration of isolated PBA tests — fix1
+
+Status: ADOPTED by Root after independent fix1 C0/I0/M0 review; see root-package-test-integration-adoption-v1.json. Explicit Root follow-up dispatch still governs source ownership. Product/API/native/refusal/guard semantics and existing selected commands are unchanged. Static evidence is guarded-test-package-integration-assessment-v1.md (27216B SHA25605d60fa32e396037afd72b8dccfbe1cda8f8d9663af8838a01178b6514448b03), Root fullread f61fff. No ordinary npm test was run or claimed failed.
+
+Causal issue: current package globs include new guard-dependent PBA files without their required pre-import. A global guard would break legitimate ordinary tests. Before source delivery, connect a separate mandatory guarded group while preserving ordinary membership and SF's downstream chain. Neither skipping tests, test-name filters, moving already-frozen files, global configuration patches, guard-return values nor running the unsafe broad suite to demonstrate the mismatch is permitted.
+
+## Ownership and File Map additions
+
+SF follow-up to Task2, after its HTTP files exist: the same sole Task2 author may implement the SF harness only after this refinement is adopted and Root explicitly dispatches the follow-up. Root can first execute/review the HTTP-only candidate. MC follow-up to Task4, after Task3's pure service-test migration and all final native/render tests exist: the sole Task4 author implements the MC harness. No second code writer, premature MC guarded group or concurrent package mutation. Task5 remains Root verification/delivery.
+
+Add exactly these source/test paths per repo:
+- package.json: scripts only; dependencies/engines/production entrypoints unchanged.
+- scripts/run-product-authority-test-groups.mjs: built-in-only shell-free planner/result interpreter/entrypoint.
+- scripts/__tests__/product-authority-test-runner.test.mjs: built-in-only planner/custody tests, excluded from old .test.js script glob and selected once by its own script.
+Document the test-toolchain prerequisite and verification limits in the existing tracked SF compatibility plan, an already mapped Root document. No new production config/API/guard/dependency surface.
+
+## Required runner behavior
+
+Parent imports only node builtins, never any product/test/fixture/guard/config module. Export pure planning/result functions; main executes only as the entry script, not on import. Derive repo root from import.meta.url, not caller cwd. Discover original immediate directories using only non-dot-prefixed names ending in the literal .test.ts suffix, with deterministic ordering; do not recurse or pass globs through shell/Node. Exclude .hidden.test.ts and every other dot-prefixed name from B, preserving the old shell glob membership. Apply regular/confined checks to genuinely matching entries, and fail on matching nonregular/unsupported entries instead of silently losing a previous glob member. Explicit MC render .tsx inclusion remains separate from B.
+
+SF original directories: tests. Guarded required manifest:
+- tests/product-authority-sf-import-isolation.test.ts
+- tests/product-build-authority-v3.test.ts
+- tests/product-build-authority-http.test.ts
+Guard path tests/fixtures/product-authority-sf-inert-import-guard.mjs.
+
+MC original directories: server/routes, server/services, server/utils, tests. Guarded required manifest:
+- tests/product-authority-import-isolation.test.ts
+- tests/product-build-authority-v3-stage-a.test.ts
+- server/services/setfarm-product-build-authority.test.ts
+- server/services/product-build-authority-v3-parser.test.ts
+- tests/product-build-authority-v3-http.test.ts
+- tests/product-build-authority-render.test.tsx
+Guard path tests/fixtures/product-authority-inert-import-guard.mjs. MC service file cannot be admitted before its Task3 pure-core/direct-hash migration. The render .tsx is an explicit added member, previously omitted by the package glob.
+
+All required test paths must be unique regular files confined to the repo and present; no existsSync filtering. The selected guard file is itself a required pre-spawn input in every mode, not merely a later --import string. Before any child, validate it without importing it: require presence, regular-file type, no symlink at the file or any path component below the established repository root, and physical confinement under that root. Resolve the repository root and candidate physical path and compare on path-component boundaries; a string-prefix collision is not confinement. Missing guard, directory/nonregular guard, any guard-path symlink (including one targeting another file inside the repo), or physical escape is a nonzero pre-spawn error with zero children. Apply the same regular/non-symlink/physical-confinement policy to required test paths. Never validate a guard by evaluating/importing it. Explicit MC ordinary family exception: server/services/product-build-authority-v2-delivery-evidence-v1.test.ts. Reject discovered product-authority/product-build-authority basename drift not in guarded manifest/explicit exception. Let B be old glob membership, G guarded manifest, A the MC extra .tsx. O=B minus G; require disjoint O/G and O union G=B union A. Every ordinary old test remains and runs once, new unrelated ordinary files are discovered automatically; no hardcoded stale ordinary list.
+
+Validate mode and complete inventory before constructing executable child plans or launching any child. G must be required and nonempty in every mode. In default mode, O must also be nonempty: empty O is a nonzero pre-spawn inventory error, with zero children, even if conservation otherwise holds. No guarded child may run first and discover this error later. Optional own --group=pba may run nonempty G when O is empty; it schedules only G and does not claim an ordinary group ran or passed. Unknown arguments fail. No child in any mode may receive an empty explicit test-file list; never emit a bare --test invocation that triggers automatic discovery. After all preflight passes, default runs guarded then ordinary sequentially; --group=pba runs only required G. Guarded argv: --import <absolute guard> --import tsx --test, then SF --test-concurrency=1, then explicit G paths. Ordinary argv: --import tsx --test then explicit O paths, no inherited guard execArgv. process.execPath, argv array, shell:false, fixed repo cwd and inherited stdio; do not inject guard through NODE_OPTIONS. Deterministic diagnostic records planned argv before spawning. Parent checks typeof node:module namespace registerHooks before scheduling guard; absence is a clear nonzero prerequisite failure before test/product imports or any child. Keep production engines unchanged; this campaign does not promise test support on older >=22 nodes lacking the existing guard API. Already-qualified physicalNode26.4.0 remains Root's actual test runtime; Node22-line test prerequisite is22.18+ or an equivalent verified capability.
+
+Only natural status0 advances. Preserve numeric nonzero child code; signal/null status/spawn error is non-success and stops. Never force termination and count success, swallow a failure, continue later groups after failure, or report omitted/unrun groups as passing. Parent runner success requires all selected groups naturally0; ordinary package suite is not authorized by this design alone.
+
+## Exact package script changes
+
+Both repos add test:pba-runner = node --test scripts/__tests__/product-authority-test-runner.test.mjs and test:pba = node scripts/run-product-authority-test-groups.mjs --group=pba.
+SF test replaces only its initial node --import tsx --test tests/*.test.ts with npm run test:pba-runner && node scripts/run-product-authority-test-groups.mjs; preserve its entire existing following && npm run test:cleanup-ops ... test:internal-production chain byte-for-byte. MC test becomes npm run test:pba-runner && node scripts/run-product-authority-test-groups.mjs. No other scripts change except these named additions/replacement.
+
+## Focused acceptance and evidence limits
+
+Author writes tests first where safe pure interfaces permit, no author execution. Unit imports only runner pure code; inject synthetic file inventories/spawn results. Require membership conservation/extra render once, missing/duplicate/outside/nonregular/unknown-family pre-spawn failure, spaces as single argv, guard-first and no ordinary preload, fixed cwd, focused/default args, capability failure, statuses0/1/7/errors/signals/null and no subsequent child after failure. Add these exact synthetic acceptance cases:
+- An all-guarded discovered inventory satisfies union/disjointness but has O empty: default planning fails nonzero before spawning either group; no argv with a bare --test is emitted.
+- The same O-empty inventory with --group=pba and a valid nonempty G schedules exactly one guarded child. Empty G fails before any child in both default and focused modes. Assert every successful child plan has at least one explicit test-file argument.
+- For each mode, guard missing, guard directory, another nonregular guard, final guard symlink to an in-repo file, parent-component symlink, and guard physical escape all fail before any child. Include a repository-prefix collision path to prove path-component confinement. A valid regular non-symlink confined guard passes preflight without import.
+- A synthetic .hidden.test.ts alongside a visible ordinary test is excluded from B and all scheduled files; the visible file remains ordinary. A hidden PBA-looking filename is also excluded, while a genuinely matching visible unclassified family file still fails. MC render .tsx remains included exactly once.
+ One harmless temp-owned built-in .mjs child/preload proof may establish separate preload state and natural exit propagation after exact review; never invoke real ordinary tests or actual product guard in the runner unit suite. Fake signal results suffice; no actual forced child kill.
+
+Read package JSON as data to assert exact script integration/SF chain preservation, supplementing behavioral tests. Root audits full selected source/import/effect flow, independently reviews task scope, runs original built-in-only runner tests, and may run actual test:pba only after that repo's complete guarded group is reviewed eligible. These do not establish ordinary full npm test PASS; broad ordinary suites retain separate eligibility requirements. Do not claim full configured refusal, build, rollout or overall readiness.
+
+Ruling: partition new PBA files into a required separately preloaded child within ordinary package test entrypoints — new tests otherwise lack their admitted isolation boundary, so this root fix is causally required for the same native compatibility delivery — cost if wrong: membership or exit-propagation regressions could omit ordinary coverage or misreport success; explicit conservation/failure tests and final review are mandatory. Unsupported older test Node versions fail visibly; no runtime engine floor or guard is weakened.
+
+## Fix1 dispositions and conservation
+
+I1 addressed by Root’s explicit empty-group rule: default requires nonempty O/G before any spawn; focused mode requires nonempty G and permits empty O; every child must have explicit nonempty files. M1 addressed by guard-file required presence, regular/non-symlink type and physical repository confinement preflight in every mode, with synthetic failure scenarios. M2 addressed by excluding dot-prefixed immediate names from B while retaining matching visible-entry validation, with a synthetic regression.
+
+Original draft is preserved unchanged: guarded-test-package-integration-amendment-draft-v1.md,8068 bytes,SHA2566ca92f88ae4308f48edbd87e536f7dad589d41675b79b6c7a1d27056a7962e01. Independent review is preserved unchanged: guarded-test-package-integration-independent-review-v1.md,9635 bytes,SHA256413f0f868264b28bbaad84cb1cc709d3cb0ac74b2f211d370b9e7aabe6becbd4. This is a new exclusive private full-draft artifact; no tracked plan/brief/source/test/package/guard change or execution occurred. All other File Map, ownership, toolchain, guards, selected-command and verification limitations remain unchanged. Root scoped re-review and adoption are still required.
+
+# Root proposed Task3 compiler-boundary and phase-accounting amendment
+
+Status: ADOPTED by Root after independentC0/I0/M0 review; see root-task3-compiler-boundary-adoption-v1.json. Task3 source still requires separate Root dispatch. Concrete static source proof/API detail is task-3-compiler-boundary-preflight-v1.md19334B SHA256b3d798d746675acb5be70d5f9a34fae9a36db0e8c680828e5b227637486e3bb1, Root fullread cc689f. No compiler failure or success was observed by the planner. This amends type sharing and phase evidence only; product/wire/runtime/polling/guard/API behavior stays under the adopted design.
+
+## Minimum extra source and interfaces
+
+Add exactly one File Map path: MC/shared/product-build-authority-v3-wire.d.ts, owned by Task3B. It contains exported type/interface declarations only; no imports from src/server/SF/another project, executable values, ambient globals, augmentation or dependencies. Declare complete native wire fields/substructures with exact source schema labels and graph nullability, preserving the full native model. Types describe data, never validate authority. No any/native-to-legacy mapping or invented old bindings.
+
+Export ProductBuildPacketAuthorityV3Wire and ProductBuildAuthorityV3Wire<TLegacyPacket,TRefusal>. The generic legacy parameter is constrained to the unchanged v1 authority schema literal+runId; sealed branch holds TLegacyPacket|ProductBuildPacketAuthorityV3Wire and refusal:null; refused branch packetAuthority:null and refusal:TRefusal. Outer schema/runId/hash/disposition stay exactly v3. Use the exact interface pattern in the bound assessment.
+
+Both consumers import/re-export these declarations with import type/export type only, using the .js-shaped neutral specifier resolved by the installed compiler to .d.ts. Browser src/lib/product-build-authority-v3.ts still owns the runtime renderable predicate and public aliases ProductBuildPacketAuthorityV3 and ProductBuildAuthorityV3, parameterized by its existing same-side legacy/refusal types. Server parser/core use neutral types plus their own existing local legacy/refusal types/callbacks; no server import of src runtime/type implementation .ts, no browser import of configured server/core runtime. Same-side type-only cycles are permitted only when no runtime cycle is created and compiler verifies them. Validators/canonical hashing stay in their existing pure runtime modules; no runtime import of a nonexistent neutral JS file.
+
+All existing Task3/4 public interfaces/behavior and files remain assigned as before except this one extra neutral declaration path. Do not change tsconfig rootDir/include/outDir/skipLibCheck, package build commands/output paths, runtime loaders/guards/vendor contracts or production dependencies. Server dist-server/index.js identity/path contract remains intact. No declaration-package distribution promise or copying a type-only file into runtime is introduced.
+
+## Phase and review gates
+
+Task3A remains behavior-preserving pure core/facade extraction + guarded legacy/unsupported-native baseline, frozen/reviewed/actually run by Root before explicit Task3B author dispatch. New neutral/native types belong to3B. Existing pure-browser StageA success assertion remains unchanged and knownRED through3A.
+
+Task3B must implement actual existing browser response dispatch as well as pure server native parsing/client. Do not defer that dispatch to4. Adding v3 to browser union necessarily exposes the current renderer's v2-only refusal/unwrap/property assumptions, so Task3 can be selected parser/server source progress, not a deployable/whole-browser-build-complete MC release. No intermediate MC service reload/delivery, temporary native-unavailable branch, dropped originalassertion or cast should manufacture whole-appGREEN. Root may retain reviewed scoped source commits with the explicit Task4 dependency.
+
+Task4 retains proper v2/v3 refusal handling, sealed native/legacy branching and exact native renderer before accessing nullable graph/actions/source map. After Task4, actual full browser type verification and render/request/parser tests must pass before final source/build delivery. No false-empty graph or deployment/accepted-final claims.
+
+## Root-only verification, not performed here
+
+Static review confirms declaration-only neutral file and type-only consumers, no forbidden project import, and byte-identical real configs/output commands. Explicit standalone neutral-declaration checking must enable declaration checking (skipLibCheck false) so existing skipLibCheck true cannot hide errors inside the new sharedfile. Root qualifies exact installed-compiler invocation; any ambient/baseline diagnostic is evidence to classify, never a fabricatedPASS or reason to weaken actual configs.
+
+Use unchanged server project resolution for Task3 boundary/source typecheck with --noEmit and a Root-owned private tsBuildInfoFile, preserving retained actual server buildinfo and emitting no JS. This checks real composite/rootDir/filelist relationships; it is not a stockbuild or emitted-artifact claim. Preserve actual original compiler output/exits, including independent baseline errors. Installed-compiler flags must be qualified, not assumed from this proposal.
+
+Do not run a knowingly incomplete browser check simply to rediscover the declared Task4 dependency. After4, use the actual unchanged browser tsconfig noEmit check, satisfying genuine project-reference output prerequisites through the normal eligible server/stockbuild phase if required. Do not replace it with relaxed file-only checks excluding the renderer, fake declarations or rootDir/includes overrides. Final clean stock build and emitted-server runtime-path/no-neutral-or-src-JS-import inspection remain mandatory and independent from noEmit, Vite transpilation or focused tests.
+
+All actual test commands preserve MC pre-import guard+separate isolation, injected synthetic data/fetch and no real env/credentials/PG/browser/provider/runtime inputs. Successful configured refusal/default-hybrid/post-mode integration remains UNVERIFIED_PENDING. CurrentSFharness work is unaffected; no new execution or source admission from this draft.
+
+Ruling: share native wire declarations in a neutral declaration-only generic module and reserve full browser readiness for completed Task4 — existing server composite/rootDir forbids treating a src runtime implementation as harmless merely because imported with type, and existing renderer consumes the expanded union — cost if wrong: declaration drift or compiler-resolution work may require revision; real strict declaration/project/final-browser checks and no intermediate MC rollout are required. No compiler guard/configuration is weakened.
