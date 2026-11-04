@@ -180,7 +180,7 @@ function waitFreshStartingChildReadyV1(child: ChildProcess, service: "dashboard"
       if(child.exitCode!==null||child.signalCode!==null)return onExit();
       finish();
     };
-    const timer=setTimeout(()=>finish(new Error("FRESH_INSTALLATION_SERVICE_READY_TIMED_OUT")),30_000);
+    const timer=setTimeout(()=>finish(new Error("FRESH_INSTALLATION_SERVICE_READY_TIMED_OUT")),service==="spawner"?120_000:30_000);
     child.on("message",onMessage);child.once("error",onError);child.once("exit",onExit);child.once("disconnect",onDisconnect);
     if(child.exitCode!==null||child.signalCode!==null)onExit();
   });
