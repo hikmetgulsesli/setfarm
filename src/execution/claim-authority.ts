@@ -64,7 +64,7 @@ export function readClaimEnvelopeFile(filePath: string): ClaimEnvelopeV1 {
  * side effects against a story they no longer own.
  */
 export async function assertClaimAuthority(
-  sql: postgres.Sql,
+  sql: postgres.Sql | postgres.TransactionSql,
   rawEnvelope: unknown,
   expectedStepDbId: string,
 ): Promise<ClaimAuthoritySnapshot> {

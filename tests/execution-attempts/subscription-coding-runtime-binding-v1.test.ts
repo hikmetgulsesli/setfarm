@@ -82,3 +82,20 @@ it("stage primary cannot be retargeted to fallback or crossed provider model", (
     assert.throws(() => required("projectSubscriptionCodingRuntimeBindingV1")({ ...input, selectedProfile }), /MISMATCH|REFUSED/);
   }
 });
+it("published worker identity requires original pid start group and complete observed identity", () => {
+  const processIdentity = { schema: "setfarm.process-identity.v1", pid: 43101,
+    processStartedAt: "2026-11-04T12:00:00.000Z", processGroupId: 43000, source: "observed_os" };
+  const published = { pid: 43101, processStartedAt: "2026-11-04T12:00:00.000Z",
+    processGroupId: 43000, processIdentity };
+  const check = required("assertSubscriptionRuntimePublishedWorkerV1");
+  // This API takes two DATA arguments; it neither observes nor starts a process.
+  const join = (session: unknown) => (api!.assertSubscriptionRuntimePublishedWorkerV1 as Function)(session, { processIdentity });
+  assert.equal(typeof check, "function");
+  assert.doesNotThrow(() => join(published));
+  for (const crossed of [{}, { ...published, pid: undefined }, { ...published, pid: 43102 },
+    { ...published, processStartedAt: "2026-11-04T12:00:01.000Z" }, { ...published, processGroupId: 43001 },
+    { ...published, processIdentity: undefined },
+    { ...published, processIdentity: { ...processIdentity, pid: 43102 } }]) {
+    assert.throws(() => join(crossed), /REFUSED/);
+  }
+});

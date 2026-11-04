@@ -135,6 +135,14 @@ function closureData(value: unknown, binding: SubscriptionRuntimeBindingV1, atta
 }
 const bytesOf = (value: unknown) => Buffer.from(JSON.stringify(value) + '\n');
 const hashOf = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+function preparationData(binding: SubscriptionRuntimeBindingV1, authority: SubscriptionRuntimeAuthorityV1) {
+  const b = parseSubscriptionRuntimeBindingV1(binding), a = parseSubscriptionRuntimeAuthorityV1(authority, b);
+  return { schema: SCHEMA, phase: 'prepared', binding: b, authority: a };
+}
+/** Exact immutable preparation bytes hash; DATA only, never startup admission. */
+export function subscriptionRuntimePreparationHashV1(binding: SubscriptionRuntimeBindingV1, authority: SubscriptionRuntimeAuthorityV1): string {
+  return hashOf(bytesOf(preparationData(binding, authority)));
+}
 function uid(): bigint { if (!process.getuid) refuse(); return BigInt(process.getuid()); }
 function stable(a: BigIntStats, b: BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.uid === b.uid && a.gid === b.gid
@@ -260,9 +268,9 @@ export function createSubscriptionRuntimeAttachmentV1(input: Readonly<{
     try { mkdirSync(runtimePath, { mode: 0o700 }); syncDirectory(dirname(runtimePath)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
     directory(runtimePath, true);
-    const prepared = { schema: SCHEMA, phase: 'prepared', binding, authority };
+    const prepared = preparationData(binding, authority);
     writeRecord(runtimePath + '/prepared.json', prepared);
-    const attachmentHash = hashOf(bytesOf(prepared));
+    const attachmentHash = subscriptionRuntimePreparationHashV1(binding, authority);
     // The replay is exact even if later records already exist. Acquisition must
     // separately require phase=prepared before creating another external owner.
     const view = readView(runtimePath, binding); if (view.attachmentHash !== attachmentHash || !equal(view.authority, authority)) refuse();

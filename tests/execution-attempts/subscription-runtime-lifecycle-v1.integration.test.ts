@@ -10,7 +10,7 @@ import { insertAndBindInternalProductionClaimBirthV1, prepareInternalProductionC
   from "../../src/execution/claim-runtime-publication.js";
 import { createRuntimeSessionRepository, releaseDrainedRuntimeSessionInTransaction,
   type ClaimRuntimeSession } from "../../src/execution/runtime-session-repository.js";
-import { requestRunTermination } from "../../src/execution/run-termination.js";
+import { requestRunTermination, createRunTerminationRepository } from "../../src/execution/run-termination.js";
 import { createSubscriptionRuntimeAttachmentV1, type SubscriptionRuntimeBindingV1,
   type SubscriptionRuntimeAuthorityV1 } from "../../src/execution/subscription-runtime-attachment-v1.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
@@ -109,11 +109,13 @@ async function withFixture(body: (f: Awaited<ReturnType<typeof fixture>>, db: Te
   finally { f?.cleanup(); await db.cleanup(); }
 }
 function subscriptionStart(f: Awaited<ReturnType<typeof fixture>>) {
-  const binding: SubscriptionRuntimeBindingV1 = {
-    kind: "stage-claim", runtimeSessionId: f.start.sessionId, claimId: f.claimId,
+  const common = { runtimeSessionId: f.start.sessionId, claimId: f.claimId,
     ownerInstanceId: f.start.ownerInstanceId, modelRef: "minimax/MiniMax-M3.1-Flash",
     sourceSha: "a".repeat(40), worktree: f.start.worktree,
   };
+  const binding: SubscriptionRuntimeBindingV1 = f.envelope.attempt
+    ? { ...common, modelRef: "minimax/MiniMax-M3.1-Flash", kind: "execution-attempt", ...f.envelope.attempt }
+    : { ...common, modelRef: "minimax/MiniMax-M3.1-Flash", kind: "stage-claim" };
   // Fixture DATA, never claimed as an OS observation or selected admission.
   const authority: SubscriptionRuntimeAuthorityV1 = {
     sourceSha: binding.sourceSha, activationPreparedHash: "b".repeat(64),
@@ -370,6 +372,46 @@ it("authentic journal publication and caller closed flags cannot substitute orig
     await f.sessions.requestDrain({ ...f.start, diagnostic: "publication is DATA, never original closure" });
     await assert.rejects(f.sessions.markDrained({ ...f.start, evidence: { ...ABSENT, subscriptionClosure: forged } }), /SUBSCRIPTION/);
     assert.equal((await f.sessions.findById(f.start.sessionId))!.state, "drain_requested");
+  }, true);
+});
+it("execution-attempt seed binds the actual joined generation and fence rather than a stage tuple", async () => {
+  await withFixture(async f => {
+    const input = subscriptionStart(f), read = authenticatedReader(f.sessions);
+    assert.equal(input.subscriptionBinding.kind, "execution-attempt");
+    const seeded = await read(input);
+    for (const change of [{ generation: f.envelope.attempt!.generation + 1 }, { fenceToken: "0".repeat(64) }]) {
+      await assert.rejects(read({ ...input, subscriptionBinding: { ...input.subscriptionBinding, ...change } as SubscriptionRuntimeBindingV1 }), /SUBSCRIPTION|MISMATCH/);
+      assert.deepEqual(await f.sessions.findById(f.start.sessionId), seeded);
+    }
+  });
+});
+it("seeded subscription runtime cannot bypass envelope checks through legacy markRunning input", async () => {
+  await withFixture(async f => {
+    const seeded = await authenticatedReader(f.sessions)(subscriptionStart(f));
+    await assert.rejects(f.sessions.markRunning(f.start), /SUBSCRIPTION|REFUSED/);
+    assert.deepEqual(await f.sessions.findById(f.start.sessionId), seeded);
+  });
+});
+it("quarantine termination recovery cannot erase subscription seed or invent original closure", async () => {
+  await withFixture(async (f, db) => {
+    const input = subscriptionStart(f), seeded = await authenticatedReader(f.sessions)(input);
+    const quarantined = await f.sessions.quarantine({ sessionId: f.start.sessionId,
+      expectedOwnerInstanceId: f.start.ownerInstanceId, expectedStateVersion: seeded.stateVersion,
+      diagnostic: "restart has no original streams or joint closure" });
+    const request = await requestRunTermination(db.sql, { runId: f.runId, targetStatus: "cancelled",
+      requestId: `RTR_${randomUUID()}`, requestedBy: "subscription-fixture", diagnostic: "terminate quarantined owner" });
+    assert.equal(request.status, "requested");
+    if (request.status === "already_terminal") assert.fail("owned termination request required");
+    const termination = await createRunTerminationRepository(db.sql).claim({ requestId: request.request.requestId,
+      ownerInstanceId: "termination-fixture-owner" });
+    assert.equal(termination!.state, "draining");
+    for (const evidence of [ABSENT, { ...ABSENT, subscriptionClosure: { binding: input.subscriptionBinding,
+      attachmentHash: "f".repeat(64), status: "closed", broker: "closed", worker: "closed", evidenceRefs: [] } }]) {
+      await assert.rejects(f.sessions.recoverQuarantinedForTermination({ sessionId: f.start.sessionId,
+        expectedStateVersion: quarantined.stateVersion, terminationRequestId: termination!.requestId,
+        terminationOwnerInstanceId: termination!.ownerInstanceId!, diagnostic: "no original must remain quarantined", evidence }), /SUBSCRIPTION/);
+      assert.deepEqual(await f.sessions.findById(f.start.sessionId), quarantined);
+    }
   }, true);
 });
 it("legacy Codex absence-only drainage and exactly one release remain unchanged", async () => {
