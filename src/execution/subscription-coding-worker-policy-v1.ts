@@ -225,7 +225,7 @@ export function buildSubscriptionCodingSandboxPolicyV1(input: SubscriptionCoding
       ...['/dev/null', '/dev/random', '/dev/urandom'].map(path => rule('file-read-data', 'literal', path, readProtected)),
       ...writable.map(grant => rule('file-write-data file-write-create', grant.kind, grant.path, writeProtected)),
       ...writable.map(grant => structuralRule(grant.kind, grant.path)),
-      `(allow network-outbound (remote ip "127.0.0.1:${v.brokerPort}"))`, ''].join('\n');
+      `(allow network-outbound (remote tcp4 "localhost:${v.brokerPort}"))`, ''].join('\n');
   } catch { refuse(); }
 }
 

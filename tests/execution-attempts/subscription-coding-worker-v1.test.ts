@@ -151,7 +151,7 @@ test('sandbox serialization keeps protected exclusions on writes and only the pi
   assert.match(policy, /\(deny default\)/);
   assert.match(policy, /\(deny process-fork\)/);
   assert.match(policy, /\(allow process-exec \(literal "\/opt\/homebrew\/Cellar\/node\/26\.4\.0\/bin\/node"\)\)/);
-  assert.match(policy, /\(allow network-outbound \(remote ip "127\.0\.0\.1:49157"\)\)/);
+  assert.match(policy, /\(allow network-outbound \(remote tcp4 "localhost:49157"\)\)/);
   assert.doesNotMatch(policy, /\(allow (?:network-inbound|process-fork)\b/);
   assert.doesNotMatch(policy, /\(allow network-outbound\s*\)/);
   assert.doesNotMatch(policy, /\(subpath "(?:\/|\/Users|\/private|\/opt)"\)/);
