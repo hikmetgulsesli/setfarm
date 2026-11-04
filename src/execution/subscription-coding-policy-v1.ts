@@ -76,7 +76,9 @@ export function buildSubscriptionCodingMaterialV1(
       directories: [...base.directories],
       files: base.files.map((file, index) => ({ path: file.path, mode: file.mode,
         contents: index === 0 ? JSON.stringify(config, null, 2) + '\n' : file.contents })),
-      env: { ...base.env }, argv,
+      // The isolated worker must not load the host's OpenSSL configuration.
+      // Certificate verification and the parent broker's TLS settings stay default.
+      env: { ...base.env, OPENSSL_CONF: '/dev/null' }, argv,
     });
   } catch { invalid(); }
 }

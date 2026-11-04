@@ -103,10 +103,11 @@ test('coding preserves private custody material and leaves the 20 second readonl
     OPENCLAW_CONFIG_PATH: r + '/config.json', PI_CODING_AGENT_DIR: r + '/state/agents/subscription-worker/agent',
     XDG_CONFIG_HOME: r + '/xdg/config', XDG_CACHE_HOME: r + '/xdg/cache', XDG_DATA_HOME: r + '/xdg/data',
     XDG_STATE_HOME: r + '/xdg/state', TMPDIR: r + '/tmp', TMP: r + '/tmp', TEMP: r + '/tmp', PATH: '/usr/bin:/bin',
-    LANG: 'en_US.UTF-8', TZ: 'UTC', NO_COLOR: '1', NODE_DISABLE_COMPILE_CACHE: '1', OPENCLAW_NO_RESPAWN: '1',
+    LANG: 'en_US.UTF-8', TZ: 'UTC', NO_COLOR: '1', OPENSSL_CONF: '/dev/null', NODE_DISABLE_COMPILE_CACHE: '1', OPENCLAW_NO_RESPAWN: '1',
     OPENCLAW_PATH_BOOTSTRAPPED: '1', OPENCLAW_LOG_LEVEL: 'silent', OPENCLAW_AUTH_STORE_READONLY: '1', OPENCLAW_TRAJECTORY: 'false' });
   for (const key of ['KIMI_API_KEY', 'MINIMAX_API_KEY', 'ANTHROPIC_API_KEY', 'HTTP_PROXY', 'HTTPS_PROXY',
-    'NODE_OPTIONS', 'SETFARM_PG_URL']) assert.ok(!Object.hasOwn(value.env, key));
+    'NODE_OPTIONS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'SETFARM_PG_URL']) assert.ok(!Object.hasOwn(value.env, key));
+  assert.equal(control.env.OPENSSL_CONF, undefined);
   assert.ok(!JSON.stringify([value.argv, value.env, value.files.slice(1)]).includes(input.worker.apiKey));
   assert.equal(JSON.stringify(buildReadonly(readonlyInput(input))), JSON.stringify(control));
 });
