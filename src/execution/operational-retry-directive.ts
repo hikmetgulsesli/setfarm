@@ -1,4 +1,4 @@
-import { readSelectedFreshCodexExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
+import { readSelectedFreshExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
 import { z } from "zod";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -50,9 +50,9 @@ const FALLBACK_EXECUTION_PROFILE = Object.freeze({
 export function resolveV3ExecutionProfile(
   selection: "primary" | "fallback",
 ): ModelExecutionProfileV1 {
-  const selected = readSelectedFreshCodexExecutionProfileV1();
+  const selected = readSelectedFreshExecutionProfileV1(selection);
   if (selected) {
-    if (selection !== "primary") throw new Error("FRESH_V3_FALLBACK_PROFILE_UNAVAILABLE");
+    if (selection !== selected.selection) throw new Error("FRESH_V3_FALLBACK_PROFILE_UNAVAILABLE");
     return ModelExecutionProfileV1Schema.parse(selected);
   }
   return ModelExecutionProfileV1Schema.parse(

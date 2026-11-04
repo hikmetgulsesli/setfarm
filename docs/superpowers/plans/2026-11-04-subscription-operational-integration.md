@@ -13,7 +13,7 @@ Primary `minimax/MiniMax-M3.1-Flash`; existing bounded retry `kimi/k3.1-pro`. No
 
 ## File Map
 
-Create under `src/execution/`: `subscription-coding-policy-v1.ts` (projection/limits), `subscription-parent-credential-v1.ts` (reader), `subscription-coding-worker-v1.ts` (sandbox/process), `subscription-runtime-attachment-v1.ts` (journal), `subscription-coding-runtime-v1.ts` (joint owner), `subscription-workflow-transport-v1.ts` (inline role/report mapping).
+Create under `src/execution/`: `subscription-coding-policy-v1.ts` (projection/limits), `subscription-parent-credential-v1.ts` (selected guarded facade), `subscription-credential-record-v1.ts` (private record DATA reader), `subscription-coding-worker-v1.ts` (sandbox/process), `subscription-runtime-attachment-v1.ts` (journal), `subscription-coding-runtime-v1.ts` (joint owner), `subscription-workflow-transport-v1.ts` (inline role/report mapping).
 Create `src/installation/selected-model-profile-v1.ts` for the import-inert pure profile projection. Modify `src/installation/fresh-installation-v3-profile-v1.ts`, `src/execution/operational-retry-directive.ts`, `src/evals/convergence-runner.ts` (profile); `src/execution/runtime-session-repository.ts`, `src/spawner.ts` (lifecycle). Matching tests under `tests/execution-attempts/`; existing installation/retry/convergence/repository/completion tests. Register new DB lifecycle test OWNER_BACKED_TESTS in `scripts/run-execution-attempt-tests.ts`.
 
 ### Task 1: pure coding policy, first releasable task
@@ -50,19 +50,19 @@ export function assertSelectedFreshExecutionProfileUnchangedV1():void;
 export function readSelectedFreshExecutionProfileV1(
  selection:'primary'|'fallback'='primary'):ModelExecutionProfileV1|null;
 ```
-- [ ] RED subscription primary/fallback, unknown runtime, sticky drift, Codex argv/fallback refusal, ordinary null. Preserve existing actual Source-extraction tests; new pure projection tests direct import. Production consumers continue through the selected facade. Before running any existing test, inspect transitive imports; isolate or omit DB/provider side effects unless explicitly admitted. Run `node --import tsx --test tests/installation/fresh-installation-v3-profile.test.ts tests/execution-attempts/operational-retry-directive.test.ts tests/evals/convergence-runner-v2.test.ts`.
-- [ ] Implement captured `subscription|codex`, generic sticky API, fixed MiniMax/Kimi, exact Codex. Keep Codex-named compatibility exports; type-only import prevents cycle. Retry passes selection; convergence reads primary. Spawner stays closed pending owner.
-- [ ] GREEN same command; Root review/commit.
+- [x] RED subscription primary/fallback, unknown runtime, sticky drift, Codex argv/fallback refusal, ordinary null. Preserve existing actual Source-extraction tests; new pure projection tests direct import. Production consumers continue through the selected facade. Before running any existing test, inspect transitive imports; isolate or omit DB/provider side effects unless explicitly admitted. Run only `node --import tsx --test tests/installation/selected-model-profile-v1.test.ts tests/installation/fresh-installation-v3-profile.test.ts`. Root rejected the broad commands because their eager imports capture credential-bearing installation/runtime state.
+- [x] Implement captured `subscription|codex`, generic sticky API, fixed MiniMax/Kimi, exact Codex. Keep Codex-named compatibility exports; type-only import prevents cycle. Retry passes selection; convergence reads primary. Spawner stays closed pending owner.
+- [x] GREEN 17/17 with zero skips (4d8011), full project no-emit TypeScript pass (d0b4f5/15fc0d), scoped review clean (2d83b2a4); Root commit.
 
 ### Task 3: protected parent credential
 
-Create reader/matching test. API:
+Create selected reader facade plus import-inert filesystem record DATA helper and matching direct fake-store test. No unit test imports the eager selected credential capture. The DATA helper confers no operational admission; the production facade derives its fixed root from genuine selected entry. API:
 ```ts
 export function withSelectedSubscriptionCredentialV1<T>(modelRef:SubscriptionModelRefV1,
  use:(credential:string)=>Promise<T>):Promise<T>;
 ```
 - [ ] RED fake-store tests missing/symlink/hardlink/uid/mode/oversize/extra or duplicate keys/model mismatch/replacement/Source drift; callback never runs on invalid input; no secrets/hash/path/raw exception. Run `node --import tsx --test tests/execution-attempts/subscription-parent-credential-v1.test.ts`.
-- [ ] Fixed selected paths/schema from design, no provisioning/path/env/SDK fallback. Follow private-assets descriptor pattern: private canonical ancestors, O_NOFOLLOW/O_NONBLOCK, owned0600 regular single-link4096 bound; stable fd/name dev/ino/mode/uid/gid/nlink/size/mtime/ctime before/after. Exact model and selected entry before/after. Callback directly supplies broker/drops refs; fixed `SUBSCRIPTION_CREDENTIAL_REFUSED`; no JS erasure claim. Fake FD helper confers no production authority.
+- [ ] Fixed selected paths/schema from design, no provisioning/path/env/SDK fallback. Follow private-assets descriptor pattern: private canonical ancestors, O_NOFOLLOW/O_NONBLOCK, owned0600 regular single-link4096 bound; stable fd/name dev/ino/mode/uid/gid/nlink/size/mtime/ctime before/after. Exact model and selected entry before/after. Finish all file/selection checks and close owned descriptors before invoking the callback. No post-callback validation may discard a successfully acquired broker handle: the runtime owner must retain it before its next guarded await and close it on refusal. Callback directly supplies broker/drops refs; fixed `SUBSCRIPTION_CREDENTIAL_REFUSED`; no JS erasure claim. Fake FD helper confers no production authority.
 - [ ] GREEN; Root review/commit. Real protected-store provenance remains operational prerequisite within retained approved scope.
 
 ### Task 4: real filesystem-only owned worker

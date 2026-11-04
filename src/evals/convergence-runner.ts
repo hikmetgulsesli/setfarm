@@ -13,7 +13,7 @@ import YAML from "yaml";
 import { z } from "zod";
 
 import { readV3AdmissionMigrationStateV1 } from "../installation/fresh-installation-v3-admission-v1.js";
-import { readSelectedFreshCodexExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
+import { readSelectedFreshExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
 import { assertFreshInstallationSelectionUnchangedV1, freshInstallationSelectionV1 } from "../installation/fresh-installation-selection-v1.js";
 import {
   EvidenceBundleV2Schema,
@@ -2059,7 +2059,7 @@ async function evaluationCodeHash(root: string): Promise<string> {
 async function readConvergenceExecutionProfileV1(workflowText: string): Promise<Readonly<{
   providerId: string; modelId: string; agentCount: number;
 }>> {
-  const selected = readSelectedFreshCodexExecutionProfileV1();
+  const selected = readSelectedFreshExecutionProfileV1("primary");
   const workflow = YAML.parse(workflowText) as Record<string, unknown>;
   const mapping = workflow["agent_mapping"] && typeof workflow["agent_mapping"] === "object"
     ? workflow["agent_mapping"] as Record<string, unknown>
