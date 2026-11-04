@@ -5,6 +5,7 @@ import { it } from "node:test";
 import ts from "typescript";
 import { deriveSubscriptionCodingRuntimePathsV1 } from "../../src/execution/subscription-coding-runtime-binding-v1.js";
 import { createV3StageClaimHandoffV1 } from "../../src/execution/v3-stage-execution-context.js";
+import { assertSubscriptionWorkflowRoleV1 } from "../../src/execution/subscription-workflow-transport-v1.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
 
 // Existing Source-DATA testing pattern: evaluate exact private production bodies
@@ -48,6 +49,7 @@ function fixture(){
         assert.equal(retained?.subscriptionRuntime,runtime,"actual pair retained before markRunning await");
         assert.deepEqual(retained?.claimEnvelope,claimEnvelope,"full original envelope retained, including issuedAt/input");
         assert.deepEqual(actual.envelope,claimEnvelope);assert.equal(actual.pid,43200);assert.deepEqual(actual.processIdentity,processIdentity);
+        assert.equal(actual.runtimePath,paths.runtimePath);assert.equal(actual.worktree,claimEnvelope.workdir);assert.equal(actual.transcriptPath,paths.transcriptPath);
         return{status:"running",session:{sessionId:runtimeSessionId,ownerInstanceId,state:"running",stateVersion:3}};},
       findById:async()=>({sessionId:runtimeSessionId,ownerInstanceId,state:"starting",stateVersion:2}),quarantine:async()=>{events.push("quarantine");},
     }),
@@ -85,7 +87,7 @@ it("actual spawnAgentNow routes selected subscription to owned helper before leg
   Object.assign(f.ports,{hasTrackedClaimRuntime:()=>false,shouldDeferBackgroundWorkflow:async()=>false,trackedRuntimeCount:()=>0,MAX_CONCURRENT:2,
     pendingClaimInvocations:new Map(),newRuntimeSessionId:()=>f.input.runtimeSessionId,buildSessionKey:()=>f.input.sessionKey,agentSessionJsonlPath:()=>"/unused/session.jsonl",
     TRANSCRIPT_ROOT:"/legacy/transcripts",recoveryDispatchClassForRole:()=>undefined,
-    assertSubscriptionWorkflowRoleV1:()=>{},claimStep:async()=>claim,runtimeClaimEnvelope:()=>f.input.claimEnvelope,safeAgentCwdFromClaimInput:()=>f.input.claimEnvelope.workdir,
+    assertSubscriptionWorkflowRoleV1,claimStep:async()=>claim,runtimeClaimEnvelope:()=>f.input.claimEnvelope,safeAgentCwdFromClaimInput:()=>f.input.claimEnvelope.workdir,
     AGENT_SAFE_CWD:"/scratch",claimRoleRequiresProjectCwd:()=>false,ensureClaimScopeParentDirs:()=>[],
     buildClaimSummary:()=>({canonicalStageClaimHandoff:f.input.authority}),completeInlineSecurityGateIfApplicable:async()=>false,
     fs:{unlinkSync(){legacy++;throw Error("legacy tmp cleanup reached");},mkdirSync(){legacy++;throw Error("legacy filesystem path reached");},writeFileSync(){legacy++;throw Error("legacy filesystem path reached");}},
@@ -102,7 +104,7 @@ it("actual selected caller refuses unsupported role before claimStep",async()=>{
     buildSessionKey:()=>f.input.sessionKey,agentSessionJsonlPath:()=>"/unused/session.jsonl",newRuntimeSessionId:()=>f.input.runtimeSessionId,
     TRANSCRIPT_ROOT:"/legacy/transcripts",pendingClaimInvocations:new Map(),recoveryDispatchClassForRole:()=>undefined,
     fs:{unlinkSync(){}},
-    assertSubscriptionWorkflowRoleV1:()=>{throw Error("SUBSCRIPTION_WORKFLOW_ROLE_UNSUPPORTED");},claimStep:async()=>{claims++;throw Error("must not claim");}});
+    assertSubscriptionWorkflowRoleV1,claimStep:async()=>{claims++;throw Error("must not claim");}});
   await assert.rejects(evaluate("spawner.ts","spawnAgentNow",f.ports)("unknown","feature-dev","unknown"),/UNSUPPORTED/);
   assert.equal(claims,0);
 });

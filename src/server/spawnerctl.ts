@@ -1,3 +1,4 @@
+import {readSelectedFreshExecutionProfileV1,assertSelectedFreshExecutionProfileUnchangedV1} from "../installation/fresh-installation-v3-profile-v1.js";
 import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 import { prepareFreshInstallationOperationalEntryV1, assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
 import { freshServicePathsV1, inspectFreshServiceV1, openFreshServiceLogV1, freshServiceChildEnvironmentV1, stopFreshServiceV1, reclaimFreshServiceAfterHeldChildV1 } from "./fresh-installation-service-controls-v1.js";
@@ -208,9 +209,11 @@ async function stopHeldFreshStartingChildV1(child: ChildProcess, service: "dashb
 
 async function startFreshSpawnerV1():Promise<{pid:number;logFile:string}> {
   const runner=process.env.SETFARM_AGENT_RUNTIME;
-  if(runner!=="codex")throw new Error("FRESH_INSTALLATION_SPAWNER_RUNNER_NOT_EXPLICIT_CODEX");
+  if(runner!=="codex"&&runner!=="subscription")throw new Error("FRESH_INSTALLATION_SPAWNER_RUNNER_REFUSED");
+  const profile=readSelectedFreshExecutionProfileV1();if(!profile)throw Error("FRESH_INSTALLATION_SPAWNER_PROFILE_REFUSED");
   await prepareFreshInstallationOperationalEntryV1();assertFreshInstallationOperationalEntryV1();
-  if(process.env.SETFARM_AGENT_RUNTIME!==runner)throw new Error("FRESH_INSTALLATION_SPAWNER_RUNNER_CHANGED");
+  assertSelectedFreshExecutionProfileUnchangedV1();
+  if(process.env.SETFARM_AGENT_RUNTIME!==runner||JSON.stringify(readSelectedFreshExecutionProfileV1())!==JSON.stringify(profile))throw new Error("FRESH_INSTALLATION_SPAWNER_RUNNER_CHANGED");
   const selected=freshInstallationSelectionV1!;
   if(inspectFreshServiceV1("spawner").running)throw new Error("FRESH_INSTALLATION_SERVICE_ALREADY_RUNNING");
   const paths=freshServicePathsV1("spawner"),script=path.join(selected.paths.repository,"dist","spawner.js");

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import path from "node:path";
 import {it} from "node:test";
+import crypto from "node:crypto";
+import {canonicalJsonStringify,hashCanonicalJson} from "../../src/product-compiler/canonical-json.js";
 import ts from "typescript";
 import {compileEvidencePlanV1} from "../../src/evidence/evidence-plan-v1.js";
 import {ImplementationSliceV1Schema} from "../../src/product-compiler/schemas/implementation-slice-v1.js";
@@ -47,25 +49,125 @@ it("setup-build retry replaces stale validator failure before current build and 
 function openMergeClause(){const file="installer/step-ops.ts",text=source(file),tree=ts.createSourceFile(file,text,ts.ScriptTarget.Latest,true),rows:ts.IfStatement[]=[];
   const visit=(node:ts.Node)=>{if(ts.isIfStatement(node)&&node.expression.getText(tree)==='prState === "OPEN"'
     &&node.thenStatement.getText(tree).includes("tryAutoMergePR(")&&node.thenStatement.getText(tree).includes("prReviewSettleComplete("))rows.push(node);ts.forEachChild(node,visit);};
-  visit(tree);assert.equal(rows.length,1,"actual verify OPEN merge clause must remain unique");return rows[0]!.getText(tree);}
-function verify(failCommand?:string){
-  const events:string[]=[],context:Record<string,string>={repo:"/product",build_cmd:"npm run build",test_cmd:"npm test",lint_cmd:"npm run lint"};
-  const ports:Record<string,any>={context,verifiedStoryId:"US-001",verifiedRow:{pr_url:"https://example.invalid/pr/1",story_branch:"story-1"},
+  const owners=tree.statements.filter((node):node is ts.FunctionDeclaration=>ts.isFunctionDeclaration(node)&&node.name?.text==="handleVerifyEachCompletion");
+  assert.equal(owners.length,1,"actual handleVerifyEachCompletion must remain unique");
+  visit(owners[0]!);assert.equal(rows.length,1,"actual verify OPEN merge clause must remain unique inside handleVerifyEachCompletion");return rows[0]!.getText(tree);}
+function verify(failCommand?:string,options:{driftAfterTest?:boolean;storyTestFails?:boolean}={}){
+  const events:string[]=[],repos:string[]=[],mergeArguments:unknown[][]=[];let head="1".repeat(40);
+  const context:Record<string,string>={repo:"/product-base",story_workdir:"/product-story",build_cmd:"npm run build",test_cmd:"npm test",lint_cmd:"npm run lint"};
+  const ports:Record<string,any>={path,context,verifiedStoryId:"US-001",verifiedRow:{id:"story-db-1",pr_url:"https://example.invalid/pr/1",story_branch:"story-1"},
     verifyStep:{id:"step-db",run_id:"run-verify",step_id:"verify",step_index:6},
     prReviewSettleComplete:()=>true,logger:{info(){},warn(){}},
-    runPostMergeBuildGate:(_repo:string,command:string)=>{events.push(command);return{ok:command!==failCommand,output:"owned command output",failure:"current configured command failed"};},
+    claimEnvelope:{schema:"setfarm.claim-envelope.v1",protocol:"v3",issuedAt:"2026-11-04T12:00:00.000Z",runId:"run-verify",stepId:"step-db",workflowStepId:"verify",
+      claimId:902,claimAgentId:"feature-dev_reviewer",runtimeAgentId:"reviewer",workdir:"/product-story"},
+    reviewedHeadSha:"1".repeat(40),getPRHeadBranch:()=>"story-1",
+    fs:{existsSync:()=>true},execFileSync:(_command:string,args:string[],opts:any)=>{
+      assert.deepEqual(args,["branch","--show-current"]);assert.equal(opts.cwd,"/product-story");return "story-1";},
+    pgGet:async()=>({id:"story-db-1",story_id:"US-001",story_branch:"story-1",pr_url:"https://example.invalid/pr/1",run_id:"run-verify"}),
+    readDefaultGithubReview:async()=>({prState:"OPEN",headSha:"1".repeat(40),actionableThreads:[]}),
+    execPlatformGit:(args:string[],opts:any)=>{assert.equal(opts.cwd,"/product-story");
+      if(args[0]==="rev-parse")return head;if(args[0]==="status")return "";throw Error("unexpected git command");},
+    captureV3GitCommitRevision:(input:any)=>({sha:input.commitSha,treeHash:"2".repeat(40)}),canonicalJsonStringify,
+    parseGitStatusPaths:()=>[],isPlatformNonStoryCommitPath:()=>false,
+    runPostMergeBuildGate:(repo:string,command:string)=>{events.push(command);repos.push(repo);
+      if(command==="npm test"&&options.driftAfterTest)head="3".repeat(40);
+      return{ok:command!==failCommand&&!(options.storyTestFails&&repo==="/product-story"&&command==="npm test"),output:"owned command output",failure:"current configured command failed"};},
     updateRunContext:async()=>{},setStepStatus:async()=>{},routeVerifyScopeFailureToImplement:async()=>true,
-    tryAutoMergePR:()=>{events.push("merge");return true;},invalidatePRStateCache:()=>{},fetchFreshPrStateName:async()=>"MERGED"};
-  const helper=declarations("installer/step-ops.ts",[],["runOwnedPreMergeVerificationV1"]);
-  if(helper)ports.runOwnedPreMergeVerificationV1=evaluate(helper,ports,"runOwnedPreMergeVerificationV1");
+    tryAutoMergePR:(...args:unknown[])=>{events.push("merge");mergeArguments.push(args);return true;},invalidatePRStateCache:()=>{},fetchFreshPrStateName:async()=>"MERGED"};
+  const helper=declarations("installer/step-ops.ts",["assertExactGitBranchWorktree","runOwnedPreMergeVerificationV1"],["authenticateOwnedPreMergeCheckoutV1"]);
+  ports.runOwnedPreMergeVerificationV1=evaluate(helper,ports,"runOwnedPreMergeVerificationV1");
+  if(helper.includes("function authenticateOwnedPreMergeCheckoutV1"))ports.authenticateOwnedPreMergeCheckoutV1=evaluate(helper,ports,"authenticateOwnedPreMergeCheckoutV1");
   const route=evaluate('async function route(){let prState="OPEN";'+openMergeClause()+'}',ports,"route");
-  return{events,context,route};
+  return{events,repos,mergeArguments,context,route};
 }
 it("actual verify merge clause runs current configured build test and lint before merging",async()=>{
   const f=verify();await f.route();assert.deepEqual(f.events,["npm run build","npm test","npm run lint","merge"]);
 });
 it("actual verify merge clause refuses a failed configured test before irreversible merge",async()=>{
   const f=verify("npm test");await f.route();assert.deepEqual(f.events,["npm run build","npm test"]);assert.match(f.context.previous_failure||"",/failed|FAIL|test/i);
+});
+it("actual premerge checks use the authenticated story checkout instead of a passing base repo",async()=>{
+  const f=verify(undefined,{storyTestFails:true});await f.route();
+  assert.deepEqual(f.repos,["/product-story","/product-story"]);assert.equal(f.events.includes("merge"),false);
+});
+it("a changed reviewed story head during configured checks refuses merge",async()=>{
+  const f=verify(undefined,{driftAfterTest:true});await f.route();
+  assert.equal(f.events.includes("merge"),false);assert.match(f.context.previous_failure||"",/HEAD|SOURCE|CHANGED|MISMATCH/);
+});
+it("actual verify caller passes the authenticated tested source SHA into merge",async()=>{
+  const f=verify();await f.route();
+  assert.deepEqual(f.mergeArguments,[["https://example.invalid/pr/1","US-001","run-verify","1".repeat(40)]]);
+});
+function mergeFixture(options:{protectionOnce?:boolean;headMismatch?:boolean;capturedHead?:string}={}){
+  const url="https://example.invalid/pr/1",sha="1".repeat(40),calls:Array<{command:string;args:string[];options:unknown}>=[];
+  let merges=0,invalidated=0;
+  const ports={GH_CLI_TIMEOUT:17001,GH_MERGE_TIMEOUT:37001,logger:{info(){},warn(){}},
+    invalidatePRStateCache:(pr:string)=>{assert.equal(pr,url);invalidated++;},
+    execFileSync:(command:string,args:string[],opts:unknown)=>{calls.push({command,args,options:opts});
+      if(args[1]==="view")return options.capturedHead===undefined?sha:options.capturedHead;
+      merges++;if(options.headMismatch)throw Error("Head commit does not match --match-head-commit");
+      if(options.protectionOnce&&merges===1)throw Error("required status check");return "";},
+  };
+  const merge=evaluate(declarations("installer/pr-state.ts",["tryAutoMergePR"]),ports,"tryAutoMergePR");
+  return{url,sha,calls,merge,invalidated:()=>invalidated};
+}
+it("both normal and existing admin merge attempts enforce the same exact expected head",()=>{
+  for(const protectionOnce of [false,true]){
+    const f=mergeFixture({protectionOnce});assert.equal(f.merge(f.url,"US-001","run-verify",f.sha),true);
+    const base=["pr","merge",f.url,"--squash","--delete-branch","--match-head-commit",f.sha];
+    assert.deepEqual(f.calls,protectionOnce?[
+      {command:"gh",args:base,options:{timeout:37001,stdio:"pipe"}},
+      {command:"gh",args:[...base,"--admin"],options:{timeout:37001,stdio:"pipe"}},
+    ]:[{command:"gh",args:base,options:{timeout:37001,stdio:"pipe"}}]);
+    assert.equal(f.invalidated(),1);
+  }
+});
+it("merge head mismatch has no admin bypass and invalid explicit SHA has zero effects",()=>{
+  const mismatch=mergeFixture({headMismatch:true});assert.equal(mismatch.merge(mismatch.url,"US-001","run-verify",mismatch.sha),false);
+  assert.equal(mismatch.calls.length,1);assert.deepEqual(mismatch.calls[0]!.args,["pr","merge",mismatch.url,"--squash","--delete-branch","--match-head-commit",mismatch.sha]);
+  const invalid=mergeFixture();assert.equal(invalid.merge(invalid.url,"US-001","run-verify","not-a-full-sha"),false);assert.deepEqual(invalid.calls,[]);
+});
+it("legacy merge captures current head once then pins that same head in both attempts",()=>{
+  const f=mergeFixture({protectionOnce:true});assert.equal(f.merge(f.url,"US-001","run-legacy"),true);
+  const base=["pr","merge",f.url,"--squash","--delete-branch","--match-head-commit",f.sha];
+  assert.deepEqual(f.calls,[
+    {command:"gh",args:["pr","view",f.url,"--json","headRefOid","--jq",".headRefOid"],options:{timeout:17001,stdio:"pipe"}},
+    {command:"gh",args:base,options:{timeout:37001,stdio:"pipe"}},
+    {command:"gh",args:[...base,"--admin"],options:{timeout:37001,stdio:"pipe"}},
+  ]);
+  const missing=mergeFixture({capturedHead:""});assert.equal(missing.merge(missing.url,"US-001","run-legacy"),false);
+  assert.equal(missing.calls.length,1);assert.equal(missing.calls[0]!.args[1],"view");
+});
+function supervisorStageCandidate(subject:"story_member"|"final_product"){
+  const envelope={schema:"setfarm.claim-envelope.v1",protocol:"v3",issuedAt:"2026-11-04T12:00:00.000Z",runId:"run-stage",stepId:"step-supervise",workflowStepId:"supervise",
+    claimId:901,claimAgentId:"feature-dev_supervisor",runtimeAgentId:"supervisor",workdir:"/product-story"};
+  const output="STATUS: done\nSUPERVISOR_DECISION: pass",outputHash=crypto.createHash("sha256").update(output).digest("hex");
+  const boundSubject=subject==="story_member"?{kind:subject,storyDbId:"story-db-1",storyId:"US-001",storyIndex:1,storyClaimGeneration:4}:{kind:subject};
+  const events:string[]=[];let captures=0;
+  const tx={unsafe:async()=>[{claim_envelope:envelope,output_hash:outputHash,lease_expires_at:"2099-11-04T12:00:00.000Z"}]};
+  const ports:Record<string,any>={crypto,canonicalJsonStringify,hashCanonicalJson,
+    currentRuntimeCompletionOwnerCapability:()=>({requestId:"RCR_stage-1",ownerInstanceId:"owner-1",ownerAttemptCount:1}),
+    getSql:()=>({begin:(action:any)=>action(tx)}),acquireClaimMutationAuthorityInTransaction:async()=>{},assertClaimAuthority:async()=>{},
+    readDatabaseWallClock:async()=>new Date("2026-11-04T12:01:00.000Z"),loadAndRevalidateV3StoryClaimRuntimeBindingV1:async()=>boundSubject,
+    readAuthenticatedSubscriptionSuperviseContractsV1:async()=>({subject:boundSubject,contexts:[]}),
+    authenticatedV3SupervisorStoryWorktree:async()=>{throw Error("V3_SUPERVISE_BOUND_WORKTREE_BRANCH_MISMATCH");},
+    revalidateAuthenticatedV3SupervisorStoryWorktree:async()=>{},assertExactGitBranchWorktree:()=>{if(subject==="story_member")throw Error("V3_SUPERVISE_BOUND_WORKTREE_BRANCH_MISMATCH");},
+    resolveV3DownstreamSourceContext:()=>({worktree:envelope.workdir,branch:"main"}),
+    execPlatformGit:(args:string[])=>{events.push(args[0]!);if(args[0]==="rev-parse")return "1".repeat(40);if(args[0]==="status")return "";throw Error("UNAUTHENTICATED_GIT_EFFECT");},
+    captureV3GitCommitRevision:()=>{if(++captures===2)throw Error("READ_ONLY_CANDIDATE_READY");return{sha:"1".repeat(40),treeHash:"2".repeat(40)};},
+    parseGitStatusPaths:()=>[],isPlatformNonStoryCommitPath:()=>false,
+    commitStoryWorktreeScopeIfNeeded:()=>{events.push("reset-add-commit");throw Error("UNAUTHENTICATED_GIT_EFFECT");},
+  };
+  const run=evaluate(declarations("installer/step-ops.ts",["runOwnedSuperviseStageEvidenceV1"]),ports,"runOwnedSuperviseStageEvidenceV1");
+  return{events,run:()=>run({envelope,runtimeSessionId:"RTS_stage-1",boundSubject,output,context:{repo:envelope.workdir,branch:"main"}})};
+}
+it("actual owned supervisor stage refuses wrong story branch before any candidate Git effects",async()=>{
+  const f=supervisorStageCandidate("story_member");await assert.rejects(f.run(),/WORKTREE.*BRANCH|BRANCH.*MISMATCH/);
+  assert.deepEqual(f.events,[]);
+});
+it("unchanged final-product audit reaches evidence without reset add or commit on main",async()=>{
+  const f=supervisorStageCandidate("final_product");await assert.rejects(f.run(),/READ_ONLY_CANDIDATE_READY/);
+  assert.equal(f.events.includes("reset-add-commit"),false);
 });
 it("mandatory stage candidate commands remain owned with gate off and preserve disabled/advisory visual reporting",async()=>{
   const slice=ImplementationSliceV1Schema.parse(buildMinimalValidContracts().implementationSlice),sliceHash="f".repeat(64);

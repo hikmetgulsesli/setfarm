@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
+import { resolvePlatformScript } from "../../paths.js";
 
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
 
@@ -71,6 +72,16 @@ async function refreshCompatFailure(context: Record<string, string>): Promise<vo
   }
 }
 
+function refreshSetupBuildDesignValidationV1(context:Record<string,string>,repo:string):void{
+  if(context["failure_category"]!=="design_import_failure")return;
+  const validator=resolvePlatformScript("generated-screen-validator.mjs");
+  if(!fs.existsSync(validator))throw Error("DESIGN_IMPORT_VALIDATE: platform validator missing");
+  fs.rmSync(path.join(repo,DESIGN_IMPORT_REPORT_REL),{force:true});
+  try{execFileSync("node",[validator,repo,"--fix"],{cwd:repo,timeout:60000,stdio:"pipe"});}
+  catch(error){throw Error(`DESIGN_IMPORT_VALIDATE: ${formatProcessFailure(error)}`);}
+  if(!fs.existsSync(path.join(repo,DESIGN_IMPORT_REPORT_REL)))throw Error("DESIGN_IMPORT_VALIDATE: fresh report missing");
+}
+
 function refreshBaselineFailure(parsed: ParsedOutput, context: Record<string, string>): void {
   if (!context["baseline_fail"]) return;
   const repo = resolveRepo(context);
@@ -78,6 +89,8 @@ function refreshBaselineFailure(parsed: ParsedOutput, context: Record<string, st
   if (!repo || !fs.existsSync(packageJson)) {
     throw new Error(`BASELINE: npm run build failed — ${context["baseline_fail"].slice(0, 300)}`);
   }
+
+  refreshSetupBuildDesignValidationV1(context,repo);
 
   if (context["failure_category"] === "design_import_failure") {
     const designImportReport = path.join(repo, DESIGN_IMPORT_REPORT_REL);

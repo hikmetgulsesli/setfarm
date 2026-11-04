@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { it } from "node:test";
+import { compileV3ImplementationTransportProposalV1 } from "../../src/execution/v3-implementation-output.js";
 import type { SubscriptionCodingWorkerOutputV1 } from "../../src/execution/subscription-coding-worker-v1.js";
 // Exact DATA parser only; type-only worker import must not become a launch edge.
 let api: Record<string, any> | undefined;
@@ -70,4 +71,24 @@ it("gateway wrapper success may use the same exact SDK payload without mixing di
   const bare=envelope("STATUS: done\nRESULT: "+"x".repeat(1800));
   const value=output(JSON.stringify({runId:"sdk-run",status:"ok",result:bare}));
   assert.equal(parse(value).assistantText,bare.payloads[0]!.text);
+});
+
+it("pinned same-model timeout retry history may precede the authenticated successful winner",()=>{
+  const value=envelope();value.meta.executionTrace.fallbackUsed=true;
+  value.meta.executionTrace.attempts.unshift({provider:"minimax",model:"MiniMax-M3.1-Flash",result:"timeout",stage:"assistant"});
+  assert.equal(parse(output(JSON.stringify(value))).assistantText,value.payloads[0]!.text);
+  for(const changed of [{provider:"kimi"},{model:"foreign-model"},{result:"fallback_model"}]){
+    const crossed=structuredClone(value);Object.assign(crossed.meta.executionTrace.attempts[0]!,changed);
+    assert.throws(()=>parse(output(JSON.stringify(crossed))),/REFUSED|MISMATCH|INVALID/);
+  }
+});
+
+it("canonical native report keeps literal reply marker bytes changed by SDK delivery projection",()=>{
+  const raw=JSON.stringify({schema:"setfarm.v3-implementation-agent-proposal.v1",disposition:"ready_for_evidence",
+    handoffHash:"a".repeat(64),attemptId:identity.attemptId,packetHash:"b".repeat(64),sliceHash:"c".repeat(64),
+    sourceBefore:{sha:"1".repeat(40),treeHash:"2".repeat(40)},summary:"Preserve literal [[reply_to_current]] marker in source documentation",changes:[]});
+  compileV3ImplementationTransportProposalV1(raw);
+  const delivered=envelope(raw);delivered.payloads[0]!.text=raw.replace("[[reply_to_current]]","");
+  assert.notEqual(delivered.payloads[0]!.text,raw);
+  assert.equal(parse(output(JSON.stringify(delivered))).assistantText,raw);
 });

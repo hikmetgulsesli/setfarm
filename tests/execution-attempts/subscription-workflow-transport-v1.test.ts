@@ -139,3 +139,15 @@ it("typed PLAN payload remains exact for the existing ProductSpec compiler", () 
   const canonicalFence=transported.output.match(/```product-spec-v2\n([\s\S]*?)\n```/);
   assert.ok(canonicalFence);assert.deepEqual(ProductSpecV2Schema.parse(JSON.parse(canonicalFence[1]!)),spec);
 });
+
+it("exact nested owned file parents are prepared without files or symlink traversal",()=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),"sf-subscription-owned-parents-")));chmodSync(root,0o700);
+  try{
+    const file=join(root,"src","components","Nested.tsx");
+    required("prepareSubscriptionWriteParentsV1")({worktree:root,paths:[file]});
+    assert.ok(lstatSync(dirname(file)).isDirectory());assert.throws(()=>lstatSync(file),/ENOENT/);
+    const outside=join(root,"outside");mkdirSync(outside,{mode:0o700});symlinkSync(outside,join(root,"linked"));
+    assert.throws(()=>required("prepareSubscriptionWriteParentsV1")({worktree:root,paths:[join(root,"linked","nested","Escape.ts")]}),/REFUSED|SYMLINK/);
+    assert.throws(()=>lstatSync(join(outside,"nested")),/ENOENT/);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});

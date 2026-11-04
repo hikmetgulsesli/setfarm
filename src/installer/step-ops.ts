@@ -1,3 +1,6 @@
+import {readAuthenticatedSubscriptionSuperviseContractsV1} from "../execution/subscription-supervise-contracts-v1.js";
+import {currentRuntimeCompletionOwnerCapability} from "../execution/runtime-completion-owner-context.js";
+import {readDatabaseWallClock} from "../db/database-wall-clock.js";
 import { V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1 } from "../execution/v3-predecessor-completion-claim-barrier-v1.js";
 import { selectedFreshInstallationRootV1, freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
@@ -76,7 +79,7 @@ import { OperationalFailureCauseError } from "../execution/schemas/operational-f
 import { assertClaimAuthority } from "../execution/claim-authority.js";
 import { isV3OperationalStageWorkflowStepIdV1 } from "../execution/operational-failure-cause-authority-v1.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
-import { ClaimMutationAuthorityError } from "../execution/claim-mutation-authority.js";
+import { ClaimMutationAuthorityError,acquireClaimMutationAuthorityInTransaction } from "../execution/claim-mutation-authority.js";
 import {
   markRuntimeCompletionOwnerCommittedInTransaction,
 } from "../execution/runtime-completion.js";
@@ -2472,6 +2475,44 @@ function runPostMergeBuildGate(
   } catch (err) {
     return { ok: false, output: "", failure: formatExecFailure(err, 6000) };
   }
+}
+
+/** Authenticate the actual current story/PR checkout; context cannot substitute the base tree. */
+async function authenticateOwnedPreMergeCheckoutV1(input:Readonly<{
+  runId:string;storyDbId:string;storyId:string;prUrl:string;storyBranch:string|null;context:Record<string,string>;
+  envelope?:ClaimEnvelopeV1;reviewedHeadSha?:string;
+  expected?:Readonly<{worktree:string;branch:string;source:Readonly<{sha:string;treeHash:string}>}>;
+}>){
+  const row=await pgGet<{id:string;story_id:string;story_branch:string|null;pr_url:string|null}>(
+    "SELECT id,story_id,story_branch,pr_url FROM stories WHERE id=$1 AND run_id=$2 AND story_id=$3 AND status='done' LIMIT 1",
+    [input.storyDbId,input.runId,input.storyId]);
+  const worktree=input.envelope?.workdir||input.context["story_workdir"]||input.context["repo"]||input.context["REPO"]||"";
+  const branch=row?.story_branch?.trim()||"";
+  if(!row||row.id!==input.storyDbId||row.story_id!==input.storyId||row.pr_url!==input.prUrl||branch!==input.storyBranch
+    ||!worktree||!branch||["main","master"].includes(branch))throw Error("PREMERGE_STORY_WORKTREE_IDENTITY_MISMATCH");
+  if(input.envelope&&(input.envelope.runId!==input.runId||input.envelope.workflowStepId!=="verify"))throw Error("PREMERGE_CLAIM_IDENTITY_MISMATCH");
+  assertExactGitBranchWorktree(worktree,branch);
+  if(getPRHeadBranch(input.prUrl,worktree)!==branch)throw Error("PREMERGE_PR_BRANCH_CHANGED");
+  const review=await readDefaultGithubReview({prUrl:input.prUrl,repositoryPath:worktree});
+  if(review.prState!=="OPEN"||review.actionableThreads.length||(input.reviewedHeadSha&&review.headSha!==input.reviewedHeadSha))throw Error("PREMERGE_REVIEWED_HEAD_CHANGED");
+  assertExactGitBranchWorktree(worktree,branch);
+  const sha=String(execPlatformGit(["rev-parse","--verify","HEAD"],{cwd:worktree,encoding:"utf8",timeout:10000,stdio:["pipe","pipe","pipe"]})).trim();
+  const source=captureV3GitCommitRevision({repo:worktree,commitSha:sha});
+  const status=String(execPlatformGit(["status","--porcelain=v1","-uall"],{cwd:worktree,encoding:"utf8",timeout:10000,stdio:["pipe","pipe","pipe"]}));
+  if(source.sha!==review.headSha||parseGitStatusPaths(status).some(file=>!isPlatformNonStoryCommitPath(file)))throw Error("PREMERGE_REVIEWED_SOURCE_CHANGED");
+  const current={worktree,branch,source};
+  if(input.expected&&canonicalJsonStringify(input.expected)!==canonicalJsonStringify(current))throw Error("PREMERGE_HEAD_SOURCE_CHANGED");
+  return current;
+}
+
+/** Owned configured checks on the current story checkout before the merge effect. */
+function runOwnedPreMergeVerificationV1(repo:string,context:Record<string,string>,runId:string,stepId:string):{ok:boolean;failure:string}{
+  if(!repo)return{ok:false,failure:"PREMERGE_VERIFICATION_FAILED: current repository missing"};
+  for(const command of [context["build_cmd"]||"npm run build",context["test_cmd"],context["lint_cmd"]].filter((c):c is string=>Boolean(c?.trim()))){
+    const result=runPostMergeBuildGate(repo,command,runId,stepId);
+    if(!result.ok||result.output.startsWith("skip ("))return{ok:false,failure:`PREMERGE_VERIFICATION_FAILED: ${command} failed\n${result.failure}`};
+  }
+  return{ok:true,failure:""};
 }
 
 async function confirmFailedSystemSmokeGate(
@@ -8771,6 +8812,105 @@ export async function claimStep(
 /**
  * Complete a step: save output, merge context, advance pipeline.
  */
+/** Fresh owned supervisor evidence under the actual executing completion lease. */
+async function runOwnedSuperviseStageEvidenceV1(input:Readonly<{
+  envelope:ClaimEnvelopeV1;runtimeSessionId:string;boundSubject:V3StoryClaimRuntimeSubjectV1;output:string;context:Record<string,string>;
+}>):Promise<void>{
+  const envelope=input.envelope,cap=currentRuntimeCompletionOwnerCapability();
+  if(!cap||envelope.protocol!=="v3"||envelope.workflowStepId!=="supervise"||envelope.attempt||!envelope.workdir)throw Error("SUPERVISOR_COMPLETION_OWNER_REQUIRED");
+  const worktree=envelope.workdir;
+  const outputHash=crypto.createHash("sha256").update(Buffer.from(input.output,"utf8")).digest("hex");
+  const authenticate=async()=>getSql().begin(async tx=>{
+    await acquireClaimMutationAuthorityInTransaction(tx,{claimId:envelope.claimId,runId:envelope.runId,
+      workflowStepId:envelope.workflowStepId,storyId:null,claimAgentId:envelope.claimAgentId});
+    await assertClaimAuthority(tx,envelope,envelope.stepId);
+    const rows=await tx.unsafe<Array<{claim_envelope:unknown;output_hash:string;lease_expires_at:Date|string}>>(`
+      SELECT q.claim_envelope,q.output_hash,q.lease_expires_at FROM runtime_completion_requests q
+      JOIN runtime_sessions r ON r.session_id=q.runtime_session_id AND r.claim_id=q.claim_id AND r.run_id=q.run_id AND r.step_db_id=q.step_db_id
+      WHERE q.request_id=$1 AND q.claim_id=$2 AND q.run_id=$3 AND q.step_db_id=$4 AND q.runtime_session_id=$5
+        AND q.state='processing' AND q.apply_phase='executing' AND q.owner_instance_id=$6 AND q.owner_attempt_count=$7
+        AND q.attempt_id IS NULL AND r.state='drained' AND r.worktree=$8 FOR UPDATE OF q,r`,
+      [cap.requestId,envelope.claimId,envelope.runId,envelope.stepId,input.runtimeSessionId,cap.ownerInstanceId,cap.ownerAttemptCount,worktree]);
+    const now=await readDatabaseWallClock(tx,"SUPERVISOR_COMPLETION_CLOCK_UNAVAILABLE"),row=rows[0];
+    if(rows.length!==1||!row||Date.parse(String(row.lease_expires_at))<=now.getTime()||row.output_hash!==outputHash
+      ||canonicalJsonStringify(typeof row.claim_envelope==="string"?JSON.parse(row.claim_envelope):row.claim_envelope)!==canonicalJsonStringify(envelope))throw Error("SUPERVISOR_COMPLETION_LEASE_REFUSED");
+    const subject=await loadAndRevalidateV3StoryClaimRuntimeBindingV1(tx,{claimId:envelope.claimId,runtimeSessionId:input.runtimeSessionId,
+      runId:envelope.runId,stepDbId:envelope.stepId,workflowStepId:"supervise"});
+    if(canonicalJsonStringify(subject)!==canonicalJsonStringify(input.boundSubject))throw Error("SUPERVISOR_BOUND_SUBJECT_CHANGED");
+  });
+  await authenticate();
+  const contracts=await readAuthenticatedSubscriptionSuperviseContractsV1(envelope,input.runtimeSessionId),seal=hashCanonicalJson(contracts);
+  const storyWorktree=input.boundSubject.kind==="story_member"?await authenticatedV3SupervisorStoryWorktree({
+    runId:envelope.runId,superviseStepDbId:envelope.stepId,runtimeSessionId:input.runtimeSessionId,
+    boundSubject:{storyDbId:input.boundSubject.storyDbId,storyId:input.boundSubject.storyId}}):undefined;
+  const finalSource=storyWorktree?undefined:resolveV3DownstreamSourceContext(input.context);
+  if(storyWorktree){
+    if(storyWorktree.workdir!==worktree||["main","master"].includes(storyWorktree.storyBranch))throw Error("V3_SUPERVISE_BOUND_WORKTREE_PROTECTED_BRANCH");
+  }else if(!finalSource||finalSource.worktree!==worktree)throw Error("V3_FINAL_SUPERVISE_BOUND_WORKTREE_MISMATCH");
+  const recheckWorktree=async()=>{
+    if(storyWorktree){await revalidateAuthenticatedV3SupervisorStoryWorktree(storyWorktree);assertExactGitBranchWorktree(worktree,storyWorktree.storyBranch);}
+    else{const current=resolveV3DownstreamSourceContext(input.context);
+      if(current.worktree!==worktree||current.branch!==finalSource!.branch)throw Error("V3_FINAL_SUPERVISE_SOURCE_CHANGED");
+      assertExactGitBranchWorktree(worktree,current.branch);
+    }
+  };
+  await recheckWorktree();
+  const committedSource=()=>captureV3GitCommitRevision({repo:worktree,commitSha:String(execPlatformGit(["rev-parse","--verify","HEAD"],{
+    cwd:worktree,encoding:"utf8",timeout:10000,stdio:["pipe","pipe","pipe"]})).trim()});
+  const sourceBefore=committedSource();
+  const writable=[...new Set(contracts.contexts.flatMap(c=>c.allowedPaths??c.slice.files.filter(f=>f.role==="owned"||f.role==="shared_writable").map(f=>f.path)))];
+  await authenticate();await recheckWorktree();
+  if(storyWorktree){
+    assertExactGitBranchWorktree(worktree,storyWorktree.storyBranch);
+    const candidate=commitStoryWorktreeScopeIfNeeded(worktree,storyWorktree.storyId,"Supervisor bounded candidate",writable,"fix",true);
+    if(candidate.error)throw Error(`SUPERVISOR_CANDIDATE_REJECTED:${candidate.error}`);
+    await recheckWorktree();
+  }else{
+    // Final supervision is an audit. Existing bounded implementation repair
+    // authority must own any product delta; even a no-op reset is not needed.
+    const status=String(execPlatformGit(["status","--porcelain=v1","-uall"],{cwd:worktree,encoding:"utf8",timeout:10000,stdio:["pipe","pipe","pipe"]}));
+    if(parseGitStatusPaths(status).some(file=>writable.includes(file)||!isPlatformNonStoryCommitPath(file)))throw Error("V3_FINAL_SUPERVISE_REPAIR_REQUIRES_BOUNDED_IMPLEMENTATION_AUTHORITY");
+  }
+  const candidateSource=committedSource();
+  const unchangedCandidate=()=>{
+    const after=committedSource();
+    const status=String(execPlatformGit(["status","--porcelain=v1","-uall"],{cwd:worktree,encoding:"utf8",timeout:10000,stdio:["pipe","pipe","pipe"]}));
+    const dirty=parseGitStatusPaths(status).filter(file=>writable.includes(file)||!isPlatformNonStoryCommitPath(file));
+    if(dirty.length||canonicalJsonStringify(after)!==canonicalJsonStringify(candidateSource))throw Error("SUPERVISOR_EVIDENCE_SOURCE_CHANGED");
+    return after;
+  };
+  const {runImplementEvidenceIfRequested}=await import("./implement-evidence-runner.js");
+  const {createFindingRecoveryRepository}=await import("../recovery/finding-recovery-repository.js");
+  const refs:string[]=[];
+  for(const contract of contracts.contexts){
+    await authenticate();await recheckWorktree();
+    const result=await runImplementEvidenceIfRequested({runId:envelope.runId,storyId:contract.slice.storyId,workdir:envelope.workdir,
+      stackPackId:contract.slice.runtimeEvidence?.stackPackId,
+      v3:{slice:contract.slice,sliceHash:contract.sliceHash,sourceRevision:candidateSource,stageClaim:{workflowStepId:"supervise",
+        claimId:envelope.claimId,runtimeSessionId:input.runtimeSessionId,requestId:cap.requestId,ownerAttemptCount:cap.ownerAttemptCount,
+        outputHash,envelope,boundSubject:input.boundSubject,sourceBefore}},
+      observe:observation=>recordLiveObservation({runId:envelope.runId,stepId:envelope.workflowStepId,storyId:contract.slice.storyId,
+        agentId:envelope.claimAgentId,checkId:observation.checkId,label:observation.label,status:observation.status,
+        summary:observation.summary||"",detail:observation.detail||"",filePaths:observation.filePaths||[],
+        evidence:observation.evidence||{},metadata:{...observation.metadata,claimId:envelope.claimId,runtimeSessionId:input.runtimeSessionId,
+          requestId:cap.requestId,ownerAttemptCount:cap.ownerAttemptCount}})});
+    await authenticate();await recheckWorktree();
+    const sourceAfter=unchangedCandidate();
+    if(hashCanonicalJson(await readAuthenticatedSubscriptionSuperviseContractsV1(envelope,input.runtimeSessionId))!==seal)throw Error("SUPERVISOR_CONTRACTS_CHANGED");
+    if(!result.attempted||!result.canonicalEvidence)throw Error("SUPERVISOR_OWNED_EVIDENCE_REQUIRED");
+    const persisted=await createFindingRecoveryRepository(getSql()).putEvidenceBundle(result.canonicalEvidence.bundle);
+    if(persisted.bundleHash!==result.canonicalEvidence.bundleHash)throw Error("SUPERVISOR_EVIDENCE_HASH_MISMATCH");
+    refs.push(`setfarm://evidence-bundle/${persisted.bundleHash}`);
+    await recordLiveObservation({runId:envelope.runId,stepId:"supervise",storyId:contract.slice.storyId,agentId:envelope.claimAgentId,
+      checkId:`supervise.owned-candidate:${envelope.claimId}:${cap.ownerAttemptCount}:${contract.sliceHash}`,label:"Supervisor owned candidate evidence",
+      status:result.ok&&result.canonicalEvidence.bundle.aggregateVerdict==="pass"?"pass":"fail",summary:result.reason,
+      metadata:{claimId:envelope.claimId,runtimeSessionId:input.runtimeSessionId,requestId:cap.requestId,ownerAttemptCount:cap.ownerAttemptCount,
+        sourceBefore,sourceAfter,sliceHash:contract.sliceHash,planHash:result.evidencePlan?.planHash,bundleHash:persisted.bundleHash}});
+    if(!result.ok||result.canonicalEvidence.bundle.aggregateVerdict!=="pass")throw Error("SUPERVISOR_OWNED_EVIDENCE_FAILED");
+  }
+  await authenticate();await recheckWorktree();unchangedCandidate();input.context["supervisor_canonical_evidence_refs"]=JSON.stringify(refs);
+}
+
 export async function completeStep(
   stepId: string,
   output: string,
@@ -9212,6 +9352,16 @@ export async function completeStep(
   const supervisorDecisionVal = firstOutputWord(parsed["supervisor_decision"]);
   const v3SuperviseSuccess = statusVal === "done"
     && ["pass", "fixed"].includes(supervisorDecisionVal);
+  if(v3SuperviseBoundSubject&&v3SuperviseSuccess){
+    try{
+      if(!completionAuthority?.envelope||!v3SuperviseRuntimeSessionId)throw Error("SUPERVISOR_COMPLETION_OWNER_REQUIRED");
+      await runOwnedSuperviseStageEvidenceV1({envelope:completionAuthority.envelope,runtimeSessionId:v3SuperviseRuntimeSessionId,
+        boundSubject:v3SuperviseBoundSubject,output,context});
+    }catch(error){
+      const diagnostic=`SUPERVISOR_OWNED_EVIDENCE_FAILED: ${String(error).slice(0,1200)}`;
+      await failStep(step.id,diagnostic,completionAuthority?.envelope);return{advanced:false,runCompleted:false};
+    }
+  }
   if (v3SuperviseBoundSubject
     && !v3SuperviseSuccess
     && superviseEachConfigForStep
@@ -14700,12 +14850,14 @@ async function handleVerifyEachCompletion(
         logger.warn(`[verify] ${verifiedStoryId} reported done but has no PR URL — keeping verify pending`, { runId: verifyStep.run_id });
         return { advanced: false, runCompleted: false };
       }
+      let reviewedHeadSha:string|undefined;
       if (verifyRunProtocol?.protocol === "v3") {
         try {
           const exactReview = await readDefaultGithubReview({
             prUrl: verifiedRow.pr_url,
             repositoryPath: context["repo"] || context["REPO"] || "",
           });
+          reviewedHeadSha=exactReview.headSha;
           if (exactReview.actionableThreads.length > 0) {
             context["v3_review_late_head_sha"] = exactReview.headSha;
             context["v3_review_late_thread_ids"] = JSON.stringify(
@@ -14783,7 +14935,28 @@ async function handleVerifyEachCompletion(
           logger.info(`[verify] ${verifiedStoryId} PR still inside review settle window (${remaining}s remaining) — deferring merge`, { runId: verifyStep.run_id });
           return { advanced: false, runCompleted: false };
         }
-        const merged = tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id);
+        let premerge:{ok:boolean;failure:string};
+        let testedHeadSha="";
+        try{
+          const identity={runId:verifyStep.run_id,storyDbId:verifiedRow.id,storyId:verifiedStoryId,prUrl:verifiedRow.pr_url,
+            storyBranch:verifiedRow.story_branch,context,envelope:claimEnvelope,reviewedHeadSha};
+          const checkout=await authenticateOwnedPreMergeCheckoutV1(identity);
+          premerge=runOwnedPreMergeVerificationV1(checkout.worktree,context,verifyStep.run_id,verifyStep.step_id);
+          if(premerge.ok){
+            await authenticateOwnedPreMergeCheckoutV1({...identity,expected:checkout});
+            testedHeadSha=checkout.source.sha;
+          }
+        }catch(error){premerge={ok:false,failure:`PREMERGE_VERIFICATION_FAILED: ${String(error).slice(0,1500)}`};}
+        if(premerge.ok&&!testedHeadSha)premerge={ok:false,failure:"PREMERGE_TESTED_HEAD_REQUIRED"};
+        if(!premerge.ok){
+          context["previous_failure"]=premerge.failure;context["failure_category"]="PREMERGE_VERIFICATION_FAILED";
+          context["current_story_id"]=verifiedStoryId;context["pr_url"]=verifiedRow.pr_url;
+          await updateRunContext(verifyStep.run_id,context);
+          await routeVerifyScopeFailureToImplement(verifyStep as StepRow,context,verifiedStoryId,premerge.failure,{
+            category:"PREMERGE_VERIFICATION_FAILED",suggestion:"Repair the exact configured build/test/lint failure before merge."});
+          await setStepStatus(verifyStep.id,"waiting");return{advanced:false,runCompleted:false};
+        }
+        const merged = tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id, testedHeadSha);
         if (merged) {
           invalidatePRStateCache(verifiedRow.pr_url);
           prState = await fetchFreshPrStateName(verifiedRow.pr_url, verifiedStoryId, context, verifyStep.run_id, verifyStep.step_id);

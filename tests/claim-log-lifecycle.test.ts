@@ -154,7 +154,7 @@ function loadStepPendingPrivateModule(input: Readonly<{
     "resolveWorkflowDir",
     "resolveAgentId",
     "spawnAgent",
-    "assertTask6aPreSchemaOrdinaryStartupV2",
+    "assertSpawnerOperationalEntryV1",
     "console",
     "shuttingDown",
     `${javascript}\nreturn { handleStepPending, listenForStepPending };`,
@@ -324,6 +324,8 @@ describe("single-step claim_log lifecycle", () => {
     const cronBlocked = new Promise<void>((_resolve, reject) => { failCron = reject; });
     let uuid = 0;
     const runWorkflow = loadRunWorkflowPrivate({
+      assertFreshInstallationSelectionUnchangedV1: () => calls.push("selection-guard"),
+      freshInstallationSelectionV1: null,
       resolveNewRunProtocol: () => ({ mode: "legacy", version: 1 }),
       resolveWorkflowDir: () => "/fixtures/feature-dev",
       loadWorkflowSpec: async () => ({
@@ -408,7 +410,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(String(pollFailure), /INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE/);
     assert.deepEqual(spawns, []);
     assert.deepEqual(inventory, { runs: 0, steps: 0, owners: 0 });
-    assert.deepEqual(calls, ["clean", "cron"]);
+    assert.deepEqual(calls, ["selection-guard", "clean", "cron"]);
   });
 
   it("spawner authenticates or recovers the exact bound run owner before work", () => {
@@ -1271,7 +1273,10 @@ describe("single-step claim_log lifecycle", () => {
   });
 
   it("enforces active story id uniqueness at the database boundary", () => {
-    const source = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
+    const entry = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
+    const source = fs.readFileSync(path.join(root, "src", "db", "ordinary-base-schema-v1.ts"), "utf-8");
+    assert.match(entry, /import \{ installOrdinaryBaseSchemaV1 \} from "\.\/db\/ordinary-base-schema-v1\.js"/);
+    assert.match(entry, /await installOrdinaryBaseSchemaV1\(s\)/);
     assert.match(source, /ALTER TABLE stories ADD COLUMN IF NOT EXISTS quality_failure_fingerprint TEXT/);
     assert.match(source, /CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_active_story_id_unique ON stories\(run_id, story_id\) WHERE status IN \('pending', 'running'\)/);
     assert.match(source, /CREATE INDEX IF NOT EXISTS idx_stories_quality_failure_fingerprint/);
@@ -1677,7 +1682,7 @@ describe("single-step claim_log lifecycle", () => {
     const mutableState = passedSource.indexOf("let prState = await fetchFreshPrStateName(verifiedRow.pr_url");
     const openGuard = passedSource.indexOf("if (prState === \"OPEN\")", mutableState);
     const settleGate = passedSource.indexOf("prReviewSettleComplete(context)", openGuard);
-    const autoMerge = passedSource.indexOf("tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id)", settleGate);
+    const autoMerge = passedSource.indexOf("tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id, testedHeadSha)", settleGate);
     const invalidate = passedSource.indexOf("invalidatePRStateCache(verifiedRow.pr_url)", autoMerge);
     const recheck = passedSource.indexOf("prState = await fetchFreshPrStateName(verifiedRow.pr_url", invalidate);
     const notMergedGuard = passedSource.indexOf("if (prState !== \"MERGED\")", recheck);

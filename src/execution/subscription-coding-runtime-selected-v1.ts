@@ -26,6 +26,9 @@ import { readSubscriptionRuntimeAttachmentV1, type SubscriptionRuntimeAuthorityV
   type SubscriptionRuntimeBindingV1, type SubscriptionRuntimeClosureV1,
   type SubscriptionRuntimeWorkerBindingV1 } from "./subscription-runtime-attachment-v1.js";
 
+import {planSubscriptionWorkflowHandoffV1,materializeSubscriptionWorkflowHandoffV1,renderSubscriptionWorkflowPromptV1,prepareSubscriptionWriteParentsV1} from "./subscription-workflow-transport-v1.js";
+import {projectSubscriptionSuperviseWritePathsV1} from "./subscription-supervise-scope-v1.js";
+import {readAuthenticatedSubscriptionSuperviseContractsV1} from "./subscription-supervise-contracts-v1.js";
 export type SelectedSubscriptionCodingRuntimeV1 = Omit<SubscriptionCodingRuntimeV1, "openGate"> & Readonly<{ openGate(): Promise<void> }>;
 type ClosedOriginal = Readonly<{ binding: SubscriptionRuntimeBindingV1; authority: SubscriptionRuntimeAuthorityV1;
   worker: SubscriptionRuntimeWorkerBindingV1; closure: SubscriptionRuntimeClosureV1 }>;
@@ -69,7 +72,9 @@ function ownedBytes(file: string): Buffer {
 function optionalControl(file: string, verify: (bytes: Buffer) => boolean, controls: string[]): void {
   try { lstatSync(file); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  if (!verify(ownedBytes(file))) subscriptionRuntimeRefusedV1();
+  const bytes=ownedBytes(file);
+  if(bytes.length>1048576)throw Error("SUBSCRIPTION_WORKFLOW_HANDOFF_CAPACITY_REFUSED");
+  if (!verify(bytes)) subscriptionRuntimeRefusedV1();
   controls.push(file);
 }
 function workerScope(authority: SubscriptionCodingCanonicalAuthorityV1, worktree: string) {
@@ -94,6 +99,12 @@ function workerScope(authority: SubscriptionCodingCanonicalAuthorityV1, worktree
   }
   return { writeGrants: Object.freeze(writeGrants), readOnlyControlPaths: Object.freeze(controls) };
 }
+/** The only production grant projection; its reader returns contracts, never grants. */
+async function resolveSuperviseScope(envelope:ClaimEnvelopeV1,runtimeSessionId:string){
+  const data=await readAuthenticatedSubscriptionSuperviseContractsV1(envelope,runtimeSessionId);
+  const readOnly=data.subject.kind==="final_product";
+  return{paths:readOnly?[]:projectSubscriptionSuperviseWritePathsV1({worktree:envelope.workdir!,subject:data.subject,contexts:data.contexts}),readOnly,seal:hash(JSON.stringify(data))};
+}
 function prepareContainer(runtimeRoot: string, container: string): void {
   canonicalDirectory(runtimeRoot, true);
   for (const directory of [join(runtimeRoot, "attempt-workspaces"), join(runtimeRoot, "attempt-workspaces", "subscription")]) {
@@ -116,10 +127,8 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
   const envelope = ClaimEnvelopeV1Schema.parse(input.envelope);
   const authority: SubscriptionCodingCanonicalAuthorityV1 = input.authority.schema === "setfarm.implementation-context.v3"
     ? V3ImplementationContextV1Schema.parse(input.authority) : V3StageClaimHandoffV1Schema.parse(input.authority);
-  const prompt = JSON.stringify(authority);
-  // B2 owns complete protected context transport. B1 neither truncates nor
-  // widens the mechanical cap or invents a context file to cross that boundary.
-  if (Buffer.byteLength(prompt) > 65536) throw new Error("SUBSCRIPTION_RUNTIME_AUTHORITY_CAPACITY_REFUSED");
+  const handoffPlan=planSubscriptionWorkflowHandoffV1({claim:envelope,authority});
+  let prompt=renderSubscriptionWorkflowPromptV1({claim:envelope,authority,handoffRef:handoffPlan.handoffRef});
   const profile = readSelectedFreshExecutionProfileV1(authority.schema === "setfarm.implementation-context.v3"
     ? authority.handoff.executionProfile.selection : "primary");
   if (!profile) subscriptionRuntimeRefusedV1();
@@ -144,11 +153,19 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
     activationPreparedHash: activation.preparedPin.sha256, activationAcknowledgedHash: activation.activatedPin.sha256,
     policySourceHash: hash(ownedBytes(fileURLToPath(new URL("./subscription-coding-worker-policy-v1.js", import.meta.url)))),
     preloadHash: hash(SUBSCRIPTION_CODING_WORKER_PRELOAD_V1), parentIdentity });
-  const scope = workerScope(authority, binding.worktree);
+  const supervisor=authority.schema==="setfarm.v3-stage-claim-handoff.v1"&&envelope.workflowStepId==="supervise"
+    ?await resolveSuperviseScope(envelope,input.runtimeSessionId):undefined;
+  if(supervisor?.readOnly)prompt+="\nThis final-product checkpoint is a read-only audit: no worker write grants are issued. Report any required product delta for existing bounded implementation repair authority; do not edit files or attempt Git mutations.";
+  const baseScope=supervisor?{writeGrants:supervisor.paths.map(path=>({path,kind:"file" as const})),readOnlyControlPaths:[]}:workerScope(authority,binding.worktree);
+  if(baseScope.readOnlyControlPaths.length+handoffPlan.readOnlyControlPaths.length>256)throw Error("SUBSCRIPTION_WORKFLOW_HANDOFF_CAPACITY_REFUSED");
+  const scope={writeGrants:baseScope.writeGrants,readOnlyControlPaths:[...baseScope.readOnlyControlPaths,...handoffPlan.readOnlyControlPaths]};
+  const recheckSupervisor=async()=>{if(supervisor&&(await resolveSuperviseScope(envelope,input.runtimeSessionId)).seal!==supervisor.seal)subscriptionRuntimeRefusedV1();};
   const authorityRoots = [join(selected.directory, "credentials", "coding-subscriptions"), join(selected.paths.root, "services")];
   authorityRoots.forEach(directory => canonicalDirectory(directory, true));
   const seededAuth = { ...auth, subscriptionBinding: binding, subscriptionAuthority: runtimeAuthority };
   await sessions.readAuthenticatedStartingClaim(seededAuth); guard();
+  prepareSubscriptionWriteParentsV1({worktree:binding.worktree,paths:scope.writeGrants.filter(g=>g.kind==="file").map(g=>g.path)});
+  materializeSubscriptionWorkflowHandoffV1({claim:envelope,authority});
   prepareContainer(selected.paths.root, paths.container);
   let runtime: SubscriptionCodingRuntimeV1 | undefined, broker: SubscriptionAttemptBrokerV1 | undefined;
   let retained: SubscriptionCodingRuntimeOwnershipV1 | undefined;
@@ -189,7 +206,7 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
         });
       },
       async launchWorker(request) {
-        guard(); await sessions.readAuthenticatedStartingClaim(seededAuth); guard();
+        guard(); await recheckSupervisor(); await sessions.readAuthenticatedStartingClaim(seededAuth); guard();
         return launchSubscriptionCodingWorkerV1(request);
       },
     });
@@ -218,6 +235,7 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
       async openGate() {
         try {
           guard();
+          await recheckSupervisor();
           const published = await sessions.readAuthenticatedRunningClaim(seededAuth);
           assertSubscriptionRuntimePublishedWorkerV1(published, worker);
           guard();

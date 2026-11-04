@@ -1564,10 +1564,8 @@ export function buildClaimSummary(params: {
   }
   if (
     claimEnvelope?.protocol === "v3"
-    && (
-      params.role === "supervisor"
-      || (params.role === "developer" && (params.storyId || claimEnvelope.storyId))
-    )
+    && claimEnvelope.workflowStepId === "implement"
+    && (params.role === "supervisor" || params.role === "developer")
   ) {
     throw new Error("V3_IMPLEMENTATION_HANDOFF_MISSING");
   }
