@@ -1,0 +1,145 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { it } from "node:test";
+import ts from "typescript";
+import { deriveSubscriptionCodingRuntimePathsV1 } from "../../src/execution/subscription-coding-runtime-binding-v1.js";
+import { createV3StageClaimHandoffV1 } from "../../src/execution/v3-stage-execution-context.js";
+import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
+
+// Existing Source-DATA testing pattern: evaluate exact private production bodies
+// in an owned dependency realm. No spawner/selected/credential module import or
+// real DB, subprocess, SDK, provider, signal, listener or filesystem effect.
+const source=(file:string)=>readFileSync(new URL("../../src/"+file,import.meta.url),"utf8");
+function declaration(file:string,name:string){const text=source(file),tree=ts.createSourceFile(file,text,ts.ScriptTarget.Latest,true);
+  const rows=tree.statements.filter((n):n is ts.FunctionDeclaration=>ts.isFunctionDeclaration(n)&&n.name?.text===name);
+  assert.equal(rows.length,1,"private production function required: "+name);return rows[0]!.getText(tree).replace(/^export\s+/,"");}
+function evaluate(file:string,name:string,ports:Record<string,any>){const body=ts.transpileModule(declaration(file,name),{
+  compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+  return new Function(...Object.keys(ports),body+";return "+name+";")(...Object.values(ports));}
+function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(yes=>{resolve=yes;});return{promise,resolve};}
+function fixture(){
+  const runtimeSessionId="RTS_00000000-0000-0000-0000-000000000901",ownerInstanceId="fixture.local:43100:12345678-1234-4234-8234-123456789abc";
+  const claimEnvelope={schema:"setfarm.claim-envelope.v1" as const,protocol:"v3" as const,issuedAt:"2026-11-04T12:00:00.000Z",
+    runId:"run-source-data-spawner",stepId:"step-source-data-spawner",workflowStepId:"plan",claimId:41,
+    claimAgentId:"feature-dev_planner",runtimeAgentId:"planner",workdir:"/project/worktree",repo:"/project/worktree",input:"Produce PLAN proposal."};
+  const authority=createV3StageClaimHandoffV1({claimEnvelope,workflow:"feature-dev",role:"planner",workdir:claimEnvelope.workdir,
+    outputFile:"/tmp/legacy-plan-output",instructionContent:claimEnvelope.input});
+  const paths=deriveSubscriptionCodingRuntimePathsV1({runtimeRoot:"/installation/runtime",runtimeSessionId});
+  const processIdentity={schema:"setfarm.process-identity.v1",pid:43200,processStartedAt:"2026-11-04T12:00:01.000Z",processGroupId:43000,source:"observed_os"};
+  const events:string[]=[],activeProcesses=new Map(),drainingProcesses=new Map(),closed=deferred<any>(),output=deferred<any>();
+  const child={pid:43200,exitCode:null,signalCode:null};
+  const runtime={worker:{child,processIdentity,identity:{attemptId:"stage-claim-41",generationId:"stage-runtime-fixture",modelRef:"minimax/MiniMax-M3.1-Flash"},output:output.promise},
+    attachmentHash:"a".repeat(64),closed:closed.promise,
+    close:(_why:string)=>{events.push("close-pair");return closed.promise;},openGate:async()=>{events.push("gate");}};
+  const input={key:"feature-dev:planner:planner",wfId:"feature-dev",role:"planner",agentId:"planner",claimEnvelope,authority,
+    runtimeSessionId,sessionId:"spawner-session",sessionKey:"spawner-session-key"};
+  let publishCount=0;
+  const ports:Record<string,any>={
+    SELECTED_SPAWNER_V1:{paths:{root:"/installation/runtime"}},SPAWNER_INSTANCE_ID:ownerInstanceId,
+    AGENT_RUNTIME:"subscription",AGENT_TIMEOUT_SECONDS:1800,activeProcesses,drainingProcesses,
+    claimingSpawns:new Set(),shuttingDown:false,path,Date,console:{log(){},warn(){}},
+    setTimeout:()=>71,clearTimeout:()=>{},readProcessCpuTicks:()=>undefined,fileSize:()=>0,
+    deriveSubscriptionCodingRuntimePathsV1,getSql:()=>({fixtureOnly:true}),assertSpawnerOperationalEntryV1:async()=>{},
+    startSelectedSubscriptionCodingRuntimeV1:async(actual:any)=>{events.push("acquire-pair");assert.equal(events[0],"mark-starting");assert.deepEqual(actual.envelope,claimEnvelope);return runtime;},
+    createRuntimeSessionRepository:()=>({
+      markStarting:async()=>{events.push("mark-starting");return{sessionId:runtimeSessionId,ownerInstanceId,state:"starting",stateVersion:1};},
+      markRunning:async(actual:any)=>{events.push("mark-running");const retained=activeProcesses.get(input.key);
+        assert.equal(retained?.subscriptionRuntime,runtime,"actual pair retained before markRunning await");
+        assert.deepEqual(retained?.claimEnvelope,claimEnvelope,"full original envelope retained, including issuedAt/input");
+        assert.deepEqual(actual.envelope,claimEnvelope);assert.equal(actual.pid,43200);assert.deepEqual(actual.processIdentity,processIdentity);
+        return{status:"running",session:{sessionId:runtimeSessionId,ownerInstanceId,state:"running",stateVersion:3}};},
+      findById:async()=>({sessionId:runtimeSessionId,ownerInstanceId,state:"starting",stateVersion:2}),quarantine:async()=>{events.push("quarantine");},
+    }),
+    decodeSubscriptionSdkWorkflowReportV1:()=>({assistantText:"STATUS: done\nRESULT: report",replayInvalid:true}),
+    parseSubscriptionWorkflowReportV1:({assistantText}:any)=>({output:assistantText}),
+    publishRuntimeCompletionProposal:async(_step:string,text:string,envelope:any)=>{publishCount++;events.push("publish");assert.equal(text,"STATUS: done\nRESULT: report");assert.deepEqual(envelope,claimEnvelope);return{managed:true};},
+    terminateActiveProcess:()=>{events.push("terminate");void runtime.close("refused");},
+    emitEvent:()=>{},recordSupervisorInfraEvent:async()=>{},settleExitedClaimAndRuntime:async()=>{events.push("settle-failure");},
+  };
+  return{input,ports,paths,runtime,events,activeProcesses,drainingProcesses,closed,output,ownerInstanceId,
+    published:()=>publishCount};
+}
+it("real selected orchestration retains original pair before publication await and gates after markRunning",async()=>{
+  const f=fixture(),start=evaluate("spawner.ts","startSelectedSubscriptionClaimV1",f.ports);
+  await start(f.input);
+  assert.deepEqual(f.events.slice(0,4),["mark-starting","acquire-pair","mark-running","gate"]);
+  assert.equal(f.published(),0);
+  f.output.resolve({stdout:"owned SDK stdout",stderr:"",exitCode:0});await new Promise(setImmediate);
+  assert.equal(f.published(),0,"stdout success is not original joint closure");
+  f.closed.resolve({status:"closed",broker:"closed",worker:"closed",evidenceRefs:["original-broker","original-process-and-streams"]});
+  await new Promise(setImmediate);assert.equal(f.published(),1);
+});
+it("markRunning failure closes retained pair and never opens its worker gate",async()=>{
+  const f=fixture(),repo=f.ports.createRuntimeSessionRepository();
+  f.closed.resolve({status:"closed",broker:"closed",worker:"closed",evidenceRefs:[]});
+  repo.markRunning=async()=>{f.events.push("mark-running-failed");throw Error("publication refused");};
+  f.ports.createRuntimeSessionRepository=()=>repo;
+  await assert.rejects(evaluate("spawner.ts","startSelectedSubscriptionClaimV1",f.ports)(f.input),/publication|REFUSED/);
+  assert.ok(f.events.includes("close-pair"));assert.equal(f.events.includes("gate"),false);assert.equal(f.published(),0);
+});
+it("actual spawnAgentNow routes selected subscription to owned helper before legacy tmp files or spawn",async()=>{
+  const f=fixture();let routed=0,legacy=0;
+  const claim={found:true,stepId:f.input.claimEnvelope.stepId,workflowStepId:"plan",runId:f.input.claimEnvelope.runId,protocol:"v3",claimId:41,
+    claimAgentId:"feature-dev_planner",runtimeSessionId:f.input.runtimeSessionId,runtimeOwnerInstanceId:f.ownerInstanceId,resolvedInput:f.input.claimEnvelope.input};
+  Object.assign(f.ports,{hasTrackedClaimRuntime:()=>false,shouldDeferBackgroundWorkflow:async()=>false,trackedRuntimeCount:()=>0,MAX_CONCURRENT:2,
+    pendingClaimInvocations:new Map(),newRuntimeSessionId:()=>f.input.runtimeSessionId,buildSessionKey:()=>f.input.sessionKey,agentSessionJsonlPath:()=>"/unused/session.jsonl",
+    TRANSCRIPT_ROOT:"/legacy/transcripts",recoveryDispatchClassForRole:()=>undefined,
+    assertSubscriptionWorkflowRoleV1:()=>{},claimStep:async()=>claim,runtimeClaimEnvelope:()=>f.input.claimEnvelope,safeAgentCwdFromClaimInput:()=>f.input.claimEnvelope.workdir,
+    AGENT_SAFE_CWD:"/scratch",claimRoleRequiresProjectCwd:()=>false,ensureClaimScopeParentDirs:()=>[],
+    buildClaimSummary:()=>({canonicalStageClaimHandoff:f.input.authority}),completeInlineSecurityGateIfApplicable:async()=>false,
+    fs:{unlinkSync(){legacy++;throw Error("legacy tmp cleanup reached");},mkdirSync(){legacy++;throw Error("legacy filesystem path reached");},writeFileSync(){legacy++;throw Error("legacy filesystem path reached");}},
+    spawn:()=>{legacy++;throw Error("legacy spawn reached");},
+    startSelectedSubscriptionClaimV1:async(actual:any)=>{routed++;assert.deepEqual(actual.claimEnvelope,f.input.claimEnvelope);assert.deepEqual(actual.authority,f.input.authority);},
+    releaseUntransferredPostClaimOwnership:async()=>{throw Error("transferred subscription owner was discarded");},
+  });
+  await evaluate("spawner.ts","spawnAgentNow",f.ports)("planner","feature-dev","planner");
+  assert.equal(routed,1);assert.equal(legacy,0);
+});
+it("actual selected caller refuses unsupported role before claimStep",async()=>{
+  const f=fixture();let claims=0;
+  Object.assign(f.ports,{hasTrackedClaimRuntime:()=>false,shouldDeferBackgroundWorkflow:async()=>false,trackedRuntimeCount:()=>0,MAX_CONCURRENT:2,
+    buildSessionKey:()=>f.input.sessionKey,agentSessionJsonlPath:()=>"/unused/session.jsonl",newRuntimeSessionId:()=>f.input.runtimeSessionId,
+    TRANSCRIPT_ROOT:"/legacy/transcripts",pendingClaimInvocations:new Map(),recoveryDispatchClassForRole:()=>undefined,
+    fs:{unlinkSync(){}},
+    assertSubscriptionWorkflowRoleV1:()=>{throw Error("SUBSCRIPTION_WORKFLOW_ROLE_UNSUPPORTED");},claimStep:async()=>{claims++;throw Error("must not claim");}});
+  await assert.rejects(evaluate("spawner.ts","spawnAgentNow",f.ports)("unknown","feature-dev","unknown"),/UNSUPPORTED/);
+  assert.equal(claims,0);
+});
+it("ordinary supervise uses its real stage handoff while implement retains canonical attempt requirement",()=>{
+  const f=fixture(),build=evaluate("spawner-prompt.ts","buildClaimSummary",{path,ClaimEnvelopeV1Schema,createV3StageClaimHandoffV1});
+  const claim={...f.input.claimEnvelope,workflowStepId:"supervise",claimAgentId:"feature-dev_supervisor",runtimeAgentId:"supervisor"};
+  const params={wfId:"feature-dev",role:"supervisor",claimFile:"/tmp/legacy-claim",outputFile:"/tmp/legacy-output",bootstrapFile:"/tmp/legacy-bootstrap",
+    stepId:claim.stepId,runId:claim.runId,workdir:claim.workdir,repo:claim.repo,claimEnvelope:claim,input:claim.input};
+  const summary=build(params);
+  assert.equal(summary.canonicalStageClaimHandoff.context.workflowStepId,"supervise");
+  assert.equal(summary.canonicalImplementationContext,undefined);
+  assert.equal(summary.canonicalStageClaimHandoff.context.story,undefined);
+  assert.throws(()=>build({...params,role:"developer",storyId:"US-001",claimEnvelope:{...claim,workflowStepId:"implement",
+    claimAgentId:"feature-dev_developer",storyId:"US-001",storyDbId:"story-db-001",claimGeneration:1,
+    attempt:{attemptId:"ATT_00000000-0000-0000-0000-000000000901",generation:1,fenceToken:"f".repeat(64)}}}),/V3_IMPLEMENTATION_HANDOFF_MISSING/);
+});
+it("actual terminate path revokes original pair instead of generic process-tree or gateway operations",()=>{
+  const f=fixture();let foreign=0;
+  const terminate=evaluate("spawner.ts","terminateActiveProcess",{...f.ports,signalProcessIfIdentityMatches:()=>{foreign++;},
+    cancelRuntimeTask:()=>{foreign++;},cleanupSpawnerDetachedToolChildren:()=>{foreign++;},cleanupProjectEphemera:()=>{foreign++;}});
+  const active={...f.input,child:f.runtime.worker.child,processIdentity:f.runtime.worker.processIdentity,subscriptionRuntime:f.runtime};
+  terminate(active,"owner-cancel");assert.ok(f.events.includes("close-pair"));assert.equal(foreign,0);
+});
+it("actual service start admits exact subscription with readiness and captured-runner drift fences",async()=>{
+  for(const runner of ["codex","subscription"]){
+    const events:string[]=[],env={SETFARM_AGENT_RUNTIME:runner};
+    const child={pid:43200,exitCode:null,signalCode:null,connected:true,disconnect(){events.push("disconnect");},unref(){events.push("unref");}};
+    const ports={process:{execPath:"/node",env},path,fs:{closeSync(){}},
+      readSelectedFreshExecutionProfileV1:()=>({providerId:runner==="codex"?"codex":"minimax",modelId:runner==="codex"?"codex/model":"minimax/MiniMax-M3.1-Flash",selection:"primary"}),
+      assertSelectedFreshExecutionProfileUnchangedV1:()=>{},prepareFreshInstallationOperationalEntryV1:async()=>{events.push("entry");},assertFreshInstallationOperationalEntryV1:()=>{},
+      freshInstallationSelectionV1:{paths:{repository:"/source"},state:{origin:{sourceSha:"a".repeat(40)}}},
+      inspectFreshServiceV1:()=>events.includes("ready")?{running:true,pid:43200}:{running:false},freshServicePathsV1:()=>({logFile:"/log"}),openFreshServiceLogV1:()=>71,
+      freshServiceChildEnvironmentV1:()=>({}),spawn:(_cmd:any,_args:any,options:any)=>{assert.equal(options.env.SETFARM_AGENT_RUNTIME,runner);events.push("spawn");return child;},
+      waitFreshStartingChildReadyV1:async()=>{events.push("ready");},setImmediate,stopHeldFreshStartingChildV1:async()=>{events.push("stop");}};
+    assert.equal((await evaluate("server/spawnerctl.ts","startFreshSpawnerV1",ports)()).pid,43200);
+    assert.ok(events.indexOf("ready")<events.indexOf("unref"));
+    ports.prepareFreshInstallationOperationalEntryV1=async()=>{env.SETFARM_AGENT_RUNTIME=runner==="codex"?"subscription":"codex";};
+    await assert.rejects(evaluate("server/spawnerctl.ts","startFreshSpawnerV1",ports)(),/CHANGED|REFUSED/);
+  }
+});

@@ -170,6 +170,27 @@ async function projectCanonical(input: ReturnType<typeof canonicalImplementation
   return api.projectSubscriptionCodingRuntimeBindingV1(input);
 }
 
+it("subscription transport preserves native implementation proposal bytes beyond legacy stage report cap",async()=>{
+  const input=canonicalImplementation(), context=input.authority;
+  const {compileV3ImplementationAgentOutputV1}=await import("../../src/execution/v3-implementation-output.js");
+  const raw=JSON.stringify({schema:"setfarm.v3-implementation-agent-proposal.v1",disposition:"ready_for_evidence",
+    handoffHash:context.handoffHash,attemptId:context.handoff.attemptId,packetHash:context.handoff.packetHash,
+    sliceHash:context.handoff.sliceHash,sourceBefore:context.handoff.sourceBefore,summary:"Exact owned implementation",
+    changes:context.writeAuthority.allowedPaths.map(path=>({path,summary:"Owned change"})),annotation:"a".repeat(70000)});
+  assert.ok(Buffer.byteLength(raw)>65536);compileV3ImplementationAgentOutputV1(raw,context);
+  const transport=await import("../../src/execution/subscription-workflow-transport-v1.js");
+  assert.deepEqual(transport.parseSubscriptionWorkflowReportV1({claim:input.envelope,authority:context,assistantText:raw}),{output:raw});
+});
+it("subscription implementation report refuses crossed canonical handoff and attempt identity",async()=>{
+  const input=canonicalImplementation(), context=input.authority;
+  const transport=await import("../../src/execution/subscription-workflow-transport-v1.js");
+  const raw={schema:"setfarm.v3-implementation-agent-proposal.v1",disposition:"ready_for_evidence",
+    handoffHash:context.handoffHash,attemptId:context.handoff.attemptId,packetHash:context.handoff.packetHash,
+    sliceHash:context.handoff.sliceHash,sourceBefore:context.handoff.sourceBefore,summary:"Exact implementation",changes:[]};
+  for(const change of [{handoffHash:"0".repeat(64)},{attemptId:"ATT_00000000-0000-0000-0000-000000000902"}])
+    assert.throws(()=>transport.parseSubscriptionWorkflowReportV1({claim:input.envelope,authority:context,assistantText:JSON.stringify({...raw,...change})}),/MISMATCH|REFUSED/);
+});
+
 it("canonical implementation binding uses selected platform origin rather than generated sourceBefore", async () => {
   const input = canonicalImplementation();
   assert.notEqual(input.platformSourceSha, input.authority.handoff.sourceBefore.sha);
