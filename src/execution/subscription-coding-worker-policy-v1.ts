@@ -7,6 +7,8 @@ import type { ProcessIdentityV1 } from './schemas/process-identity-v1.js';
 
 export function subscriptionCodingWorkerRefusedV1(): never { throw new Error('SUBSCRIPTION_CODING_WORKER_REFUSED'); }
 const refuse: () => never = subscriptionCodingWorkerRefusedV1;
+// Generated SBPL expands exact literal paths/exclusions; this is not a grant.
+export const SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1 = 1048576;
 export function subscriptionCodingHashV1(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -227,7 +229,7 @@ export function buildSubscriptionCodingSandboxPolicyV1(input: SubscriptionCoding
       let parent = posix.dirname(path);
       while (parent !== '/') { ancestors.add(parent); parent = posix.dirname(parent); }
     }
-    return ['(version 1)', '(deny default)', '(deny process-fork)', '(deny network-inbound)',
+    const policy = ['(version 1)', '(deny default)', '(deny process-fork)', '(deny network-inbound)',
       '(allow file-read-data (literal "/"))',
       `(allow process-exec (literal ${quote(v.nodePath)}))`,
       '(allow process-info* (target self))', '(allow signal (target self))', '(allow sysctl-read)',
@@ -240,6 +242,8 @@ export function buildSubscriptionCodingSandboxPolicyV1(input: SubscriptionCoding
       ...writable.map(grant => rule('file-write-data file-write-create', grant.kind, grant.path, writeProtected)),
       ...writable.map(grant => structuralRule(grant.kind, grant.path)),
       `(allow network-outbound (remote tcp4 "localhost:${v.brokerPort}"))`, ''].join('\n');
+    if (Buffer.byteLength(policy, 'utf8') > SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1) refuse();
+    return policy;
   } catch { refuse(); }
 }
 

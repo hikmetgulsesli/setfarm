@@ -12,7 +12,7 @@ import { createSubscriptionCredentialRedactorV1 } from './subscription-credentia
 import { observeProcessIdentity } from './process-identity.js';
 import type { ProcessIdentityV1 } from './schemas/process-identity-v1.js';
 import { SUBSCRIPTION_CODING_WORKER_PRELOAD_V1 } from './subscription-coding-worker-preload-v1.js';
-import { buildSubscriptionCodingSandboxPolicyV1, buildSubscriptionCodingProbeChallengeV1,
+import { SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1, buildSubscriptionCodingSandboxPolicyV1, buildSubscriptionCodingProbeChallengeV1,
   createSubscriptionCodingTranscriptCloserV1, createSubscriptionCodingCustodyTrackerV1,
   createSubscriptionCodingProbeProtocolV1, subscriptionCodingCanonicalPathV1,
   subscriptionCodingHashV1, subscriptionCodingWorkerRefusedV1,
@@ -159,12 +159,14 @@ export function prepareSubscriptionCodingSdkTempDirectoryV1(privateRoot: string)
     return path;
   } catch { return refuse(); }
 }
-function createPrivateFile(path: string, contents: string): Pin {
+function createPrivateFile(path: string, contents: string, maximum = 262144): Pin {
+  const bytes = Buffer.from(contents);
+  if (bytes.length > maximum) refuse();
   canonicalDirectory(dirname(path), true);
   let fd: number | undefined;
   try {
     fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    const bytes = Buffer.from(contents); let offset = 0;
+    let offset = 0;
     while (offset < bytes.length) {
       const written = writeSync(fd, bytes, offset, bytes.length - offset);
       if (written <= 0) refuse(); offset += written;
@@ -172,7 +174,7 @@ function createPrivateFile(path: string, contents: string): Pin {
     fsyncSync(fd);
     safeFileStat(fstatSync(fd, { bigint: true }), true);
   } finally { if (fd !== undefined) closeSync(fd); }
-  return pinFile(path, true, 262144);
+  return pinFile(path, true, maximum);
 }
 export function inspectSubscriptionCodingGitControlPathsV1(worktree: string): Readonly<{
   kind: 'absent' | 'present'; paths: readonly string[];
@@ -370,7 +372,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     for (const directory of material.directories) createPrivateDirectory(directory);
     const sdkTempDirectory = prepareSubscriptionCodingSdkTempDirectoryV1(root);
     const privatePins = material.files.map(file => createPrivateFile(file.path, file.contents));
-    privatePins.push(createPrivateFile(preloadPath, SUBSCRIPTION_CODING_WORKER_PRELOAD_V1), createPrivateFile(profilePath, policy));
+    privatePins.push(createPrivateFile(preloadPath, SUBSCRIPTION_CODING_WORKER_PRELOAD_V1), createPrivateFile(profilePath, policy, SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1));
     const privateDirectories = [root, ...material.directories, sdkTempDirectory]
       .map(path => ({ path, stat: lstatSync(path, { bigint: true }) }));
     const fd = openSync(transcriptPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
