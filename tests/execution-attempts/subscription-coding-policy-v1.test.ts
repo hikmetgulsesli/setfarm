@@ -34,10 +34,10 @@ function frozen(value: unknown): void {
   }
 }
 
-test('fixed PLAN report DATA profile disables thinking without changing model, limits or other launch material', () => {
+test('fixed PLAN report DATA profile requests low thinking without changing model, limits or other launch material', () => {
   const input=fixture('minimax/MiniMax-M3.1-Flash'),normal=build(input);
   const plan=build({...input,requestProfile:'plan-report-v1'} as never);
-  assert.deepEqual(plan.argv,[...normal.argv,'--thinking','off']);
+  assert.deepEqual(plan.argv,[...normal.argv,'--thinking','low']);
   assert.deepEqual({...plan,argv:normal.argv},normal);
   assert.equal(JSON.parse(plan.files[0].contents).models.providers.minimax.models[0].maxTokens,8192);
   assert.equal(SUBSCRIPTION_CODING_LIMITS_V1?.maxOutputTokens,8192);frozen(plan);

@@ -47,14 +47,14 @@ function material() {
 }
 function cloneMaterial() { return JSON.parse(JSON.stringify(material())) as ReturnType<typeof material>; }
 
-test('worker reconstructs only the exact fixed PLAN thinking-off suffix and binds its complete material hash',()=>{
-  assert.ok(api);const normal=material(),plan=cloneMaterial();(plan.argv as string[]).push('--thinking','off');
+test('worker reconstructs only the exact fixed PLAN thinking-low suffix and binds its complete material hash',()=>{
+  assert.ok(api);const normal=material(),plan=cloneMaterial();(plan.argv as string[]).push('--thinking','low');
   const checked=api.validateSubscriptionCodingWorkerMaterialV1(plan);
   assert.deepEqual(checked.material,plan);
   assert.equal(checked.materialHash,createHash('sha256').update(JSON.stringify(plan)).digest('hex'));
   assert.notEqual(checked.materialHash,api.validateSubscriptionCodingWorkerMaterialV1(normal).materialHash);
-  for(const suffix of [['--thinking','low'],['--thinking','medium'],['--thinking','off','--thinking','off'],
-    ['--thinking','off','--model','kimi/k3.1-pro'],['--thinking']]){
+  for(const suffix of [['--thinking','off'],['--thinking','medium'],['--thinking','low','--thinking','low'],
+    ['--thinking','low','--model','kimi/k3.1-pro'],['--thinking']]){
     const forged=cloneMaterial();(forged.argv as string[]).push(...suffix);
     assert.throws(()=>api!.validateSubscriptionCodingWorkerMaterialV1(forged),{message:'SUBSCRIPTION_CODING_WORKER_REFUSED'});
   }
