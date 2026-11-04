@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { it } from "node:test";
 import ts from "typescript";
-import { deriveSubscriptionCodingRuntimePathsV1,projectSubscriptionCodingRuntimeBindingV1,sameSubscriptionRuntimeDataV1,subscriptionRuntimeRefusedV1 } from "../../src/execution/subscription-coding-runtime-binding-v1.js";
+import { deriveSubscriptionCodingRuntimePathsV1,projectSubscriptionCodingRuntimeBindingV1,sameSubscriptionRuntimeDataV1,subscriptionRuntimeRefusedV1,subscriptionRuntimePreparationHashV1 } from "../../src/execution/subscription-coding-runtime-binding-v1.js";
 import { createV3StageClaimHandoffV1,V3StageClaimHandoffV1Schema } from "../../src/execution/v3-stage-execution-context.js";
 import { assertSubscriptionWorkflowRoleV1,planSubscriptionWorkflowHandoffV1,renderSubscriptionWorkflowPromptV1 } from "../../src/execution/subscription-workflow-transport-v1.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
@@ -29,14 +29,14 @@ it("genuine selected facade derives fixed PLAN shaping only after authentic star
   // Disclosed module-locator DATA seam only; no selected graph/FS is imported.
   body=body.replace("import.meta.url",JSON.stringify("file:///component/selected-facade.js"));
   const compiled=ts.transpileModule(body,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
-  for(const mode of ["plan","stories","design","starting-refused","crossed-stage"]){
+  for(const mode of ["plan","stories","design","starting-refused","crossed-stage","profile-model-mismatch"]){
     const step=mode==="stories"?"stories":mode==="design"?"design":"plan",role=step==="design"?"designer":"planner";
     const f=fixture(),events:string[]=[];
     const envelope={...f.input.claimEnvelope,workflowStepId:step,claimAgentId:`feature-dev_${role}`,runtimeAgentId:role};
     const authority=createV3StageClaimHandoffV1({claimEnvelope:envelope,workflow:"feature-dev",role,workdir:envelope.workdir,
       outputFile:"/tmp/component-unused-output",instructionContent:"Return the complete existing report."});
     const observed={...f.runtime.worker.processIdentity,pid:43100};
-    let captured:any;
+    let captured:any,capturedBroker:any,prepared:any;
     class ComponentStartupError extends Error{}
     const selected={paths:{root:"/installation/runtime"},directory:"/installation",state:{origin:{sourceSha:"a".repeat(40)}},
       activation:{acknowledged:true,preparedPin:{sha256:"b".repeat(64)},activatedPin:{sha256:"c".repeat(64)}},assertUnchanged(){}};
@@ -44,7 +44,7 @@ it("genuine selected facade derives fixed PLAN shaping only after authentic star
       assertFreshInstallationSelectionUnchangedV1(){},assertFreshInstallationOperationalEntryV1(){},freshInstallationSelectionV1:selected,
       planSubscriptionWorkflowHandoffV1,renderSubscriptionWorkflowPromptV1,projectSubscriptionCodingRuntimeBindingV1,
       deriveSubscriptionCodingRuntimePathsV1,sameSubscriptionRuntimeDataV1,subscriptionRuntimeRefusedV1,
-      readSelectedFreshExecutionProfileV1:()=>({schema:"setfarm.model-execution-profile.v1",providerId:"minimax",modelId:"minimax/MiniMax-M3.1-Flash",selection:"primary"}),
+      readSelectedFreshExecutionProfileV1:()=>({schema:"setfarm.model-execution-profile.v1",providerId:mode==="profile-model-mismatch"?"kimi":"minimax",modelId:mode==="profile-model-mismatch"?"kimi/k3.1-pro":"minimax/MiniMax-M3.1-Flash",selection:"primary"}),
       getSql:()=>({componentData:true}),createRuntimeSessionRepository:()=>({async readAuthenticatedStartingClaim(actual:any){
         events.push("authenticated-starting");assert.deepEqual(actual.envelope,envelope);
         if(mode==="starting-refused")throw Error("COMPONENT_STARTING_REFUSED");return{};
@@ -54,20 +54,34 @@ it("genuine selected facade derives fixed PLAN shaping only after authentic star
       // or selected success; the exact authentic reader/order is tested above.
       workerScope:()=>({writeGrants:[],readOnlyControlPaths:[]}),canonicalDirectory(){},
       prepareSubscriptionWriteParentsV1(){events.push("prepare-parents");},materializeSubscriptionWorkflowHandoffV1(){events.push("materialize");},prepareContainer(){events.push("container");},
-      acquireSubscriptionCodingRuntimeV1:async(input:any)=>{assert.ok(events.includes("authenticated-starting"));captured=input;events.push("acquire");throw Error("COMPONENT_ACQUIRE_BOUNDARY");},
+      acquireSubscriptionCodingRuntimeV1:async(input:any,acquisition:any)=>{
+        assert.ok(events.includes("authenticated-starting"));captured=input;events.push("acquire");
+        const authority=await acquisition.deriveAuthority(input);
+        prepared={phase:"prepared",authority,attachmentHash:subscriptionRuntimePreparationHashV1(input.binding,authority)};
+        await acquisition.acquireBroker({identity:{attemptId:"stage-claim-41",generationId:"component-stage-runtime",modelRef:input.binding.modelRef},limits:{componentData:true},signal:input.signal});
+        throw Error("COMPONENT_ACQUIRE_BOUNDARY");
+      },
+      subscriptionRuntimePreparationHashV1,readSubscriptionRuntimeAttachmentV1:()=>prepared,
+      withSelectedSubscriptionCredentialV1:async(model:string,use:(credential:string)=>Promise<unknown>)=>{
+        assert.ok(events.includes("authenticated-starting"));assert.equal(model,"minimax/MiniMax-M3.1-Flash");events.push("credential-data");
+        return use("component-synthetic-plan-credential");
+      },
+      startSubscriptionAttemptBrokerV1:async(input:any)=>{capturedBroker=input;events.push("broker-data");throw Error("COMPONENT_ACQUIRE_BOUNDARY");},
       SubscriptionCodingRuntimeStartupErrorV1:ComponentStartupError,
     };
     const start=new Function(...Object.keys(ports),compiled+";return "+name+";")(...Object.values(ports));
     const input={envelope:mode==="crossed-stage"?{...envelope,workflowStepId:"stories"}:envelope,authority,
       runtimeSessionId:f.input.runtimeSessionId,ownerInstanceId:f.ownerInstanceId,signal:new AbortController().signal};
     Object.defineProperty(input,"requestProfile",{get(){throw Error("CALLER_SHAPING_AUTHORITY_READ");}});
-    if(mode==="starting-refused"||mode==="crossed-stage"){
+    if(mode==="starting-refused"||mode==="crossed-stage"||mode==="profile-model-mismatch"){
       await assert.rejects(start(input),/COMPONENT_STARTING_REFUSED|REFUSED/);
       assert.equal(captured,undefined);assert.equal(events.includes("materialize"),false);
+      assert.equal(events.includes("credential-data"),false);assert.equal(capturedBroker,undefined);
     }else{
       await assert.rejects(start(input),/COMPONENT_ACQUIRE_BOUNDARY/);
       assert.equal(captured.requestProfile,step==="plan"?"plan-report-v1":undefined);
-      if(step!=="plan")assert.equal(Object.hasOwn(captured,"requestProfile"),false,"other roles omit the profile entirely");
+      assert.equal(capturedBroker.requestProfile,step==="plan"?"plan-report-v1":undefined,"broker receives the same authenticated fixed profile");
+      if(step!=="plan")for(const value of [captured,capturedBroker])assert.equal(Object.hasOwn(value,"requestProfile"),false,"other roles omit the profile entirely");
     }
   }
   const tree=ts.createSourceFile(file,body,ts.ScriptTarget.Latest,true),choices:number[]=[],reads:number[]=[];

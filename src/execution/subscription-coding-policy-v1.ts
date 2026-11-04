@@ -76,7 +76,7 @@ export function buildSubscriptionCodingMaterialV1(
     argv[argv.length - 1] = '1800';
     // Fixed DATA profile only. The selected facade derives the genuine PLAN
     // choice; this pure builder neither authenticates a stage nor admits work.
-    if (value.requestProfile === 'plan-report-v1') argv.push('--thinking', 'off');
+    if (value.requestProfile === 'plan-report-v1') argv.push('--thinking', 'low');
     return freeze({ schema: base.schema, profile: 'subscription-coding-files-v1',
       identity: { ...base.identity }, sessionId: base.sessionId, cwd: worktree,
       directories: [...base.directories],

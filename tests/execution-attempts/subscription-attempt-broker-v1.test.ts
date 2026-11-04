@@ -28,6 +28,16 @@ async function fixture(t: TestContext, handler: (req: IncomingMessage, res: Serv
   const sockets = new Set<net.Socket>();
   const server = http.createServer(handler);
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+  let ownedBroker: Awaited<ReturnType<typeof startSubscriptionAttemptBrokerV1>> | undefined;
+  // A constructor refusal is an expected RED path too. Retain cleanup before
+  // listening/awaiting acquisition so that no failed constructor leaks a server.
+  t.after(async () => {
+    try { await ownedBroker?.stop('completed'); }
+    finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const port = (server.address() as net.AddressInfo).port;
   assert.ok(![3080, 3333, 18789].includes(port));
@@ -48,8 +58,7 @@ async function fixture(t: TestContext, handler: (req: IncomingMessage, res: Serv
     return { request: original, response, closed, abort() { original.destroy(); } };
   } };
   const result = await startSubscriptionAttemptBrokerForTestV1(input(extra), transport);
-  t.after(async () => { await result.broker.stop('completed'); for (const socket of sockets) socket.destroy();
-    await new Promise<void>(resolve => server.close(() => resolve())); });
+  ownedBroker = result.broker;
   return { ...result, calls, sockets, server };
 }
 function call(broker: Awaited<ReturnType<typeof startSubscriptionAttemptBrokerV1>>, content = body(broker.worker.modelId),
@@ -96,6 +105,68 @@ for (const [modelRef, modelId, url, path] of [
   assert.deepEqual(await stop1, { status: 'closed', reason: 'completed', acceptedRequests: 2,
     responseBytes: Buffer.byteLength(message(modelId)) * 2, redactions: 0, terminalCode: null });
   await assert.rejects(call(f.broker));
+});
+
+test('fixed PLAN profile projects only MiniMax adaptive low wire fields and exact content length',async t=>{
+  const received:Buffer[]=[];
+  const f=await fixture(t,async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);received.push(Buffer.concat(chunks));
+    res.setHeader('content-type','application/json');res.end(message());
+  },{requestProfile:'plan-report-v1'});
+  const content=body(undefined,{thinking:{type:'enabled',budget_tokens:2048},
+    messages:[{role:'assistant',content:[{type:'thinking',thinking:'prior reason',signature:'bound-signature'},
+      {type:'tool_use',id:'read-1',name:'read',input:{path:'part-001'}}]},
+    {role:'user',content:[{type:'tool_result',tool_use_id:'read-1',content:'complete protected part'}]}]});
+  for(let n=0;n<2;n++){
+    const response=await call(f.broker,content);assert.equal(response.status,200);assert.equal(await response.text(),message());
+  }
+  assert.equal(f.calls.length,2);assert.equal(received.length,2);
+  for(const [index,request] of f.calls.entries()){
+    const actual=JSON.parse(request.body.toString('utf8'));
+    assert.deepEqual(actual,{...JSON.parse(content),thinking:{type:'adaptive'},output_config:{effort:'low'}});
+    assert.equal(actual.max_tokens,128);assert.equal(actual.model,'MiniMax-M3.1-Flash');
+    assert.equal(request.url,'https://api.minimax.io/anthropic/v1/messages');
+    assert.equal(request.headers['content-length'],String(request.body.length));assert.deepEqual(received[index],request.body);
+  }
+  assert.equal((await f.broker.stop('completed')).acceptedRequests,2);
+});
+
+test('PLAN projection rechecks the same request-byte ceiling before upstream or token reservation',async t=>{
+  const content=body(),originalBytes=Buffer.byteLength(content);
+  assert.ok(Buffer.byteLength(JSON.stringify({...JSON.parse(content),thinking:{type:'adaptive'},output_config:{effort:'low'}}))>originalBytes);
+  const f=await fixture(t,(_req,res)=>res.end('unexpected'),{requestProfile:'plan-report-v1',limits:{...limits,maxRequestBytes:originalBytes}});
+  await fixedError(await call(f.broker,content),413,'BYTES');
+  assert.equal(f.calls.length,0);const receipt=await f.broker.closed;
+  assert.equal(receipt.acceptedRequests,0);assert.equal(receipt.responseBytes,0);
+});
+
+for(const [name,content,status,code] of [
+  ['worker effort override',body(undefined,{output_config:{effort:'max'}}),400,'MALFORMED'],
+  ['foreign model',body('k3.1-pro'),403,'MODEL_REJECTED'],
+  ['token widening',body(undefined,{max_tokens:2049}),429,'BUDGET'],
+] as const)test(`PLAN profile still refuses ${name} before opening upstream`,async t=>{
+  const f=await fixture(t,(_req,res)=>res.end('unexpected'),{requestProfile:'plan-report-v1'});
+  await fixedError(await call(f.broker,content),status,code);assert.equal(f.calls.length,0);
+  assert.equal((await f.broker.closed).acceptedRequests,0);
+});
+
+test('broker PLAN profile is closed own DATA and cannot retarget Kimi or invoke accessors/proxies',async()=>{
+  let opens=0,traps=0;
+  const transport={open(){opens++;throw Error('COMPONENT_UNEXPECTED_UPSTREAM');}};
+  for(const extra of [{requestProfile:'low'},{requestProfile:'off'},{requestProfile:{effort:'low'}},
+    {requestProfile:undefined},{requestProfile:'plan-report-v1',modelRef:'kimi/k3.1-pro'}])
+    await assert.rejects(startSubscriptionAttemptBrokerForTestV1(input(extra),transport),{message:'BROKER_INPUT_INVALID'});
+  const getter=Object.defineProperty(input(),'requestProfile',{enumerable:true,get(){traps++;throw Error('COMPONENT_PRIVATE_PROFILE_GETTER');}});
+  const proxy=new Proxy(input({requestProfile:'plan-report-v1'}),{getPrototypeOf(){traps++;throw Error('COMPONENT_PRIVATE_PROFILE_PROXY');},ownKeys(){traps++;throw Error('COMPONENT_PRIVATE_PROFILE_PROXY');}});
+  for(const value of [getter,proxy])await assert.rejects(startSubscriptionAttemptBrokerForTestV1(value,transport),{message:'BROKER_INPUT_INVALID'});
+  // The real constructor must refuse the model/profile join too; no provider
+  // request is made, and a mistaken returned local owner is honestly closed.
+  let unexpected:Awaited<ReturnType<typeof startSubscriptionAttemptBrokerV1>>|undefined;
+  try{
+    await assert.rejects(startSubscriptionAttemptBrokerV1({...input({requestProfile:'plan-report-v1',modelRef:'kimi/k3.1-pro'}),credential:'sk-cp-synthetic-test-credential'} as never)
+      .then(owner=>{unexpected=owner;throw Error('COMPONENT_PROFILE_MODEL_ACCEPTED');}),{message:'BROKER_INPUT_INVALID'});
+  }finally{await unexpected?.stop('refused');}
+  assert.equal(opens,0);assert.equal(traps,0);
 });
 
 test('strict constructors reject overrides, invalid limits/ids/credentials and pre-abort without transport', async () => {

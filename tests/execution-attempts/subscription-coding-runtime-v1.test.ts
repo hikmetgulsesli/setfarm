@@ -113,7 +113,7 @@ test('inert runtime propagates the fixed PLAN DATA profile into the actual hashe
   const f=fixture('stage-claim');try{
     const launch=f.port.launchWorker;
     f.port.launchWorker=async request=>{
-      assert.deepEqual(request.material.argv.slice(-2),['--thinking','off']);
+      assert.deepEqual(request.material.argv.slice(-2),['--thinking','low']);
       assert.equal(JSON.parse(request.material.files[0].contents).models.providers.minimax.models[0].maxTokens,8192);
       return launch(request);
     };

@@ -153,6 +153,7 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
     && authority.context.workflow === "feature-dev" && authority.context.workflowStepId === "plan"
     && authority.context.role === "planner" && envelope.workflowStepId === "plan"
     ? "plan-report-v1" as const : undefined;
+  if (requestProfile && binding.modelRef !== "minimax/MiniMax-M3.1-Flash") subscriptionRuntimeRefusedV1();
   const parentIdentity = observeProcessIdentity(process.pid), activation = selected.activation;
   if (!parentIdentity || parentIdentity.source !== "observed_os" || !activation?.acknowledged || !activation.activatedPin) subscriptionRuntimeRefusedV1();
   const runtimeAuthority: SubscriptionRuntimeAuthorityV1 = Object.freeze({ sourceSha: binding.sourceSha,
@@ -207,7 +208,8 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
           || !sameSubscriptionRuntimeDataV1(prepared.authority, runtimeAuthority)) subscriptionRuntimeRefusedV1();
         return withSelectedSubscriptionCredentialV1(binding.modelRef, async credential => {
           guard(); const acquired = await startSubscriptionAttemptBrokerV1({ ...request.identity,
-            credential, limits: request.limits, signal: request.signal });
+            credential, limits: request.limits, signal: request.signal,
+            ...(requestProfile ? { requestProfile } : {}) });
           broker = acquired; // Before any fallible guard or await can discard this owner.
           return acquired;
         });

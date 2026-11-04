@@ -2,6 +2,7 @@ import http, { type ClientRequest, type IncomingMessage, type ServerResponse } f
 import https from 'node:https';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Socket, AddressInfo } from 'node:net';
+import { types } from 'node:util';
 import { createSubscriptionCredentialRedactorV1 } from './subscription-credential-redactor-v1.js';
 
 type Model = 'minimax/MiniMax-M3.1-Flash' | 'kimi/k3.1-pro';
@@ -13,6 +14,8 @@ export type SubscriptionAttemptBrokerLimitsV1 = Readonly<{
 export type SubscriptionAttemptBrokerInputV1 = Readonly<{
   attemptId: string; generationId: string; modelRef: Model; credential: string;
   limits: SubscriptionAttemptBrokerLimitsV1; signal: AbortSignal;
+  /** Fixed parent DATA choice; provenance/admission belongs to the selected facade. */
+  requestProfile?: 'plan-report-v1';
 }>;
 export type SubscriptionAttemptBrokerWorkerV1 = Readonly<{
   attemptId: string; generationId: string; modelRef: Model; providerId: 'minimax' | 'kimi';
@@ -56,7 +59,7 @@ const criticalHeaders = new Set(['host', 'authorization', 'x-api-key', 'content-
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
 function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
+  return value !== null && typeof value === 'object' && !types.isProxy(value) && !Array.isArray(value)
     && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 }
 function exactKeys(value: unknown, keys: readonly string[]): boolean {
@@ -65,7 +68,11 @@ function exactKeys(value: unknown, keys: readonly string[]): boolean {
 }
 function invalid(): never { throw new Error('BROKER_INPUT_INVALID'); }
 function validate(input: PublicInput | SubscriptionAttemptBrokerInputV1, synthetic: boolean): void {
-  if (!exactKeys(input, ['attemptId', 'generationId', 'modelRef', 'limits', 'signal', ...(synthetic ? [] : ['credential'])])) invalid();
+  if (types.isProxy(input)) invalid();
+  const hasProfile = input !== null && typeof input === 'object' && Object.hasOwn(input, 'requestProfile');
+  if (!exactKeys(input, ['attemptId', 'generationId', 'modelRef', 'limits', 'signal', ...(synthetic ? [] : ['credential']),
+    ...(hasProfile ? ['requestProfile'] : [])])) invalid();
+  if (hasProfile && (input.requestProfile !== 'plan-report-v1' || input.modelRef !== 'minimax/MiniMax-M3.1-Flash')) invalid();
   if (typeof input.attemptId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.attemptId)
     || typeof input.generationId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.generationId)
     || typeof input.modelRef !== 'string' || !Object.hasOwn(models, input.modelRef)
@@ -163,7 +170,7 @@ const envelope = (code: string): string => JSON.stringify({ type: 'error', error
 const errorEvent = (code: string): string => `event: error\ndata: ${envelope(code)}\n\n`;
 
 async function startCore(
-  { attemptId, generationId, modelRef, limits: suppliedLimits, signal: ownerSignal }: PublicInput,
+  { attemptId, generationId, modelRef, limits: suppliedLimits, signal: ownerSignal, requestProfile }: PublicInput,
   credential: string | undefined, transport: BrokerTestTransportV1, destroyAgent: () => void,
 ): Promise<SubscriptionAttemptBrokerV1> {
   const limits = Object.freeze({ ...suppliedLimits });
@@ -325,10 +332,18 @@ async function startCore(
       if (value.model !== selected.modelId) { fail(res, 403, 'MODEL_REJECTED'); return; }
       if (acceptedRequests >= limits.maxRequests || value.max_tokens > limits.maxOutputTokens
         || value.max_tokens > limits.maxTotalOutputTokens - reservedTokens) { fail(res, 429, 'BUDGET'); return; }
+      let upstreamBytes = bytes;
+      if (requestProfile === 'plan-report-v1') {
+        // M3.1 Flash always reasons: its Anthropic contract requires adaptive
+        // thinking and controls depth through output_config.effort, not the
+        // SDK's legacy thinking budget. Worker input remains strictly unchanged.
+        upstreamBytes = Buffer.from(JSON.stringify({ ...value, thinking: { type: 'adaptive' }, output_config: { effort: 'low' } }));
+        if (upstreamBytes.length > limits.maxRequestBytes) { fail(res, 413, 'BYTES'); return; }
+      }
       acceptedRequests++; reservedTokens += value.max_tokens;
-      const upstream = transport.open({ url: selected.url, path: selected.path, method: 'POST', body: bytes,
+      const upstream = transport.open({ url: selected.url, path: selected.path, method: 'POST', body: upstreamBytes,
         signal: controller.signal, headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json',
-          'content-length': String(bytes.length), accept: value.stream ? 'text/event-stream' : 'application/json',
+          'content-length': String(upstreamBytes.length), accept: value.stream ? 'text/event-stream' : 'application/json',
           'anthropic-version': '2023-06-01', 'user-agent': 'setfarm-subscription-attempt-broker-v1' } });
       const abort = () => upstream.abort();
       upstreamAborts.add(abort);
