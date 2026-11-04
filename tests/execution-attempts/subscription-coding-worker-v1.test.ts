@@ -615,3 +615,46 @@ test('generated policy above fixed 1MiB capacity refuses at the actual pure pre-
     {message:'SUBSCRIPTION_CODING_WORKER_REFUSED'});
   assert.deepEqual(effects,[],'oversized generated policy must refuse before filesystem materialization');
 });
+
+function openedStartupCallback(){
+  assert.ok(api);const protocol=api.createSubscriptionCodingProbeProtocolV1(binding()),tree=workerTree(),callbacks:ts.ArrowFunction[]=[];
+  const visit=(node:ts.Node)=>{
+    if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.expression.getText(tree)==='proof'
+      &&node.expression.name.text==='on'&&ts.isStringLiteral(node.arguments[0]!)&&node.arguments[0]!.text==='data'
+      &&node.arguments[1]&&ts.isArrowFunction(node.arguments[1])&&node.arguments[1].getText(tree).includes('protocol.accept(chunk)'))callbacks.push(node.arguments[1]);
+    ts.forEachChild(node,visit);
+  };
+  visit(tree);assert.equal(callbacks.length,1,'actual private proof data callback must remain unique');
+  let clock=0,faults=0,ready=0;const recorded:string[]=[],cleared:number[]=[],timers=new Map<number,{due:number;call:()=>void}>();
+  const timer=73;timers.set(timer,{due:10000,call:()=>{faults++;}});
+  const ports={protocol,startupResolve:()=>{ready++;},record:(event:string)=>recorded.push(event),fault:()=>{faults++;},
+    clearTimeout:(id:number)=>{cleared.push(id);timers.delete(id);}};
+  const code='function fixture(){let proofReady=false;let startupTimer='+timer+';const accept='+callbacks[0]!.getText(tree)
+    +';return {accept,get proofReady(){return proofReady;},get startupTimer(){return startupTimer;}};}';
+  const js=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+  const observed=new Function(...Object.keys(ports),js+';return fixture();')(...Object.values(ports));
+  return{protocol,observed,cleared,recorded,faults:()=>faults,ready:()=>ready,
+    advance:(ms:number)=>{clock+=ms;for(const [id,pending]of timers)if(pending.due<=clock){timers.delete(id);pending.call();}}};
+}
+test('authenticated OPENED acknowledgement disarms the actual startup callback timer and permits quiet work past startup',()=>{
+  const f=openedStartupCallback();f.observed.accept(line(proofFrame()));assert.equal(f.ready(),1);assert.equal(f.observed.proofReady,true);
+  assert.deepEqual(f.cleared,[],'proof READY cannot authorize an unlimited pending parent gate');
+  f.protocol.openGate();assert.deepEqual(f.cleared,[],'gate write is not an authenticated OPENED acknowledgement');
+  f.observed.accept(line(openedFrame()));assert.equal(f.protocol.state,'open');assert.deepEqual(f.cleared,[73]);assert.equal(f.observed.startupTimer,undefined);
+  f.advance(20000);assert.equal(f.faults(),0,'quiet SDK work must outlive the completed startup window');assert.deepEqual(f.recorded,[]);
+});
+test('READY and gate-sent without OPENED keep the existing startup timeout armed',()=>{
+  for(const phase of ['ready','gate-sent']){
+    const f=openedStartupCallback();f.observed.accept(line(proofFrame()));if(phase==='gate-sent')f.protocol.openGate();
+    assert.equal(f.protocol.state,phase);assert.deepEqual(f.cleared,[]);assert.equal(f.observed.startupTimer,73);
+    f.advance(9999);assert.equal(f.faults(),0);f.advance(1);assert.equal(f.faults(),1);
+  }
+});
+test('foreign or duplicate OPENED still faults through the exact private callback',()=>{
+  const foreign=openedStartupCallback();foreign.observed.accept(line(proofFrame()));foreign.protocol.openGate();
+  foreign.observed.accept(line({...openedFrame(),nonce:'f'.repeat(64)}));assert.equal(foreign.protocol.state,'failed');
+  assert.equal(foreign.faults(),1);assert.deepEqual(foreign.recorded,['child-error']);assert.deepEqual(foreign.cleared,[]);
+  const duplicate=openedStartupCallback();duplicate.observed.accept(line(proofFrame()));duplicate.protocol.openGate();duplicate.observed.accept(line(openedFrame()));
+  duplicate.observed.accept(line(openedFrame()));assert.equal(duplicate.protocol.state,'failed');assert.equal(duplicate.faults(),1);
+  assert.deepEqual(duplicate.recorded,['child-error']);assert.deepEqual(duplicate.cleared,[73],'duplicate frame cannot re-clear or revive the startup timer');
+});

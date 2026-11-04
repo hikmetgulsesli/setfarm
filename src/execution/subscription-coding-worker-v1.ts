@@ -549,6 +549,9 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
         if (!protocol) refuse();
         protocol.accept(chunk);
         if (protocol.state === 'ready') { proofReady = true; startupResolve(); }
+        if (protocol.state === 'open' && startupTimer !== undefined) {
+          clearTimeout(startupTimer); startupTimer = undefined;
+        }
       } catch { record('child-error'); fault(); }
     });
     proof?.once('end', () => { try { protocol?.end(); } catch { record('child-error'); fault(); } });
