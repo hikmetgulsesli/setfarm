@@ -88,6 +88,8 @@ export function launchSubscriptionCodingWorkerV1(input:Readonly<{
 
 ### Task 5: durable joint owner and production integration
 
+Task5A owner/journal mechanics are implemented and reviewed: nineteen direct inert/fake-store groups pass with zero skips, full project no-emit compilation passes, independent spec/quality review approves. Real owner strings retain hostname:pid:UUID. Late worker rejection retains the actual branded partial owner even after shutdown wins; the runtime's own refusal ownership cannot be mistaken for a worker. Synchronous filesystem/process observation can delay event-loop timers; no hard wall-clock guarantee is claimed. Production selected acquisition, repository authentication, spawner and report publication remain Task5B, followed by shared Setfarm/Mission Control recipes. No live readiness is implied.
+
 Create attachment/runtime/transport/tests; modify repository/spawner/dispatcher. APIs:
 ```ts
 export type SubscriptionRuntimeBindingV1=Readonly<{
