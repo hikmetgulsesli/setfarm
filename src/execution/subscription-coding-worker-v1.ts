@@ -20,6 +20,8 @@ import { buildSubscriptionCodingSandboxPolicyV1, buildSubscriptionCodingProbeCha
   narrowSubscriptionCodingWorkerMaterialV1, type SubscriptionCodingCustodyEventV1,
   type SubscriptionCodingProbeProtocolV1, type SubscriptionCodingWriteGrantV1 } from './subscription-coding-worker-policy-v1.js';
 
+import { captureSubscriptionCodingNodeLibrariesV1, type SubscriptionCodingNodeLibrariesV1 } from './subscription-coding-node-libraries-v1.js';
+
 const refuse: () => never = subscriptionCodingWorkerRefusedV1;
 const SDK_ROOT = '/opt/homebrew/lib/node_modules/openclaw';
 const SANDBOX = '/usr/bin/sandbox-exec';
@@ -295,6 +297,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
   let transcriptCloser: ReturnType<typeof createSubscriptionCodingTranscriptCloserV1> | undefined;
   let partial: SubscriptionCodingPartialOwnedWorkerV1 | undefined;
   let owned: SubscriptionCodingOwnedWorkerV1 | undefined;
+  let nodeLibraries: SubscriptionCodingNodeLibrariesV1 | undefined;
   const publicAncestors: { path: string; stat: BigIntStats; fd: number | undefined }[] = [];
   const closePublicAncestors = (): boolean => {
     let closed = true;
@@ -312,11 +315,14 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     if (major < 22 || (major === 22 && minor < 19)) refuse();
     const nodePath = realpathSync(process.execPath), sdkRoot = realpathSync(SDK_ROOT);
     const entryPath = sdkRoot + '/openclaw.mjs', preloadPath = root + '/fixed-gate.mjs', profilePath = root + '/profile.sb';
-    const lexical = { privateRoot: root, worktree: material.cwd, authorityRoots,
+    // Parent-only public metadata capture, with no caller path or backend.
+    nodeLibraries = await captureSubscriptionCodingNodeLibrariesV1();
+    if (nodeLibraries.nodePath !== nodePath) refuse();
+    const lexical = { nodeLibraryPaths: { readPaths: nodeLibraries.readPaths, mapPaths: nodeLibraries.mapPaths }, privateRoot: root, worktree: material.cwd, authorityRoots,
       gitControlPaths: [material.cwd + '/.git'], nodePath, openclawRoot: sdkRoot,
       preloadPath, profilePath, transcriptPath, brokerPort,
       writeGrants: checked.writeGrants, readOnlyControlPaths: checked.readOnlyControlPaths };
-    // Pure overlap checks precede any filesystem materialization.
+    // Pure overlap checks precede private filesystem materialization.
     buildSubscriptionCodingSandboxPolicyV1(lexical);
     publicRuntimeDirectory(sdkRoot); publicRuntimeDirectory(dirname(nodePath));
     inspectSubscriptionCodingWorktreeV1(material.cwd, checked.readOnlyControlPaths);
@@ -367,6 +373,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     const transcriptStat = fstatSync(fd, { bigint: true }); safeFileStat(transcriptStat, true);
     if (!sameObject(transcriptStat, lstatSync(transcriptPath, { bigint: true })) || realpathSync(transcriptPath) !== transcriptPath) refuse();
     const stableCheck = () => {
+      nodeLibraries!.recheck();
       for (const pin of publicAncestors) {
         if (pin.fd === undefined || realpathSync(pin.path) !== pin.path
           || !sameStat(pin.stat, fstatSync(pin.fd, { bigint: true }))
@@ -423,6 +430,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
       for (const capture of Object.values(captures)) if (!capture.finished) { capture.redactor.discard(); capture.finished = true; }
       if (transcriptCloser?.close() !== 'closed') status = 'custody-uncertain';
       if (!closePublicAncestors()) status = 'custody-uncertain';
+      if (nodeLibraries?.close() !== 'closed') status = 'custody-uncertain';
       resolveClosed(Object.freeze({ status }));
       resolveOutput(Object.freeze({
         stdout: Buffer.concat(captures.stdout.chunks).toString('utf8'), stderr: Buffer.concat(captures.stderr.chunks).toString('utf8'),
@@ -561,7 +569,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     if (stopping || performance.now() >= startupDeadline || protocol.state !== 'ready'
       || !tracker.canSignal(observeProcessIdentity(child.pid) ?? null)) refuse();
     isolationHash = subscriptionCodingHashV1(JSON.stringify({ schema: 'setfarm.subscription-coding-isolation.v1',
-      materialHash, policyHash, preloadHash, processIdentity: originalIdentity, proofHash: protocol.proofHash,
+      materialHash, policyHash, preloadHash, nodeLibraryClosureHash: nodeLibraries.closureHash, processIdentity: originalIdentity, proofHash: protocol.proofHash,
       controls: controlPins.map(pin => ({ path: pin.path, hash: pin.hash, dev: String(pin.stat.dev), ino: String(pin.stat.ino) })),
       publicAncestors: publicAncestors.map(pin => ({ path: pin.path, dev: String(pin.stat.dev), ino: String(pin.stat.ino),
         uid: String(pin.stat.uid), gid: String(pin.stat.gid), mode: String(pin.stat.mode),
@@ -583,6 +591,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
   } catch {
     if (partial) return rejectSubscriptionCodingWorkerStartupV1(partial);
     closePublicAncestors();
+    nodeLibraries?.close();
     if (transcriptCloser) transcriptCloser.close();
     if (transcript !== undefined) {
       const original = transcript; transcript = undefined;

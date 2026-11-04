@@ -64,6 +64,10 @@ function paths() {
     gitControlPaths: ['/private/tmp/claimed project/.git', '/private/owner/git/common',
       '/private/owner/git/common/worktrees/claimed'],
     nodePath: '/opt/homebrew/Cellar/node/26.4.0/bin/node',
+    nodeLibraryPaths: { readPaths: ['/opt/homebrew/opt/llhttp/lib/libllhttp.9.4.dylib',
+      '/opt/homebrew/Cellar/llhttp/9.4.2/lib/libllhttp.9.4.2.dylib'],
+    mapPaths: ['/opt/homebrew/opt/llhttp/lib/libllhttp.9.4.dylib',
+      '/opt/homebrew/Cellar/llhttp/9.4.2/lib/libllhttp.9.4.2.dylib'] },
     openclawRoot: '/opt/homebrew/lib/node_modules/openclaw',
     preloadPath: '/private/tmp/owned worker/fixed-gate.mjs',
     profilePath: '/private/tmp/owned worker/profile.sb',
@@ -432,4 +436,48 @@ test('transcript close invalidates descriptor ownership once even when close rel
   });
   assert.equal(failedSync.close(), 'custody-uncertain');
   assert.equal(originalOpen, false, 'validation/sync failure still closes the owned descriptor once');
+});
+
+test('sandbox permits dyld root-directory open without granting root subtree file data', () => {
+  assert.ok(api, 'worker policy implementation is required');
+  const policy = api.buildSubscriptionCodingSandboxPolicyV1(paths());
+  assert.match(policy, /^\(allow file-read-data \(literal "\/"\)\)$/m);
+  assert.doesNotMatch(policy, /\(allow file-read(?:-data|\*)?\s+\(subpath "\/"\)\)/);
+});
+
+
+test('Node library policy grants exact files and ancestor metadata with all protected exclusions', () => {
+  assert.ok(api);
+  const policy = api.buildSubscriptionCodingSandboxPolicyV1(paths());
+  for (const path of paths().nodeLibraryPaths.readPaths) {
+    const reads = policy.split('\n').filter(row => row.startsWith('(allow file-read*') && row.includes('(literal ' + JSON.stringify(path) + ')'));
+    const maps = policy.split('\n').filter(row => row.startsWith('(allow file-map-executable') && row.includes('(literal ' + JSON.stringify(path) + ')'));
+    assert.equal(reads.length, 1); assert.equal(maps.length, 1);
+    for (const row of [...reads, ...maps]) for (const protectedPath of [...paths().authorityRoots,
+      ...paths().gitControlPaths, paths().transcriptPath]) assert.ok(row.includes(JSON.stringify(protectedPath)));
+  }
+  assert.match(policy, /file-read-metadata.*\(literal "\/opt\/homebrew\/opt\/llhttp\/lib"\)/);
+  assert.doesNotMatch(policy, /\(subpath "\/opt\/homebrew\/(?:opt(?:\/[^" ]*)?|Cellar\/llhttp(?:\/[^" ]*)?)"\)/);
+});
+
+test('Node library policy rejects missing, directory, non-public, duplicate and overlapping path DATA', () => {
+  assert.ok(api);
+  const noLibraries = { ...paths() } as Record<string, unknown>; delete noLibraries.nodeLibraryPaths;
+  assert.throws(() => api!.buildSubscriptionCodingSandboxPolicyV1(noLibraries as never));
+  for (const path of ['/opt/homebrew', '/opt/homebrew/opt/llhttp/lib', '/Users/owner/key.dylib',
+    '/opt/homebrew/lib/node_modules/openclaw/hook.dylib', '/opt/homebrew/opt/llhttp/../key.dylib']) {
+    assert.throws(() => api!.buildSubscriptionCodingSandboxPolicyV1({ ...paths(),
+      nodeLibraryPaths: { readPaths: [path], mapPaths: [path] } }));
+  }
+  const publicFile = paths().nodeLibraryPaths.readPaths[0];
+  for (const nodeLibraryPaths of [
+    { readPaths: [publicFile, publicFile], mapPaths: [publicFile] },
+    { readPaths: [], mapPaths: [publicFile] },
+    { readPaths: [publicFile], mapPaths: [publicFile], approved: true },
+  ]) assert.throws(() => api!.buildSubscriptionCodingSandboxPolicyV1({ ...paths(), nodeLibraryPaths } as never));
+  for (const field of ['authorityRoots', 'gitControlPaths'] as const) {
+    const value = field === 'authorityRoots' ? [publicFile] : [paths().worktree + '/.git', publicFile];
+    assert.throws(() => api!.buildSubscriptionCodingSandboxPolicyV1({ ...paths(), [field]: value }));
+  }
+  assert.throws(() => api!.buildSubscriptionCodingSandboxPolicyV1({ ...paths(), transcriptPath: publicFile }));
 });

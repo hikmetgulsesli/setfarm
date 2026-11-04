@@ -151,7 +151,8 @@ export function narrowSubscriptionCodingWorkerMaterialV1(input: Readonly<{
 
 export type SubscriptionCodingSandboxPathsV1 = Readonly<{
   privateRoot: string; worktree: string; authorityRoots: readonly string[]; gitControlPaths: readonly string[];
-  nodePath: string; openclawRoot: string; preloadPath: string; profilePath: string; transcriptPath: string; brokerPort: number;
+  nodePath: string; nodeLibraryPaths: Readonly<{ readPaths: readonly string[]; mapPaths: readonly string[] }>;
+  openclawRoot: string; preloadPath: string; profilePath: string; transcriptPath: string; brokerPort: number;
   writeGrants: readonly SubscriptionCodingWriteGrantV1[]; readOnlyControlPaths: readonly string[];
 }>;
 /** Serializes path DATA. The physical launcher obtains and rechecks these paths itself. */
@@ -159,7 +160,7 @@ export function buildSubscriptionCodingSandboxPolicyV1(input: SubscriptionCoding
   try {
     const v = detached(input) as SubscriptionCodingSandboxPathsV1;
     exact(v, ['privateRoot', 'worktree', 'authorityRoots', 'gitControlPaths', 'nodePath', 'openclawRoot',
-      'preloadPath', 'profilePath', 'transcriptPath', 'brokerPort', 'writeGrants', 'readOnlyControlPaths']);
+      'preloadPath', 'profilePath', 'transcriptPath', 'brokerPort', 'writeGrants', 'readOnlyControlPaths', 'nodeLibraryPaths']);
     const paths = [v.privateRoot, v.worktree, v.nodePath, v.openclawRoot, v.preloadPath, v.profilePath, v.transcriptPath];
     if (!Array.isArray(v.authorityRoots) || v.authorityRoots.length < 1 || v.authorityRoots.length > 32
       || !Array.isArray(v.gitControlPaths) || v.gitControlPaths.length < 1 || v.gitControlPaths.length > 8
@@ -172,15 +173,25 @@ export function buildSubscriptionCodingSandboxPolicyV1(input: SubscriptionCoding
       || !/^\/opt\/homebrew\/Cellar\/node(?:@[0-9]+)?\/[0-9]+\.[0-9]+\.[0-9]+\/bin\/node$/.test(v.nodePath)
       || v.openclawRoot !== '/opt/homebrew/lib/node_modules/openclaw'
       || subscriptionCodingPathsOverlapV1(v.privateRoot, v.worktree)) refuse();
+    const libraryData = exact(v.nodeLibraryPaths, ['readPaths', 'mapPaths']);
+    const libraryLists = [libraryData.readPaths, libraryData.mapPaths];
+    for (const list of libraryLists) {
+      if (!Array.isArray(list) || list.length > 256 || new Set(list).size !== list.length
+        || list.some(path => !subscriptionCodingCanonicalPathV1(path)
+          || !/^\/opt\/homebrew\/(?:Cellar\/[^/]+\/[^/]+\/(?:lib|bin)|opt\/[^/]+\/lib)\/(?:[^/]+\/)*[^/]+\.dylib$/.test(path))) refuse();
+    }
+    const libraryReads = libraryData.readPaths as string[], libraryMaps = libraryData.mapPaths as string[];
+    if (libraryMaps.some(path => !libraryReads.includes(path))) refuse();
     const runtimeRoot = posix.dirname(posix.dirname(v.nodePath));
-    const readableSystem = ['/usr/lib', '/System/Library', '/System/Volumes/Preboot/Cryptexes/OS/usr/lib', runtimeRoot, v.openclawRoot];
+    const readableSystem = ['/usr/lib', '/System/Library', '/System/Volumes/Preboot/Cryptexes/OS/usr/lib', v.openclawRoot];
+    const runtimeProtected = [...readableSystem, runtimeRoot, ...libraryReads, ...libraryMaps];
     for (const protectedPath of [...v.authorityRoots, v.transcriptPath]) {
-      if ([v.privateRoot, v.worktree, ...readableSystem].some(path => subscriptionCodingPathsOverlapV1(path, protectedPath))) refuse();
+      if ([v.privateRoot, v.worktree, ...runtimeProtected].some(path => subscriptionCodingPathsOverlapV1(path, protectedPath))) refuse();
     }
     for (const gitPath of v.gitControlPaths.slice(1)) {
-      if ([v.privateRoot, v.worktree, ...readableSystem].some(path => subscriptionCodingPathsOverlapV1(path, gitPath))) refuse();
+      if ([v.privateRoot, v.worktree, ...runtimeProtected].some(path => subscriptionCodingPathsOverlapV1(path, gitPath))) refuse();
     }
-    if (readableSystem.some(path => [v.privateRoot, v.worktree].some(other => subscriptionCodingPathsOverlapV1(path, other)))) refuse();
+    if (runtimeProtected.some(path => [v.privateRoot, v.worktree].some(other => subscriptionCodingPathsOverlapV1(path, other)))) refuse();
     const readProtected = [...v.authorityRoots, ...v.gitControlPaths, v.transcriptPath];
     const writeProtected = [...readProtected, ...scope.readOnlyControlPaths, v.preloadPath, v.profilePath, v.privateRoot + '/config.json',
       v.privateRoot + '/state/agents/subscription-worker/agent/auth-profiles.json',
@@ -212,14 +223,17 @@ export function buildSubscriptionCodingSandboxPolicyV1(input: SubscriptionCoding
       '(allow file-write-unlink (require-all (' + kind + ' ' + quote(path) + ') ' + exclude(writeProtected)
       + ' ' + [...structuralAncestors].map(parent => '(require-not (literal ' + quote(parent) + '))').join(' ') + '))';
     const ancestors = new Set<string>(['/']);
-    for (const path of [...paths, ...readableSystem]) {
+    for (const path of [...paths, ...readableSystem, ...libraryReads, ...libraryMaps]) {
       let parent = posix.dirname(path);
       while (parent !== '/') { ancestors.add(parent); parent = posix.dirname(parent); }
     }
     return ['(version 1)', '(deny default)', '(deny process-fork)', '(deny network-inbound)',
+      '(allow file-read-data (literal "/"))',
       `(allow process-exec (literal ${quote(v.nodePath)}))`,
       '(allow process-info* (target self))', '(allow signal (target self))', '(allow sysctl-read)',
       ...[...readableSystem, v.privateRoot, v.worktree].map(path => rule('file-read*', 'subpath', path, readProtected)),
+      ...[v.nodePath, ...libraryReads].map(path => rule('file-read*', 'literal', path, readProtected)),
+      ...libraryMaps.map(path => rule('file-map-executable', 'literal', path, readProtected)),
       ...[...readableSystem, v.nodePath].map(path => rule('file-map-executable', path === v.nodePath ? 'literal' : 'subpath', path, readProtected)),
       ...[...ancestors, '/dev/null', '/dev/random', '/dev/urandom'].map(path => rule('file-read-metadata', 'literal', path, readProtected)),
       ...['/dev/null', '/dev/random', '/dev/urandom'].map(path => rule('file-read-data', 'literal', path, readProtected)),
