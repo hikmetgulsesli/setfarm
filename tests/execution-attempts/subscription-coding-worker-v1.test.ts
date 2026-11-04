@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import ts from 'typescript';
+import * as ownedFs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { buildSubscriptionCodingMaterialV1 } from '../../src/execution/subscription-coding-policy-v1.js';
 import type { ProcessIdentityV1 } from '../../src/execution/schemas/process-identity-v1.js';
@@ -520,4 +523,95 @@ test('SDK temp preparation creates only the fixed owned UID leaf and refuses ali
     assert.throws(() => workerApi.prepareSubscriptionCodingSdkTempDirectoryV1(existingAliasRoot),
       { message: 'SUBSCRIPTION_CODING_WORKER_REFUSED' });
   } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+// Bounded generated-policy regression: exact private production bodies, with
+// filesystem effects restricted to this test's exclusive temporary directory.
+// This is file/policy DATA, never an OS sandbox or worker admission substitute.
+const workerSource=()=>ownedFs.readFileSync(new URL('../../src/execution/subscription-coding-worker-v1.ts',import.meta.url),'utf8');
+function workerTree(){return ts.createSourceFile('worker.ts',workerSource(),ts.ScriptTarget.Latest,true);}
+function privatePolicyFileRealm(root:string){
+  const tree=workerTree(),names=['sameStat','canonicalDirectory','safeFileStat','pinFile','checkPin','createPrivateFile'];
+  const declarations=tree.statements.filter((node):node is ts.FunctionDeclaration=>ts.isFunctionDeclaration(node)&&!!node.name&&names.includes(node.name.text));
+  for(const name of names)assert.equal(declarations.filter(node=>node.name?.text===name).length,1,'exact worker function required: '+name);
+  const calls:ts.CallExpression[]=[];
+  const visit=(node:ts.Node)=>{if(ts.isCallExpression(node)&&node.expression.getText(tree)==='createPrivateFile'&&node.arguments[0]?.getText(tree)==='profilePath')calls.push(node);ts.forEachChild(node,visit);};
+  visit(tree);assert.equal(calls.length,1,'actual worker generated profile materialization must remain unique');
+  const body=declarations.map(node=>node.getText(tree)).join('\n');
+  const profileBudget=(api as unknown as Record<string,unknown>).SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1??1048576;
+  const ports={constants:ownedFs.constants,closeSync:ownedFs.closeSync,fstatSync:ownedFs.fstatSync,
+    fsyncSync:ownedFs.fsyncSync,lstatSync:ownedFs.lstatSync,openSync:ownedFs.openSync,readSync:ownedFs.readSync,
+    realpathSync:ownedFs.realpathSync,writeSync:ownedFs.writeSync,
+    dirname,createHash,Buffer,process:{getuid:()=>process.getuid!()},uid:()=>BigInt(process.getuid!()),
+    refuse:api!.subscriptionCodingWorkerRefusedV1,subscriptionCodingCanonicalPathV1:api!.subscriptionCodingCanonicalPathV1,
+    SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1:profileBudget};
+  const execute=(expression:string,locals:Record<string,unknown>)=>{
+    const all={...ports,...locals},js=ts.transpileModule(body+'\nfunction exercise(){return '+expression+';}',{
+      compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+    return new Function(...Object.keys(all),js+';return exercise();')(...Object.values(all));
+  };
+  return{profile:(policy:string)=>execute(calls[0]!.getText(tree),{profilePath:join(root,'profile.sb'),policy}),
+    create:(name:string,contents:string)=>execute('createPrivateFile(file, contents)',{file:join(root,name),contents}),
+    readback:(pin:unknown)=>execute('pinFile(pin.path,true,SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1)',{pin}),
+    recheck:(pin:unknown)=>execute('checkPin(pin)',{pin})};
+}
+function deepPolicyPaths(){
+  const installation='/Users/owner/ai/setrox/data/installations/00000000-0000-4000-8000-000000000001';
+  const container=installation+'/runtime/attempt-workspaces/subscription/RTS_00000000-0000-4000-8000-000000000041';
+  const privateRoot=container+'/worker',worktree=installation+'/runtime/agent-scratch';
+  const libraries=Array.from({length:67},(_,index)=>index%2
+    ?`/opt/homebrew/opt/dependency-${index}/lib/libdependency-${index}.1.dylib`
+    :`/opt/homebrew/Cellar/dependency-${index}/1.2.3/lib/libdependency-${index}.1.2.dylib`);
+  return{...paths(),privateRoot,worktree,authorityRoots:[installation+'/credentials/coding-subscriptions',installation+'/runtime/services',container+'/owner'],
+    gitControlPaths:[worktree+'/.git',installation+'/runtime/git/common',installation+'/runtime/git/common/worktrees/story'],
+    preloadPath:privateRoot+'/fixed-gate.mjs',profilePath:privateRoot+'/profile.sb',transcriptPath:container+'/worker-output.log',
+    nodeLibraryPaths:{readPaths:libraries,mapPaths:libraries},writeGrants:[],
+    readOnlyControlPaths:Array.from({length:16},(_,i)=>worktree+'/.setfarm/stage-executions/claim-41/subscription-handoff/canonical-'+i+'.part')};
+}
+test('realistic deep generated SBPL above generic file cap is pinned and read back without losing bytes or exclusions',()=>{
+  assert.ok(api);const input=deepPolicyPaths(),policy=api.buildSubscriptionCodingSandboxPolicyV1(input),bytes=Buffer.byteLength(policy);
+  assert.ok(bytes>262144,'fixture must reproduce the real policy/generic-file capacity mismatch');assert.ok(bytes<=1048576);
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'sf-generated-policy-budget-')));chmodSync(root,0o700);
+  try{
+    const files=privatePolicyFileRealm(root),pin=files.profile(policy);
+    assert.equal((api as unknown as Record<string,unknown>).SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1,1048576);
+    assert.equal(Number(pin.stat.size),bytes);assert.equal(pin.hash,api.subscriptionCodingHashV1(policy));
+    assert.equal(ownedFs.readFileSync(pin.path,'utf8'),policy);assert.equal(lstatSync(pin.path).mode&0o7777,0o600);
+    const replay=files.readback(pin);assert.equal(replay.hash,pin.hash);assert.equal(Number(replay.stat.size),bytes);files.recheck(pin);
+    assert.match(policy,/^\(deny process-fork\)$/m);assert.match(policy,/^\(deny network-inbound\)$/m);
+    for(const library of input.nodeLibraryPaths.readPaths)assert.ok(policy.includes('(literal '+JSON.stringify(library)+')'));
+    for(const control of input.readOnlyControlPaths)assert.ok(policy.includes('(require-not (subpath '+JSON.stringify(control)+'))'));
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+test('generic config and preload file materialization retains its exact 256KiB limit',()=>{
+  assert.ok(api);const root=realpathSync(mkdtempSync(join(tmpdir(),'sf-private-material-budget-')));chmodSync(root,0o700);
+  try{
+    const files=privatePolicyFileRealm(root);
+    for(const [index,name] of ['config.json','fixed-gate.mjs'].entries()){
+      const pin=files.create(name,'x'.repeat(262144));assert.equal(Number(pin.stat.size),262144);
+      assert.throws(()=>files.create('oversize-'+index,'x'.repeat(262145)),{message:'SUBSCRIPTION_CODING_WORKER_REFUSED'});
+    }
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+test('generated policy above fixed 1MiB capacity refuses at the actual pure pre-materialization build point',()=>{
+  assert.ok(api);const input=deepPolicyPaths();
+  const oversized={...input,readOnlyControlPaths:Array.from({length:128},(_,i)=>input.worktree+'/.setfarm/controls/'+('x'.repeat(700))+'-'+i+'.json')};
+  assert.ok(oversized.readOnlyControlPaths.length<=256);
+  assert.equal(oversized.nodeLibraryPaths.readPaths.length,67);assert.ok(oversized.nodeLibraryPaths.mapPaths.length<=256);
+  for(const path of [...oversized.readOnlyControlPaths,...oversized.nodeLibraryPaths.readPaths,...oversized.nodeLibraryPaths.mapPaths,
+    oversized.privateRoot,oversized.worktree,...oversized.authorityRoots,...oversized.gitControlPaths,oversized.profilePath,
+    oversized.preloadPath,oversized.transcriptPath,oversized.nodePath,oversized.openclawRoot]){
+    assert.ok(path.length<=1024,'oversize DATA must remain inside the existing path bound');
+    assert.equal(api.subscriptionCodingCanonicalPathV1(path),true,'over-policy-cap case must not fail an earlier lexical guard');
+  }
+  const tree=workerTree(),launch=tree.statements.find((node):node is ts.FunctionDeclaration=>ts.isFunctionDeclaration(node)&&node.name?.text==='launchSubscriptionCodingWorkerV1');
+  assert.ok(launch?.body);let statements:readonly ts.Statement[]|undefined;
+  const visit=(node:ts.Node)=>{if(ts.isBlock(node)&&node.statements.some(item=>ts.isExpressionStatement(item)&&item.expression.getText(tree)==='buildSubscriptionCodingSandboxPolicyV1(lexical)'))statements=node.statements;ts.forEachChild(node,visit);};
+  visit(launch);assert.ok(statements);
+  const offset=statements.findIndex(node=>ts.isExpressionStatement(node)&&node.expression.getText(tree)==='buildSubscriptionCodingSandboxPolicyV1(lexical)');
+  assert.ok(offset>=0);const code=statements.slice(offset,offset+2).map(node=>node.getText(tree)).join('\n'),effects:string[]=[];
+  const run=new Function('buildSubscriptionCodingSandboxPolicyV1','lexical','publicRuntimeDirectory','sdkRoot',code);
+  assert.throws(()=>run(api!.buildSubscriptionCodingSandboxPolicyV1,oversized,()=>{effects.push('filesystem');throw Error('FILE_EFFECT_REACHED');},paths().openclawRoot),
+    {message:'SUBSCRIPTION_CODING_WORKER_REFUSED'});
+  assert.deepEqual(effects,[],'oversized generated policy must refuse before filesystem materialization');
 });
