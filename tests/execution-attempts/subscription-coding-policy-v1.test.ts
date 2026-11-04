@@ -34,6 +34,24 @@ function frozen(value: unknown): void {
   }
 }
 
+test('fixed PLAN report DATA profile disables thinking without changing model, limits or other launch material', () => {
+  const input=fixture('minimax/MiniMax-M3.1-Flash'),normal=build(input);
+  const plan=build({...input,requestProfile:'plan-report-v1'} as never);
+  assert.deepEqual(plan.argv,[...normal.argv,'--thinking','off']);
+  assert.deepEqual({...plan,argv:normal.argv},normal);
+  assert.equal(JSON.parse(plan.files[0].contents).models.providers.minimax.models[0].maxTokens,8192);
+  assert.equal(SUBSCRIPTION_CODING_LIMITS_V1?.maxOutputTokens,8192);frozen(plan);
+  assert.deepEqual(build(input),normal,'omitted profile preserves the existing coding defaults');
+});
+
+test('PLAN request profile accepts no arbitrary thinking, model, or caller-controlled value', () => {
+  for(const requestProfile of ['off','medium','plan-report-v2',null,{}, {thinking:'off'}, ['plan-report-v1']])
+    assert.throws(()=>build({...fixture(),requestProfile} as never),{message:'SUBSCRIPTION_CODING_INPUT_INVALID'});
+  let calls=0;
+  const input=Object.defineProperty(fixture(),'requestProfile',{get(){calls++;throw Error('PRIVATE_PROFILE_GETTER');}});
+  assert.throws(()=>build(input),{message:'SUBSCRIPTION_CODING_INPUT_INVALID'});assert.equal(calls,0);
+});
+
 for (const modelRef of ['kimi/k3.1-pro', 'minimax/MiniMax-M3.1-Flash'] as const) {
   test(`coding material confines file tools and model selection: ${modelRef}`, { skip: !api && modelRef !== 'kimi/k3.1-pro' }, () => {
     assert.equal(typeof build, 'function', 'coding capability is missing');

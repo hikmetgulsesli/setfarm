@@ -147,6 +147,12 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
       || selected.state.origin.sourceSha !== binding.sourceSha) subscriptionRuntimeRefusedV1();
   };
   guard(); await sessions.readAuthenticatedStartingClaim(auth); guard();
+  // Only the genuine authenticated PLAN stage selects this fixed request
+  // shaping. No caller profile, model override, or implementation grant is read.
+  const requestProfile = authority.schema === "setfarm.v3-stage-claim-handoff.v1"
+    && authority.context.workflow === "feature-dev" && authority.context.workflowStepId === "plan"
+    && authority.context.role === "planner" && envelope.workflowStepId === "plan"
+    ? "plan-report-v1" as const : undefined;
   const parentIdentity = observeProcessIdentity(process.pid), activation = selected.activation;
   if (!parentIdentity || parentIdentity.source !== "observed_os" || !activation?.acknowledged || !activation.activatedPin) subscriptionRuntimeRefusedV1();
   const runtimeAuthority: SubscriptionRuntimeAuthorityV1 = Object.freeze({ sourceSha: binding.sourceSha,
@@ -191,7 +197,8 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
   };
   try {
     runtime = await acquireSubscriptionCodingRuntimeV1({ binding, root: paths.root, runtimePath: paths.runtimePath,
-      transcriptPath: paths.transcriptPath, prompt, signal: input.signal, authorityRoots, ...scope }, {
+      transcriptPath: paths.transcriptPath, prompt, signal: input.signal, authorityRoots, ...scope,
+      ...(requestProfile ? { requestProfile } : {}) }, {
       async deriveAuthority() { guard(); return runtimeAuthority; },
       async acquireBroker(request) {
         guard();

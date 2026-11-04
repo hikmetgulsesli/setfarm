@@ -20,6 +20,7 @@ const OBSERVATION_MS = 2_500;
 const PUBLICATION_MS = 1_000;
 export type SubscriptionCodingRuntimeInputV1 = Readonly<{
   binding: SubscriptionRuntimeBindingV1; root: string; runtimePath: string; prompt: string;
+  requestProfile?: 'plan-report-v1';
   transcriptPath: string; signal: AbortSignal; authorityRoots: readonly string[];
   writeGrants: readonly SubscriptionCodingWriteGrantV1[]; readOnlyControlPaths: readonly string[];
 }>;
@@ -57,13 +58,15 @@ export class SubscriptionCodingRuntimeStartupErrorV1 extends Error {
   }
 }
 function refuse(): never { throw new Error('SUBSCRIPTION_CODING_RUNTIME_REFUSED'); }
-function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
+function record(value: unknown, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (!value || typeof value !== 'object' || types.isProxy(value)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) refuse();
   const descriptors = Object.getOwnPropertyDescriptors(value), actual = Reflect.ownKeys(descriptors);
-  if (actual.length !== keys.length || actual.some(key => typeof key !== 'string' || !keys.includes(key))) refuse();
+  if (actual.length < keys.length || actual.length > keys.length + optional.length
+    || actual.some(key => typeof key !== 'string' || (!keys.includes(key) && !optional.includes(key)))) refuse();
   const result: Record<string, unknown> = Object.create(null);
-  for (const key of keys) { const d = descriptors[key]; if (!d || !Object.hasOwn(d, 'value')) refuse(); result[key] = d.value; }
+  for (const key of [...keys, ...optional]) { const d = descriptors[key]; if (!d && optional.includes(key)) continue;
+    if (!d || !Object.hasOwn(d, 'value')) refuse(); result[key] = d.value; }
   return result;
 }
 function paths(value: unknown): readonly string[] {
@@ -92,7 +95,8 @@ function sameIdentity(a: SubscriptionAttemptIdentityV1, b: SubscriptionAttemptId
   return a.attemptId === v.attemptId && a.generationId === v.generationId && a.modelRef === v.modelRef;
 }
 function inputData(value: SubscriptionCodingRuntimeInputV1): SubscriptionCodingRuntimeInputV1 {
-  const v = record(value, ['binding', 'root', 'runtimePath', 'prompt', 'transcriptPath', 'signal', 'authorityRoots', 'writeGrants', 'readOnlyControlPaths']);
+  const v = record(value, ['binding', 'root', 'runtimePath', 'prompt', 'transcriptPath', 'signal', 'authorityRoots', 'writeGrants', 'readOnlyControlPaths'], ['requestProfile']);
+  if (Object.hasOwn(v, 'requestProfile') && v.requestProfile !== 'plan-report-v1') refuse();
   const binding = parseSubscriptionRuntimeBindingV1(v.binding);
   if (![v.root, v.runtimePath, v.transcriptPath].every(isSubscriptionRuntimeCanonicalPathV1)
     || typeof v.prompt !== 'string' || v.prompt.includes('\0') || !Buffer.byteLength(v.prompt)
@@ -106,6 +110,7 @@ function inputData(value: SubscriptionCodingRuntimeInputV1): SubscriptionCodingR
   // Capture detached data now so later caller mutation cannot widen authority.
   const scope = structuredScope(v.writeGrants, v.readOnlyControlPaths);
   return Object.freeze({ binding, root, runtimePath, transcriptPath, prompt: v.prompt, signal: v.signal as AbortSignal,
+    ...(v.requestProfile === 'plan-report-v1' ? { requestProfile: 'plan-report-v1' as const } : {}),
     authorityRoots: paths(v.authorityRoots), ...scope });
 }
 function structuredScope(grants: unknown, controls: unknown): Readonly<{
@@ -295,7 +300,8 @@ export async function acquireSubscriptionCodingRuntimeV1(
     // fields, including the exact three-field identity projection.
     if (stopping) refuse();
     const material = buildSubscriptionCodingMaterialV1({ identity, worker: acquiredBroker.worker,
-      root: input.root, prompt: input.prompt, worktree: input.binding.worktree });
+      root: input.root, prompt: input.prompt, worktree: input.binding.worktree,
+      ...(input.requestProfile ? { requestProfile: input.requestProfile } : {}) });
     const effective = narrowSubscriptionCodingWorkerMaterialV1({ material, writeGrants: input.writeGrants, readOnlyControlPaths: input.readOnlyControlPaths });
     const authorityRoots = Object.freeze([...new Set([...input.authorityRoots, input.runtimePath])]);
     let acquiredWorker: SubscriptionCodingOwnedWorkerV1;

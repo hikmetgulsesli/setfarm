@@ -14,15 +14,17 @@ export type SubscriptionCodingMaterialV1 = Omit<SubscriptionAttemptLaunchMateria
   & Readonly<{ profile: 'subscription-coding-files-v1' }>;
 
 function invalid(): never { throw new Error('SUBSCRIPTION_CODING_INPUT_INVALID'); }
-function data(value: unknown, keys: readonly string[]): Record<string, unknown> {
+function data(value: unknown, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || types.isProxy(value)) invalid();
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) invalid();
   const descriptors = Object.getOwnPropertyDescriptors(value), actual = Reflect.ownKeys(descriptors);
-  if (actual.length !== keys.length || actual.some(key => typeof key !== 'string' || !keys.includes(key))) invalid();
+  if (actual.length < keys.length || actual.length > keys.length + optional.length
+    || actual.some(key => typeof key !== 'string' || (!keys.includes(key) && !optional.includes(key)))) invalid();
   const copy: Record<string, unknown> = Object.create(null);
-  for (const key of keys) {
+  for (const key of [...keys, ...optional]) {
     const descriptor = descriptors[key];
+    if (!descriptor && optional.includes(key)) continue;
     if (!descriptor || !Object.hasOwn(descriptor, 'value')) invalid();
     copy[key] = descriptor.value;
   }
@@ -44,10 +46,11 @@ function freeze<T>(value: T): T {
 
 /** Pure policy data. Filesystem ownership, sandboxing and runtime admission remain the caller's responsibility. */
 export function buildSubscriptionCodingMaterialV1(
-  input: SubscriptionAttemptLaunchInputV1 & Readonly<{ worktree: string }>,
+  input: SubscriptionAttemptLaunchInputV1 & Readonly<{ worktree: string; requestProfile?: 'plan-report-v1' }>,
 ): SubscriptionCodingMaterialV1 {
   try {
-    const value = data(input, ['identity', 'worker', 'root', 'prompt', 'worktree']);
+    const value = data(input, ['identity', 'worker', 'root', 'prompt', 'worktree'], ['requestProfile']);
+    if (Object.hasOwn(value, 'requestProfile') && value.requestProfile !== 'plan-report-v1') invalid();
     const identity = data(value.identity, ['attemptId', 'generationId', 'modelRef']);
     const worker = data(value.worker, ['attemptId', 'generationId', 'modelRef', 'providerId', 'modelId',
       'baseUrl', 'api', 'apiKey', 'auth', 'authHeader']);
@@ -71,6 +74,9 @@ export function buildSubscriptionCodingMaterialV1(
     config.tools.allow = ['read', 'write', 'edit'];
     const argv = [...base.argv];
     argv[argv.length - 1] = '1800';
+    // Fixed DATA profile only. The selected facade derives the genuine PLAN
+    // choice; this pure builder neither authenticates a stage nor admits work.
+    if (value.requestProfile === 'plan-report-v1') argv.push('--thinking', 'off');
     return freeze({ schema: base.schema, profile: 'subscription-coding-files-v1',
       identity: { ...base.identity }, sessionId: base.sessionId, cwd: worktree,
       directories: [...base.directories],

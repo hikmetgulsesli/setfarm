@@ -109,6 +109,20 @@ test('joint owner publishes preparation before acquisition and binds original pr
   } finally { f.cleanup(); }
 });
 
+test('inert runtime propagates the fixed PLAN DATA profile into the actual hashed worker material',async()=>{
+  const f=fixture('stage-claim');try{
+    const launch=f.port.launchWorker;
+    f.port.launchWorker=async request=>{
+      assert.deepEqual(request.material.argv.slice(-2),['--thinking','off']);
+      assert.equal(JSON.parse(request.material.files[0].contents).models.providers.minimax.models[0].maxTokens,8192);
+      return launch(request);
+    };
+    const owner=await required().acquireSubscriptionCodingRuntimeV1({...f.input,requestProfile:'plan-report-v1'} as never,f.port);
+    f.finish();assert.equal((await owner.close('completed')).status,'closed');
+    assert.equal(f.events.filter(event=>event==='launch-worker').length,1);
+  }finally{f.cleanup();}
+});
+
 test('close revokes broker before stopping worker and shares one promise until all originals close', async () => {
   const f = fixture(); try {
     const owner = await required().acquireSubscriptionCodingRuntimeV1(f.input, f.port);

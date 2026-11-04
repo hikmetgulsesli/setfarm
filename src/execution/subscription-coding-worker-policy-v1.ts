@@ -92,6 +92,8 @@ export function validateSubscriptionCodingWorkerMaterialV1(input: unknown): Read
     const kimi = identity.modelRef === 'kimi/k3.1-pro', providerId = kimi ? 'kimi' : 'minimax';
     const provider = config.models.providers[providerId];
     const material = buildSubscriptionCodingMaterialV1({ identity, root, worktree: copy.cwd,
+      ...(copy.argv.length === 13 && copy.argv[11] === '--thinking' && copy.argv[12] === 'off'
+        ? { requestProfile: 'plan-report-v1' as const } : {}),
       prompt: copy.argv[8], worker: { ...identity, providerId, modelId: kimi ? 'k3.1-pro' : 'MiniMax-M3.1-Flash',
         baseUrl: provider.baseUrl, api: provider.api, apiKey: provider.apiKey,
         auth: provider.auth, authHeader: provider.authHeader } });
