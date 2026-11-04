@@ -14,6 +14,7 @@ import { z } from "zod";
 
 import { readV3AdmissionMigrationStateV1 } from "../installation/fresh-installation-v3-admission-v1.js";
 import { readSelectedFreshExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
+import { projectSelectedConvergenceRecipeV1 } from "../installation/selected-convergence-recipe-v1.js";
 import { assertFreshInstallationSelectionUnchangedV1, freshInstallationSelectionV1 } from "../installation/fresh-installation-selection-v1.js";
 import {
   EvidenceBundleV2Schema,
@@ -2453,7 +2454,7 @@ type CliOptions = Readonly<{
 function parseCli(argv: readonly string[]): CliOptions {
   const root = packageRoot();
   const selectedSuite = freshInstallationSelectionV1
-    ? path.join(freshInstallationSelectionV1.paths.repository, "evals", "suites", "product-convergence-codex-v1.json")
+    ? path.join(freshInstallationSelectionV1.paths.repository, projectSelectedConvergenceRecipeV1(readSelectedFreshExecutionProfileV1("primary")).fixedSuiteRelativePath)
     : null;
   let suiteFile = selectedSuite ?? path.join(root, "evals", "suites", "product-convergence-v1.json");
   let outputRoot = resolveConvergenceEvalResultDir();

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
+import { FIXED_CONVERGENCE_SUITE_PATHS_V1 } from "../../installation/selected-convergence-recipe-v1.js";
 import { hashCanonicalJson } from "../../product-compiler/canonical-json.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -44,7 +45,7 @@ export type ControlJobReceiptV1 = Readonly<z.infer<typeof ControlJobReceiptV1Sch
 export const ControlPrivateIntentV1Schema = z.object({
   schema: z.literal("mission-control.control-intent.v1"), receipt: ControlJobReceiptV1Schema,
   installationDir: AbsolutePath, releaseDir: AbsolutePath, nonceDigest: Hash,
-  fixedSuiteRelativePath: z.literal("evals/suites/product-convergence-codex-v1.json").nullable(),
+  fixedSuiteRelativePath: z.enum(FIXED_CONVERGENCE_SUITE_PATHS_V1).nullable(),
 }).strict().superRefine((value, context) => {
   if ((value.receipt.kind === "convergence_full8") !== (value.fixedSuiteRelativePath !== null)) {
     context.addIssue({ code: "custom", path: ["fixedSuiteRelativePath"], message: "Fixed recipe must match job kind" });
