@@ -16,6 +16,7 @@ import { buildSubscriptionCodingSandboxPolicyV1, buildSubscriptionCodingProbeCha
   createSubscriptionCodingTranscriptCloserV1, createSubscriptionCodingCustodyTrackerV1,
   createSubscriptionCodingProbeProtocolV1, subscriptionCodingCanonicalPathV1,
   subscriptionCodingHashV1, subscriptionCodingWorkerRefusedV1,
+  subscriptionCodingPublicAncestorAllowedV1,
   narrowSubscriptionCodingWorkerMaterialV1, type SubscriptionCodingCustodyEventV1,
   type SubscriptionCodingProbeProtocolV1, type SubscriptionCodingWriteGrantV1 } from './subscription-coding-worker-policy-v1.js';
 
@@ -88,8 +89,21 @@ function safeFileStat(stat: BigIntStats, privateMode: boolean): void {
     || (stat.mode & 0o022n) !== 0n
     || (privateMode && (stat.uid !== uid() || (stat.mode & 0o7777n) !== 0o600n))) refuse();
 }
-function pinFile(path: string, privateMode = false, maximum = 268435456): Pin {
-  canonicalDirectory(dirname(path));
+function publicRuntimeDirectory(path: string): void {
+  if (!(path === '/usr/bin' || path === '/opt/homebrew' || path.startsWith('/opt/homebrew/'))
+    || realpathSync(path) !== path) refuse();
+  let current = path;
+  while (true) {
+    const stat = lstatSync(current, { bigint: true });
+    if (!subscriptionCodingPublicAncestorAllowedV1({ path: current, uid: stat.uid, gid: stat.gid,
+      mode: stat.mode, currentUid: uid(), directory: stat.isDirectory(), symbolicLink: stat.isSymbolicLink() })) refuse();
+    if (current === '/') break;
+    current = dirname(current);
+  }
+}
+function pinFile(path: string, privateMode = false, maximum = 268435456,
+  directoryCheck: (path: string) => void = canonicalDirectory): Pin {
+  directoryCheck(dirname(path));
   if (realpathSync(path) !== path) refuse();
   const before = lstatSync(path, { bigint: true }); safeFileStat(before, privateMode);
   if (before.size < 0n || before.size > BigInt(maximum)) refuse();
@@ -111,8 +125,8 @@ function pinFile(path: string, privateMode = false, maximum = 268435456): Pin {
 function checkPin(pin: Pin): void {
   if (realpathSync(pin.path) !== pin.path || !sameStat(pin.stat, lstatSync(pin.path, { bigint: true }))) refuse();
 }
-function readSmall(path: string, maximum = 4096): string {
-  const pin = pinFile(path, false, maximum), bytes = Buffer.alloc(Number(pin.stat.size));
+function readSmall(path: string, maximum = 4096, directoryCheck: (path: string) => void = canonicalDirectory): string {
+  const pin = pinFile(path, false, maximum, directoryCheck), bytes = Buffer.alloc(Number(pin.stat.size));
   let fd: number | undefined;
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -281,6 +295,15 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
   let transcriptCloser: ReturnType<typeof createSubscriptionCodingTranscriptCloserV1> | undefined;
   let partial: SubscriptionCodingPartialOwnedWorkerV1 | undefined;
   let owned: SubscriptionCodingOwnedWorkerV1 | undefined;
+  const publicAncestors: { path: string; stat: BigIntStats; fd: number | undefined }[] = [];
+  const closePublicAncestors = (): boolean => {
+    let closed = true;
+    for (const pin of publicAncestors) {
+      const fd = pin.fd; pin.fd = undefined;
+      if (fd !== undefined) { try { closeSync(fd); } catch { closed = false; } }
+    }
+    return closed;
+  };
   try {
     const { checked, transcriptPath, authorityRoots } = launchInput(input);
     const { material, root, brokerPort, materialHash, capability } = checked;
@@ -295,7 +318,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
       writeGrants: checked.writeGrants, readOnlyControlPaths: checked.readOnlyControlPaths };
     // Pure overlap checks precede any filesystem materialization.
     buildSubscriptionCodingSandboxPolicyV1(lexical);
-    canonicalDirectory(sdkRoot); canonicalDirectory(dirname(nodePath));
+    publicRuntimeDirectory(sdkRoot); publicRuntimeDirectory(dirname(nodePath));
     inspectSubscriptionCodingWorktreeV1(material.cwd, checked.readOnlyControlPaths);
     checked.writeGrants.forEach(inspectWriteGrant);
     const controlPins = checked.readOnlyControlPaths.map(path => pinFile(path, true, 1048576));
@@ -307,9 +330,21 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
       .map(path => ({ path, stat: lstatSync(path, { bigint: true }) }));
     const policy = buildSubscriptionCodingSandboxPolicyV1({ ...lexical, gitControlPaths: gitPaths });
     const policyHash = subscriptionCodingHashV1(policy), preloadHash = subscriptionCodingHashV1(SUBSCRIPTION_CODING_WORKER_PRELOAD_V1);
-    const publicPins = [nodePath, SANDBOX, entryPath, sdkRoot + '/package.json',
-      sdkRoot + '/dist/entry.js', sdkRoot + '/dist/cli/run-main.js'].map(path => pinFile(path));
-    const packageData = JSON.parse(readSmall(sdkRoot + '/package.json', 262144));
+    const publicPaths = [nodePath, SANDBOX, entryPath, sdkRoot + '/package.json',
+      sdkRoot + '/dist/entry.js', sdkRoot + '/dist/cli/run-main.js'];
+    const ancestorPaths = new Set<string>();
+    for (const path of publicPaths) {
+      let parent = dirname(path);
+      while (true) { ancestorPaths.add(parent); if (parent === '/') break; parent = dirname(parent); }
+    }
+    for (const path of ancestorPaths) {
+      const stat = lstatSync(path, { bigint: true });
+      const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      publicAncestors.push({ path, stat, fd });
+      if (!sameStat(stat, fstatSync(fd, { bigint: true })) || realpathSync(path) !== path) refuse();
+    }
+    const publicPins = publicPaths.map(path => pinFile(path, false, 268435456, publicRuntimeDirectory));
+    const packageData = JSON.parse(readSmall(sdkRoot + '/package.json', 262144, publicRuntimeDirectory));
     if (packageData.name !== 'openclaw' || packageData.version !== '2026.5.20'
       || packageData.engines?.node !== '>=22.19.0' || dirname(entryPath) !== sdkRoot) refuse();
     createPrivateDirectory(root);
@@ -332,6 +367,12 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     const transcriptStat = fstatSync(fd, { bigint: true }); safeFileStat(transcriptStat, true);
     if (!sameObject(transcriptStat, lstatSync(transcriptPath, { bigint: true })) || realpathSync(transcriptPath) !== transcriptPath) refuse();
     const stableCheck = () => {
+      for (const pin of publicAncestors) {
+        if (pin.fd === undefined || realpathSync(pin.path) !== pin.path
+          || !sameStat(pin.stat, fstatSync(pin.fd, { bigint: true }))
+          || !sameStat(pin.stat, lstatSync(pin.path, { bigint: true }))) refuse();
+      }
+      publicRuntimeDirectory(sdkRoot); publicRuntimeDirectory(dirname(nodePath));
       publicPins.forEach(checkPin); privatePins.forEach(checkPin); gitFiles.forEach(checkPin); controlPins.forEach(checkPin);
       checked.writeGrants.forEach(inspectWriteGrant);
       for (const directory of [...gitDirectories, ...privateDirectories]) {
@@ -381,6 +422,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
       for (const timer of [killTimer, drainTimer, startupTimer, lifetimeTimer]) if (timer) clearTimeout(timer);
       for (const capture of Object.values(captures)) if (!capture.finished) { capture.redactor.discard(); capture.finished = true; }
       if (transcriptCloser?.close() !== 'closed') status = 'custody-uncertain';
+      if (!closePublicAncestors()) status = 'custody-uncertain';
       resolveClosed(Object.freeze({ status }));
       resolveOutput(Object.freeze({
         stdout: Buffer.concat(captures.stdout.chunks).toString('utf8'), stderr: Buffer.concat(captures.stderr.chunks).toString('utf8'),
@@ -513,7 +555,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     stableCheck();
     inspectSubscriptionCodingWorktreeV1(material.cwd, checked.readOnlyControlPaths);
     for (const pin of publicPins) {
-      const fresh = pinFile(pin.path);
+      const fresh = pinFile(pin.path, false, 268435456, publicRuntimeDirectory);
       if (!sameStat(pin.stat, fresh.stat) || pin.hash !== fresh.hash) refuse();
     }
     if (stopping || performance.now() >= startupDeadline || protocol.state !== 'ready'
@@ -521,6 +563,9 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     isolationHash = subscriptionCodingHashV1(JSON.stringify({ schema: 'setfarm.subscription-coding-isolation.v1',
       materialHash, policyHash, preloadHash, processIdentity: originalIdentity, proofHash: protocol.proofHash,
       controls: controlPins.map(pin => ({ path: pin.path, hash: pin.hash, dev: String(pin.stat.dev), ino: String(pin.stat.ino) })),
+      publicAncestors: publicAncestors.map(pin => ({ path: pin.path, dev: String(pin.stat.dev), ino: String(pin.stat.ino),
+        uid: String(pin.stat.uid), gid: String(pin.stat.gid), mode: String(pin.stat.mode),
+        mtimeNs: String(pin.stat.mtimeNs), ctimeNs: String(pin.stat.ctimeNs), birthtimeNs: String(pin.stat.birthtimeNs) })),
       publicFiles: publicPins.map(pin => ({ path: pin.path, hash: pin.hash, dev: String(pin.stat.dev), ino: String(pin.stat.ino) })) }));
     owned = Object.freeze({
       identity: material.identity, child, processIdentity: Object.freeze({ ...originalIdentity }), closed, originalClosed, output,
@@ -537,6 +582,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     return owned;
   } catch {
     if (partial) return rejectSubscriptionCodingWorkerStartupV1(partial);
+    closePublicAncestors();
     if (transcriptCloser) transcriptCloser.close();
     if (transcript !== undefined) {
       const original = transcript; transcript = undefined;

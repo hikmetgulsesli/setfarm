@@ -10,6 +10,18 @@ const refuse: () => never = subscriptionCodingWorkerRefusedV1;
 export function subscriptionCodingHashV1(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
+/** Public Homebrew runtime metadata only, never a private-directory policy.
+ * Darwin's admin group owns the existing shared Homebrew lib ancestor. */
+export function subscriptionCodingPublicAncestorAllowedV1(value: Readonly<{
+  path: string; uid: bigint; gid: bigint; mode: bigint; currentUid: bigint;
+  directory: boolean; symbolicLink: boolean;
+}>): boolean {
+  if (!value.directory || value.symbolicLink || (value.uid !== 0n && value.uid !== value.currentUid)
+    || (value.mode & 0o002n) !== 0n) return false;
+  if ((value.mode & 0o022n) === 0n) return true;
+  return value.path === '/opt/homebrew/lib' && value.uid === value.currentUid
+    && value.gid === 80n && (value.mode & 0o7777n) === 0o775n;
+}
 function own(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || types.isProxy(value)) refuse();
   const proto = Object.getPrototypeOf(value);

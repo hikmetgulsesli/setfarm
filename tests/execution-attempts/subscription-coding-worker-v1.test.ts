@@ -21,6 +21,18 @@ try {
   if (missing.code !== 'ERR_MODULE_NOT_FOUND' || !urls.includes(missing.url as string)) throw error;
 }
 
+test('public runtime accepts only the exact owned Homebrew admin ancestor exception', () => {
+  assert.ok(api && typeof api.subscriptionCodingPublicAncestorAllowedV1 === 'function', 'public runtime ancestor policy missing');
+  const normal = { path: '/opt/homebrew/lib', uid: 501n, gid: 80n, mode: 0o40775n, currentUid: 501n,
+    directory: true, symbolicLink: false };
+  assert.equal(api.subscriptionCodingPublicAncestorAllowedV1(normal), true);
+  for (const delta of [{ path: '/opt/homebrew/lib/node_modules' }, { uid: 502n }, { gid: 20n },
+    { mode: 0o40777n }, { directory: false }, { symbolicLink: true }]) {
+    assert.equal(api.subscriptionCodingPublicAncestorAllowedV1({ ...normal, ...delta }), false);
+  }
+  assert.equal(api.subscriptionCodingPublicAncestorAllowedV1({ ...normal, path: '/opt/homebrew', mode: 0o40755n }), true);
+});
+
 function material() {
   const identity = { attemptId: 'ATT_worker_1', generationId: 'generation-7',
     modelRef: 'minimax/MiniMax-M3.1-Flash' as const };

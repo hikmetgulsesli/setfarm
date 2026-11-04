@@ -69,6 +69,8 @@ export function withSelectedSubscriptionCredentialV1<T>(modelRef:SubscriptionMod
 
 Source correction wave verified: fourteen inert/fake-filesystem groups pass, zero skips; Root project no-emit compilation passes. Independent R1–R6 re-review accepted. The owned READY result exposes frozen actual material/policy/preload/probe/isolation hashes for the Task5 journal before gate opening. Actual sandbox/SDK qualification remains a separate pending result; these unit checks grant no operational readiness.
 
+First physical synthetic qualification refused before child acquisition or any model request: the existing public `/opt/homebrew/lib` ancestor is owned by the current user, admin GID80, mode0775. The causal compatibility fix has a dedicated public-runtime walker with only that exact exception, held ancestor descriptor/name/stat checks and isolation binding. Every private/worktree/authority/control/transcript guard remains unchanged; no host permissions were modified. New regression RED then fifteen-group GREEN and project no-emit pass; scoped review accepted. A fresh synthetic original is required after this source correction.
+
 Create worker/matching test. API:
 ```ts
 export type SubscriptionCodingOwnedWorkerV1=SubscriptionOwnedWorkerV1 & Readonly<{
