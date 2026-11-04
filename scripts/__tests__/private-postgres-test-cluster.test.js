@@ -33,6 +33,13 @@ test('subscription runtime mode selects only its owned isolated lifecycle test',
   assert.throws(()=>planPrivatePostgresTestsV1({root,port:5432,mode:'subscription-runtime'}));
   assert.throws(()=>planPrivatePostgresTestsV1({root,port:55439,mode:'subscription-runtime extra'}));
 });
+test('runtime sessions mode selects only its owned repository test',async()=>{
+  const {planPrivatePostgresTestsV1}=await implementation();
+  const plan=planPrivatePostgresTestsV1({root,port:55439,mode:'runtime-sessions'});
+  assert.deepEqual(plan.test,['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+    'node','--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/runtime-session-repository.test.ts']);
+});
 for(const file of ['base-schema-readonly-verifier-v1.integration.test.ts',
   'contract-spine-readonly-verifier-v1.integration.test.ts'])
 for(const [label,password] of [['nonhex','NEVER_EXPOSE_PRIVATE_LOGIN_BAD_PASSWORD'],
