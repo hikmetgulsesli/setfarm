@@ -360,6 +360,7 @@ const SELECTED_RUNNER_V1 = process.env.SETFARM_AGENT_RUNTIME;
 let selectedSpawnerPolicyRefusedV1 = false;
 let selectedSpawnerLeaseV1: Readonly<{ release(): void; retainOnExit(): void }> | undefined;
 let selectedSpawnerListenerV1: FreshSpawnerListenerV1 | undefined;
+let selectedSpawnerListenerOpeningV1: Promise<FreshSpawnerListenerV1> | undefined;
 let selectedSpawnerShutdownV1: (() => Promise<number>) | undefined;
 let selectedSpawnerFailedV1 = false;
 let selectedSpawnerReadyV1 = false;
@@ -11706,7 +11707,13 @@ async function main() {
       for (const handle of intervalHandles) clearInterval(handle);
       console.log(`[spawner] Shutting down (${activeProcesses.size} active, ${drainingProcesses.size} draining, ${inFlightSpawnPromises.size} in-flight)`);
       try {
-        if (SELECTED_SPAWNER_V1) await selectedSpawnerListenerV1?.end();
+        if (SELECTED_SPAWNER_V1) {
+          // The factory may already own a private pool while admission is
+          // pending. Join that original acquisition before closing main PG.
+          const listener = selectedSpawnerListenerOpeningV1
+            ? await selectedSpawnerListenerOpeningV1 : selectedSpawnerListenerV1;
+          await listener?.end();
+        }
         else await legacySpawnerListenerV1?.end({ timeout: 5 });
       } catch (error) {
         if (SELECTED_SPAWNER_V1) selectedSpawnerFailedV1 = true;
@@ -11859,13 +11866,13 @@ async function main() {
   }
 
   const listener = SELECTED_SPAWNER_V1
-    ? (selectedSpawnerListenerV1 = await openFreshInstallationSpawnerListenerV1())
+    ? (selectedSpawnerListenerV1 = await (selectedSpawnerListenerOpeningV1 = openFreshInstallationSpawnerListenerV1()))
     : (legacySpawnerListenerV1 = postgres(process.env.SETFARM_PG_URL || "postgresql://postgres@localhost:5432/setfarm", { max: 1 }));
   if (SELECTED_SPAWNER_V1) {
+    assertSelectedSpawnerStartupContinuesV1();
     selectedSpawnerListenerV1!.closed.then(error => {
       if (error) { selectedSpawnerFailedV1 = true; void shutdown(); }
     });
-    assertSelectedSpawnerStartupContinuesV1();
   } else {
     process.on("SIGTERM", () => { void shutdown(); });
     process.on("SIGINT", () => { void shutdown(); });

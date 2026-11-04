@@ -37,10 +37,47 @@ test("private readiness DATA component rejects wrong source PID port disconnect 
  }
 });
 test("held spawner cleanup DATA component uses only TERM and retains unknown custody",async()=>{
- const body=compile(declaration("server/spawnerctl.ts","stopHeldFreshStartingChildV1"));let reclaimed=0;const signals:string[]=[];
- const stop=new Function("reclaimFreshServiceAfterHeldChildV1","setTimeout","clearTimeout",body+";return stopHeldFreshStartingChildV1;")(()=>{reclaimed++;},(fn:()=>void)=>setTimeout(fn,0),clearTimeout) as (c:unknown,s:string)=>Promise<void>;
+ const body=compile(declaration("server/spawnerctl.ts","stopHeldFreshStartingChildV1"));let reclaimed=0;const signals:string[]=[],delays:number[]=[];
+ const stop=new Function("reclaimFreshServiceAfterHeldChildV1","setTimeout","clearTimeout",body+";return stopHeldFreshStartingChildV1;")(()=>{reclaimed++;},(fn:()=>void,delay:number)=>{delays.push(delay);return setTimeout(fn,0);},clearTimeout) as (c:unknown,s:string)=>Promise<void>;
  const child=Object.assign(new EventEmitter(),{pid:12345,exitCode:null,signalCode:null,kill(signal:string){signals.push(signal);return true;}});
- await assert.rejects(stop(child,"spawner"),/CLEANUP_UNCONFIRMED/);assert.deepEqual(signals,["SIGTERM"]);assert.equal(reclaimed,0);assert.equal(child.eventNames().length,0);
+ await assert.rejects(stop(child,"spawner"),/CLEANUP_UNCONFIRMED/);assert.deepEqual(signals,["SIGTERM"]);assert.deepEqual(delays,[30000]);assert.equal(reclaimed,0);assert.equal(child.eventNames().length,0);
+});
+
+test("real READY waiter permits checked spawner startup beyond 30 seconds but remains bounded",async()=>{
+ for(const [file,service,deadline] of [["server/spawnerctl.ts","spawner",120000],["server/spawnerctl.ts","dashboard",30000],["server/daemonctl.ts","dashboard",30000]] as const){
+  let now=0,next=0;const timers=new Map<number,{at:number;callback:()=>void}>();
+  const wait=new Function("setTimeout","clearTimeout",compile(declaration(file,"waitFreshStartingChildReadyV1"))+";return waitFreshStartingChildReadyV1;")(
+   (callback:()=>void,delay:number)=>{const id=++next;timers.set(id,{at:now+delay,callback});return id;},
+   (id:number)=>{timers.delete(id);},
+  ) as (child:unknown,service:string,sha:string,port?:number)=>Promise<void>;
+  const advance=async(time:number)=>{now=time;for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.callback();}await Promise.resolve();await Promise.resolve();};
+  const child=Object.assign(new EventEmitter(),{pid:12345,exitCode:null,signalCode:null});
+  let settled=false;const pending=wait(child,service,"a".repeat(40),32123);
+  void pending.then(()=>{settled=true;},()=>{settled=true;});
+  await advance(deadline-1);
+  const stillWaiting=!settled;
+  await advance(deadline);
+  await assert.rejects(pending,/FRESH_INSTALLATION_SERVICE_READY_TIMED_OUT/);
+  assert.equal(stillWaiting,true,file+" "+service+" must allow its complete checked startup window");
+  assert.equal(timers.size,0);assert.equal(child.eventNames().length,0);
+ }
+});
+
+test("spawner extended READY window still settles immediately on actual READY or startup faults",async()=>{
+ const body=compile(declaration("server/spawnerctl.ts","waitFreshStartingChildReadyV1"));
+ for(const outcome of ["ready","invalid","exit","disconnect"] as const){
+  const timers=new Map<number,()=>void>();let cleared=0;
+  const wait=new Function("setTimeout","clearTimeout",body+";return waitFreshStartingChildReadyV1;")(
+   (callback:()=>void)=>{timers.set(71,callback);return 71;},(id:number)=>{assert.equal(id,71);cleared++;timers.delete(id);},
+  ) as (child:unknown,service:string,sha:string)=>Promise<void>;
+  const child=Object.assign(new EventEmitter(),{pid:12345,exitCode:null as number|null,signalCode:null});
+  const pending=wait(child,"spawner","a".repeat(40));
+  if(outcome==="exit"){child.exitCode=1;child.emit("exit",1,null);}
+  else if(outcome==="disconnect")child.emit("disconnect");
+  else child.emit("message",{type:"setfarm.spawner.ready.v1",pid:12345,sourceSha:(outcome==="ready"?"a":"b").repeat(40)});
+  if(outcome==="ready")await pending;else await assert.rejects(pending,/FRESH_INSTALLATION_SERVICE_/);
+  assert.equal(cleared,1);assert.equal(timers.size,0);assert.equal(child.eventNames().length,0);
+ }
 });
 
 test("actual selected start bodies preserve spawn and log-close failures with held-child cleanup DATA",async()=>{
@@ -53,6 +90,8 @@ test("actual selected start bodies preserve spawn and log-close failures with he
    // no child process, filesystem, entry authority or selected success is real.
    const ports={
     prepareFreshInstallationOperationalEntryV1:async()=>{},assertFreshInstallationOperationalEntryV1:()=>{},
+    readSelectedFreshExecutionProfileV1:()=>Object.freeze({schema:"setfarm.model-execution-profile.v1",providerId:"codex",modelId:"codex/component-model",selection:"primary"}),
+    assertSelectedFreshExecutionProfileUnchangedV1:()=>{},
     freshInstallationSelectionV1:{paths:{repository:"/component/repository"},state:{origin:{sourceSha:"a".repeat(40)}}},
     inspectFreshServiceV1:()=>({running:false}),freshServicePathsV1:()=>({logFile:"/component/log"}),
     path:{join:(...parts:string[])=>parts.join("/")},process:{execPath:"/component/node",env:{SETFARM_AGENT_RUNTIME:"codex"}},
