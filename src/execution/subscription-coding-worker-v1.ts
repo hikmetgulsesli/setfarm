@@ -146,6 +146,19 @@ function readSmall(path: string, maximum = 4096, directoryCheck: (path: string) 
 function createPrivateDirectory(path: string): void {
   canonicalDirectory(dirname(path)); mkdirSync(path, { mode: 0o700 }); canonicalDirectory(path, true);
 }
+/** Parent prepares the SDK's fixed temp leaf so the child need not chmod it.
+ * Nonrecursive mkdir refuses every existing name, including aliases. */
+export function prepareSubscriptionCodingSdkTempDirectoryV1(privateRoot: string): string {
+  try {
+    canonicalDirectory(privateRoot, true);
+    const temporaryRoot = privateRoot + '/tmp'; canonicalDirectory(temporaryRoot, true);
+    const path = temporaryRoot + '/openclaw-' + uid().toString();
+    mkdirSync(path, { mode: 0o700 });
+    canonicalDirectory(privateRoot, true); canonicalDirectory(temporaryRoot, true);
+    canonicalDirectory(path, true);
+    return path;
+  } catch { return refuse(); }
+}
 function createPrivateFile(path: string, contents: string): Pin {
   canonicalDirectory(dirname(path), true);
   let fd: number | undefined;
@@ -355,9 +368,10 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
       || packageData.engines?.node !== '>=22.19.0' || dirname(entryPath) !== sdkRoot) refuse();
     createPrivateDirectory(root);
     for (const directory of material.directories) createPrivateDirectory(directory);
+    const sdkTempDirectory = prepareSubscriptionCodingSdkTempDirectoryV1(root);
     const privatePins = material.files.map(file => createPrivateFile(file.path, file.contents));
     privatePins.push(createPrivateFile(preloadPath, SUBSCRIPTION_CODING_WORKER_PRELOAD_V1), createPrivateFile(profilePath, policy));
-    const privateDirectories = [root, ...material.directories]
+    const privateDirectories = [root, ...material.directories, sdkTempDirectory]
       .map(path => ({ path, stat: lstatSync(path, { bigint: true }) }));
     const fd = openSync(transcriptPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     transcript = fd;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -480,4 +480,44 @@ test('Node library policy rejects missing, directory, non-public, duplicate and 
     assert.throws(() => api!.buildSubscriptionCodingSandboxPolicyV1({ ...paths(), [field]: value }));
   }
   assert.throws(() => api!.buildSubscriptionCodingSandboxPolicyV1({ ...paths(), transcriptPath: publicFile }));
+});
+
+
+test('SDK temp preparation creates only the fixed owned UID leaf and refuses aliases, unsafe parents and existing paths', () => {
+  assert.equal(typeof workerApi.prepareSubscriptionCodingSdkTempDirectoryV1, 'function',
+    'parent-owned SDK temp preparation capability missing');
+  assert.ok(process.getuid);
+  const owner = process.getuid();
+  const fixture = mkdtempSync(join(realpathSync(tmpdir()), 'sf-sdk-temp-data-'));
+  const root = (name: string, rootMode = 0o700, tmpMode = 0o700) => {
+    const path = join(fixture, name); mkdirSync(path, { mode: rootMode }); chmodSync(path, rootMode);
+    mkdirSync(join(path, 'tmp'), { mode: tmpMode }); chmodSync(join(path, 'tmp'), tmpMode); return path;
+  };
+  try {
+    const privateRoot = root('private');
+    const expected = privateRoot + '/tmp/openclaw-' + owner;
+    const path = workerApi.prepareSubscriptionCodingSdkTempDirectoryV1(privateRoot);
+    assert.equal(path, expected); assert.equal(realpathSync(path), expected);
+    const stat = lstatSync(path);
+    assert.equal(stat.isDirectory(), true); assert.equal(stat.isSymbolicLink(), false);
+    assert.equal(stat.uid, owner); assert.equal(stat.mode & 0o7777, 0o700);
+    assert.throws(() => workerApi.prepareSubscriptionCodingSdkTempDirectoryV1(privateRoot),
+      { message: 'SUBSCRIPTION_CODING_WORKER_REFUSED' }, 'existing UID leaf must never be adopted');
+    for (const unsafe of [root('public-root', 0o755), root('public-tmp', 0o700, 0o755)]) {
+      assert.throws(() => workerApi.prepareSubscriptionCodingSdkTempDirectoryV1(unsafe),
+        { message: 'SUBSCRIPTION_CODING_WORKER_REFUSED' });
+    }
+    const realRoot = root('real-root'); const aliasRoot = join(fixture, 'alias-root');
+    symlinkSync(realRoot, aliasRoot);
+    assert.throws(() => workerApi.prepareSubscriptionCodingSdkTempDirectoryV1(aliasRoot),
+      { message: 'SUBSCRIPTION_CODING_WORKER_REFUSED' });
+    const tmpAliasRoot = join(fixture, 'tmp-alias-root'); mkdirSync(tmpAliasRoot, { mode: 0o700 });
+    symlinkSync(join(realRoot, 'tmp'), join(tmpAliasRoot, 'tmp'));
+    assert.throws(() => workerApi.prepareSubscriptionCodingSdkTempDirectoryV1(tmpAliasRoot),
+      { message: 'SUBSCRIPTION_CODING_WORKER_REFUSED' });
+    const existingAliasRoot = root('existing-alias');
+    symlinkSync(join(realRoot, 'tmp'), existingAliasRoot + '/tmp/openclaw-' + owner);
+    assert.throws(() => workerApi.prepareSubscriptionCodingSdkTempDirectoryV1(existingAliasRoot),
+      { message: 'SUBSCRIPTION_CODING_WORKER_REFUSED' });
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
