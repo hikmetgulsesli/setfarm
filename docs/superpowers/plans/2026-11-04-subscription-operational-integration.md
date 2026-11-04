@@ -13,6 +13,8 @@ Primary `minimax/MiniMax-M3.1-Flash`; existing bounded retry `kimi/k3.1-pro`. No
 
 ## File Map
 
+Task5B1 isolated lifecycle verification also adds one closed `subscription-runtime` mode in `scripts/run-private-postgres-tests.mjs` and a focused dispatch regression in `scripts/__tests__/private-postgres-test-cluster.test.js`. It reuses the existing owned private-cluster/P3 transport because no test admin URL is present; it never selects the live database or expands command input.
+
 Physical Node compatibility refinement: add `src/execution/subscription-coding-node-libraries-v1.ts` and `tests/execution-attempts/subscription-coding-node-libraries-v1.test.ts`; consume only in existing coding worker/policy and its test. The v4 synthetic original proves an actual denied llhttp dylib dependency after literal-root loader startup is repaired. Derive the current Node's bounded exact dylib/alias/RPATH inventory internally; pin and recheck it, then grant literal read/map paths only. No provisioning refactor, broad Homebrew access or new native framework. The existing public-only inventory is diagnostic data, not admission.
 
 This compatibility slice now passes 32 focused groups, zero skips, fresh Root project no-emit compilation and scoped spec/quality review. Genuine zero-argument public metadata capture resolves the current Node's 25 dylibs and 67 exact alias/canonical read/map paths, rechecks them and closes held descriptors. The real-format fixes add `otool -h` for load-command headers and permit ordinary `@` in formula symlink names. SDK/provider execution and live entry remain unqualified until their own actual outcomes.
