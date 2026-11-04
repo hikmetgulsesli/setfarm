@@ -12,6 +12,7 @@ import { hashCanonicalJson, canonicalJsonStringify } from "../product-compiler/c
 import { createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1, validateInternalProductionBoundOwnerReservationV1, deriveInternalProductionTerminalOwnerAuthorityPairV1 } from "../internal-production/owner-admission-v1.js";
 import { requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "../findings/finding-publication-v1.js";
 import { loadConvergenceSuite } from "../evals/suite-schema.js";
+import { captureSelectedConvergenceRecipeV1, type SelectedConvergenceRecipeV1 } from "../installation/selected-convergence-recipe-v1.js";
 import { V3ReleaseAdmissionV1Schema, canarySelectorHash } from "./v3-release-admission.js";
 import { OperationalEventIdentityV1Schema, CanonicalOperationalEventV1Schema, OperationalEventDeliveryConsumerV1Schema, operationalEventRunId, operationalEventDeliveryId } from "./schemas/operational-event-v1.js";
 import type { PersistWorkflowRunInputV1 } from "./run-persistence.js";
@@ -35,7 +36,6 @@ type FilePin = { locator: string; bytes: Buffer; stat: fs.BigIntStats; parents: 
 type Custody = { origin: "mission_control" | "direct"; lifecycle: "ready" | "acquiring" | "binding" | "releasing" | "closing" | "closed" | "uncertain"; publicationAttempted: boolean; held: ManualEvaluationReservationV1 | null; released: FilePin | null; closure: FilePin | null; input: z.infer<typeof AcquireSchema>; owner: Owner; intent: FilePin; nonceDigest: string; executionMode: "preflight" | "execute" };
 const custodies = new Map<string, Custody>();
 const observedPins = new WeakMap<ManualEvaluationReservationV1, FilePin>();
-const SUITE = "evals/suites/product-convergence-codex-v1.json";
 
 function refuseV1(code = "MANUAL_EVALUATION_OWNERSHIP_UNKNOWN"): never { throw new Error(code); }
 function sameStatV1(a: fs.BigIntStats, b: fs.BigIntStats, file: boolean): boolean {
@@ -179,11 +179,16 @@ function entryV1(kind: "worker" | "direct"): Owner {
   assertFreshInstallationOperationalEntryV1();
   return processOwnerV1(process.pid, script, fs.realpathSync(process.execPath));
 }
-async function suiteV1(): Promise<string> {
+async function suiteV1(recipe?: SelectedConvergenceRecipeV1): Promise<string> {
   const { selected } = selectionV1();
-  const loaded = await loadConvergenceSuite(path.join(selected.paths.repository, SUITE));
-  if (loaded.suite.repetitionsPerCase !== 1 || loaded.suite.rootCauseRepeatLimit !== 3
-    || loaded.suite.timeout.runMs !== 21600000 || loaded.suite.timeout.pollMs !== 15000) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
+  const captured = recipe ?? await captureSelectedConvergenceRecipeV1();
+  captured.assertUnchanged();
+  const loaded = await loadConvergenceSuite(path.join(selected.paths.repository, captured.fixedSuiteRelativePath));
+  captured.assertUnchanged();
+  if (loaded.suite.cases.length !== 8 || loaded.suite.repetitionsPerCase !== 1 || loaded.suite.rootCauseRepeatLimit !== 3
+    || loaded.suite.timeout.runMs !== 21600000 || loaded.suite.timeout.pollMs !== 15000
+    || loaded.suite.cases.some(item => item.executionProfile.providerId !== captured.executionProfile.providerId
+      || item.executionProfile.modelId !== captured.executionProfile.modelId)) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
   selected.assertUnchanged(); return loaded.suiteHash;
 }
 function verifyCustodyV1(custody: Custody): Custody {
@@ -232,11 +237,14 @@ export async function registerSelectedManualWorkerCustodyV1(raw: ControlWorkerCu
   const pin = readPrivateFileV1(locator, 32768, context.selected.directory);
   const intent = ControlPrivateIntentV1Schema.parse(JSON.parse(pin.bytes.toString("utf8")));
   const receipt = intent.receipt;
+  const recipe = receipt.kind === "convergence_full8" ? await captureSelectedConvergenceRecipeV1() : undefined;
+  recipe?.assertUnchanged();
   if (receipt.kind === "ui_regression" || intent.installationDir !== context.selected.directory || intent.releaseDir !== context.selected.paths.repository
     || receipt.jobId !== custody.jobId || receipt.selectionHash !== custody.selectionHash || custody.selectionHash !== context.selectionHash
     || receipt.sourceSha !== custody.sourceSha || custody.sourceSha !== context.selected.state.origin.sourceSha
     || receipt.mcBuildHash !== custody.mcBuildHash || !timingSafeEqual(Buffer.from(intent.nonceDigest, "hex"), Buffer.from(digestV1(custody.nonce), "hex"))
-    || (receipt.kind === "convergence_full8" && receipt.suiteHash !== await suiteV1())) refuseV1("MANUAL_EVALUATION_CUSTODY_REQUIRED");
+    || (recipe && (intent.fixedSuiteRelativePath !== recipe.fixedSuiteRelativePath || receipt.suiteHash !== await suiteV1(recipe)))) refuseV1("MANUAL_EVALUATION_CUSTODY_REQUIRED");
+  recipe?.assertUnchanged();
   stableV1(pin, context.selected.directory);
   const input = AcquireSchema.parse({ jobId: receipt.jobId, kind: receipt.kind, selectionHash: receipt.selectionHash, sourceSha: receipt.sourceSha, suiteHash: receipt.suiteHash });
   registerCustodyV1({ input, owner, intent: pin, nonceDigest: intent.nonceDigest, origin: "mission_control",
@@ -246,6 +254,7 @@ export async function registerSelectedManualWorkerCustodyV1(raw: ControlWorkerCu
 export async function prepareSelectedDirectEvaluationIntentV1(): Promise<Readonly<z.infer<typeof AcquireSchema> & { kind: "convergence_full8"; suiteHash: string }>> {
   if (arguments.length || custodies.size !== 0) refuseV1("MANUAL_EVALUATION_ENTRY_REFUSED");
   const owner = entryV1("direct"), context = rootV1(false);
+  const recipe = await captureSelectedConvergenceRecipeV1(); recipe.assertUnchanged();
   const options = new Map<string, string>(); let execute = false;
   for (let index = 2; index < process.argv.length; index++) {
     const key = process.argv[index]!;
@@ -254,13 +263,14 @@ export async function prepareSelectedDirectEvaluationIntentV1(): Promise<Readonl
     else if (["--suite", "--output-root", "--release-sha"].includes(key) && process.argv[index + 1]) options.set(key, process.argv[++index]!);
     else refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
   }
-  const selectedSuite = path.join(context.selected.paths.repository, SUITE);
+  const selectedSuite = path.join(context.selected.paths.repository, recipe.fixedSuiteRelativePath);
   if ((options.get("--suite") ?? selectedSuite) !== selectedSuite
     || (options.has("--output-root") && options.get("--output-root") !== context.selected.paths.evals)
     || (options.has("--release-sha") && options.get("--release-sha") !== context.selected.state.origin.sourceSha)
     || (execute && !options.has("--release-sha"))) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
   const input = { jobId: randomUUID(), kind: "convergence_full8" as const, selectionHash: context.selectionHash,
-    sourceSha: context.selected.state.origin.sourceSha, suiteHash: await suiteV1() };
+    sourceSha: context.selected.state.origin.sourceSha, suiteHash: await suiteV1(recipe) };
+  recipe.assertUnchanged();
   const nonceDigest = digestV1(randomBytes(32));
   rootV1(true); const directory = createChildV1(context.root, "direct", context.selected.directory);
   const mode = execute ? "execute" as const : "preflight" as const;
@@ -639,12 +649,15 @@ export async function observeSelectedManualEvaluationInTransactionV1(_sql: PgTra
 
 export async function acquireSelectedManualEvaluationV1(raw: z.infer<typeof AcquireSchema>): Promise<ManualEvaluationReservationV1> {
   const input = AcquireSchema.parse(raw), custody = assertCustodyV1(input);
+  const recipe = input.kind === "convergence_full8" ? await captureSelectedConvergenceRecipeV1() : undefined;
+  recipe?.assertUnchanged();
   if ((input.kind === "activation_preflight" && input.suiteHash !== null)
-    || (input.kind === "convergence_full8" && input.suiteHash !== await suiteV1())) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
+    || (recipe && input.suiteHash !== await suiteV1(recipe))) refuseV1("MANUAL_EVALUATION_RECIPE_REFUSED");
+  recipe?.assertUnchanged();
   const held = await custodyMutationV1(custody, "acquiring", async sql => {
     const prior = readRecordV1();
     if (prior && (prior.uncertain || prior.record.reservation.phase !== "released")) refuseV1("MANUAL_EVALUATION_RESERVED");
-    assertCustodyV1(input); await idleV1(sql); if (externalOwnersV1(custody) !== "none") refuseV1("MANUAL_EVALUATION_RESERVED");
+    assertCustodyV1(input); await idleV1(sql); recipe?.assertUnchanged(); if (externalOwnersV1(custody) !== "none") refuseV1("MANUAL_EVALUATION_RESERVED");
     custody.publicationAttempted = true;
     startMutationV1(sql);
     const record: RecordV1 = { schema: "setfarm.manual-evaluation-record.v1", reservation: { ...input, revision: (prior?.record.reservation.revision ?? 0) + 1, phase: "pending" },

@@ -1,4 +1,9 @@
-import { assertSelectedFreshCodexProfileUnchangedV1, selectedFreshCodexModelArgumentsV1 } from "./installation/fresh-installation-v3-profile-v1.js";
+import {startSelectedSubscriptionCodingRuntimeV1,readClosedSelectedSubscriptionCodingRuntimeV1,type SelectedSubscriptionCodingRuntimeV1} from "./execution/subscription-coding-runtime-selected-v1.js";
+import {SubscriptionCodingRuntimeStartupErrorV1,type SubscriptionCodingRuntimeOwnershipV1} from "./execution/subscription-coding-runtime-v1.js";
+import {deriveSubscriptionCodingRuntimePathsV1,isSubscriptionRuntimePathV1,sameSubscriptionRuntimeDataV1,type SubscriptionCodingCanonicalAuthorityV1} from "./execution/subscription-coding-runtime-binding-v1.js";
+import {readSubscriptionRuntimeAttachmentV1} from "./execution/subscription-runtime-attachment-v1.js";
+import {assertSubscriptionWorkflowRoleV1,decodeSubscriptionSdkWorkflowReportV1,parseSubscriptionWorkflowReportV1} from "./execution/subscription-workflow-transport-v1.js";
+import { assertSelectedFreshExecutionProfileUnchangedV1, readSelectedFreshExecutionProfileV1, selectedFreshCodexModelArgumentsV1 } from "./installation/fresh-installation-v3-profile-v1.js";
 /**
  * Setfarm Event-Driven Spawner
  * Listens to PostgreSQL NOTIFY events for pending steps/stories
@@ -148,7 +153,7 @@ import {
 } from "./execution/openclaw-agent-terminal-outcome.js";
 import { readOpenClawTaskRegistryProbe } from "./execution/openclaw-task-registry.js";
 
-type AgentRuntime = "codex" | "openclaw" | "kimi" | "opencode";
+type AgentRuntime = "codex" | "subscription" | "openclaw" | "kimi" | "opencode";
 type OperationalRecoveryIntent = "observe_fix" | "platform_replay" | "project_rescue";
 
 function classifyOperationalRecoveryIntent(source: string): OperationalRecoveryIntent {
@@ -291,6 +296,7 @@ function kimiWeeklyQuotaExhausted(): boolean {
 
 function resolveAgentRuntime(): AgentRuntime {
   const requested = (process.env.SETFARM_AGENT_RUNTIME || "").trim().toLowerCase();
+  if(requested==="subscription")throw Error("SUBSCRIPTION_SELECTED_INSTALLATION_REQUIRED");
   if (requested === "codex" && commandIsUsable(CODEX_CLI)) return "codex";
   if (requested === "openclaw" && commandIsUsable(OPENCLAW_CLI)) return "openclaw";
   if (requested === "kimi" && commandIsUsable(KIMI_CLI)) return "kimi";
@@ -323,9 +329,11 @@ function initializeAgentRuntimeV1(): void {
   if (SELECTED_SPAWNER_V1) {
     assertSelectedSpawnerPolicyV1();
     assertFreshInstallationOperationalEntryV1();
-    CODEX_CLI = resolveCodexCli();
-    if (!commandIsUsable(CODEX_CLI)) throw new Error("FRESH_SPAWNER_CODEX_UNAVAILABLE");
-    AGENT_RUNTIME = "codex";
+    if(SELECTED_RUNNER_V1==="codex"){
+      CODEX_CLI = resolveCodexCli();
+      if (!commandIsUsable(CODEX_CLI)) throw new Error("FRESH_SPAWNER_CODEX_UNAVAILABLE");
+    }
+    AGENT_RUNTIME = SELECTED_RUNNER_V1 as "codex"|"subscription";
     MAX_CONCURRENT = parsePositiveInt(process.env.SETFARM_MAX_CONCURRENT, 2);
     AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
     agentRuntimeInitializedV1 = true;
@@ -357,8 +365,8 @@ let selectedSpawnerFailedV1 = false;
 let selectedSpawnerReadyV1 = false;
 function assertSelectedSpawnerPolicyV1(): void {
   assertFreshInstallationSelectionUnchangedV1();
-  assertSelectedFreshCodexProfileUnchangedV1();
-  if (!SELECTED_SPAWNER_V1 || selectedSpawnerPolicyRefusedV1 || SELECTED_RUNNER_V1 !== "codex"
+  assertSelectedFreshExecutionProfileUnchangedV1();
+  if (!SELECTED_SPAWNER_V1 || selectedSpawnerPolicyRefusedV1 || (SELECTED_RUNNER_V1 !== "codex" && SELECTED_RUNNER_V1 !== "subscription")
     || process.env.SETFARM_AGENT_RUNTIME !== SELECTED_RUNNER_V1) {
     selectedSpawnerPolicyRefusedV1 = true;
     throw new Error("FRESH_SPAWNER_RUNTIME_SELECTION_REFUSED");
@@ -503,6 +511,10 @@ const OPENCLAW_AGENTS_ROOT = SELECTED_SPAWNER_V1 ? path.join(SELECTED_SPAWNER_V1
 const OPENCLAW_ATTEMPT_WORKSPACE_ROOT = SELECTED_SPAWNER_V1 ? path.join(SELECTED_SPAWNER_V1.paths.root, "attempt-workspaces") : path.join(os.homedir(), ".openclaw", "setfarm", "attempt-workspaces");
 
 function assertAgentRuntimeAvailable(): void {
+  if(AGENT_RUNTIME==="subscription"){
+    assertSelectedSpawnerPolicyV1();
+    if(!readSelectedFreshExecutionProfileV1())throw Error("FRESH_SPAWNER_SUBSCRIPTION_UNAVAILABLE");return;
+  }
   const command = AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : AGENT_RUNTIME === "opencode" ? OPENCODE_CLI : KIMI_CLI;
   if (!commandIsUsable(command)) {
     throw new Error(`AGENT_RUNTIME_UNAVAILABLE: ${AGENT_RUNTIME} CLI is not executable or failed --version at ${command}`);
@@ -1219,6 +1231,9 @@ async function completeInlineSecurityGateIfApplicable(params: {
 }
 
 type ActiveProcess = {
+  claimEnvelope?: ClaimEnvelopeV1;
+  subscriptionRuntime?: SelectedSubscriptionCodingRuntimeV1;
+  subscriptionOriginalClosed?: boolean;
   child: ChildProcess;
   processIdentity?: ProcessIdentityV1;
   runId: string;
@@ -1296,6 +1311,7 @@ function runtimeClaimEnvelope(
 }
 
 function activeClaimEnvelope(active: ActiveProcess): ClaimEnvelopeV1 {
+  if(active.claimEnvelope)return active.claimEnvelope;
   if (!active.claimId) throw new Error("ACTIVE_CLAIM_ENVELOPE_ID_MISSING");
   return parseClaimEnvelope({
     schema: "setfarm.claim-envelope.v1",
@@ -1506,7 +1522,7 @@ function trackSpawn(promise: Promise<void>): void {
 
 function hasTrackedClaimRuntime(predicate: (active: ActiveProcess) => boolean): boolean {
   for (const active of activeProcesses.values()) {
-    if (predicate(active) && childProcessTerminalReason(active.child) === null) return true;
+    if (predicate(active) && (active.subscriptionRuntime || childProcessTerminalReason(active.child) === null)) return true;
   }
   for (const active of drainingProcesses.values()) {
     if (predicate(active)) return true;
@@ -4344,6 +4360,7 @@ function terminateActiveProcess(
   if (callerOwnsClaim) active.claimRecoveryOwned = true;
   active.runtimeDrainRequested = true;
   drainingProcesses.set(active.runtimeSessionId, active);
+  if(active.subscriptionRuntime){void active.subscriptionRuntime.close("owner-abort").catch(()=>{});return;}
   // Stop the local process tree first. Cancelling task records or restarting
   // the gateway while this child is alive can trigger OpenClaw embedded
   // fallback against a workspace that Setfarm is about to clean.
@@ -4407,18 +4424,29 @@ async function waitForClaimRuntimeQuiescence(
   expectedClaimId?: number,
 ): Promise<void> {
   const runtimeSessions = createRuntimeSessionRepository(getSql());
-  const matching = [...drainingProcesses.values()].filter((active) =>
+  let matching = [...drainingProcesses.values()].filter((active) =>
     active.runId === runId
     && (active.storyId ?? null) === (storyId ?? null)
     && active.claimAgentId === claimAgentId
     && (expectedClaimId === undefined || active.claimId === expectedClaimId)
   );
-  const durable = (await runtimeSessions.listRecoverable({ runId, limit: 500 })).filter((session) =>
+  let durable = (await runtimeSessions.listRecoverable({ runId, limit: 500 })).filter((session) =>
     (session.storyId ?? undefined) === storyId
     && session.claimAgentId === claimAgentId
     && (expectedClaimId === undefined || session.claimId === expectedClaimId)
     && session.state !== "released"
   );
+  const subscriptionSessions=durable.filter(row=>isSubscriptionRuntimePathV1(row.runtimePath)||Object.hasOwn(row.drainEvidence,"subscriptionStart"));
+  for(const row of subscriptionSessions){
+    if(row.state==="drained")continue;
+    const requested=await runtimeSessions.requestDrain({sessionId:row.sessionId,ownerInstanceId:row.ownerInstanceId,diagnostic:"Original subscription quiescence"});
+    await drainDurableRuntimeSession(requested,{requestId:`runtime-quiescence-${row.sessionId}`});
+  }
+  if(subscriptionSessions.length){
+    durable=durable.filter(row=>!subscriptionSessions.some(sub=>sub.sessionId===row.sessionId));
+    matching=matching.filter(active=>!active.subscriptionRuntime);
+    if(!durable.length&&!matching.length)return;
+  }
   const quarantined = durable.find((session) => session.state === "quarantined");
   if (quarantined) throw new Error(`RUNTIME_QUIESCENCE_QUARANTINED:${quarantined.sessionId}`);
   if (matching.length === 0) {
@@ -7141,6 +7169,16 @@ async function reapFinishedClaims(): Promise<void> {
          LIMIT 1`,
         [active.stepId],
       );
+      if(active.subscriptionRuntime){
+        // The original pair completion callback owns terminal output. Generic
+        // child/PID/transcript reapers cannot race it or invent closure.
+        if(!row||row.run_status!=="running"||!await heartbeatRunningV3RecoveryOwner(active)
+          ||Date.now()-active.startedAtMs>AGENT_TIMEOUT_SECONDS*1000){
+          terminateActiveProcess(active,"subscription-owner-watchdog",false);activeProcesses.delete(key);
+          await settleExitedClaimAndRuntime(active,new Error("SUBSCRIPTION_OWNER_WATCHDOG_REFUSED"));
+        }else await updateRunningStepHeartbeat(active,row.step_id,Date.now()-active.startedAtMs);
+        continue;
+      }
       if (!row) {
         console.warn(`[spawner] Reaping ${key}: claimed step disappeared`);
       } else if (row.run_status === "running" && row.step_status === "running") {
@@ -7675,6 +7713,7 @@ ${reason}
 
 function spawnAgent(agentId: string, wfId: string, role: string): void {
   const key = `${wfId}:${role}:${agentId}`;
+  if(AGENT_RUNTIME==="subscription")assertSubscriptionWorkflowRoleV1({workflow:wfId,role});
   if (runtimeUsageLimitCooldownUntil > Date.now()) {
     console.log(`[spawner] Runtime usage-limit cooldown active; retry ${key} in ${formatDurationMs(runtimeUsageLimitCooldownUntil - Date.now())}`);
     return;
@@ -7772,8 +7811,69 @@ function matchesTask6aV2RetainedPostClaimRuntimeForShutdown(
     && session.startedAt === undefined;
 }
 
+// Startup errors may retain an original broker/partial worker before an ActiveProcess exists.
+const subscriptionPartialOwnersV1=new Map<string,SubscriptionCodingRuntimeOwnershipV1>();
+async function startSelectedSubscriptionClaimV1(input:Readonly<{
+  key:string;wfId:string;role:string;agentId:string;claimEnvelope:ClaimEnvelopeV1;authority:SubscriptionCodingCanonicalAuthorityV1;
+  runtimeSessionId:string;sessionId:string;sessionKey:string;recoveryFence?:import("./execution/runtime-session-repository.js").RecoveryRuntimeLeaseFence;
+}>):Promise<void>{
+  const envelope=input.claimEnvelope,paths=deriveSubscriptionCodingRuntimePathsV1({runtimeRoot:SELECTED_SPAWNER_V1!.paths.root,runtimeSessionId:input.runtimeSessionId});
+  const sessions=createRuntimeSessionRepository(getSql()),controller=new AbortController();
+  let runtime:SelectedSubscriptionCodingRuntimeV1|undefined,active:ActiveProcess|undefined;
+  await assertSpawnerOperationalEntryV1();
+  try{
+  await sessions.markStarting({sessionId:input.runtimeSessionId,ownerInstanceId:SPAWNER_INSTANCE_ID,sessionKey:input.sessionKey,
+    worktree:envelope.workdir,runtimePath:paths.runtimePath,transcriptPath:paths.transcriptPath,recoveryFence:input.recoveryFence});
+    runtime=await startSelectedSubscriptionCodingRuntimeV1({envelope,authority:input.authority,runtimeSessionId:input.runtimeSessionId,
+      ownerInstanceId:SPAWNER_INSTANCE_ID,recoveryFence:input.recoveryFence,signal:controller.signal});
+    // Retain originals synchronously before markRunning or any other fallible await.
+    active={child:runtime.worker.child,processIdentity:runtime.worker.processIdentity,subscriptionRuntime:runtime,claimEnvelope:envelope,
+      runId:envelope.runId,stepId:envelope.stepId,workflowStepId:envelope.workflowStepId,protocol:envelope.protocol,claimId:envelope.claimId,
+      claimAgentId:envelope.claimAgentId,agentId:input.agentId,wfId:input.wfId,role:input.role,storyId:envelope.storyId,storyDbId:envelope.storyDbId,
+      claimGeneration:envelope.claimGeneration,attempt:envelope.attempt,startedAtMs:Date.now(),transcriptPath:paths.transcriptPath,initialTranscriptSize:0,
+      outputPath:"",spawnCwd:envelope.workdir!,runtimeSessionId:input.runtimeSessionId,runtimeOwnerInstanceId:SPAWNER_INSTANCE_ID,
+      sessionId:input.sessionId,sessionKey:input.sessionKey,sessionJsonlPath:paths.transcriptPath,
+      ...(input.recoveryFence?{recoveryDispatchId:input.recoveryFence.dispatchId,recoveryRevisionId:input.recoveryFence.revisionId,recoveryLeaseToken:input.recoveryFence.leaseToken}:{})};
+    activeProcesses.set(input.key,active);
+    const owned=runtime,retained=active;
+    void owned.closed.then(()=>{retained.subscriptionOriginalClosed=true;}).catch(()=>{});
+    const published=await sessions.markRunning({sessionId:input.runtimeSessionId,ownerInstanceId:SPAWNER_INSTANCE_ID,envelope,
+      runtimePath:paths.runtimePath,worktree:envelope.workdir,transcriptPath:paths.transcriptPath,
+      pid:owned.worker.processIdentity.pid,processIdentity:owned.worker.processIdentity,sessionKey:input.sessionKey,recoveryFence:input.recoveryFence});
+    if(published.status!=="running"||shuttingDown)throw Error("SUBSCRIPTION_RUNNING_PUBLICATION_REFUSED");
+    await owned.openGate();
+    // Child exit is not report authority. Both original stream and broker/process
+    // promises must resolve; the completion owner performs authenticated drainage.
+    void (async()=>{
+      try{
+        const output=await owned.worker.output,closure=await owned.closed;
+        if(closure.status!=="closed"||retained.runtimeDrainRequested)throw Error("SUBSCRIPTION_JOINT_CLOSURE_REFUSED");
+        const decoded=decodeSubscriptionSdkWorkflowReportV1({identity:owned.worker.identity,output});
+        const report=parseSubscriptionWorkflowReportV1({claim:envelope,authority:input.authority,assistantText:decoded.assistantText});
+        const publication=await publishRuntimeCompletionProposal(envelope.stepId,report.output,envelope);
+        if(!publication.managed)throw Error("SUBSCRIPTION_RUNTIME_COMPLETION_OWNER_REQUIRED");
+        if(activeProcesses.get(input.key)===retained)activeProcesses.delete(input.key);
+      }catch(error){
+        terminateActiveProcess(retained,"subscription-terminal-refusal",false);
+        await settleExitedClaimAndRuntime(retained,error);
+        if(activeProcesses.get(input.key)===retained)activeProcesses.delete(input.key);
+      }
+    })().catch(()=>{});
+  }catch(error){
+    if(runtime){drainingProcesses.set(input.runtimeSessionId,active!);void runtime.close("refused").catch(()=>{});}
+    else if(error instanceof SubscriptionCodingRuntimeStartupErrorV1){
+      subscriptionPartialOwnersV1.set(input.runtimeSessionId,error.ownership);void error.ownership.close("refused").catch(()=>{});
+    }
+    const row=await sessions.findById(input.runtimeSessionId);
+    if(row)await sessions.quarantine({sessionId:row.sessionId,expectedOwnerInstanceId:row.ownerInstanceId,
+      expectedStateVersion:row.stateVersion,diagnostic:"SUBSCRIPTION_RUNTIME_START_REFUSED"});
+    throw error;
+  }
+}
+
 async function spawnAgentNow(agentId: string, wfId: string, role: string): Promise<void> {
   await assertSpawnerOperationalEntryV1();
+  if(AGENT_RUNTIME==="subscription")assertSubscriptionWorkflowRoleV1({workflow:wfId,role});
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key) || claimingSpawns.has(key) || hasTrackedClaimRuntime((active) => `${active.wfId}:${active.role}:${active.agentId}` === key)) {
     console.log(`[spawner] Already running/claiming: ${key}, skip`);
@@ -7824,7 +7924,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const sessionJsonlPath = agentSessionJsonlPath(agentId, sessionId);
   const runtimeSessionId = newRuntimeSessionId();
   const transcriptTs = new Date().toISOString().replace(/[:.]/g, "-");
-  const transcriptPath = path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + transcriptTs + ".log");
+  const subscriptionPaths=AGENT_RUNTIME==="subscription"?deriveSubscriptionCodingRuntimePathsV1({runtimeRoot:SELECTED_SPAWNER_V1!.paths.root,runtimeSessionId}):undefined;
+  const transcriptPath = subscriptionPaths?.transcriptPath??path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + transcriptTs + ".log");
   const runtimeIntent: RuntimeClaimIntentV1 = {
     schema: "setfarm.runtime-claim-intent.v1",
     sessionId: runtimeSessionId,
@@ -7833,16 +7934,19 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     ownerInstanceId: SPAWNER_INSTANCE_ID,
     sessionKey,
     transcriptPath,
+    ...(subscriptionPaths?{runtimePath:subscriptionPaths.runtimePath}:{}),
   };
   const outputFileId = agentId + "-spawner-" + spawnId;
   const claimFile = path.join("/tmp", "claim-" + outputFileId + ".json");
   const claimSummaryFile = path.join("/tmp", "claim-summary-" + outputFileId + ".json");
   const outputFile = path.join("/tmp", "setfarm-output-" + outputFileId + ".txt");
   const bootstrapFile = path.join("/tmp", "setfarm-claim-bootstrap-" + outputFileId + ".sh");
+  if(AGENT_RUNTIME!=="subscription"){
   try { fs.unlinkSync(outputFile); } catch { /* didnt exist, fine */ }
   try { fs.unlinkSync(claimFile); } catch { /* didnt exist, fine */ }
   try { fs.unlinkSync(claimSummaryFile); } catch { /* didnt exist, fine */ }
   try { fs.unlinkSync(bootstrapFile); } catch { /* didnt exist, fine */ }
+  }
 
   const fullAgentId = `${wfId}_${role}`;
   // Keep exact invocation ownership through preClaim, publication and transfer
@@ -7979,6 +8083,22 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     if (claim.stepId) await failStep(claim.stepId, reason, claimEnvelope);
     if (claim.claimId) await releaseReservedRuntimeForClaimIfPresent(claim.claimId, reason);
     return;
+  }
+  if(AGENT_RUNTIME==="subscription"){
+    const summary=buildClaimSummary({wfId,role,claimFile,outputFile,bootstrapFile,stepId:claim.stepId!,runId:claim.runId!,
+      workdir:spawnCwd,repo:spawnCwd,storyId:claim.storyId,claimEnvelope,v3ImplementationHandoff:claim.v3ImplementationHandoff,
+      v3StageRetrySource:claim.v3StageRetrySource,input:claim.resolvedInput});
+    if(await completeInlineSecurityGateIfApplicable({role,agentId,wfId,key,claim,claimEnvelope,repo:spawnCwd,transcriptPath})){
+      await releaseReservedRuntimeForClaimIfPresent(claim.claimId!,"Inline security gate completed without runtime spawn");return;
+    }
+    const authority=(summary.canonicalImplementationContext??summary.canonicalStageClaimHandoff) as SubscriptionCodingCanonicalAuthorityV1;
+    if(!authority)throw Error("SUBSCRIPTION_CANONICAL_AUTHORITY_REQUIRED");
+    // The helper retains successful and partial owners even when startup refuses.
+    postClaimOwnershipTransferred=true;
+    await startSelectedSubscriptionClaimV1({key,wfId,role,agentId,claimEnvelope,authority,runtimeSessionId,sessionId,sessionKey,
+      ...(claim.recoveryDispatchId&&claim.recoveryRevisionId&&claim.recoveryLeaseToken&&claim.attempt?{recoveryFence:{
+        revisionId:claim.recoveryRevisionId,dispatchId:claim.recoveryDispatchId,leaseToken:claim.recoveryLeaseToken,attempt:claim.attempt}}:{})});
+    claimingSpawns.delete(key);return;
   }
   let claimSummary: Record<string, unknown>;
   let preparedScopeParentDirs: string[] = [];
@@ -8770,6 +8890,39 @@ async function drainDurableRuntimeSession(
 ): Promise<void> {
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   const tracked = activeRuntimeEntry(session.sessionId);
+  if(isSubscriptionRuntimePathV1(session.runtimePath)||Object.hasOwn(session.drainEvidence,"subscriptionStart")){
+    // No PID absence inference: only original pair resolution plus two real
+    // closed-journal readbacks can feed the repository's locked drain join.
+    const owner=tracked?.active.subscriptionRuntime??subscriptionPartialOwnersV1.get(session.sessionId);
+    if(owner)void owner.close("owner-abort").catch(()=>{});
+    const deadline=Date.now()+12_000;let observations=0;
+    while(Date.now()<deadline){
+      try{
+        const original=readClosedSelectedSubscriptionCodingRuntimeV1(session.sessionId);
+        const journal=readSubscriptionRuntimeAttachmentV1({runtimePath:session.runtimePath!,binding:original.binding});
+        if(original.closure.status!=="closed"||journal.phase!=="closed"
+          ||!sameSubscriptionRuntimeDataV1(journal.closure,original.closure))throw Error("SUBSCRIPTION_ORIGINAL_CLOSURE_REFUSED");
+        observations++;
+        if(observations>=2){
+          const evidence={schema:"setfarm.runtime-drain-evidence.v1" as const,observedAt:new Date().toISOString(),
+            localProcessAbsent:true,openClawTaskAbsent:true,workspaceProcessAbsent:true,stableObservations:observations,
+            evidenceRefs:original.closure.evidenceRefs,subscriptionClosure:original.closure};
+          if(session.state==="quarantined"){
+            if(!request.terminationOwnerInstanceId)throw Error("RUNTIME_QUARANTINE_RECOVERY_REQUIRES_TERMINATION_OWNER");
+            await runtimeSessions.recoverQuarantinedForTermination({sessionId:session.sessionId,expectedStateVersion:session.stateVersion,
+              terminationRequestId:request.requestId,terminationOwnerInstanceId:request.terminationOwnerInstanceId,evidence,
+              diagnostic:"Original subscription joint closure authenticated"});
+          }else await runtimeSessions.markDrained({sessionId:session.sessionId,ownerInstanceId:session.ownerInstanceId,evidence});
+          drainingProcesses.delete(session.sessionId);subscriptionPartialOwnersV1.delete(session.sessionId);return;
+        }
+      }catch{observations=0;}
+      await new Promise<void>(resolve=>setTimeout(resolve,250));
+    }
+    const current=await runtimeSessions.findById(session.sessionId);
+    if(current)await runtimeSessions.quarantine({sessionId:current.sessionId,expectedOwnerInstanceId:current.ownerInstanceId,
+      expectedStateVersion:current.stateVersion,diagnostic:"SUBSCRIPTION_ORIGINAL_CLOSURE_UNAVAILABLE"});
+    throw Error("SUBSCRIPTION_ORIGINAL_CLOSURE_UNAVAILABLE");
+  }
   const expectedProcessIdentity = session.processIdentity ?? tracked?.active.processIdentity;
   if (tracked) {
     terminateActiveProcess(tracked.active, `run-termination:${request.requestId}`);

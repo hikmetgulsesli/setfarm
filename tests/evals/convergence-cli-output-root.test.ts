@@ -8,6 +8,13 @@ import ts from "typescript";
 const SELECTED_SUITE = "/component/selected-release/evals/suites/product-convergence-codex-v1.json";
 const LEGACY_SUITE = "/component/release/evals/suites/product-convergence-v1.json";
 const SOURCE_SHA = "a".repeat(40);
+let recipeApi: typeof import("../../src/installation/selected-convergence-recipe-v1.js") | undefined;
+try { recipeApi = await import("../../src/installation/selected-convergence-recipe-v1.js"); }
+catch (error) {
+  const missing = error as { code?: unknown; url?: unknown };
+  const urls = [".js", ".ts"].map(ext => new URL("../../src/installation/selected-convergence-recipe-v1" + ext, import.meta.url).href);
+  if (missing.code !== "ERR_MODULE_NOT_FOUND" || !urls.includes(missing.url as string)) throw error;
+}
 
 function sourceFunction(file: string, name: string): string {
   const text = readFileSync(new URL("../../" + file, import.meta.url), "utf8");
@@ -21,14 +28,17 @@ const compile = (text: string) => ts.transpileModule(text, { compilerOptions: {
   module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022,
 } }).outputText.replace(/^export /gm, "");
 
-function parser(selected: boolean, environment: Record<string, string> = {}, refused = false) {
+function parser(selected: boolean, environment: Record<string, string> = {}, refused = false, runtime: "codex" | "subscription" = "codex") {
   const code = compile(sourceFunction("src/runtime-config.ts", "resolveConvergenceEvalResultDir")
     + "\n" + sourceFunction("src/evals/convergence-runner.ts", "parseCli"));
   return new Function("path", "join", "packageRoot", "resolvePackageRoot", "expandRuntimePath", "process",
-    "freshInstallationSelectionV1", "assertFreshInstallationSelectionUnchangedV1", code + ";return parseCli;")(
+    "freshInstallationSelectionV1", "assertFreshInstallationSelectionUnchangedV1", "readSelectedFreshExecutionProfileV1", "projectSelectedConvergenceRecipeV1", code + ";return parseCli;")(
     path, path.join, () => "/component/release", () => "/component/release", (value: string) => value,
     { env: environment }, selected ? { paths: { repository: "/component/selected-release", evals: "/component/installation/runtime/evals/results" } } : null,
     () => { if (refused) throw Error("selection refused"); },
+    () => ({ schema: "setfarm.model-execution-profile.v1", providerId: runtime === "subscription" ? "minimax" : "codex",
+      modelId: runtime === "subscription" ? "minimax/MiniMax-M3.1-Flash" : "codex/gpt-6.1-sol", selection: "primary" }),
+    (profile: unknown) => { assert.ok(recipeApi, "pure selected recipe unavailable"); return recipeApi.projectSelectedConvergenceRecipeV1(profile); },
   ) as (argv: readonly string[]) => { outputRoot: string; suiteFile: string; execute: boolean; json: boolean; releaseSha?: string };
 }
 
@@ -111,4 +121,13 @@ test("actual parsed main keeps ordinary default and refuses selected foreign sui
 });
 test("actual CLI propagates captured selection refusal even with an explicit output argument", () => {
   assert.throws(() => parser(true, {}, true)(["--output-root", "/component/foreign"]), /selection refused/);
+});
+
+
+test("actual CLI derives annual fixed suite from the selected primary and refuses crossed Codex recipe", () => {
+  const parse = parser(true, {}, false, "subscription");
+  const annual = "/component/selected-release/evals/suites/product-convergence-minimax-m31-flash-v1.json";
+  assert.equal(parse([]).suiteFile, annual);
+  assert.equal(parse(["--suite", annual]).suiteFile, annual);
+  assert.throws(() => parse(["--suite", SELECTED_SUITE]), { message: "MANUAL_EVALUATION_RECIPE_REFUSED" });
 });

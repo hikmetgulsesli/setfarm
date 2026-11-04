@@ -13,6 +13,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { registerHooks } from "node:module";
 import childProcess from "node:child_process";
+import { ProductConvergenceSuiteV1Schema } from "../../src/evals/suite-schema.js";
 import { ProductConvergenceSuiteV2Schema } from "../../src/evals/suite-schema-v2.js";
 import { createConvergenceResultV2, createConvergenceRunResultV2 } from "../../src/evals/result-schema-v2.js";
 import { taskIntentOracleHashV2 } from "../../src/evals/task-intent-oracle-v2.js";
@@ -226,4 +227,34 @@ test("component a leaf owned by another uid is unsafe", async t => {
   fsp.lstat = (async (...args: Parameters<typeof fsp.lstat>) => { const stat = await original(...args); return args[0] === leaf ? Object.assign(Object.create(stat), { uid: Number(stat.uid) + 1 }) : stat; }) as typeof fsp.lstat;
   try { assert.equal((await f.reader.readSelectedControlEvidenceV1(f.input)).evaluation.availability.state, "unsafe"); }
   finally { fsp.lstat = original; }
+});
+
+test('historical annual evidence resolves persisted fixed suite hash under either current runtime without writes', async t => {
+  const annual = ProductConvergenceSuiteV1Schema.parse(JSON.parse(fs.readFileSync('evals/suites/product-convergence-minimax-m31-flash-v1.json', 'utf8')));
+  const priorRuntime = process.env.SETFARM_AGENT_RUNTIME;
+  try {
+    for (const runtime of ['codex', 'subscription']) {
+      process.env.SETFARM_AGENT_RUNTIME = runtime;
+      const f = await fixture(t);
+      fs.writeFileSync(path.join(f.repository, 'evals/suites/product-convergence-minimax-m31-flash-v1.json'), JSON.stringify(annual), { mode: 0o600 });
+      f.input.suiteHash = hashCanonicalJson(annual); f.input.releaseSha = 'e'.repeat(40);
+      const { resultHash: _, ...payload } = f.result();
+      f.storeResult(createConvergenceResult({ ...payload, suiteId: annual.suiteId, suiteHash: f.input.suiteHash, releaseSha: f.input.releaseSha }));
+      const before = snapshot(f.root);
+      const result = await f.reader.readSelectedControlEvidenceV1(f.input);
+      assert.equal(result.evaluation.availability.state, 'available', runtime);
+      assert.equal(result.evaluation.report?.compatibility, 'historical');
+      assert.equal(result.evaluation.report?.qualification, 'historical');
+      assert.deepEqual(result.evaluation.report?.cases.map(item => item.caseId), annual.cases.map((item: any) => item.caseId));
+      assert.deepEqual(snapshot(f.root), before);
+    }
+  } finally { if (priorRuntime === undefined) delete process.env.SETFARM_AGENT_RUNTIME; else process.env.SETFARM_AGENT_RUNTIME = priorRuntime; }
+});
+
+test('historical evidence refuses ambiguous identical suite material at both fixed recipe paths', async t => {
+  const f = await fixture(t); f.storeResult();
+  fs.copyFileSync(path.join(f.repository, 'evals/suites/product-convergence-codex-v1.json'),
+    path.join(f.repository, 'evals/suites/product-convergence-minimax-m31-flash-v1.json'));
+  const result = await f.reader.readSelectedControlEvidenceV1(f.input);
+  assert.equal(result.evaluation.availability.state, 'invalid');
 });

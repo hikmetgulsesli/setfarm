@@ -109,6 +109,7 @@ test("private intent binds the fixed recipe and keeps custody separate from publ
     fixedSuiteRelativePath: "evals/suites/product-convergence-codex-v1.json",
   };
   assert.equal(ControlPrivateIntentV1Schema.safeParse(intent).success, true);
+  assert.equal(ControlPrivateIntentV1Schema.safeParse({ ...intent, fixedSuiteRelativePath: "evals/suites/product-convergence-minimax-m31-flash-v1.json" }).success, true, "annual fixed recipe must be accepted without arbitrary path authority");
   for (const fixedSuiteRelativePath of [null, "../suite.json", "evals/suites/custom.json"]) {
     assert.equal(ControlPrivateIntentV1Schema.safeParse({ ...intent, fixedSuiteRelativePath }).success, false);
   }
@@ -210,13 +211,14 @@ test("production custody ingress refuses unselected source entry before any oper
 
 // Real parser and full intent function, with explicit local selection/owner observations.
 // The suite sentinel stops before any durable intent/custody effect; this is not entry/OS admission.
-function directRecipeComponent(argv: readonly string[]) {
+function directRecipeComponent(argv: readonly string[], runtime: "codex" | "subscription" = "codex") {
   function declarations(file: string, names: readonly string[]) {
     const source = fs.readFileSync(new URL("../../" + file, import.meta.url), "utf8");
     const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
     return names.map(name => {
       const nodes = tree.statements.filter(node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
         || (ts.isVariableStatement(node) && node.declarationList.declarations.some(item => item.name.getText(tree) === name)));
+      if (name === "SUITE" && nodes.length === 0) return ""; // Obsolete local literal was replaced by the shared recipe.
       assert.equal(nodes.length, 1, `complete production ${name}`);
       return nodes[0]!.getText(tree);
     }).join("\n");
@@ -239,8 +241,17 @@ function directRecipeComponent(argv: readonly string[]) {
   const calls: string[] = [];
   const mutations: string[] = [];
   const forbidden = (name: string) => () => { mutations.push(name); throw new Error("UNEXPECTED_COMPONENT_MUTATION"); };
+  const recipe = Object.freeze({ fixedSuiteRelativePath: runtime === "subscription"
+    ? "evals/suites/product-convergence-minimax-m31-flash-v1.json" : "evals/suites/product-convergence-codex-v1.json",
+    executionProfile: Object.freeze({ schema: "setfarm.model-execution-profile.v1", providerId: runtime === "subscription" ? "minimax" : "codex",
+      modelId: runtime === "subscription" ? "minimax/MiniMax-M3.1-Flash" : "codex/gpt-6.1-sol", selection: "primary" }),
+    workerEnv: Object.freeze(runtime === "subscription" ? { SETFARM_AGENT_RUNTIME: "subscription" }
+      : { SETFARM_AGENT_RUNTIME: "codex", SETFARM_CODEX_MODEL: "gpt-6.1-sol" }), assertUnchanged() {} });
   const dependencies = {
     path, join: path.join, process: Object.freeze({ argv: rawArgv, env: Object.freeze({}) }),
+    captureSelectedConvergenceRecipeV1: async () => recipe,
+    readSelectedFreshExecutionProfileV1: () => recipe.executionProfile,
+    projectSelectedConvergenceRecipeV1: () => recipe,
     packageRoot: () => "/component/ordinary-release", resolvePackageRoot: () => "/component/ordinary-release",
     expandRuntimePath: (value: string) => value, freshInstallationSelectionV1: selected,
     assertFreshInstallationSelectionUnchangedV1: () => {}, custodies: new Map(),
@@ -422,4 +433,18 @@ for(const fault of ["foreign_outbox","missing_event","foreign_event","bad_hash",
   if(fault==="active_run")extra.active_runs=1;
   if(fault==="overflow"){outbox=Array(4097).fill(f.row);deliveries=[];owners=[];}
   await assert.rejects(()=>f.observe(outbox,deliveries,owners,extra));
+});
+
+
+test("selected annual raw intent and actual parser share fixed recipe before any publication", async () => {
+  const annual = "/component/selected-release/evals/suites/product-convergence-minimax-m31-flash-v1.json";
+  for (const argv of [[], ["--suite", annual]]) {
+    const component = directRecipeComponent(argv, "subscription");
+    assert.equal(component.api.parseCli(argv).suiteFile, annual);
+    await assert.rejects(component.api.prepareSelectedDirectEvaluationIntentV1, error => error === component.sentinel);
+    assert.deepEqual(component.calls, ["entry", "root-read", "suite"]); assert.deepEqual(component.mutations, []);
+  }
+  const crossed = directRecipeComponent(["--suite", "/component/selected-release/evals/suites/product-convergence-codex-v1.json"], "subscription");
+  await assert.rejects(crossed.api.prepareSelectedDirectEvaluationIntentV1, { message: "MANUAL_EVALUATION_RECIPE_REFUSED" });
+  assert.deepEqual(crossed.mutations, []); assert.ok(!crossed.calls.includes("suite"));
 });

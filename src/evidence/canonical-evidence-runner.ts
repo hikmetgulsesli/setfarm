@@ -24,6 +24,13 @@ import {
 import { compileEvidencePlanV1, EvidencePlanV1Schema, type EvidencePlanV1 } from "./evidence-plan-v1.js";
 import type { z } from "zod";
 
+import {ClaimEnvelopeV1Schema,type ClaimEnvelopeV1} from "../execution/schemas/claim-envelope-v1.js";
+import type {V3StoryClaimRuntimeSubjectV1} from "../execution/v3-story-claim-runtime-binding-v1.js";
+export type SuperviseStageEvidenceIdentityV1=Readonly<{
+  workflowStepId:"supervise";claimId:number;runtimeSessionId:string;requestId:string;ownerAttemptCount:number;
+  outputHash:string;envelope:ClaimEnvelopeV1;boundSubject:V3StoryClaimRuntimeSubjectV1;sourceBefore:SourceRevisionV1;
+}>;
+
 export type CanonicalCommandTraceV1 = Readonly<{
   commandRef: string;
   exitCode: number;
@@ -757,7 +764,6 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
   runId: string;
   storyId: string;
   workdir: string;
-  attemptId: string;
   sourceRevision: SourceRevisionV1;
   slice: ImplementationSliceV1;
   plan: EvidencePlanV1;
@@ -765,7 +771,7 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
   startedAt: string;
   completedAt: string;
   runnerVersion?: string;
-}>): CanonicalEvidenceResultV1 {
+}&({attemptId:string;stageClaim?:never}|{stageClaim:SuperviseStageEvidenceIdentityV1;attemptId?:never})>): CanonicalEvidenceResultV1 {
   const slice = ImplementationSliceV1Schema.parse(input.slice);
   const plan = EvidencePlanV1Schema.parse(input.plan);
   const expectedPlan = compileEvidencePlanV1({ slice, sliceHash: plan.sliceHash });
@@ -778,8 +784,25 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
     throw new Error("CANONICAL_EVIDENCE_SLICE_PLAN_IDENTITY_MISMATCH");
   }
 
+  const stage=input.stageClaim;
+  if(stage){
+    const envelope=ClaimEnvelopeV1Schema.parse(stage.envelope),fail=():never=>{throw Error("STAGE_EVIDENCE_IDENTITY_OR_FRESHNESS_REFUSED");};
+    if(input.attemptId!==undefined||stage.workflowStepId!=="supervise"||envelope.workflowStepId!=="supervise"||envelope.protocol!=="v3"||envelope.attempt
+      ||envelope.claimId!==stage.claimId||envelope.runId!==input.runId||envelope.workdir!==input.workdir
+      ||!/^RTS_[A-Za-z0-9-]+$/.test(stage.runtimeSessionId)||!/^RCR_[A-Za-z0-9-]+$/.test(stage.requestId)
+      ||!Number.isSafeInteger(stage.ownerAttemptCount)||stage.ownerAttemptCount<1||!/^[a-f0-9]{64}$/.test(stage.outputHash)
+      ||(stage.boundSubject.kind!=="story_member"&&stage.boundSubject.kind!=="final_product")
+      ||(stage.boundSubject.kind==="story_member"&&stage.boundSubject.storyId!==input.storyId))fail();
+    const start=Date.parse(input.startedAt),end=Date.parse(input.completedAt);
+    if(!Number.isFinite(start)||!Number.isFinite(end)||start>end||Date.parse(envelope.issuedAt)>start)fail();
+    const time=(value:string)=>{const t=Date.parse(value);if(!Number.isFinite(t)||t<start||t>end)fail();};
+    for(const command of input.execution.commands){time(command.startedAt);time(command.completedAt);if(Date.parse(command.startedAt)>Date.parse(command.completedAt))fail();}
+    if(input.execution.initialCapture)time(input.execution.initialCapture.capturedAt);
+    for(const trace of input.execution.interactions){time(trace.result.startedAt);time(trace.result.completedAt);time(trace.before.capturedAt);time(trace.after.capturedAt);
+      if(Date.parse(trace.result.startedAt)>Date.parse(trace.result.completedAt))fail();}
+  }
   const root = path.resolve(input.workdir);
-  const evidenceRoot = path.join(root, ".setfarm", "evidence-v2", safeSegment(input.storyId), safeSegment(input.attemptId));
+  const evidenceRoot = path.join(root, ".setfarm", "evidence-v2", safeSegment(input.storyId), safeSegment(stage?`stage-claim-${stage.claimId}-${stage.runtimeSessionId}-${stage.requestId}-owner-${stage.ownerAttemptCount}`:input.attemptId!));
   fs.mkdirSync(evidenceRoot, { recursive: true });
   const artifacts = new Map<string, Artifact>();
   const artifactPaths: string[] = [];
@@ -911,6 +934,9 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
     observationRefsByFlow.set(flow.flowId, drafts.map(computeObservationRef).sort());
   }
 
+  if(stage)addBytes(path.relative(root,path.join(evidenceRoot,"STAGE_CLAIM_BINDING.json")),canonicalJsonStringify({
+    ...stage,sourceAfter:input.sourceRevision,sliceHash:plan.sliceHash,planHash:plan.planHash,
+  })+"\n","application/json");
   const candidateObservations = [...commandObservations, ...flowObservations];
   const productPredicates = slice.requiredEvidence.map((predicate) => {
     const flow = plan.flows.find((candidate) => candidate.predicateRefs.includes(predicate.id));
@@ -974,7 +1000,7 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
     packetHash: slice.packetHash,
     sliceHash: plan.sliceHash,
     sourceRevision: input.sourceRevision,
-    attemptId: input.attemptId,
+    ...(stage?{}:{attemptId:input.attemptId!}),
     predicates,
     observations: candidateObservations.filter((observation) => new Set(
       predicates.flatMap((predicate) => predicate.observationRefs),

@@ -1,4 +1,5 @@
 import { constants, lstatSync, type Stats } from "node:fs";
+import { FIXED_CONVERGENCE_SUITE_PATHS_V1, resolveFixedConvergenceSuitePathV1 } from "../installation/selected-convergence-recipe-v1.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -83,10 +84,14 @@ function absent(code: string) { return { availability: { state: "unconfigured" a
 
 /** Internal Source-only snapshot; never an HTTP or worker ABI. */
 export async function readSelectedControlEvidenceSnapshotV1(input: ControlEvidenceExpectedV1) {
-  const retained: Pin[] = [];
+  const retained: Pin[] = [], absentRecipes: string[] = [];
   const assertFilesUnchanged = (): void => {
     for (const pin of retained) {
       try { if (!same(pin.stat, lstatSync(pin.locator))) unsafe(); } catch { unsafe(); }
+    }
+    for (const locator of absentRecipes) {
+      try { lstatSync(locator); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; unsafe(); }
+      unsafe(); // A later candidate must not make a previously unique hash ambiguous.
     }
   };
   const assertUnchanged = (): void => { assertFreshInstallationSelectionUnchangedV1(); assertFilesUnchanged(); };
@@ -129,9 +134,24 @@ export async function readSelectedControlEvidenceSnapshotV1(input: ControlEviden
   if (expected.refs.resultHash || expected.refs.gateHash) {
     try {
       if (!expected.refs.resultHash || !expected.suiteHash) invalid();
-      const raw = JSON.parse((await boundedRead(path.join(selected.paths.repository, "evals/suites/product-convergence-codex-v1.json"), selected.paths.repository, retained)).toString("utf8"));
-      const suite = raw.schema === "setfarm.product-convergence-suite.v1" ? ProductConvergenceSuiteV1Schema.parse(raw) : ProductConvergenceSuiteV2Schema.parse(raw);
-      if (hashCanonicalJson(suite) !== expected.suiteHash || suite.repetitionsPerCase !== 1) invalid();
+      // Historical identity comes only from persisted hashes and fixed public
+      // recipe files. The current runtime/profile must not retarget old evidence.
+      const candidates = [];
+      for (const fixedSuiteRelativePath of FIXED_CONVERGENCE_SUITE_PATHS_V1) {
+        try {
+          const raw = JSON.parse((await boundedRead(path.join(selected.paths.repository, fixedSuiteRelativePath), selected.paths.repository, retained)).toString("utf8"));
+          const suite = raw.schema === "setfarm.product-convergence-suite.v1" ? ProductConvergenceSuiteV1Schema.parse(raw) : ProductConvergenceSuiteV2Schema.parse(raw);
+          candidates.push({ fixedSuiteRelativePath, suiteHash: hashCanonicalJson(suite), suite });
+        } catch (error) {
+          if (!(error instanceof EvidenceError) || error.state !== "missing") throw error;
+          absentRecipes.push(path.join(selected.paths.repository, fixedSuiteRelativePath));
+        }
+      }
+      if (candidates.length === 0) throw new EvidenceError("missing", "CONTROL_EVIDENCE_MISSING");
+      const selectedPath = resolveFixedConvergenceSuitePathV1(expected.suiteHash,
+        candidates.map(({ fixedSuiteRelativePath, suiteHash }) => ({ fixedSuiteRelativePath, suiteHash })));
+      const suite = candidates.find(candidate => candidate.fixedSuiteRelativePath === selectedPath)!.suite;
+      if (suite.repetitionsPerCase !== 1) invalid();
       const readEval = (hash: string) => boundedRead(path.join(selected.paths.evals, "sha256", hash.slice(0, 2), `${hash}.json`), selected.directory, retained);
       const bytes = await readEval(expected.refs.resultHash);
       const result = ConvergenceEvalResultVersionedSchema.parse(JSON.parse(bytes.toString("utf8")));

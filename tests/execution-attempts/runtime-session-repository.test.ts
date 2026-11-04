@@ -549,7 +549,7 @@ async function seedStory(database: Awaited<ReturnType<typeof createIsolatedTestD
 
 async function seedPreAttemptRecoveryRuntime(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
-  input: Readonly<{ runId: string; leaseMs?: number; sessionId?: string }>,
+  input: Readonly<{ runId: string; leaseMs?: number; sessionId?: string; subscriptionWorktree?: string }>,
 ) {
   const admission = await seedRecoveryStoryAdmissionAuthority(database, input.runId);
   const {
@@ -642,8 +642,13 @@ async function seedPreAttemptRecoveryRuntime(
       schema: "setfarm.runtime-claim-intent.v1",
       sessionId: input.sessionId ?? "RTS_recovery-runtime-0001",
       runtimeAgentId: "prism",
-      runtimeKind: "openclaw_session",
+      runtimeKind: input.subscriptionWorktree ? "local_process" : "openclaw_session",
       ownerInstanceId: runtimeOwnerInstanceId,
+      ...(input.subscriptionWorktree ? {
+        worktree: input.subscriptionWorktree,
+        runtimePath: `/runtime/attempt-workspaces/subscription/${input.sessionId ?? "RTS_recovery-runtime-0001"}/owner`,
+        transcriptPath: `/runtime/attempt-workspaces/subscription/${input.sessionId ?? "RTS_recovery-runtime-0001"}/worker-output.log`,
+      } : {}),
     },
     recoveryHandoff: handoff,
     storyAdmissionProof,
@@ -668,7 +673,7 @@ async function seedPreAttemptRecoveryRuntime(
 
 async function seedAttemptBoundRecoveryRuntime(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
-  input: Readonly<{ runId: string; runtimeOwnerInstanceId?: string }>,
+  input: Readonly<{ runId: string; runtimeOwnerInstanceId?: string; subscriptionWorktree?: string }>,
 ) {
   const preAttempt = await seedPreAttemptRecoveryRuntime(database, input);
   const { publication, findingSet, handoff, storyId } = preAttempt;
@@ -731,6 +736,31 @@ async function seedAttemptBoundRecoveryRuntime(
 }
 
 describe("durable runtime session ownership", () => {
+  it("authenticated selected start preserves the actual recovery delivery expiry fence", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const fixture = await seedAttemptBoundRecoveryRuntime(database, {
+        runId: "run-subscription-authenticated-recovery-lease", subscriptionWorktree: "/runtime/projects/recovery-story",
+      });
+      const session = fixture.session;
+      await fixture.sessions.markStarting({ sessionId: session.sessionId, ownerInstanceId: session.ownerInstanceId,
+        recoveryFence: fixture.recoveryFence });
+      const rows = await database.sql<Array<{ claim_generation: number }>>`SELECT claim_generation FROM stories WHERE id=${fixture.storyDbId}`;
+      const envelope: ClaimEnvelopeV1 = { schema: "setfarm.claim-envelope.v1", protocol: "v3", issuedAt: new Date().toISOString(),
+        runId: session.runId, stepId: session.stepDbId, workflowStepId: session.workflowStepId,
+        storyId: fixture.storyId, storyDbId: fixture.storyDbId, claimId: session.claimId,
+        claimAgentId: session.claimAgentId, runtimeAgentId: session.runtimeAgentId, claimGeneration: rows[0]!.claim_generation,
+        workdir: session.worktree!, attempt: fixture.recoveryFence.attempt };
+      const input = { sessionId: session.sessionId, ownerInstanceId: session.ownerInstanceId, envelope,
+        runtimePath: session.runtimePath!, worktree: session.worktree!, transcriptPath: session.transcriptPath!,
+        recoveryFence: fixture.recoveryFence };
+      assert.equal((await fixture.sessions.readAuthenticatedStartingClaim(input)).state, "starting");
+      await database.sql`UPDATE recovery_dispatch_deliveries SET lease_expires_at=clock_timestamp()-interval '1 second'
+        WHERE dispatch_id=${fixture.recoveryFence.dispatchId}`;
+      await assert.rejects(fixture.sessions.readAuthenticatedStartingClaim(input), /RECOVERY_DELIVERY_FENCE_STALE/);
+      assert.equal((await fixture.sessions.findById(session.sessionId))!.state, "starting");
+    } finally { await database.cleanup(); }
+  });
   it("refuses crossed supplied identity on a starting retry without mutating the locked row", async () => {
     const database = await createIsolatedTestDatabase();
     try {

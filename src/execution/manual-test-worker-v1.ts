@@ -1,3 +1,4 @@
+import { captureSelectedConvergenceRecipeV1 } from "../installation/selected-convergence-recipe-v1.js";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -508,7 +509,12 @@ export async function runSelectedManualControlJobV1(rawIntent: ControlPrivateInt
     const selection = selected();
     if (intent.receipt.kind === "ui_regression")
         throw new ControlWorkerFatalErrorV1("CONTROL_CUSTODY_UNCERTAIN");
+    const recipe = intent.receipt.kind === "convergence_full8" ? await captureSelectedConvergenceRecipeV1() : undefined;
+    recipe?.assertUnchanged();
+    if (recipe && intent.fixedSuiteRelativePath !== recipe.fixedSuiteRelativePath)
+        throw new ControlWorkerFatalErrorV1("CONTROL_BINDING_FAILED");
     await registerSelectedManualWorkerCustodyV1(custody);
+    recipe?.assertUnchanged();
     if (channel.cancellation())
         return closeNeverReserved(channel, "cancelled");
     const input: JobInput = { jobId: intent.receipt.jobId, kind: intent.receipt.kind, selectionHash: intent.receipt.selectionHash, sourceSha: intent.receipt.sourceSha, suiteHash: intent.receipt.suiteHash };
@@ -536,11 +542,14 @@ export async function runSelectedManualControlJobV1(rawIntent: ControlPrivateInt
         execution.finalDecision();
     }
     else {
-        const loaded = await effects.loadSuite(path.join(selection.paths.repository, "evals/suites/product-convergence-codex-v1.json"));
+        recipe!.assertUnchanged();
+        const loaded = await effects.loadSuite(path.join(selection.paths.repository, recipe!.fixedSuiteRelativePath));
+        recipe!.assertUnchanged();
         if (loaded.suiteHash !== input.suiteHash)
             throw new ControlWorkerFatalErrorV1("CONTROL_BINDING_FAILED");
         const ports = await effects.createConvergencePorts(selection.paths.evals);
         try {
+            recipe!.assertUnchanged();
             const result = await runConvergenceSuite(loaded, { releaseSha: input.sourceSha, execute: true, control: execution.control }, execution.wrap(loaded, ports));
             refs = { resultHash: result.result.resultHash, gateHash: result.gate.gateHash };
             outcome = result.result.blockerCodes.includes("EVAL_CANCEL_REQUESTED") ? "cancelled" : "completed";

@@ -9,6 +9,7 @@ import {
   type CanonicalCommandTraceV1,
   type CanonicalEvidenceResultV1,
   type CanonicalInteractionTraceV1,
+  type SuperviseStageEvidenceIdentityV1,
 } from "../evidence/canonical-evidence-runner.js";
 import {
   compileEvidencePlanV1,
@@ -440,9 +441,8 @@ export async function runImplementEvidenceIfRequested(input: {
   v3?: Readonly<{
     slice: ImplementationSliceV1;
     sliceHash: string;
-    attemptId: string;
     sourceRevision: SourceRevisionV1;
-  }>;
+  }&({attemptId:string;stageClaim?:never}|{stageClaim:SuperviseStageEvidenceIdentityV1;attemptId?:never})>;
   observe?: ImplementEvidenceObserver;
 }): Promise<ImplementEvidenceRunResult> {
   const evidenceStartedAt = new Date().toISOString();
@@ -527,7 +527,7 @@ export async function runImplementEvidenceIfRequested(input: {
         runId: input.runId,
         storyId: input.storyId,
         workdir: input.workdir,
-        attemptId: input.v3.attemptId,
+        ...(input.v3.stageClaim?{stageClaim:input.v3.stageClaim}:{attemptId:input.v3.attemptId!}),
         sourceRevision: input.v3.sourceRevision,
         slice: input.v3.slice,
         plan: evidencePlan,

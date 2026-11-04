@@ -567,3 +567,57 @@ for (const failure of ["forever_pending", "unknown_settlement"] as const) test(`
         assert.equal(h.starts(),0); assert.equal(h.promotions(),0);
     } finally { fs.rmSync(h.root,{recursive:true,force:true}); }
 });
+
+// Exact selected dispatch Source with local DATA/channel observations only.
+// The load sentinel stops before convergence ports, SQL, SDK or run creation.
+async function selectedRecipeDispatchComponent(runtime: 'codex' | 'subscription', mode: 'load' | 'crossed' | 'drift' = 'load') {
+    const source = fs.readFileSync('src/execution/manual-test-worker-v1.ts', 'utf8');
+    const tree = ts.createSourceFile('manual-test-worker-v1.ts', source, ts.ScriptTarget.Latest, true);
+    const node = tree.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === 'runSelectedManualControlJobV1');
+    assert.ok(node);
+    const code = ts.transpileModule(node.getText(tree), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText.replace(/^export /gm, '');
+    const relative = runtime === 'subscription' ? 'evals/suites/product-convergence-minimax-m31-flash-v1.json' : 'evals/suites/product-convergence-codex-v1.json';
+    const { loadConvergenceSuiteVersioned } = await import('../../src/evals/suite-schema-v2.js');
+    const loaded = await loadConvergenceSuiteVersioned(path.resolve(relative));
+    const intent = { receipt: { kind: 'convergence_full8', jobId: '11111111-1111-4111-8111-111111111111',
+        selectionHash: 'b'.repeat(64), sourceSha: 'c'.repeat(40), suiteHash: loaded.suiteHash },
+        fixedSuiteRelativePath: mode === 'crossed' ? (runtime === 'subscription' ? 'evals/suites/product-convergence-codex-v1.json' : 'evals/suites/product-convergence-minimax-m31-flash-v1.json') : relative };
+    const custody = {}; const channel = { intent, custody, intentHash: 'd'.repeat(64), owner, cancellation: () => false };
+    const sentinel = new Error('COMPONENT_SELECTED_SUITE_LOAD_BOUNDARY');
+    let drift = false; const calls: string[] = [], mutations: string[] = [];
+    const recipe = Object.freeze({ fixedSuiteRelativePath: relative,
+        executionProfile: { schema: 'setfarm.model-execution-profile.v1', providerId: runtime === 'subscription' ? 'minimax' : 'codex',
+            modelId: runtime === 'subscription' ? 'minimax/MiniMax-M3.1-Flash' : 'codex/gpt-6.1-sol', selection: 'primary' },
+        workerEnv: runtime === 'subscription' ? { SETFARM_AGENT_RUNTIME: 'subscription' } : { SETFARM_AGENT_RUNTIME: 'codex', SETFARM_CODEX_MODEL: 'gpt-6.1-sol' },
+        assertUnchanged() { if (drift) throw Error('COMPONENT_SELECTED_PROFILE_DRIFT'); } });
+    const dependencies = { path, selectedManualWorkerChannelV1: () => channel,
+        ControlPrivateIntentV1Schema: { parse: (value: unknown) => value }, ControlWorkerCustodyV1Schema: { parse: (value: unknown) => value },
+        ControlWorkerFatalErrorV1: Error, selected: () => ({ paths: { repository: '/component/selected-release', evals: '/component/private-evals' }, assertUnchanged() {} }),
+        captureSelectedConvergenceRecipeV1: async () => recipe,
+        registerSelectedManualWorkerCustodyV1: async () => { mutations.push('register'); },
+        acquireSelectedManualEvaluationV1: async () => { mutations.push('acquire'); return {}; },
+        acquiredJournal: () => ({}), WorkerExecutionV1: class { async announceAcquired() {} },
+    };
+    const dispatch = new Function(...Object.keys(dependencies), code + ';return runSelectedManualControlJobV1;')(...Object.values(dependencies));
+    const effects = { async loadSuite(file: string) { calls.push(file); if (mode === 'load') throw sentinel; drift = mode === 'drift'; return loaded; },
+        async createConvergencePorts() { mutations.push('ports'); throw Error('UNEXPECTED_CONVERGENCE_PORTS'); } };
+    return { invoke: () => dispatch(intent, custody, effects), sentinel, calls, mutations, relative };
+}
+
+test('selected worker loads the captured fixed annual recipe and retains the Codex recipe', async () => {
+    for (const runtime of ['subscription', 'codex'] as const) {
+        const component = await selectedRecipeDispatchComponent(runtime);
+        await assert.rejects(component.invoke, error => error === component.sentinel);
+        assert.deepEqual(component.calls, ['/component/selected-release/' + component.relative]);
+        assert.ok(!component.mutations.includes('ports'));
+    }
+});
+
+test('selected worker refuses crossed recipe before custody and profile drift before convergence effects', async () => {
+    const crossed = await selectedRecipeDispatchComponent('subscription', 'crossed');
+    await assert.rejects(crossed.invoke, /CONTROL_BINDING_FAILED|MANUAL_EVALUATION_RECIPE_REFUSED/);
+    assert.deepEqual(crossed.calls, []); assert.deepEqual(crossed.mutations, []);
+    const drift = await selectedRecipeDispatchComponent('subscription', 'drift');
+    await assert.rejects(drift.invoke, /COMPONENT_SELECTED_PROFILE_DRIFT|CONTROL_BINDING_FAILED/);
+    assert.ok(!drift.mutations.includes('ports'));
+});

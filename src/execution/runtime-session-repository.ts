@@ -17,6 +17,16 @@ import {
   type ProcessIdentityV1,
 } from "./schemas/process-identity-v1.js";
 import { v3RecoveryStoryLockIdentity } from "../recovery/v3-recovery-claim-authority.js";
+import { assertClaimAuthority } from "./claim-authority.js";
+import type { ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
+import { readSubscriptionRuntimeAttachmentV1, parseSubscriptionRuntimeBindingV1,
+  parseSubscriptionRuntimeAuthorityV1, type SubscriptionRuntimeBindingV1,
+  type SubscriptionRuntimeAuthorityV1 } from "./subscription-runtime-attachment-v1.js";
+import { isSubscriptionRuntimePathV1, parseSubscriptionRuntimeClosureV1,
+  parseSubscriptionRuntimeStartSeedV1, sameSubscriptionRuntimeDataV1,
+  subscriptionRuntimePreparationHashV1, subscriptionRuntimeRefusedV1,
+  assertSubscriptionRuntimePublishedWorkerV1,
+  type SubscriptionRuntimeStartSeedV1, type SubscriptionCodingCanonicalAuthorityV1 } from "./subscription-coding-runtime-binding-v1.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -90,6 +100,7 @@ export const RuntimeDrainEvidenceV1Schema = z.object({
   observedProcessIdentity: ProcessIdentityV1Schema.optional(),
   processIdentityMatched: z.boolean().optional(),
   trackedChildTerminal: z.boolean().optional(),
+  subscriptionClosure: z.unknown().transform(parseSubscriptionRuntimeClosureV1).optional(),
 }).strict().superRefine((value, context) => {
   for (const field of [
     "localProcessAbsent",
@@ -266,6 +277,160 @@ function validTime(value: Date | undefined): Date {
   const now = value ? new Date(value) : new Date();
   if (!Number.isFinite(now.getTime())) throw new Error("RUNTIME_SESSION_TIME_INVALID");
   return now;
+}
+
+export type AuthenticatedRuntimeClaimInputV1 = Readonly<{
+  sessionId: string; ownerInstanceId: string; envelope: ClaimEnvelopeV1;
+  runtimePath: string; worktree: string; transcriptPath: string;
+  recoveryFence?: RecoveryRuntimeLeaseFence;
+  subscriptionBinding?: SubscriptionRuntimeBindingV1;
+  subscriptionAuthority?: SubscriptionRuntimeAuthorityV1;
+  canonicalAuthority?: SubscriptionCodingCanonicalAuthorityV1;
+}>;
+function runtimeEvidence(row: RuntimeSessionRow): Record<string, unknown> {
+  return mapRuntimeSession(row).drainEvidence;
+}
+function subscriptionSeed(row: RuntimeSessionRow): SubscriptionRuntimeStartSeedV1 | undefined {
+  const data = runtimeEvidence(row);
+  if (Object.hasOwn(data, "subscriptionStart")) return parseSubscriptionRuntimeStartSeedV1(data.subscriptionStart);
+  return undefined;
+}
+function hasSubscriptionRuntime(row: RuntimeSessionRow): boolean {
+  return isSubscriptionRuntimePathV1(row.runtime_path) || Object.hasOwn(runtimeEvidence(row), "subscriptionStart");
+}
+function preserveRuntimeStart(row: RuntimeSessionRow, evidence: Record<string, unknown>): Record<string, unknown> {
+  if (Object.hasOwn(evidence, "subscriptionStart")) subscriptionRuntimeRefusedV1();
+  const seed = subscriptionSeed(row);
+  return seed ? { ...evidence, subscriptionStart: seed } : evidence;
+}
+function parseStoredDrainEvidence(row: RuntimeSessionRow): void {
+  const { subscriptionStart: _seed, ...evidence } = runtimeEvidence(row);
+  if (hasSubscriptionRuntime(row) && !subscriptionSeed(row)) subscriptionRuntimeRefusedV1();
+  RuntimeDrainEvidenceV1Schema.parse(evidence);
+}
+/** Run/runtime are already locked. Keep claim, step, story, attempt order. */
+async function lockRuntimeClaimTuple(sql: TransactionSql, row: RuntimeSessionRow, envelope: ClaimEnvelopeV1) {
+  const claims = await sql.unsafe<Array<{ run_id: string; step_id: string; story_id: string | null; agent_id: string }>>(
+    "SELECT run_id,step_id,story_id,agent_id FROM claim_log WHERE id=$1 FOR UPDATE", [Number(row.claim_id)]);
+  const steps = await sql.unsafe<Array<{run_id: string; step_id: string}>>(
+    "SELECT run_id,step_id FROM steps WHERE id=$1 FOR UPDATE", [row.step_db_id]);
+  const stories = row.story_db_id ? await sql.unsafe<Array<{run_id: string; story_id: string; claim_generation: number}>>(
+    "SELECT run_id,story_id,claim_generation FROM stories WHERE id=$1 FOR UPDATE", [row.story_db_id]) : [];
+  const claim = claims[0];
+  if (!claim || steps[0]?.run_id !== row.run_id || steps[0]?.step_id !== row.workflow_step_id
+    || (row.story_db_id && (stories[0]?.run_id !== row.run_id || stories[0]?.story_id !== row.story_id
+      || (envelope.claimGeneration !== undefined && stories[0]?.claim_generation !== envelope.claimGeneration)))
+    || claim.run_id !== row.run_id || claim.step_id !== row.workflow_step_id
+    || claim.story_id !== row.story_id || claim.agent_id !== row.claim_agent_id
+    || envelope.runId !== row.run_id || envelope.stepId !== row.step_db_id
+    || envelope.workflowStepId !== row.workflow_step_id || envelope.claimId !== Number(row.claim_id)
+    || envelope.claimAgentId !== row.claim_agent_id || envelope.runtimeAgentId !== row.runtime_agent_id
+    || (envelope.storyId ?? null) !== row.story_id || (envelope.storyDbId ?? null) !== row.story_db_id
+    || (envelope.attempt?.attemptId ?? null) !== row.attempt_id || envelope.workdir !== row.worktree) {
+    throw new Error("RUNTIME_SESSION_AUTHENTICATED_IDENTITY_MISMATCH");
+  }
+  if (!row.attempt_id) return null;
+  const rows = await sql.unsafe<Array<Record<string, unknown>>>(
+    `SELECT attempt_id,claim_id::text,run_id,step_id,story_id,generation,fence_token,
+            packet_hash,compilation_report_hash,slice_hash,source_before_sha,source_before_tree_hash
+       FROM execution_attempts WHERE attempt_id=$1 FOR UPDATE`, [row.attempt_id]);
+  const attempt = rows[0];
+  if (!attempt || attempt.claim_id !== String(row.claim_id) || attempt.run_id !== row.run_id
+    || attempt.step_id !== row.workflow_step_id || attempt.story_id !== row.story_id
+    || attempt.generation !== envelope.attempt?.generation || attempt.fence_token !== envelope.attempt?.fenceToken) {
+    throw new Error("RUNTIME_SESSION_AUTHENTICATED_ATTEMPT_MISMATCH");
+  }
+  return { ...attempt };
+}
+async function authenticateRuntimeInTransaction(sql: TransactionSql, row: RuntimeSessionRow,
+  input: AuthenticatedRuntimeClaimInputV1, state: "starting" | "running"): Promise<RuntimeSessionRow> {
+  if (row.state !== state || row.runtime_kind !== "local_process" || row.owner_instance_id !== input.ownerInstanceId
+    || row.runtime_path !== input.runtimePath || row.worktree !== input.worktree || row.transcript_path !== input.transcriptPath) {
+    throw new Error("RUNTIME_SESSION_AUTHENTICATED_START_MISMATCH");
+  }
+  const attemptContract = await lockRuntimeClaimTuple(sql, row, input.envelope);
+  await assertClaimAuthority(sql, input.envelope, row.step_db_id);
+  await assertBoundRecoveryLeaseLiveInTransaction(sql, row, input.recoveryFence);
+  if (row.attempt_id) {
+    const leases = await sql.unsafe<Array<{lease_expires_at: Date | string}>>(
+      "SELECT lease_expires_at FROM execution_attempts WHERE attempt_id=$1", [row.attempt_id]);
+    const clock = await readDatabaseWallClock(sql, "RUNTIME_SESSION_DATABASE_WALL_CLOCK_UNAVAILABLE");
+    if (!leases[0] || new Date(leases[0].lease_expires_at).getTime() <= clock.getTime()) {
+      throw new Error("RUNTIME_SESSION_ORDINARY_ATTEMPT_LEASE_EXPIRED");
+    }
+  }
+  if (input.canonicalAuthority?.schema === "setfarm.implementation-context.v3") {
+    const h = input.canonicalAuthority.handoff;
+    if (!attemptContract || h.claimId !== Number(row.claim_id) || h.attemptId !== row.attempt_id
+      || h.attemptGeneration !== attemptContract.generation || h.runId !== row.run_id || h.stepId !== row.step_db_id
+      || h.storyId !== row.story_id || h.storyDbId !== row.story_db_id || h.workdir !== row.worktree
+      || h.packetHash !== attemptContract.packet_hash || h.compilationReportHash !== attemptContract.compilation_report_hash
+      || h.sliceHash !== attemptContract.slice_hash || h.sourceBefore.sha !== attemptContract.source_before_sha
+      || h.sourceBefore.treeHash !== attemptContract.source_before_tree_hash) subscriptionRuntimeRefusedV1();
+  }
+  if (!!input.subscriptionBinding !== !!input.subscriptionAuthority) subscriptionRuntimeRefusedV1();
+  const existing = subscriptionSeed(row);
+  if (existing && (!sameSubscriptionRuntimeDataV1(existing.envelope, input.envelope)
+    || existing.binding.runtimeSessionId !== row.session_id || existing.binding.ownerInstanceId !== row.owner_instance_id
+    || existing.runtimePath !== row.runtime_path || existing.transcriptPath !== row.transcript_path
+    || !sameSubscriptionRuntimeDataV1(existing.attemptContract, attemptContract))) subscriptionRuntimeRefusedV1();
+  if (!input.subscriptionBinding) {
+    if (state === "running" && hasSubscriptionRuntime(row) && !existing) subscriptionRuntimeRefusedV1();
+    return row;
+  }
+  const binding = parseSubscriptionRuntimeBindingV1(input.subscriptionBinding);
+  const authority = parseSubscriptionRuntimeAuthorityV1(input.subscriptionAuthority, binding);
+  const seed = parseSubscriptionRuntimeStartSeedV1({ schema: "setfarm.subscription-runtime-start.v1",
+    binding, authority, attachmentHash: subscriptionRuntimePreparationHashV1(binding, authority),
+    envelope: input.envelope, runtimePath: input.runtimePath, transcriptPath: input.transcriptPath, attemptContract });
+  if (binding.runtimeSessionId !== row.session_id || binding.ownerInstanceId !== row.owner_instance_id
+    || !isSubscriptionRuntimePathV1(row.runtime_path)) subscriptionRuntimeRefusedV1();
+  if (existing) {
+    if (!sameSubscriptionRuntimeDataV1(existing, seed)) subscriptionRuntimeRefusedV1();
+    return row;
+  }
+  if (state !== "starting") subscriptionRuntimeRefusedV1();
+  const updated = await sql.unsafe<RuntimeSessionRow[]>(`UPDATE runtime_sessions
+    SET drain_evidence=$3::text::jsonb,state_version=state_version+1,updated_at=clock_timestamp()
+    WHERE session_id=$1 AND state_version=$2 AND state='starting' RETURNING *`,
+  [row.session_id, row.state_version, JSON.stringify({ ...runtimeEvidence(row), subscriptionStart: seed })]);
+  if (updated.length !== 1) subscriptionRuntimeRefusedV1();
+  return updated[0]!;
+}
+type ClosedSubscriptionOriginal = Awaited<ReturnType<typeof import("./subscription-coding-runtime-selected-v1.js").readClosedSelectedSubscriptionCodingRuntimeV1>>;
+async function readOriginalSubscriptionBeforeTransaction(row: ClaimRuntimeSession | undefined, evidence: z.infer<typeof RuntimeDrainEvidenceV1Schema>) {
+  if (!row || (!isSubscriptionRuntimePathV1(row.runtimePath) && !Object.hasOwn(row.drainEvidence, "subscriptionStart"))) return undefined;
+  if (!evidence.subscriptionClosure) subscriptionRuntimeRefusedV1();
+  // Read only the already resolved original. Never await pending closure in SQL.
+  const module = await import("./subscription-coding-runtime-selected-v1.js");
+  return module.readClosedSelectedSubscriptionCodingRuntimeV1(row.sessionId);
+}
+async function authenticateSubscriptionDrain(sql: TransactionSql, row: RuntimeSessionRow,
+  evidence: z.infer<typeof RuntimeDrainEvidenceV1Schema>, original: ClosedSubscriptionOriginal | undefined): Promise<void> {
+  if (!hasSubscriptionRuntime(row)) {
+    if (evidence.subscriptionClosure) subscriptionRuntimeRefusedV1();
+    return;
+  }
+  const seed = subscriptionSeed(row), closure = evidence.subscriptionClosure;
+  if (!seed || !closure || !original || closure.status !== "closed"
+    || seed.binding.runtimeSessionId !== row.session_id || seed.binding.ownerInstanceId !== row.owner_instance_id
+    || seed.runtimePath !== row.runtime_path || seed.transcriptPath !== row.transcript_path
+    || !sameSubscriptionRuntimeDataV1(original.closure, closure)
+    || !sameSubscriptionRuntimeDataV1(original.binding, seed.binding)
+    || !sameSubscriptionRuntimeDataV1(original.authority, seed.authority)
+    || closure.attachmentHash !== seed.attachmentHash) subscriptionRuntimeRefusedV1();
+  const mapped = mapRuntimeSession(row);
+  if (row.started_at !== null || row.pid !== null || row.process_started_at !== null
+    || row.process_group_id !== null || mapped.processIdentity) {
+    assertSubscriptionRuntimePublishedWorkerV1(mapped, original.worker);
+  }
+  const actual = await lockRuntimeClaimTuple(sql, row, seed.envelope);
+  if (!sameSubscriptionRuntimeDataV1(actual, seed.attemptContract)) subscriptionRuntimeRefusedV1();
+  const journal = readSubscriptionRuntimeAttachmentV1({ runtimePath: seed.runtimePath, binding: seed.binding });
+  if (journal.phase !== "closed" || journal.attachmentHash !== seed.attachmentHash
+    || !sameSubscriptionRuntimeDataV1(journal.authority, seed.authority)
+    || !sameSubscriptionRuntimeDataV1(journal.worker, original.worker)
+    || !sameSubscriptionRuntimeDataV1(journal.closure, closure)) subscriptionRuntimeRefusedV1();
 }
 
 async function assertBoundRecoveryLeaseLiveInTransaction(
@@ -786,6 +951,20 @@ export function createRuntimeSessionRepository(sql: Sql) {
 
   return Object.freeze({
     findById,
+    async readAuthenticatedStartingClaim(input: AuthenticatedRuntimeClaimInputV1): Promise<ClaimRuntimeSession> {
+      return sql.begin(async transaction => {
+        const row = await lockRuntimeStartAuthorityInTransaction(transaction,
+          RuntimeSessionIdSchema.parse(input.sessionId), input.ownerInstanceId);
+        return mapRuntimeSession(await authenticateRuntimeInTransaction(transaction, row, input, "starting"));
+      }) as Promise<ClaimRuntimeSession>;
+    },
+    async readAuthenticatedRunningClaim(input: AuthenticatedRuntimeClaimInputV1): Promise<ClaimRuntimeSession> {
+      return sql.begin(async transaction => {
+        const row = await lockRuntimeStartAuthorityInTransaction(transaction,
+          RuntimeSessionIdSchema.parse(input.sessionId), input.ownerInstanceId);
+        return mapRuntimeSession(await authenticateRuntimeInTransaction(transaction, row, input, "running"));
+      }) as Promise<ClaimRuntimeSession>;
+    },
     reserve: (input: unknown) => sql.begin((transaction) =>
       reserveRuntimeSessionInTransaction(transaction, input)) as Promise<ClaimRuntimeSession>,
     bindAttempt: (input: Readonly<{ sessionId: string; attemptId: string; ownerInstanceId: string; now?: Date }>) =>
@@ -853,6 +1032,10 @@ export function createRuntimeSessionRepository(sql: Sql) {
       sessionKey?: string;
       processStartedAt?: Date;
       processIdentity?: ProcessIdentityV1;
+      envelope?: ClaimEnvelopeV1;
+      runtimePath?: string;
+      worktree?: string;
+      transcriptPath?: string;
       recoveryFence?: RecoveryRuntimeLeaseFence;
       now?: Date;
     }>): Promise<Readonly<{ status: "running" | "drain_requested"; session: ClaimRuntimeSession }>> {
@@ -883,6 +1066,15 @@ export function createRuntimeSessionRepository(sql: Sql) {
         );
         if (locked.state === "drain_requested") {
           return { status: "drain_requested" as const, session: mapRuntimeSession(locked) };
+        }
+        if (input.envelope || hasSubscriptionRuntime(locked)) {
+          if (!input.envelope || !input.runtimePath || !input.worktree || !input.transcriptPath) subscriptionRuntimeRefusedV1();
+          await authenticateRuntimeInTransaction(transaction, locked, {
+            sessionId, ownerInstanceId: input.ownerInstanceId, envelope: input.envelope,
+            runtimePath: input.runtimePath, worktree: input.worktree, transcriptPath: input.transcriptPath,
+            recoveryFence: input.recoveryFence,
+          }, locked.state === "running" ? "running" : "starting");
+          if (hasSubscriptionRuntime(locked) && !subscriptionSeed(locked)) subscriptionRuntimeRefusedV1();
         }
         await assertBoundRecoveryLeaseLiveInTransaction(transaction, locked, input.recoveryFence);
         const now = await readDatabaseWallClock(
@@ -1016,7 +1208,15 @@ export function createRuntimeSessionRepository(sql: Sql) {
     }>): Promise<ClaimRuntimeSession> {
       const evidence = RuntimeDrainEvidenceV1Schema.parse(input.evidence);
       validTime(input.now);
+      const original = await readOriginalSubscriptionBeforeTransaction(await findById(input.sessionId), evidence);
       return sql.begin(async (transaction) => {
+        const identity = await transaction.unsafe<Array<{run_id: string; story_id: string | null}>>("SELECT run_id,story_id FROM runtime_sessions WHERE session_id=$1", [input.sessionId]);
+        if (!identity[0]) throw new Error("RUNTIME_SESSION_NOT_FOUND");
+        if (identity[0].story_id) await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+          v3RecoveryStoryLockIdentity({ runId: identity[0].run_id, storyId: identity[0].story_id }),
+        ]);
+        await transaction.unsafe("SELECT id FROM runs WHERE id=$1 FOR UPDATE", [identity[0].run_id]);
+        await transaction.unsafe("SELECT request_id FROM run_termination_requests WHERE run_id=$1 ORDER BY requested_at,request_id FOR UPDATE", [identity[0].run_id]);
         const currentRows = await transaction.unsafe<RuntimeSessionRow[]>(
           "SELECT * FROM runtime_sessions WHERE session_id = $1 FOR UPDATE",
           [RuntimeSessionIdSchema.parse(input.sessionId)],
@@ -1026,13 +1226,17 @@ export function createRuntimeSessionRepository(sql: Sql) {
         // Drain evidence proves process absence, independent of which later
         // completion/cancellation intent consumes it. Reuse the first durable
         // proof verbatim; never overwrite its timestamp or evidence on replay.
-        if (current.state === "drained") return mapRuntimeSession(current);
+        if (current.state === "drained") {
+          await authenticateSubscriptionDrain(transaction, current, evidence, original);
+          return mapRuntimeSession(current);
+        }
         if (current.state !== "drain_requested") {
           throw new Error(`RUNTIME_SESSION_DRAIN_CAS_LOST:${current.state}`);
         }
         if (input.ownerInstanceId && current.owner_instance_id !== input.ownerInstanceId) {
           throw new Error("RUNTIME_SESSION_DRAIN_CAS_LOST");
         }
+        await authenticateSubscriptionDrain(transaction, current, evidence, original);
         const now = await readDatabaseWallClock(
           transaction,
           "RUNTIME_SESSION_DRAIN_DATABASE_TIME_UNAVAILABLE",
@@ -1044,7 +1248,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
                   heartbeat_at = $3, state_version = state_version + 1, updated_at = $3
             WHERE session_id = $1 AND state = 'drain_requested'
             RETURNING *`,
-          [current.session_id, JSON.stringify(evidence), now],
+          [current.session_id, JSON.stringify(preserveRuntimeStart(current, evidence)), now],
         );
         if (rows.length !== 1) throw new Error("RUNTIME_SESSION_DRAIN_CAS_LOST");
         return mapRuntimeSession(rows[0]!);
@@ -1060,6 +1264,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
       now?: Date;
     }>): Promise<ClaimRuntimeSession> {
       const evidence = RuntimeDrainEvidenceV1Schema.parse(input.evidence);
+      const original = await readOriginalSubscriptionBeforeTransaction(await findById(input.sessionId), evidence);
       if (!Number.isSafeInteger(input.expectedStateVersion) || input.expectedStateVersion < 0) {
         throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_VERSION_INVALID");
       }
@@ -1074,12 +1279,15 @@ export function createRuntimeSessionRepository(sql: Sql) {
       }
       validTime(input.now);
       const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
-      const identities = await sql.unsafe<Array<{ run_id: string }>>(
-        "SELECT run_id FROM runtime_sessions WHERE session_id = $1",
+      const identities = await sql.unsafe<Array<{ run_id: string; story_id: string | null }>>(
+        "SELECT run_id,story_id FROM runtime_sessions WHERE session_id = $1",
         [sessionId],
       );
       if (!identities[0]) throw new Error("RUNTIME_SESSION_NOT_FOUND");
       return sql.begin(async (transaction) => {
+        if (identities[0]!.story_id) await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+          v3RecoveryStoryLockIdentity({ runId: identities[0]!.run_id, storyId: identities[0]!.story_id! }),
+        ]);
         const runs = await transaction.unsafe<Array<{ id: string }>>(
           "SELECT id FROM runs WHERE id = $1 FOR UPDATE",
           [identities[0]!.run_id],
@@ -1107,7 +1315,8 @@ export function createRuntimeSessionRepository(sql: Sql) {
         }
         if (["drained", "released"].includes(current.state)) {
           const mapped = mapRuntimeSession(current);
-          RuntimeDrainEvidenceV1Schema.parse(mapped.drainEvidence);
+          parseStoredDrainEvidence(current);
+          await authenticateSubscriptionDrain(transaction, current, evidence, original);
           return mapped;
         }
         const now = await readDatabaseWallClock(
@@ -1128,6 +1337,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
         if (current.state !== "quarantined" || current.state_version !== input.expectedStateVersion) {
           throw new Error(`RUNTIME_SESSION_TERMINATION_RECOVERY_CAS_LOST:${current.state}`);
         }
+        await authenticateSubscriptionDrain(transaction, current, evidence, original);
         const rows = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'drained',
@@ -1144,7 +1354,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
           [
             sessionId,
             input.expectedStateVersion,
-            JSON.stringify(evidence),
+            JSON.stringify(preserveRuntimeStart(current, evidence)),
             now,
             input.diagnostic.slice(0, 4_000),
           ],
@@ -1192,6 +1402,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
         ) {
           throw new Error("RUNTIME_SESSION_QUARANTINE_CAS_LOST");
         }
+        const preservedEvidence = preserveRuntimeStart(current, input.evidence ?? {});
         const now = await readDatabaseWallClock(
           transaction,
           "RUNTIME_SESSION_QUARANTINE_DATABASE_TIME_UNAVAILABLE",
@@ -1214,7 +1425,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
           [
             sessionId,
             input.diagnostic.slice(0, 4_000),
-            JSON.stringify(input.evidence ?? {}),
+            JSON.stringify(preservedEvidence),
             input.expectedOwnerInstanceId,
             input.expectedStateVersion,
             now,

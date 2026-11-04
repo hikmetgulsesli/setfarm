@@ -13,7 +13,8 @@ import YAML from "yaml";
 import { z } from "zod";
 
 import { readV3AdmissionMigrationStateV1 } from "../installation/fresh-installation-v3-admission-v1.js";
-import { readSelectedFreshCodexExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
+import { readSelectedFreshExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
+import { projectSelectedConvergenceRecipeV1 } from "../installation/selected-convergence-recipe-v1.js";
 import { assertFreshInstallationSelectionUnchangedV1, freshInstallationSelectionV1 } from "../installation/fresh-installation-selection-v1.js";
 import {
   EvidenceBundleV2Schema,
@@ -2059,7 +2060,7 @@ async function evaluationCodeHash(root: string): Promise<string> {
 async function readConvergenceExecutionProfileV1(workflowText: string): Promise<Readonly<{
   providerId: string; modelId: string; agentCount: number;
 }>> {
-  const selected = readSelectedFreshCodexExecutionProfileV1();
+  const selected = readSelectedFreshExecutionProfileV1("primary");
   const workflow = YAML.parse(workflowText) as Record<string, unknown>;
   const mapping = workflow["agent_mapping"] && typeof workflow["agent_mapping"] === "object"
     ? workflow["agent_mapping"] as Record<string, unknown>
@@ -2453,7 +2454,7 @@ type CliOptions = Readonly<{
 function parseCli(argv: readonly string[]): CliOptions {
   const root = packageRoot();
   const selectedSuite = freshInstallationSelectionV1
-    ? path.join(freshInstallationSelectionV1.paths.repository, "evals", "suites", "product-convergence-codex-v1.json")
+    ? path.join(freshInstallationSelectionV1.paths.repository, projectSelectedConvergenceRecipeV1(readSelectedFreshExecutionProfileV1("primary")).fixedSuiteRelativePath)
     : null;
   let suiteFile = selectedSuite ?? path.join(root, "evals", "suites", "product-convergence-v1.json");
   let outputRoot = resolveConvergenceEvalResultDir();

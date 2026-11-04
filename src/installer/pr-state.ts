@@ -82,11 +82,20 @@ export function tryReopenPR(prUrl: string, storyId: string, runId: string): bool
 /**
  * Attempt to squash-merge an OPEN PR. Returns true if successful.
  */
-export function tryAutoMergePR(prUrl: string, storyId: string, runId: string): boolean {
+export function tryAutoMergePR(prUrl: string, storyId: string, runId: string, expectedHeadSha?: string): boolean {
+  let head=expectedHeadSha;
+  if(head===undefined){
+    // Legacy mechanical merge callers have no checked-code authority. Capture
+    // one actual head only to fence both existing merge attempts against drift.
+    try{head=String(execFileSync("gh",["pr","view",prUrl,"--json","headRefOid","--jq",".headRefOid"],{
+      timeout:GH_CLI_TIMEOUT,stdio:"pipe"})).trim();}
+    catch{return false;}
+  }
+  if(typeof head!=="string"||!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head))return false;
   // Try squash merge first, then admin override if branch protection blocks it
   for (const args of [
-    ["pr", "merge", prUrl, "--squash", "--delete-branch"],
-    ["pr", "merge", prUrl, "--squash", "--delete-branch", "--admin"],
+    ["pr", "merge", prUrl, "--squash", "--delete-branch", "--match-head-commit", head],
+    ["pr", "merge", prUrl, "--squash", "--delete-branch", "--match-head-commit", head, "--admin"],
   ]) {
     try {
       execFileSync("gh", args, {
