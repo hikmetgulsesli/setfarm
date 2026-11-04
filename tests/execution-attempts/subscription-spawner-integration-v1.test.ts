@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { it } from "node:test";
 import ts from "typescript";
-import { deriveSubscriptionCodingRuntimePathsV1 } from "../../src/execution/subscription-coding-runtime-binding-v1.js";
-import { createV3StageClaimHandoffV1 } from "../../src/execution/v3-stage-execution-context.js";
-import { assertSubscriptionWorkflowRoleV1 } from "../../src/execution/subscription-workflow-transport-v1.js";
+import { deriveSubscriptionCodingRuntimePathsV1,projectSubscriptionCodingRuntimeBindingV1,sameSubscriptionRuntimeDataV1,subscriptionRuntimeRefusedV1 } from "../../src/execution/subscription-coding-runtime-binding-v1.js";
+import { createV3StageClaimHandoffV1,V3StageClaimHandoffV1Schema } from "../../src/execution/v3-stage-execution-context.js";
+import { assertSubscriptionWorkflowRoleV1,planSubscriptionWorkflowHandoffV1,renderSubscriptionWorkflowPromptV1 } from "../../src/execution/subscription-workflow-transport-v1.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
 
 // Existing Source-DATA testing pattern: evaluate exact private production bodies
@@ -19,6 +21,64 @@ function evaluate(file:string,name:string,ports:Record<string,any>){const body=t
   compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
   return new Function(...Object.keys(ports),body+";return "+name+";")(...Object.values(ports));}
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(yes=>{resolve=yes;});return{promise,resolve};}
+
+it("genuine selected facade derives fixed PLAN shaping only after authentic starting claim and ignores caller shaping",async()=>{
+  const file="execution/subscription-coding-runtime-selected-v1.ts",name="startSelectedSubscriptionCodingRuntimeV1";
+  let body=declaration(file,name);
+  assert.equal(body.split("import.meta.url").length-1,1);
+  // Disclosed module-locator DATA seam only; no selected graph/FS is imported.
+  body=body.replace("import.meta.url",JSON.stringify("file:///component/selected-facade.js"));
+  const compiled=ts.transpileModule(body,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+  for(const mode of ["plan","stories","design","starting-refused","crossed-stage"]){
+    const step=mode==="stories"?"stories":mode==="design"?"design":"plan",role=step==="design"?"designer":"planner";
+    const f=fixture(),events:string[]=[];
+    const envelope={...f.input.claimEnvelope,workflowStepId:step,claimAgentId:`feature-dev_${role}`,runtimeAgentId:role};
+    const authority=createV3StageClaimHandoffV1({claimEnvelope:envelope,workflow:"feature-dev",role,workdir:envelope.workdir,
+      outputFile:"/tmp/component-unused-output",instructionContent:"Return the complete existing report."});
+    const observed={...f.runtime.worker.processIdentity,pid:43100};
+    let captured:any;
+    class ComponentStartupError extends Error{}
+    const selected={paths:{root:"/installation/runtime"},directory:"/installation",state:{origin:{sourceSha:"a".repeat(40)}},
+      activation:{acknowledged:true,preparedPin:{sha256:"b".repeat(64)},activatedPin:{sha256:"c".repeat(64)}},assertUnchanged(){}};
+    const ports={process:{getuid:()=>501,pid:43100},ClaimEnvelopeV1Schema,V3StageClaimHandoffV1Schema,
+      assertFreshInstallationSelectionUnchangedV1(){},assertFreshInstallationOperationalEntryV1(){},freshInstallationSelectionV1:selected,
+      planSubscriptionWorkflowHandoffV1,renderSubscriptionWorkflowPromptV1,projectSubscriptionCodingRuntimeBindingV1,
+      deriveSubscriptionCodingRuntimePathsV1,sameSubscriptionRuntimeDataV1,subscriptionRuntimeRefusedV1,
+      readSelectedFreshExecutionProfileV1:()=>({schema:"setfarm.model-execution-profile.v1",providerId:"minimax",modelId:"minimax/MiniMax-M3.1-Flash",selection:"primary"}),
+      getSql:()=>({componentData:true}),createRuntimeSessionRepository:()=>({async readAuthenticatedStartingClaim(actual:any){
+        events.push("authenticated-starting");assert.deepEqual(actual.envelope,envelope);
+        if(mode==="starting-refused")throw Error("COMPONENT_STARTING_REFUSED");return{};
+      }}),observeProcessIdentity:()=>observed,hash:(bytes:string|Buffer)=>createHash("sha256").update(bytes).digest("hex"),
+      ownedBytes:()=>Buffer.from("component-owned-policy"),fileURLToPath,URL,join:path.join,SUBSCRIPTION_CODING_WORKER_PRELOAD_V1:"component-preload",
+      // Scope/FS effects are finite DATA ports. They confer no production grant
+      // or selected success; the exact authentic reader/order is tested above.
+      workerScope:()=>({writeGrants:[],readOnlyControlPaths:[]}),canonicalDirectory(){},
+      prepareSubscriptionWriteParentsV1(){events.push("prepare-parents");},materializeSubscriptionWorkflowHandoffV1(){events.push("materialize");},prepareContainer(){events.push("container");},
+      acquireSubscriptionCodingRuntimeV1:async(input:any)=>{assert.ok(events.includes("authenticated-starting"));captured=input;events.push("acquire");throw Error("COMPONENT_ACQUIRE_BOUNDARY");},
+      SubscriptionCodingRuntimeStartupErrorV1:ComponentStartupError,
+    };
+    const start=new Function(...Object.keys(ports),compiled+";return "+name+";")(...Object.values(ports));
+    const input={envelope:mode==="crossed-stage"?{...envelope,workflowStepId:"stories"}:envelope,authority,
+      runtimeSessionId:f.input.runtimeSessionId,ownerInstanceId:f.ownerInstanceId,signal:new AbortController().signal};
+    Object.defineProperty(input,"requestProfile",{get(){throw Error("CALLER_SHAPING_AUTHORITY_READ");}});
+    if(mode==="starting-refused"||mode==="crossed-stage"){
+      await assert.rejects(start(input),/COMPONENT_STARTING_REFUSED|REFUSED/);
+      assert.equal(captured,undefined);assert.equal(events.includes("materialize"),false);
+    }else{
+      await assert.rejects(start(input),/COMPONENT_ACQUIRE_BOUNDARY/);
+      assert.equal(captured.requestProfile,step==="plan"?"plan-report-v1":undefined);
+      if(step!=="plan")assert.equal(Object.hasOwn(captured,"requestProfile"),false,"other roles omit the profile entirely");
+    }
+  }
+  const tree=ts.createSourceFile(file,body,ts.ScriptTarget.Latest,true),choices:number[]=[],reads:number[]=[];
+  const visit=(node:ts.Node)=>{
+    if(ts.isStringLiteral(node)&&node.text==="plan-report-v1")choices.push(node.getStart(tree));
+    if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==="readAuthenticatedStartingClaim")reads.push(node.end);
+    ts.forEachChild(node,visit);
+  };visit(tree);
+  assert.ok(choices.length>0&&reads.length>0);
+  assert.ok(Math.min(...choices)>Math.min(...reads),"fixed profile choice must follow the genuine initial starting-claim authentication");
+});
 function fixture(){
   const runtimeSessionId="RTS_00000000-0000-0000-0000-000000000901",ownerInstanceId="fixture.local:43100:12345678-1234-4234-8234-123456789abc";
   const claimEnvelope={schema:"setfarm.claim-envelope.v1" as const,protocol:"v3" as const,issuedAt:"2026-11-04T12:00:00.000Z",

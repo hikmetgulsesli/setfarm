@@ -46,6 +46,23 @@ function material() {
   prompt: 'Implement the complete inline claim using filesystem tools.' });
 }
 function cloneMaterial() { return JSON.parse(JSON.stringify(material())) as ReturnType<typeof material>; }
+
+test('worker reconstructs only the exact fixed PLAN thinking-off suffix and binds its complete material hash',()=>{
+  assert.ok(api);const normal=material(),plan=cloneMaterial();(plan.argv as string[]).push('--thinking','off');
+  const checked=api.validateSubscriptionCodingWorkerMaterialV1(plan);
+  assert.deepEqual(checked.material,plan);
+  assert.equal(checked.materialHash,createHash('sha256').update(JSON.stringify(plan)).digest('hex'));
+  assert.notEqual(checked.materialHash,api.validateSubscriptionCodingWorkerMaterialV1(normal).materialHash);
+  for(const suffix of [['--thinking','low'],['--thinking','medium'],['--thinking','off','--thinking','off'],
+    ['--thinking','off','--model','kimi/k3.1-pro'],['--thinking']]){
+    const forged=cloneMaterial();(forged.argv as string[]).push(...suffix);
+    assert.throws(()=>api!.validateSubscriptionCodingWorkerMaterialV1(forged),{message:'SUBSCRIPTION_CODING_WORKER_REFUSED'});
+  }
+  const configForged=JSON.parse(JSON.stringify(plan));
+  const config=JSON.parse(configForged.files[0].contents);config.models.providers.minimax.models[0].maxTokens=16384;
+  configForged.files[0].contents=JSON.stringify(config,null,2)+'\n';
+  assert.throws(()=>api!.validateSubscriptionCodingWorkerMaterialV1(configForged),{message:'SUBSCRIPTION_CODING_WORKER_REFUSED'});
+});
 const identity: ProcessIdentityV1 = { schema: 'setfarm.process-identity.v1', pid: 43210,
   processStartedAt: '2026-11-04T12:00:00.000Z', processGroupId: 43200, source: 'observed_os' };
 function binding() {

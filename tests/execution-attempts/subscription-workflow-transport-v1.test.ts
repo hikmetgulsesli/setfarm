@@ -71,17 +71,30 @@ it("planned raw fragments reconstruct complete canonical bytes and decoded instr
   assert.ok(plan.files.length <= 256); assert.equal(plan.readOnlyControlPaths.length, plan.files.length);
   for (const file of plan.files) {
     assert.ok(file.path.startsWith("/project/claim-worktree/.setfarm/stage-executions/claim-41/subscription-handoff/"));
-    if (file.kind !== "manifest") assert.ok(Buffer.byteLength(file.contents) <= 40 * 1024);
+    assert.ok(Buffer.byteLength(file.contents) <= 12 * 1024,"protected file must fit the installed read-result character cap");
+    assert.ok(file.contents.split("\n").length<=2000,"protected file must fit the installed default read line limit");
     assert.equal(file.sha256, hash(file.contents));
   }
 });
-it("typical complete 4MiB retry fits original path caps and preserves every prior-output byte", () => {
-  const previous = "A".repeat(4 * 1024 * 1024), input = stage("plan", "planner", "/project/claim-worktree", "Plan instruction.\n".repeat(6000), previous);
+it("complete readable retry preserves every prior-output byte under unchanged path caps", () => {
+  const previous = "Aé🧭".repeat(32000), input = stage("plan", "planner", "/project/claim-worktree", "Plan instruction.\n".repeat(600), previous);
   const plan = required("planSubscriptionWorkflowHandoffV1")(input);
   assert.ok(plan.files.length <= 256);
   const rows = plan.files.filter((f: any) => f.kind === "previous-output").sort((a: any, b: any) => a.byteOffset - b.byteOffset);
   assert.equal(rows.map((f: any) => f.contents).join(""), previous);
   assert.equal(plan.manifest.previousOutput.sha256, hash(previous));
+  for(const file of plan.files)assert.ok(Buffer.byteLength(file.contents)<=12288&&file.contents.split("\n").length<=2000);
+});
+it("dense short lines split losslessly before the default read line boundary",()=>{
+  const input=stage("plan","planner","/project/claim-worktree","x\n".repeat(5000));
+  const plan=required("planSubscriptionWorkflowHandoffV1")(input),rows=plan.files.filter((f:any)=>f.kind==="instruction");
+  assert.ok(rows.length>=3);assert.equal(rows.map((f:any)=>f.contents).join(""),input.authority.instructionContent);
+  for(const row of rows){assert.ok(row.contents.split("\n").length<=2000);assert.ok(Buffer.byteLength(row.contents)<=12288);}
+  for(const row of plan.manifest.instruction.parts)assert.equal(row.lines,plan.files.find((f:any)=>f.path.endsWith("/"+row.path)).contents.split("\n").length);
+});
+it("complete 4MiB retry honestly refuses readable-part capacity before any materialization",()=>{
+  const input=stage("plan","planner","/nonexistent-subscription-readable-capacity","Plan instruction.","A".repeat(4*1024*1024));
+  assert.throws(()=>required("planSubscriptionWorkflowHandoffV1")(input),/CAPACITY/);
 });
 it("escaped worst-case expansion refuses pure planning before any filesystem or credential effects", () => {
   const input = stage("plan", "planner", "/nonexistent-subscription-capacity-worktree", "Plan instruction.", "\t".repeat(4 * 1024 * 1024));
@@ -92,6 +105,7 @@ it("short prompt names the protected hash-bound handoff and line-based read tool
   const prompt = required("renderSubscriptionWorkflowPromptV1")({ ...input, handoffRef: plan.handoffRef });
   assert.ok(Buffer.byteLength(prompt) <= 65536); assert.ok(prompt.includes(plan.handoffRef.path));
   assert.ok(prompt.includes(plan.handoffRef.sha256)); assert.match(prompt, /path/); assert.match(prompt, /offset/); assert.match(prompt, /limit/);
+  assert.match(prompt,/offset\s*:\s*1/);assert.match(prompt,/limit[^\n]*lines|lines[^\n]*limit/);
   assert.doesNotMatch(prompt, /\/tmp\/|setfarm step|setfarm-summary|bash -|node -|CLAIM_FILE|BOOTSTRAP_FILE/);
 });
 it("materializer exclusively writes private protected files with exact plan bytes", () => {
