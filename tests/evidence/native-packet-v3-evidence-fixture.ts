@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { canonicalizeObservableAssertionsV2 } from "../../src/product-compiler/observable-assertion-identity-v2.js";
 import { SemanticArtifactEnvelopeV1Schema } from "../../src/product-compiler/artifact-store.js";
 import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
 import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
@@ -32,11 +33,19 @@ const sha = (bytes: string | Buffer) => createHash("sha256").update(bytes).diges
 const escape = (value: string) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 const converterPath = fileURLToPath(new URL("../../scripts/stitch-to-jsx.mjs", import.meta.url));
 
-export async function nativeBrowserFixture(options: { input?: "empty-string" | "boolean"; persistence?: boolean; prerequisite?: boolean; twoPlacements?: boolean } = {}) {
+export async function nativeBrowserFixture(options: { input?: "empty-string" | "boolean"; persistence?: boolean; prerequisite?: boolean; twoPlacements?: boolean; controlReload?: boolean; controlDisabledAfter?: boolean } = {}) {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-browser-evidence-"));
   try {
     const proposal = containedGamePlanProposalV2();
     const primary = proposal.actions[0];
+    const controlOutcome = primary.observables.find((observable: { selector: { kind: string } }) => observable.selector.kind === "control");
+    if (options.controlReload) controlOutcome.assertions.push({ phase: "reload", property: "visibility", operator: "equals", expected: true });
+    if (options.controlDisabledAfter) {
+      controlOutcome.assertions = canonicalizeObservableAssertionsV2([
+        ...controlOutcome.assertions,
+        { phase: "after", property: "enabled", operator: "equals", expected: false },
+      ]);
+    }
     if (options.twoPlacements) primary.controlPlacements.push({ ...primary.controlPlacements[0], key: "secondary_start" });
     if (options.input) {
       const field = options.input === "boolean" ? "enabled" : "phase";
@@ -195,6 +204,7 @@ export async function nativeBrowserFixture(options: { input?: "empty-string" | "
  */
 export function writeNativeBrowserRuntime(value: Awaited<ReturnType<typeof nativeBrowserFixture>>, faults: {
   wrongSlot?: boolean; wrongSurface?: boolean; wrongValue?: boolean; wrongReloadValue?: boolean; losePersistence?: boolean; skipPrerequisite?: boolean; duplicateControl?: boolean; wrongSecondarySlot?: boolean;
+  relocateControlAfter?: boolean; relocateControlOnReload?: boolean;
 } = {}) {
   const screen = value.slice.storySourceMap.screens[0]!;
   const product = value.slice.contract.product;
@@ -237,6 +247,11 @@ function render(){
    output.setAttribute('data-value',faults.wrongValue||(faults.wrongReloadValue&&restored)?'stale':String(primary.phase));
  }
 }
+function relocateControl(actionRef){
+ const control=document.querySelector('[data-action="'+actionRef+'"]');
+ const other=document.createElement('aside');other.setAttribute('data-surface-id','SURF_RELOCATED_CONTROL');
+ document.getElementById('root').appendChild(other);other.appendChild(control);
+}
 function invokeAction(actionRef,inputValues){
  const action=actions.find(action=>action.id===actionRef); if(!action)throw Error('unknown action');
  if(faults.skipPrerequisite&&actionRef==='ACT_PREPARE_GAME')return;
@@ -247,6 +262,8 @@ function invokeAction(actionRef,inputValues){
  }
  if(options.persistence&&!faults.losePersistence)localStorage.setItem('native-evidence-state',JSON.stringify(states));
  render();
+ if(options.controlDisabledAfter)document.querySelector('[data-action="'+actionRef+'"]').disabled=true;
+ if(faults.relocateControlAfter)relocateControl(actionRef);
 }
 globalThis[${JSON.stringify(value.runtime.capture.globalName)}]={states,[${JSON.stringify(value.runtime.capture.actionInvocation.method)}]:invokeAction};
 for(const button of document.querySelectorAll('[data-action]'))button.addEventListener(button.tagName==='INPUT'?(button.type==='checkbox'?'change':'input'):'click',()=>{
@@ -255,7 +272,7 @@ for(const button of document.querySelectorAll('[data-action]'))button.addEventLi
   const input=document.querySelector('[data-action-input="'+action.id+'.'+field.name+'"]');
   return [field.name,field.valueType==='boolean'?input.checked:input.value];
  }));invokeAction(action.id,values);
-});render();`;
+});render();if(faults.relocateControlOnReload&&restored)relocateControl('ACT_START_GAME');`;
   const html = `<!doctype html><html><body><main id="root">${surfaceHtml(screen.rootSurface.surfaceRef)}</main><script>${script}</script></body></html>`;
   fs.writeFileSync(path.join(value.workdir, "server.cjs"), `require('node:http').createServer((req,res)=>{res.setHeader('content-type','text/html');res.end(${JSON.stringify(html)})}).listen(Number(process.argv[3]),process.argv[2]);`);
 }

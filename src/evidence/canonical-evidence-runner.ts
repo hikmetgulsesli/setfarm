@@ -806,7 +806,7 @@ function nativeStates(capture: CapturedRuntimeState | undefined, slice: LegacyIm
   return {};
 }
 
-function nativeRenderedValue(input: Readonly<{ capture: CapturedRuntimeState | undefined; effect: EvidencePlanV2["flows"][number]["observableEffects"][number];
+function nativeRenderedValue(input: Readonly<{ slice: LegacyImplementationSliceV2; capture: CapturedRuntimeState | undefined; effect: EvidencePlanV2["flows"][number]["observableEffects"][number];
   flow: EvidencePlanV2["flows"][number]; property: ObservableActionEffectV1["assertions"][number]["property"] }>): unknown {
   const dom = nativeDom(input.capture), selector = input.effect.selector;
   if (!dom || selector.kind === "invocation_output") return undefined;
@@ -824,6 +824,17 @@ function nativeRenderedValue(input: Readonly<{ capture: CapturedRuntimeState | u
     if (element.attributes.get("data-control-slot") !== selector.controlSlotRef) return undefined;
     const expected = input.flow.observableBindings.find(binding => binding.observableRef === input.effect.id);
     if (expected?.selector.kind !== "control" || expected.selector.controlSlotRef !== selector.controlSlotRef) return undefined;
+    // The observable selects its own slot, which need not be this flow's invoked
+    // placement. Bind every observed phase to that slot's authenticated source.
+    const controls = input.slice.contract.design?.controls.filter(control => control.identity.actionRef === input.flow.actionRef
+      && control.identity.controlSlotRef === selector.controlSlotRef) ?? [];
+    if (controls.length !== 1) return undefined;
+    const controlSources = input.slice.storySourceMap.screens.flatMap(screen => screen.controls).filter(control =>
+      control.physicalControlRef === controls[0]!.id && control.actionRef === input.flow.actionRef && control.controlSlotRef === selector.controlSlotRef);
+    if (controlSources.length !== 1) return undefined;
+    const controlSource = controlSources[0]!;
+    if (source.sourceElementRef !== controlSource.sourceElementRef || element.activeSurfaceRef !== controlSource.placement.surfaceRef
+      || observation.containingSurfaceId !== controlSource.placement.surfaceRef) return undefined;
   } else if (selector.kind === "surface") {
     if (element.attributes.get("data-surface-id") !== selector.surfaceRef || observation.surfaceId !== selector.surfaceRef) return undefined;
   } else if (element.activeSurfaceRef !== selector.surfaceRef || (observation.containingSurfaceId ?? observation.surfaceId) !== selector.surfaceRef
@@ -843,7 +854,7 @@ function nativeObservableVerdict(input: Readonly<{ slice: LegacyImplementationSl
       const value = nativeInvocationValue(input.slice, input.flow.actionRef, capture);
       return value === undefined ? undefined : jsonPointer(value, selector.pointer);
     }
-    return nativeRenderedValue({ capture, property, effect: input.effect, flow: input.flow });
+    return nativeRenderedValue({ slice: input.slice, capture, property, effect: input.effect, flow: input.flow });
   };
   let inconclusive = false;
   for (const assertion of input.effect.assertions) {

@@ -202,6 +202,57 @@ describe("genuine native PacketV3 evidence plan", () => {
       assert.deepEqual(failed.observations.filter(observation => observation.kind === "control").map(observation => observation.controlRef).sort(), controls.map(control => control.id).sort());
     } finally { value.cleanup(); }
   });
+
+  for (const phase of ["after", "reload"]) {
+    it(`refuses the exact native control observable when the control relocates only ${phase}`, async () => {
+      const value = await nativeBrowserFixture(phase === "reload" ? { persistence: true, controlReload: true } : {});
+      try {
+        const action = value.slice.contract.product.actions.find(action => action.id === "ACT_START_GAME")!;
+        const effect = action.observableEffects.find(effect => effect.selector.kind === "control")!;
+        assert.ok(effect.assertions.some(assertion => assertion.phase === phase && assertion.property === "visibility"));
+        const source = value.slice.storySourceMap.screens[0]!.controls[0]!;
+        writeNativeBrowserRuntime(value);
+        const baseline = await runNative(value, `control-surface-${phase}-baseline`);
+        assert.equal(baseline.ok, true, nativeDiagnostic(baseline, value.workdir));
+        assert.equal(assertExactNativePredicates(value, baseline).predicates.find(predicate => predicate.predicateRef === effect.evidenceRef)?.verdict, "pass");
+        writeNativeBrowserRuntime(value, phase === "reload" ? { relocateControlOnReload: true } : { relocateControlAfter: true });
+        const relocated = await runNative(value, `control-surface-${phase}-relocated`);
+        const bundle = assertExactNativePredicates(value, relocated);
+        const traceRef = bundle.artifacts.find(artifact => artifact.locator.endsWith("runtime-trace.json"))!;
+        const trace = JSON.parse(fs.readFileSync(path.join(value.workdir, traceRef.locator), "utf8"));
+        assert.equal(trace.runtimeError, null);
+        assert.ok(trace.interactions.every((interaction: { result: { status: string } }) => interaction.result.status === "pass"));
+        const flow = relocated.evidencePlan!.flows.find(flow => flow.actionRef === action.id)!;
+        const actionTrace = trace.interactions.find((interaction: { request: { id: string } }) => interaction.request.id === flow.actionInteractionId);
+        const observedPhase = phase === "after" ? actionTrace.after
+          : trace.interactions.find((interaction: { request: { id: string } }) => interaction.request.id === flow.reloadInteractionId).after;
+        const beforeDom = JSON.parse(fs.readFileSync(actionTrace.before.domSnapshotPath, "utf8"));
+        const afterDom = JSON.parse(fs.readFileSync(observedPhase.domSnapshotPath, "utf8"));
+        assert.equal(beforeDom.elements.find((element: { actionId: string }) => element.actionId === source.generatedLocalId).containingSurfaceId, source.placement.surfaceRef);
+        assert.equal(afterDom.elements.find((element: { actionId: string }) => element.actionId === source.generatedLocalId).containingSurfaceId, "SURF_RELOCATED_CONTROL");
+        assert.deepEqual(actionTrace.after.stateBridge.states.STATE_GAME_PHASE, { phase: "playing" });
+        const invocation = value.slice.contract.product.evidencePredicates.find(predicate => predicate.kind === "action_invocation" && predicate.subjectRef === action.id)!;
+        assert.equal(bundle.predicates.find(predicate => predicate.predicateRef === invocation.id)?.verdict, "pass");
+        const observed = bundle.predicates.find(predicate => predicate.predicateRef === effect.evidenceRef)!;
+        assert.equal(observed.actionRef, action.id);
+        assert.equal(observed.controlRef, source.physicalControlRef);
+        assert.notEqual(observed.verdict, "pass", `${phase} relocation must fail the exact native control observable`);
+        assert.equal(relocated.ok, false);
+      } finally { value.cleanup(); }
+    });
+  }
+
+  it("preserves a native control observable whose own after-enabled assertion is false", async () => {
+    const value = await nativeBrowserFixture({ controlDisabledAfter: true });
+    try {
+      writeNativeBrowserRuntime(value);
+      const result = await runNative(value, "control-disabled-after-valid");
+      assert.equal(result.ok, true, nativeDiagnostic(result, value.workdir));
+      const effect = value.slice.contract.product.actions[0]!.observableEffects.find(effect => effect.selector.kind === "control")!;
+      assert.ok(effect.assertions.some(assertion => assertion.phase === "after" && assertion.property === "enabled" && assertion.expected === false));
+      assert.equal(assertExactNativePredicates(value, result).predicates.find(predicate => predicate.predicateRef === effect.evidenceRef)?.verdict, "pass");
+    } finally { value.cleanup(); }
+  });
 });
 
 describe("native boolean transport through the existing browser primitive", () => {
