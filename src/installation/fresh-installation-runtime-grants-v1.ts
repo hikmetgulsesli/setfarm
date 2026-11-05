@@ -5,6 +5,17 @@ import {
   type FreshInstallationProvenanceSqlV1,
 } from "./fresh-installation-provenance-v1.js";
 
+import {
+  V3_STORY_CLAIM_RUNTIME_BINDING_V1_TABLE,
+  V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_TABLE,
+  V3_STORY_CLAIM_RUNTIME_BINDING_V1_FUNCTION,
+  V3_STORY_CLAIM_RUNTIME_BINDING_V1_FUNCTION_BODY,
+  V3_STORY_CLAIM_RUNTIME_BINDING_V1_ROW_TRIGGER,
+  V3_STORY_CLAIM_RUNTIME_BINDING_V1_TRUNCATE_TRIGGER,
+  V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_ROW_TRIGGER,
+  V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_TRUNCATE_TRIGGER,
+} from "../db/v3-story-claim-runtime-binding-v1-migration.js";
+
 type Grant = Readonly<{ table: string; privilege: "INSERT" | "UPDATE"; columns: readonly string[] }>;
 const GRANTS: readonly Grant[] = Object.freeze([
   // run-persistence:475/520; terminal transition:905; repo/step/spawner updates.
@@ -100,7 +111,14 @@ const GRANTS: readonly Grant[] = Object.freeze([
   { table: "v3_deploy_receipts", privilege: "INSERT", columns: ["receipt_hash", "run_id", "step_db_id", "workflow_step_id", "claim_id", "candidate_id", "candidate_hash", "packet_hash", "product_id", "project_id", "display_name", "summary", "stack_pack_id", "stack_pack_version", "stack_pack_content_hash", "platform", "tech_stack", "source_sha", "source_tree_hash", "build_artifact_hash", "build_manifest_file_count", "build_manifest_total_bytes", "build_manifest_ref", "sealed_runtime_ref", "service_id", "deployment_mode", "host", "port", "health_url", "deploy_url", "health_http_status", "health_checked_at", "runtime_owner_pid", "runtime_owner_started_at", "runtime_owner_process_group_id", "terminal_projection_ref", "completed_at", "payload", "created_at"] },
   { table: "v3_project_transfer_acks", privilege: "INSERT", columns: ["ack_hash", "run_id", "candidate_id", "candidate_hash", "packet_hash", "source_sha", "source_tree_hash", "deploy_receipt_hash", "source_snapshot_hash", "project_id", "projection_hash", "project_record_hash", "project_record_ref", "persisted_at", "payload", "created_at"] },
 ]);
-const TABLES = Object.freeze([...new Set(GRANTS.map(grant => grant.table))].sort());
+// Published migration29's INVOKER binding trigger KEY SHARE-locks this
+// immutable timestamp row. Its exact guard below rejects every actual UPDATE.
+const CUTOVER_ROW_LOCK_PRIVILEGE = Object.freeze({
+  table: V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_TABLE, column: "cutover_at",
+});
+const TABLES = Object.freeze([...new Set([
+  ...GRANTS.map(grant => grant.table), CUTOVER_ROW_LOCK_PRIVILEGE.table,
+])].sort());
 const SEQUENCES = Object.freeze(["runs_run_number_seq", "claim_log_id_seq"]);
 // Exact scoped exception for unavoidable published migration25 INVOKER locks.
 // Neither timestamp can actually be updated: the exact existing row triggers
@@ -169,6 +187,62 @@ function oid(value: string): boolean {
 }
 type Context = Readonly<{ ownerOid: string; runtimeOid: string }>;
 type Acl = { object: string; column: string; grantor: string; grantee: string; privilege: string; grantable: boolean };
+
+/** Fresh-only policy proof for one row-lock exception. The frozen migration
+ * verifier requires historical owner-only ACLs and is deliberately unchanged. */
+async function verifyCutoverRowLockGuard(sql: FreshInstallationProvenanceSqlV1, ctx: Context): Promise<void> {
+  const functions = await sql.unsafe<Array<{
+    oid: string; owner_oid: string; body: string; config: string[] | null; valid: boolean; owner_acl: boolean;
+  }>>(`SELECT p.oid::text AS oid,p.proowner::text AS owner_oid,p.prosrc AS body,p.proconfig AS config,
+      (p.pronargs=0 AND p.pronargdefaults=0 AND p.prokind='f' AND p.prorettype='pg_catalog.trigger'::regtype
+       AND l.lanname='plpgsql' AND NOT p.prosecdef AND NOT p.proleakproof AND NOT p.proisstrict
+       AND NOT p.proretset AND p.provolatile='v' AND p.proparallel='u'
+       AND pg_catalog.pg_get_function_identity_arguments(p.oid)='') AS valid,
+      (SELECT count(*)=1 AND bool_and(a.grantor=p.proowner AND a.grantee=p.proowner
+         AND a.privilege_type='EXECUTE' AND NOT a.is_grantable)
+       FROM pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) a) AS owner_acl
+    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+    WHERE n.nspname='public' AND p.proname=$1 LIMIT 2`, [V3_STORY_CLAIM_RUNTIME_BINDING_V1_FUNCTION]);
+  const fn = functions[0];
+  if (functions.length !== 1 || !fn || !oid(fn.oid) || fn.owner_oid !== ctx.ownerOid
+    || fn.body !== V3_STORY_CLAIM_RUNTIME_BINDING_V1_FUNCTION_BODY || fn.valid !== true || fn.owner_acl !== true
+    || canonicalJsonStringify(fn.config) !== canonicalJsonStringify(["search_path=pg_catalog, public"])) refuse();
+  const expected = [
+    { name: V3_STORY_CLAIM_RUNTIME_BINDING_V1_ROW_TRIGGER, table: V3_STORY_CLAIM_RUNTIME_BINDING_V1_TABLE, type: 31 },
+    { name: V3_STORY_CLAIM_RUNTIME_BINDING_V1_TRUNCATE_TRIGGER, table: V3_STORY_CLAIM_RUNTIME_BINDING_V1_TABLE, type: 34 },
+    { name: V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_ROW_TRIGGER, table: V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_TABLE, type: 27 },
+    { name: V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_TRUNCATE_TRIGGER, table: V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_TABLE, type: 34 },
+  ];
+  const triggers = await sql.unsafe<Array<{
+    name: string; table: string; schema: string; function_oid: string; owner_oid: string;
+    type: number; enabled: string; valid: boolean;
+  }>>(`SELECT t.tgname AS name,c.relname AS "table",n.nspname AS "schema",t.tgfoid::text AS function_oid,
+      c.relowner::text AS owner_oid,t.tgtype::integer AS type,t.tgenabled AS enabled,
+      (t.tgnargs=0 AND octet_length(t.tgargs)=0 AND t.tgattr=''::int2vector AND t.tgqual IS NULL
+       AND t.tgconstraint=0 AND t.tgconstrrelid=0 AND t.tgconstrindid=0
+       AND NOT t.tgdeferrable AND NOT t.tginitdeferred
+       AND c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition
+       AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity
+       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid=c.oid OR i.inhparent=c.oid)
+       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid=c.oid)
+       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=c.oid)) AS valid
+    FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    WHERE NOT t.tgisinternal AND ((n.nspname='public' AND c.relname=ANY($1::text[]))
+      OR t.tgname=ANY($2::text[]) OR t.tgfoid=$3::oid)
+    ORDER BY n.nspname,c.relname,t.tgname LIMIT 5`, [
+      [V3_STORY_CLAIM_RUNTIME_BINDING_V1_TABLE, V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_TABLE],
+      expected.map(trigger => trigger.name), fn.oid,
+    ]);
+  if (triggers.length !== expected.length || new Set(triggers.map(trigger => trigger.name)).size !== expected.length
+    || triggers.some(trigger => {
+      const wanted = expected.find(item => item.name === trigger.name);
+      return !wanted || trigger.table !== wanted.table || trigger.schema !== "public"
+        || trigger.type !== wanted.type || trigger.enabled !== "O" || trigger.function_oid !== fn.oid
+        || trigger.owner_oid !== ctx.ownerOid || trigger.valid !== true;
+    })) refuse();
+}
 
 async function installDeliveryRowLockGuard(sql: FreshInstallationProvenanceSqlV1, ctx: Context): Promise<void> {
   const absent = await sql.unsafe<Array<{ absent: boolean }>>(`SELECT
@@ -326,7 +400,9 @@ async function context(sql: FreshInstallationProvenanceSqlV1, role: string, owne
     || objects.some(object => object.owner_oid !== row.owner_oid || object.serial_matches !== true
       || (TABLES.includes(object.name) ? object.kind !== "r"
         : !SEQUENCES.includes(object.name) || object.kind !== "S"))) refuse();
-  return Object.freeze({ ownerOid: row.owner_oid, runtimeOid: row.runtime_oid });
+  const ctx = Object.freeze({ ownerOid: row.owner_oid, runtimeOid: row.runtime_oid });
+  await verifyCutoverRowLockGuard(sql, ctx);
+  return ctx;
 }
 
 async function readAcl(sql: FreshInstallationProvenanceSqlV1, ctx: Context): Promise<Acl[]> {
@@ -356,6 +432,7 @@ function assertAcl(actual: readonly Acl[], ctx: Context, extended: boolean): voi
   if (extended) {
     for (const grant of GRANTS) for (const column of grant.columns) append(grant.table, column, grant.privilege);
     for (const grant of PREPARATION_ROW_LOCK_PRIVILEGES) append(grant.table, grant.column, "UPDATE");
+    append(CUTOVER_ROW_LOCK_PRIVILEGE.table, CUTOVER_ROW_LOCK_PRIVILEGE.column, "UPDATE");
     for (const table of DELETE_TABLES) append(table, "", "DELETE");
     for (const sequence of SEQUENCES) append(sequence, "", "USAGE");
   }
@@ -391,6 +468,8 @@ export async function installFreshInstallationRuntimeBusinessGrantsV1(
     for (const grant of PREPARATION_ROW_LOCK_PRIVILEGES) await sql.unsafe(
       `GRANT UPDATE (${quote(grant.column)}) ON TABLE public.${grant.table} TO ${quote(role)}`,
     );
+    await sql.unsafe(`GRANT UPDATE (${quote(CUTOVER_ROW_LOCK_PRIVILEGE.column)})
+      ON TABLE public.${CUTOVER_ROW_LOCK_PRIVILEGE.table} TO ${quote(role)}`);
     for (const table of DELETE_TABLES) await sql.unsafe(`GRANT DELETE ON TABLE public.${table} TO ${quote(role)}`);
     for (const sequence of SEQUENCES) await sql.unsafe(`GRANT USAGE ON SEQUENCE public.${sequence} TO ${quote(role)}`);
     const after = await context(sql, role, true);

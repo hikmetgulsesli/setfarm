@@ -66,6 +66,74 @@ test("fresh runtime V25 lock privileges preserve exact immutable guards and perm
     const bypass = await runtime.unsafe("SELECT has_parameter_privilege(current_user,'session_replication_role','SET') AS allowed");
     assert.equal(bypass[0].allowed, false);
     await code(() => runtime.unsafe("UPDATE artifact_capacity SET quota_bytes=quota_bytes WHERE capacity_key='semantic-artifacts'"), "42501");
+    // Migration29's immutable binding INSERT trigger runs as this real LOGIN
+    // principal and KEY SHARE-locks its genuine genesis cutover row. Ordinary
+    // SELECT must succeed first; the old policy then fails the exact lock42501.
+    const cutoverTable = "public.v3_story_claim_runtime_binding_cutovers_v1";
+    const cutoverBefore = await runtime.unsafe(`SELECT cutover_id,
+      maximum_pre_cutover_claim_id::text AS maximum_pre_cutover_claim_id,
+      cutover_at::text AS cutover_at,historical_owner_count::text AS historical_owner_count,
+      historical_owner_digest FROM ${cutoverTable} WHERE cutover_id='v1'`);
+    assert.equal(cutoverBefore.length, 1);
+    assert.equal(cutoverBefore[0].historical_owner_count, "0");
+    await runtime.begin(async tx => {
+      const locked = await tx.unsafe(`SELECT cutover_id,
+        maximum_pre_cutover_claim_id::text AS maximum_pre_cutover_claim_id,
+        cutover_at::text AS cutover_at,historical_owner_count::text AS historical_owner_count,
+        historical_owner_digest FROM ${cutoverTable} WHERE cutover_id='v1' FOR KEY SHARE`);
+      assert.deepEqual([...locked], [...cutoverBefore]);
+    });
+    const cutoverAcl = await runtime.unsafe(`SELECT
+      has_table_privilege(current_user,$1,'SELECT') AS readable,
+      has_table_privilege(current_user,$1,'UPDATE') AS table_update,
+      has_column_privilege(current_user,$1,'cutover_at','UPDATE') AS timestamp_lock,
+      has_column_privilege(current_user,$1,'cutover_at','UPDATE WITH GRANT OPTION') AS can_grant,
+      has_column_privilege(current_user,$1,'maximum_pre_cutover_claim_id','UPDATE') AS boundary_update`, [cutoverTable]);
+    assert.deepEqual([...cutoverAcl], [{ readable:true,table_update:false,timestamp_lock:true,
+      can_grant:false,boundary_update:false }]);
+    // The narrow lock privilege cannot change even an equal timestamp. Every
+    // other mutation/bypass remains forbidden under the unchanged real guard.
+    await code(() => runtime.unsafe(`UPDATE ${cutoverTable} SET cutover_at=cutover_at WHERE cutover_id='v1'`), "23514");
+    await code(() => runtime.unsafe(`UPDATE ${cutoverTable} SET cutover_at=cutover_at+INTERVAL '1 second' WHERE cutover_id='v1'`), "23514");
+    await code(() => runtime.unsafe(`UPDATE ${cutoverTable} SET maximum_pre_cutover_claim_id=maximum_pre_cutover_claim_id WHERE cutover_id='v1'`), "42501");
+    await code(() => runtime.unsafe(`INSERT INTO ${cutoverTable} SELECT * FROM ${cutoverTable}`), "42501");
+    await code(() => runtime.unsafe(`DELETE FROM ${cutoverTable} WHERE cutover_id='v1'`), "42501");
+    await code(() => runtime.unsafe(`TRUNCATE TABLE ${cutoverTable}`), "42501");
+    await code(() => runtime.unsafe(`ALTER TABLE ${cutoverTable} DISABLE TRIGGER trg_v3_story_claim_runtime_binding_cutover_guard_v1`), "42501");
+    await code(() => runtime.unsafe(`CREATE OR REPLACE FUNCTION public.setfarm_guard_v3_story_claim_runtime_binding_v1()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$`), "42501");
+    const cutoverAfter = await runtime.unsafe(`SELECT cutover_id,
+      maximum_pre_cutover_claim_id::text AS maximum_pre_cutover_claim_id,
+      cutover_at::text AS cutover_at,historical_owner_count::text AS historical_owner_count,
+      historical_owner_digest FROM ${cutoverTable} WHERE cutover_id='v1'`);
+    assert.deepEqual([...cutoverAfter], [...cutoverBefore]);
+    await grants.verifyFreshInstallationRuntimeBusinessGrantsV1(runtime, installation.runtimeRole);
+
+    // Only this owned fixture's owner may introduce drift, always rolled back.
+    // Runtime verification must reject rather than adopt each extra privilege
+    // or altered immutable guard, then pass again after the real rollback.
+    const tamperOwner = postgres(endpoint.href, { max: 1, connect_timeout: 3, onnotice() {} });
+    try {
+      for (const statement of [
+        `GRANT UPDATE (maximum_pre_cutover_claim_id) ON ${cutoverTable} TO ${quote(installation.runtimeRole)}`,
+        `ALTER TABLE ${cutoverTable} DISABLE TRIGGER trg_v3_story_claim_runtime_binding_cutover_guard_v1`,
+        `CREATE OR REPLACE FUNCTION public.setfarm_guard_v3_story_claim_runtime_binding_v1()
+          RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public
+          AS $$ BEGIN RETURN NEW; END; $$`,
+        `GRANT EXECUTE ON FUNCTION public.setfarm_guard_v3_story_claim_runtime_binding_v1() TO ${quote(installation.runtimeRole)}`,
+      ]) {
+        await assert.rejects(tamperOwner.begin(async tx => {
+          await tx.unsafe(`SET LOCAL ROLE ${quote(installation.ownerRole)}`);
+          await tx.unsafe(statement);
+          await assert.rejects(grants.verifyFreshInstallationRuntimeBusinessGrantsV1(tx, installation.runtimeRole),
+            /FRESH_INSTALLATION_RUNTIME_GRANTS_REFUSED/);
+          throw new Error("cutover guard drift rollback");
+        }), /cutover guard drift rollback/);
+        await grants.verifyFreshInstallationRuntimeBusinessGrantsV1(runtime, installation.runtimeRole);
+      }
+    } finally { await tamperOwner.end({ timeout: 3 }); }
+
+
     // Inert data-only seed from maintained preparation-authority migration test.
     // No helper fabricates a V3 capability or disables any production trigger.
     const runId = "component-preparation-v25", storyId = "US-001";
