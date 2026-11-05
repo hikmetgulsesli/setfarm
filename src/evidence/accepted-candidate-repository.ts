@@ -131,7 +131,7 @@ export function createAcceptedCandidateRepository(input: Readonly<{
     ) {
       fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID", `${artifactHash} is not the exact packet-owned ${artifactType}`);
     }
-    return envelope;
+    return { envelope, indexed };
   }
 
   return Object.freeze({
@@ -203,6 +203,7 @@ export function createAcceptedCandidateRepository(input: Readonly<{
       // Native contract/original Git and final candidate I/O precedes the lock.
       // The transaction below rechecks actual child/parent/source-owner rows.
       const nativeContexts=new Map<string,NativeImplementationContextV3>();
+      const nativeArtifacts=new Map<string,Awaited<ReturnType<typeof readExactArtifact>>>();
       if("implementationSourceMap" in packet){
         const {loadV3ImplementationAttemptContext}=await import("../execution/v3-implementation-attempt.js");
         for(const request of raw.storyEvidence){
@@ -211,6 +212,12 @@ export function createAcceptedCandidateRepository(input: Readonly<{
             ||context.evidencePlanArtifactHash!==request.evidencePlanArtifactHash
             ||context.sourceBefore.sha!==sourceRevision.sha||context.sourceBefore.treeHash!==sourceRevision.treeHash)
             fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native final-source contract lacks genuine downstream authority");
+          // Immutable envelope/hash/producer/length checks occur before begin.
+          // Only the same indexed metadata and durable refs are read under lock.
+          nativeArtifacts.set(context.sliceHash,await readExactArtifact(context.sliceHash,
+            "setfarm.implementation-slice.v2",packet.producer));
+          nativeArtifacts.set(context.evidencePlanArtifactHash,await readExactArtifact(context.evidencePlanArtifactHash,
+            "setfarm.evidence-plan.v2",packet.producer));
           nativeContexts.set(request.storyId,context);
         }
       }
@@ -327,8 +334,23 @@ export function createAcceptedCandidateRepository(input: Readonly<{
           }
 
           const native=nativeContexts.get(request.storyId);
-          const sliceEnvelope = await readExactArtifact(attempt.slice_hash,
-            native?"setfarm.implementation-slice.v2":"setfarm.implementation-slice.v1",packet.producer);
+          if(native) {
+            for(const hash of [attempt.slice_hash,request.evidencePlanArtifactHash]) {
+              const snapshot=nativeArtifacts.get(hash);
+              if(!snapshot) fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native immutable preauthentication is absent");
+              const metadata=await transaction.unsafe<Array<{artifact_type:string;byte_length:string|number;producer_metadata:unknown}>>(
+                "SELECT artifact_type,byte_length,producer_metadata FROM semantic_artifacts WHERE artifact_hash=$1 FOR SHARE",[hash]);
+              const indexed=metadata[0];
+              if(metadata.length!==1||!indexed||indexed.artifact_type!==snapshot.indexed.artifactType
+                ||Number(indexed.byte_length)!==snapshot.indexed.byteLength
+                ||canonicalJsonStringify(indexed.producer_metadata)!==canonicalJsonStringify(snapshot.indexed.producer))
+                fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native immutable index changed before acceptance");
+            }
+          }
+          const sliceSnapshot=native?nativeArtifacts.get(attempt.slice_hash)
+            :await readExactArtifact(attempt.slice_hash,"setfarm.implementation-slice.v1",packet.producer);
+          if(!sliceSnapshot) fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native slice preauthentication is absent");
+          const sliceEnvelope=sliceSnapshot.envelope;
           const slice=native?LegacyImplementationSliceV2Schema.parse(sliceEnvelope.payload):ImplementationSliceV1Schema.parse(sliceEnvelope.payload);
           if(slice.packetHash!==packet.packetHash||slice.storyId!==request.storyId)
             fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID",`${request.storyId} slice differs from exact packet/story`);
@@ -344,8 +366,10 @@ export function createAcceptedCandidateRepository(input: Readonly<{
             ||slice.sourceRevision.treeHash!==sourceRevision.treeHash){
             fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID",`${request.storyId} slice is not compiled from the final source`);
           }
-          const planEnvelope=await readExactArtifact(request.evidencePlanArtifactHash,
-            native?"setfarm.evidence-plan.v2":"setfarm.evidence-plan.v1",packet.producer);
+          const planSnapshot=native?nativeArtifacts.get(request.evidencePlanArtifactHash)
+            :await readExactArtifact(request.evidencePlanArtifactHash,"setfarm.evidence-plan.v1",packet.producer);
+          if(!planSnapshot) fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native plan preauthentication is absent");
+          const planEnvelope=planSnapshot.envelope;
           const plan=slice.schema==="setfarm.implementation-slice.v2"
             ?EvidencePlanV2Schema.parse(planEnvelope.payload):EvidencePlanV1Schema.parse(planEnvelope.payload);
           const expectedPlan=slice.schema==="setfarm.implementation-slice.v2"

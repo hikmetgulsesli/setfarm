@@ -645,8 +645,8 @@ async function lockNativeRecoveryPredecessor(
     || origin.stepId !== reservation.stepId || origin.storyId !== reservation.storyId
     || origin.packetHash !== reservation.packetHash || origin.compilationReportHash !== reservation.compilationReportHash
     || origin.baseRevision.sha !== originRow.source_before_sha || origin.baseRevision.treeHash !== originRow.source_before_tree_hash
-    || !sameCanonical(origin.dependencyAttempts.map(({ attemptId: _id, attemptGeneration: _generation,
-      attemptClass: _class, disposition: _disposition, ...dependency }) => dependency), slice.dependencyOutputs)) {
+    || !sameCanonical(origin.dependencyAttempts.map(({ storyId, sliceHash, outputHash, sourceAfter, fileSignatures }) =>
+      ({ storyId, sliceHash, outputHash, sourceAfter, fileSignatures })), slice.dependencyOutputs)) {
     throw new Error("RECOVERY_DELIVERY_NATIVE_ORIGIN_MISMATCH");
   }
   const originRef = `setfarm://preparation-authority-v2/${origin.authorityHash}`;

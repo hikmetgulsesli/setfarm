@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { createHash } from "node:crypto";
 import { NativeEvidenceRefreshWitnessV1Schema } from "../execution/v3-preparation-runtime-authority-v1.js";
+import { V3ImplementationAgentOutputV1Schema } from "../execution/v3-implementation-output.js";
 import { RuntimeCompletionPlanV1Schema } from "../execution/schemas/runtime-completion-plan-v1.js";
 import { z } from "zod";
 
@@ -784,6 +785,88 @@ async function assertNoModelPublicationForEvidenceOnlyClaimInTransaction(
   }
 }
 
+/** Accepted model completion is source provenance, not a successful story.
+ * The actual RCR/runtime/claim and frozen continuation identify the immediate
+ * candidate; the initial reservation separately supplies immutable Git custody.
+ * Used before I/O and again through SQL-only consumers under their existing locks. */
+export async function readNativeAcceptedModelSourceAuthority(
+  query:Pick<Sql,"unsafe">,
+  input:Readonly<{runId:string;storyId:string;attemptId:string;packetHash:string}>,
+) {
+  const rows=await query.unsafe<Array<{
+    attempt_id:string;claim_id:string;generation:number;slice_hash:string;compilation_report_hash:string;
+    branch:string;worktree:string;source_before_sha:string;source_before_tree_hash:string;
+    source_after_sha:string;source_after_tree_hash:string;output_hash:string;output:string;evidence_refs:string;
+    completion_plan:unknown;completion_plan_hash:string;request_id:string;step_db_id:string;story_db_id:string;
+    authority_hash:string;initial_attempt_id:string;initial_claim_id:string;initial_branch:string;
+    initial_worktree:string;initial_sha:string;initial_tree_hash:string;initial_evidence_refs:string;
+  }>>(`SELECT a.attempt_id,a.claim_id::text,a.generation,a.slice_hash,a.compilation_report_hash,a.branch,a.worktree,
+      a.source_before_sha,a.source_before_tree_hash,a.source_after_sha,a.source_after_tree_hash,a.output_hash,a.evidence_refs,
+      q.output,q.completion_plan,q.completion_plan_hash,q.request_id,q.step_db_id,s.story_db_id,b.authority_hash,
+      initial.attempt_id AS initial_attempt_id,initial.claim_id::text AS initial_claim_id,
+      initial.branch AS initial_branch,initial.worktree AS initial_worktree,
+      initial.source_before_sha AS initial_sha,initial.source_before_tree_hash AS initial_tree_hash,
+      initial.evidence_refs AS initial_evidence_refs
+    FROM execution_attempts a
+    JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id
+      AND q.run_id=a.run_id AND q.workflow_step_id=a.step_id AND q.story_id=a.story_id AND q.output_hash=a.output_hash
+      AND q.state='accepted' AND q.apply_phase='effects_committed' AND q.claim_outcome IN ('completed','failed')
+    JOIN runtime_sessions s ON s.session_id=q.runtime_session_id AND s.attempt_id=a.attempt_id AND s.claim_id=a.claim_id
+      AND s.run_id=a.run_id AND s.workflow_step_id=a.step_id AND s.step_db_id=q.step_db_id
+      AND s.story_id=a.story_id AND s.claim_agent_id=a.agent_id AND s.state='released'
+    JOIN claim_log c ON c.id=a.claim_id AND c.run_id=a.run_id AND c.step_id=a.step_id AND c.story_id=a.story_id
+      AND c.agent_id=a.agent_id AND c.outcome=q.claim_outcome
+    JOIN v3_story_claim_runtime_bindings_v1 binding ON binding.claim_id=a.claim_id AND binding.runtime_session_id=s.session_id
+      AND binding.run_id=a.run_id AND binding.step_db_id=q.step_db_id AND binding.workflow_step_id=a.step_id
+      AND binding.subject_kind='story_member' AND binding.story_id=a.story_id AND binding.story_db_id=s.story_db_id
+    JOIN v3_preparation_authority_attempts_v2 b ON a.evidence_refs::jsonb ? ('setfarm://preparation-authority-v2/'||b.authority_hash)
+    JOIN execution_attempts initial ON initial.attempt_id=b.attempt_id AND initial.claim_id=b.claim_id AND initial.slice_hash=b.slice_hash
+      AND initial.run_id=a.run_id AND initial.step_id=a.step_id AND initial.story_id=a.story_id
+      AND initial.packet_hash=a.packet_hash AND initial.compilation_report_hash=a.compilation_report_hash
+      AND initial.attempt_class='product_implementation' AND initial.role='developer'
+      AND initial.recovery_dispatch_id IS NULL AND initial.recovery_case_revision_id IS NULL AND initial.generation<=a.generation
+    JOIN v3_preparation_authorities_v2 origin ON origin.authority_hash=b.authority_hash
+      AND origin.run_id=a.run_id AND origin.step_id=a.step_id AND origin.story_id=a.story_id
+      AND origin.packet_hash=a.packet_hash AND origin.compilation_report_hash=a.compilation_report_hash
+      AND origin.base_source_sha=initial.source_before_sha AND origin.base_source_tree_hash=initial.source_before_tree_hash
+    WHERE a.attempt_id=$1 AND a.run_id=$2 AND a.story_id=$3 AND a.packet_hash=$4 AND a.step_id='implement'
+      AND a.role IN ('developer','supervisor') AND a.disposition NOT IN ('claimed','running','superseded')
+      AND a.source_after_sha IS NOT NULL AND a.source_after_tree_hash IS NOT NULL
+      AND a.branch IS NOT NULL AND a.worktree IS NOT NULL
+      AND ((a.recovery_dispatch_id IS NULL AND a.recovery_case_revision_id IS NULL)
+        OR EXISTS(SELECT 1 FROM internal_production_v3_recovery_claim_publications_v1 p
+          JOIN recovery_revision_dispatches d ON d.dispatch_id=p.dispatch_id AND d.revision_id=p.revision_id
+          JOIN recovery_case_revisions r ON r.revision_id=d.revision_id AND r.recovery_case_id=d.recovery_case_id
+          WHERE p.claim_id=a.claim_id AND p.runtime_session_id=s.session_id AND p.run_id=a.run_id
+            AND p.workflow_step_id=a.step_id AND p.story_id=a.story_id AND p.step_db_id=q.step_db_id
+            AND p.dispatch_id=a.recovery_dispatch_id AND p.revision_id=a.recovery_case_revision_id
+            AND d.dispatch_class=a.attempt_class AND r.packet_hash=a.packet_hash
+            AND r.source_sha=a.source_before_sha AND r.source_tree_hash=a.source_before_tree_hash))`,
+    [input.attemptId,input.runId,input.storyId,input.packetHash]);
+  if(rows.length!==1) fail("V3_NATIVE_MODEL_SOURCE_PROVENANCE_INVALID","one exact accepted model candidate owner is required");
+  const row=rows[0]!;
+  const refs=z.array(z.string()).parse(JSON.parse(row.evidence_refs));
+  const initialRefs=z.array(z.string()).parse(JSON.parse(row.initial_evidence_refs));
+  const output=V3ImplementationAgentOutputV1Schema.parse(JSON.parse(row.output));
+  const completionPlan=RuntimeCompletionPlanV1Schema.parse(row.completion_plan);
+  const custody=initialRefs.filter(ref=>ref.startsWith("setfarm://native-git-custody-v1/"));
+  if(createHash("sha256").update(row.output,"utf8").digest("hex")!==row.output_hash
+    ||output.attemptId!==row.attempt_id||output.packetHash!==input.packetHash||output.sliceHash!==row.slice_hash
+    ||output.disposition!=="ready_for_evidence"
+    ||!jsonEquals(output.sourceBefore,{sha:row.source_before_sha,treeHash:row.source_before_tree_hash})
+    ||hashCanonicalJson(completionPlan)!==row.completion_plan_hash||completionPlan.kind!=="story_completion"
+    ||completionPlan.requestId!==row.request_id||completionPlan.claimId!==Number(row.claim_id)
+    ||completionPlan.runId!==input.runId||completionPlan.workflowStepId!=="implement"
+    ||completionPlan.stepDbId!==row.step_db_id||completionPlan.outputHash!==row.output_hash
+    ||completionPlan.subject?.storyId!==input.storyId||completionPlan.subject.storyDbId!==row.story_db_id
+    ||completionPlan.subject.sourceSha!==row.source_after_sha
+    ||!jsonEquals(refs.filter(ref=>ref.startsWith("setfarm://preparation-authority-v2/")),
+      [`setfarm://preparation-authority-v2/${row.authority_hash}`])
+    ||custody.length!==1||!jsonEquals(refs.filter(ref=>ref.startsWith("setfarm://native-git-custody-v1/")),custody))
+    fail("V3_NATIVE_MODEL_SOURCE_PROVENANCE_INVALID","model output, frozen continuation or initial custody differs");
+  return Object.freeze({...row,modelOutput:output,completionPlan});
+}
+
 /** Native clean-origin evidence refresh: SQL-only source/contract custody.
  * The current candidate is the accepted terminal source owner; the slice and
  * plan remain its immutable original base contracts. No caller-provided proof. */
@@ -801,7 +884,7 @@ export async function readNativeEvidenceOnlySourceAuthority(
       AND revision.revision_id=c.current_revision_id
     JOIN recovery_revision_dispatches d ON d.revision_id=revision.revision_id AND d.recovery_case_id=c.recovery_case_id
     JOIN execution_attempts a ON a.run_id=c.run_id AND a.story_id=c.story_id AND c.prior_attempt_refs::jsonb ? a.attempt_id
-    JOIN v3_preparation_authority_attempts_v2 b ON b.attempt_id=a.attempt_id AND b.claim_id=a.claim_id AND b.slice_hash=a.slice_hash
+    JOIN v3_preparation_authority_attempts_v2 b ON a.evidence_refs::jsonb ? ('setfarm://preparation-authority-v2/'||b.authority_hash)
     JOIN v3_preparation_authorities_v2 origin ON origin.authority_hash=b.authority_hash
       AND origin.run_id=a.run_id AND origin.story_id=a.story_id AND origin.packet_hash=a.packet_hash
     JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id AND q.run_id=a.run_id
@@ -813,7 +896,6 @@ export async function readNativeEvidenceOnlySourceAuthority(
       AND claim.story_id=a.story_id AND claim.outcome=q.claim_outcome
     WHERE c.recovery_case_id=$1 AND revision.revision_id=$2 AND d.dispatch_id=$3
       AND c.run_id=$4 AND c.story_id=$5 AND c.owner='infrastructure' AND revision.owner='infrastructure'
-      AND revision.revision_number=1 AND revision.parent_revision_id IS NULL
       AND revision.packet_hash=$6 AND d.packet_hash=$6 AND a.packet_hash=$6
       AND revision.contract_slice_hash=$7 AND d.contract_slice_hash=$7 AND a.slice_hash=$7
       AND revision.finding_set_hash=$8 AND d.finding_set_hash=$8
@@ -821,9 +903,9 @@ export async function readNativeEvidenceOnlySourceAuthority(
       AND d.source_sha=$9 AND d.source_tree_hash=$10 AND a.source_after_sha=$9 AND a.source_after_tree_hash=$10
       AND d.dispatch_class='evidence_only' AND revision.expected_delta->>'kind'='evidence_refresh'
       AND revision.allowed_paths='[]'::jsonb
-      AND a.step_id='implement' AND a.attempt_class='product_implementation' AND a.role='developer'
-      AND a.recovery_dispatch_id IS NULL AND a.recovery_case_revision_id IS NULL
+      AND a.step_id='implement' AND a.role IN ('developer','supervisor')
       AND a.disposition NOT IN ('claimed','running','superseded')
+      AND a.evidence_refs::jsonb ? ('setfarm://artifact/'||revision.evidence_plan_artifact_hash)
       AND q.state='accepted' AND q.apply_phase='effects_committed' AND q.claim_outcome IN ('completed','failed')
       AND runtime.state='released' AND a.branch IS NOT NULL AND a.worktree IS NOT NULL`,
     [lease.recoveryCaseId,lease.revisionId,lease.dispatchId,lease.runId,lease.storyId,lease.packetHash,
@@ -832,7 +914,13 @@ export async function readNativeEvidenceOnlySourceAuthority(
     || rows[0]!.evidence_plan_artifact_hash !== lease.priorEvidencePlanArtifactHash) {
     fail("V3_NATIVE_EVIDENCE_ONLY_SOURCE_AUTHORITY_MISMATCH", "clean native evidence must retain its accepted original source owner and exact plan");
   }
-  return rows[0]!;
+  const source=rows[0]!;
+  const provenance=await readNativeAcceptedModelSourceAuthority(sql,{runId:lease.runId,storyId:lease.storyId,
+    attemptId:source.attempt_id,packetHash:lease.packetHash});
+  if(provenance.authority_hash!==source.authority_hash||provenance.slice_hash!==lease.contractSliceHash
+    ||provenance.source_after_sha!==lease.sourceRevision.sha||provenance.source_after_tree_hash!==lease.sourceRevision.treeHash)
+    fail("V3_NATIVE_EVIDENCE_ONLY_SOURCE_AUTHORITY_MISMATCH","accepted immediate source differs from current revision");
+  return {...source,provenance};
 }
 
 
@@ -898,7 +986,7 @@ export async function readNativeEvidenceOnlyTerminalAuthority(
       AND d.source_tree_hash=a.source_before_tree_hash
     JOIN recovery_case_revisions rev ON rev.revision_id=d.revision_id
       AND rev.recovery_case_id=d.recovery_case_id AND rev.run_id=a.run_id AND rev.story_id=a.story_id
-      AND rev.revision_number=1 AND rev.parent_revision_id IS NULL AND rev.owner='infrastructure'
+      AND rev.owner='infrastructure'
       AND rev.packet_hash=d.packet_hash AND rev.contract_slice_hash=d.contract_slice_hash
       AND rev.finding_set_hash=d.finding_set_hash AND rev.finding_ids=d.finding_ids
       AND rev.source_sha=d.source_sha AND rev.source_tree_hash=d.source_tree_hash
@@ -906,9 +994,13 @@ export async function readNativeEvidenceOnlyTerminalAuthority(
       AND rev.expected_delta->>'kind'='evidence_refresh' AND rev.allowed_paths='[]'::jsonb
     JOIN recovery_cases rc ON rc.recovery_case_id=rev.recovery_case_id
       AND rc.current_revision_id=rev.revision_id AND rc.run_id=a.run_id AND rc.story_id=a.story_id
-      AND rc.packet_hash=rev.packet_hash AND rc.slice_hash=rev.contract_slice_hash
-      AND rc.source_sha=rev.source_sha AND rc.source_tree_hash=rev.source_tree_hash
-      AND rc.finding_set_hash=rev.finding_set_hash AND rc.finding_ids=rev.finding_ids
+      AND rc.packet_hash=rev.packet_hash
+      AND EXISTS(SELECT 1 FROM recovery_case_revisions opening WHERE opening.recovery_case_id=rc.recovery_case_id
+        AND opening.revision_number=1 AND opening.parent_revision_id IS NULL
+        AND opening.run_id=rc.run_id AND opening.story_id=rc.story_id AND opening.packet_hash=rc.packet_hash
+        AND opening.contract_slice_hash=rc.slice_hash AND opening.source_sha=rc.source_sha
+        AND opening.source_tree_hash=rc.source_tree_hash AND opening.finding_set_hash=rc.finding_set_hash
+        AND opening.finding_ids=rc.finding_ids)
       AND rc.owner='infrastructure'
       AND ((rc.status='resolved' AND delivery.state='succeeded')
         OR (rc.status='evidencing' AND delivery.state IN ('attempt_reserved','running')
@@ -922,16 +1014,17 @@ export async function readNativeEvidenceOnlyTerminalAuthority(
       AND original.generation+1=a.generation AND original.source_after_sha=a.source_before_sha
       AND original.source_after_tree_hash=a.source_before_tree_hash
       AND original.branch=a.branch AND original.worktree=a.worktree
-      AND original.attempt_class='product_implementation' AND original.role='developer'
-      AND original.disposition='inconclusive' AND original.recovery_dispatch_id IS NULL
-      AND original.recovery_case_revision_id IS NULL AND rc.prior_attempt_refs::jsonb ? original.attempt_id
-    JOIN v3_preparation_authority_attempts_v2 initial ON initial.attempt_id=original.attempt_id
-      AND initial.claim_id=original.claim_id AND initial.slice_hash=original.slice_hash
+      AND original.role IN ('developer','supervisor') AND original.disposition='inconclusive'
+      AND original.evidence_refs::jsonb ? ('setfarm://artifact/'||rev.evidence_plan_artifact_hash)
+      AND rc.prior_attempt_refs::jsonb ? original.attempt_id
+    JOIN v3_preparation_authority_attempts_v2 initial ON original.evidence_refs::jsonb ? ('setfarm://preparation-authority-v2/'||initial.authority_hash)
+    JOIN execution_attempts custody ON custody.attempt_id=initial.attempt_id AND custody.claim_id=initial.claim_id
+      AND custody.slice_hash=initial.slice_hash AND custody.run_id=a.run_id AND custody.story_id=a.story_id
     JOIN v3_preparation_authorities_v2 authority ON authority.authority_hash=initial.authority_hash
       AND authority.run_id=a.run_id AND authority.step_id=a.step_id AND authority.story_id=a.story_id
       AND authority.packet_hash=a.packet_hash AND authority.compilation_report_hash=a.compilation_report_hash
-      AND authority.base_source_sha=original.source_before_sha
-      AND authority.base_source_tree_hash=original.source_before_tree_hash
+      AND authority.base_source_sha=custody.source_before_sha
+      AND authority.base_source_tree_hash=custody.source_before_tree_hash
     JOIN runtime_completion_requests q ON q.attempt_id=original.attempt_id AND q.claim_id=original.claim_id
       AND q.run_id=original.run_id AND q.story_id=original.story_id AND q.workflow_step_id=original.step_id
       AND q.output_hash=original.output_hash AND q.state='accepted' AND q.apply_phase='effects_committed'
@@ -985,6 +1078,12 @@ export async function readNativeEvidenceOnlyTerminalAuthority(
   `, [input.attemptId,input.runId,input.stepId,input.storyId,input.packetHash]);
   const row=rows[0];
   if(rows.length!==1||!row) fail("V3_NATIVE_EVIDENCE_SUCCESS_MISSING","one exact canonical terminal native nonmodel child is required");
+  const sourceProvenance=await readNativeAcceptedModelSourceAuthority(query,{runId:input.runId,storyId:input.storyId,
+    attemptId:row.source_owner_attempt_id,packetHash:input.packetHash});
+  if(sourceProvenance.authority_hash!==row.authority_hash||sourceProvenance.slice_hash!==row.slice_hash
+    ||sourceProvenance.generation+1!==row.generation||sourceProvenance.source_after_sha!==row.source_sha
+    ||sourceProvenance.source_after_tree_hash!==row.source_tree_hash)
+    fail("V3_NATIVE_EVIDENCE_SUCCESS_WITNESS_MISMATCH","verifier does not attest its immediate accepted model candidate");
   const bundle=EvidenceBundleV2Schema.parse(row.bundle_payload);
   const originalBundle=EvidenceBundleV2Schema.parse(row.original_bundle_payload);
   const originalFindings=FindingSetV1Schema.parse(row.original_finding_payload);
@@ -1211,12 +1310,43 @@ export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
   await transaction.unsafe("UPDATE runs SET context=$2,updated_at=$3 WHERE id=$1",[input.runId,JSON.stringify(context),fence.observedAt]);
 }
 
+/** A read snapshot carries the observed owner, never authority by itself.
+ * Settlement rechecks this exact tuple and current DB-time liveness after locks. */
+export type NativeEvidenceOnlySettlementLease = Readonly<{
+  runId:string;storyId:string;attemptId:string;claimId:string;revisionId:string;dispatchId:string;
+  recoveryCaseId:string;ownerInstanceId:string;leaseToken:string;
+}>;
+
+export async function readNativeEvidenceOnlySettlementLease(
+  query:Pick<Sql,"unsafe">,
+  input:Readonly<{runId:string;storyId:string;attemptId:string;revisionId:string;dispatchId:string;recoveryCaseId:string}>,
+):Promise<NativeEvidenceOnlySettlementLease|undefined> {
+  const rows=await query.unsafe<Array<{claim_id:string;owner_instance_id:string|null;lease_token:string|null;
+    state:string;live:boolean}>>(`SELECT d.claim_id::text,d.owner_instance_id,d.lease_token,d.state,
+      d.lease_expires_at>clock_timestamp() AS live
+    FROM recovery_dispatch_deliveries d JOIN execution_attempts a ON a.attempt_id=d.attempt_id
+      AND a.claim_id=d.claim_id AND a.run_id=d.run_id AND a.story_id=d.story_id
+      AND a.recovery_dispatch_id=d.dispatch_id AND a.recovery_case_revision_id=d.revision_id
+    WHERE d.run_id=$1 AND d.story_id=$2 AND d.attempt_id=$3 AND d.revision_id=$4
+      AND d.dispatch_id=$5 AND d.recovery_case_id=$6 AND a.attempt_class='evidence_only'
+      AND a.role='evidence-orchestrator' AND a.agent_id='setfarm-evidence-orchestrator'`,
+    [input.runId,input.storyId,input.attemptId,input.revisionId,input.dispatchId,input.recoveryCaseId]);
+  if(rows.length===0) return undefined; // Model recovery uses its unchanged owner protocol.
+  if(rows.length!==1) fail("V3_NATIVE_EVIDENCE_SETTLEMENT_LEASE_INVALID","ambiguous delivery owner");
+  const row=rows[0]!;
+  if(row.state==='succeeded') return undefined; // Exact settled replay is checked independently.
+  if(!['attempt_reserved','running'].includes(row.state)||!row.live||!row.owner_instance_id||!row.lease_token)
+    fail("V3_NATIVE_EVIDENCE_SETTLEMENT_LEASE_EXPIRED","pending delivery has no current live owner");
+  return Object.freeze({...input,claimId:row.claim_id,ownerInstanceId:row.owner_instance_id,leaseToken:row.lease_token});
+}
+
 /** Delivery settlement belongs to the SAME transaction as case/story acceptance.
  * No lease is invented: only an already completed canonical nonmodel child can
  * reach this path, and a conflict rolls back all three projections. */
 export async function settleNativeEvidenceOnlySuccessInTransaction(
   transaction: TransactionSql,
   input: Readonly<{runId:string;storyId:string;attemptId:string;revisionId:string;dispatchId:string;recoveryCaseId:string}>,
+  lease?:NativeEvidenceOnlySettlementLease,
 ): Promise<boolean> {
   const rows=await transaction.unsafe<Array<{packet_hash:string;slice_hash:string;finding_set_hash:string;
     source_sha:string;source_tree_hash:string;output_hash:string;plan_hash:string;bundle:unknown;
@@ -1278,12 +1408,19 @@ export async function settleNativeEvidenceOnlySuccessInTransaction(
     if(!jsonEquals(row.terminal_result,result)) fail("V3_NATIVE_EVIDENCE_SUCCESS_SETTLEMENT_CONFLICT","terminal delivery has another tuple");
     return false;
   }
+  if(!lease||lease.runId!==input.runId||lease.storyId!==input.storyId||lease.attemptId!==input.attemptId
+    ||lease.revisionId!==input.revisionId||lease.dispatchId!==input.dispatchId||lease.recoveryCaseId!==input.recoveryCaseId)
+    fail("V3_NATIVE_EVIDENCE_SETTLEMENT_LEASE_INVALID","pending settlement requires its observed exact owner");
   const now=await readDatabaseWallClock(transaction,"V3_EVIDENCE_ONLY_PUBLICATION_DATABASE_TIME_UNAVAILABLE");
   const updated=await transaction.unsafe<Array<{dispatch_id:string}>>(`UPDATE recovery_dispatch_deliveries
     SET state='succeeded',terminal_result=$4::text::jsonb,terminal_at=$5,updated_at=$5
-    WHERE dispatch_id=$1 AND revision_id=$2 AND attempt_id=$3 AND state=$6 RETURNING dispatch_id`,
-    [input.dispatchId,input.revisionId,input.attemptId,JSON.stringify(result),now,row.delivery_state]);
-  if(updated.length!==1) fail("V3_NATIVE_EVIDENCE_SUCCESS_SETTLEMENT_CAS_LOST","native delivery changed before atomic acceptance");
+    WHERE dispatch_id=$1 AND revision_id=$2 AND attempt_id=$3 AND state=$6
+      AND claim_id=$7 AND owner_instance_id=$8 AND lease_token=$9
+      AND lease_expires_at>clock_timestamp() AND terminal_result='{}'::jsonb AND terminal_at IS NULL
+    RETURNING dispatch_id`,
+    [input.dispatchId,input.revisionId,input.attemptId,JSON.stringify(result),now,row.delivery_state,
+      lease.claimId,lease.ownerInstanceId,lease.leaseToken]);
+  if(updated.length!==1) fail("V3_NATIVE_EVIDENCE_SUCCESS_SETTLEMENT_LEASE_STALE","native delivery expired or changed before atomic acceptance");
   return true;
 }
 

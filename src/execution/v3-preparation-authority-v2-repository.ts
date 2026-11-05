@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import { readNativeOperationalSuccessAuthority } from "./v3-native-operational-success-authority.js";
 import { OperationalRetryDirectiveV1Schema } from "./operational-retry-directive.js";
-import { readNativeEvidenceOnlySuccessAuthority, readNativeEvidenceOnlySourceAuthority,
+import { readNativeEvidenceOnlySuccessAuthority, readNativeEvidenceOnlySourceAuthority, readNativeAcceptedModelSourceAuthority,
   readNativeEvidenceOnlyTerminalAuthority, type V3EvidenceOnlyPublicationLeaseV1,
 } from "../recovery/v3-evidence-only-publication.js";
 import { compileEvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
@@ -204,6 +204,11 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
   if (row.recovery_dispatch_id || row.attempt_class === "infrastructure_retry") {
     const originRefs = refs.filter((ref: string) => ref.startsWith("setfarm://preparation-authority-v2/"));
     if (originRefs.length !== 1) repositoryFail("V3_NATIVE_GIT_CUSTODY_REFERENCE_INVALID", "successor must retain one initial authority");
+    const verifier=row.attempt_class==="evidence_only"
+      ?await readNativeEvidenceOnlyTerminalAuthority(query,{runId:input.runId,stepId:row.step_id,
+        storyId:row.story_id,packetHash:row.packet_hash,attemptId:input.attemptId}):undefined;
+    if(verifier&&verifier.evidenceRefresh.initialAuthorityHash!==originRefs[0]!.slice("setfarm://preparation-authority-v2/".length))
+      repositoryFail("V3_NATIVE_GIT_CUSTODY_REFERENCE_INVALID","verifier source provenance differs from initial custody");
     const origins = await query.unsafe<Array<{ claim_id: string; branch: string; worktree: string;
       source_before_sha: string; source_before_tree_hash: string; evidence_refs: string }>>(
       `SELECT initial.claim_id::text,initial.branch,initial.worktree,initial.source_before_sha,
@@ -229,22 +234,9 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
                AND prior.story_id=initial.story_id AND prior.outcome='infra_retry')
          ) OR (
            successor.attempt_class='evidence_only' AND successor.role='evidence-orchestrator'
-           AND successor.generation=initial.generation+1 AND successor.slice_hash=initial.slice_hash
-           AND successor.source_before_sha=initial.source_after_sha AND successor.source_before_tree_hash=initial.source_after_tree_hash
-           AND EXISTS(SELECT 1 FROM recovery_dispatch_deliveries delivery
-             JOIN recovery_revision_dispatches dispatch ON dispatch.dispatch_id=delivery.dispatch_id AND dispatch.revision_id=delivery.revision_id
-             JOIN recovery_case_revisions revision ON revision.revision_id=dispatch.revision_id
-             JOIN recovery_cases c ON c.recovery_case_id=revision.recovery_case_id AND c.current_revision_id=revision.revision_id
-             WHERE delivery.attempt_id=successor.attempt_id AND delivery.claim_id=successor.claim_id
-               AND delivery.run_id=successor.run_id AND delivery.story_id=successor.story_id AND delivery.attempt_count=1
-               AND delivery.execution_slice_hash=successor.slice_hash AND dispatch.dispatch_class='evidence_only'
-               AND dispatch.dispatch_id=successor.recovery_dispatch_id AND revision.revision_id=successor.recovery_case_revision_id
-               AND revision.revision_number=1 AND revision.parent_revision_id IS NULL AND revision.owner='infrastructure'
-               AND revision.packet_hash=successor.packet_hash AND revision.contract_slice_hash=initial.slice_hash
-               AND revision.finding_set_hash=successor.finding_set_hash AND c.prior_attempt_refs::jsonb ? initial.attempt_id
-               AND revision.source_sha=successor.source_before_sha AND revision.source_tree_hash=successor.source_before_tree_hash)
+           AND successor.attempt_id=$4
          ))`,
-      [originRefs[0]!.slice("setfarm://preparation-authority-v2/".length), input.attemptId, input.runId]);
+      [originRefs[0]!.slice("setfarm://preparation-authority-v2/".length), input.attemptId, input.runId,verifier?.attemptId??null]);
     const origin = origins[0];
     if (origins.length !== 1 || !origin?.branch || !origin.worktree
       || canonicalJsonStringify(JSON.parse(origin.evidence_refs).filter((ref: string) => ref.startsWith(NATIVE_GIT_CUSTODY_REF_PREFIX)))
@@ -307,6 +299,21 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
           stepId:row.step_id,storyId:row.story_id,packetHash:row.packet_hash,attemptId:successors[0]!.attempt_id});
         acceptedCustody=success.operationalRetry.priorAttemptId===input.attemptId
           && success.operationalRetry.priorClaimId===claimId(row.claim_id);
+      }
+    }
+    if(!acceptedCustody&&custody.length===1) {
+      // A released accepted model RCR may own an inconclusive candidate. That
+      // is sufficient immutable-source custody, never successful story status.
+      const accepted=await query.unsafe<Array<{attempt_id:string}>>(`SELECT a.attempt_id
+        FROM execution_attempts a JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id
+        JOIN runtime_sessions runtime ON runtime.session_id=q.runtime_session_id AND runtime.attempt_id=a.attempt_id
+        WHERE a.attempt_id=$1 AND q.state='accepted' AND q.apply_phase='effects_committed'
+          AND q.claim_outcome IN ('completed','failed') AND runtime.state='released'
+          AND a.role IN ('developer','supervisor')`,[input.attemptId]);
+      if(accepted.length===1) {
+        const source=await readNativeAcceptedModelSourceAuthority(query,{runId:input.runId,storyId:row.story_id,
+          packetHash:row.packet_hash,attemptId:input.attemptId});
+        acceptedCustody=source.claim_id===row.claim_id&&source.branch===row.branch&&source.worktree===row.worktree;
       }
     }
     if(!acceptedCustody || custody.length!==1) {
@@ -411,7 +418,7 @@ export async function readV3NativeDependencyAuthority(
     const originalOutput=V3ImplementationAgentOutputV1Schema.parse(JSON.parse(success.sourceOwner.output));
     if (!("implementationSourceMap" in packet) || packet.packetHash!==input.packetHash
       || packet.refs.compilationReport!==success.compilationReportHash
-      || envelope.artifactType!=="setfarm.implementation-slice.v2" || slice.recovery
+      || envelope.artifactType!=="setfarm.implementation-slice.v2"
       || canonicalJsonStringify(envelope.producer)!==canonicalJsonStringify(packet.producer)
       || slice.packetHash!==input.packetHash || slice.storyId!==input.storyId
       || canonicalJsonStringify(slice.sourceRevision)!==canonicalJsonStringify(success.sourceOwner.sourceBefore)
@@ -961,9 +968,15 @@ async function authenticateNativeEvidenceWorktreeLease(
       lease.ownerInstanceId,lease.leaseToken,owner.worktree,owner.branch,lease.storyDbId,lease.stepDbId]);
   if(rows.length!==1) repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_LEASE_INVALID","exact current native source/delivery/failed story is required");
   const row=rows[0]!;
-  const canonical=await nativeCanonicalRunRepository(query,{runId:lease.runId,claimId:claimId(row.claim_id),
-    worktree:owner.worktree,branch:owner.branch,
-    sourceBefore:{sha:row.source_before_sha,treeHash:row.source_before_tree_hash}});
+  const provenance=owner.provenance;
+  const initial=await nativeCanonicalRunRepository(query,{runId:lease.runId,claimId:claimId(provenance.initial_claim_id),
+    worktree:provenance.initial_worktree,branch:provenance.initial_branch,
+    sourceBefore:{sha:provenance.initial_sha,treeHash:provenance.initial_tree_hash}});
+  const ownRef=`refs/heads/${owner.branch}`;
+  nativeCustodyGit(initial.repo,["check-ref-format",ownRef]);
+  const retainedCommit=nativeCustodyGit(initial.repo,["rev-parse","--verify","--end-of-options",`${ownRef}^{commit}`]);
+  nativeCustodyGit(initial.repo,["merge-base","--is-ancestor",provenance.initial_sha,lease.sourceRevision.sha]);
+  const canonical={...initial,retainedCommit};
   const refs:unknown=JSON.parse(row.evidence_refs);
   if(!Array.isArray(refs)||refs.some(ref=>typeof ref!=="string")
     ||canonicalJsonStringify(refs.filter(ref=>typeof ref==="string"&&ref.startsWith(NATIVE_GIT_CUSTODY_REF_PREFIX)))

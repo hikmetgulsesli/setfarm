@@ -1098,9 +1098,33 @@ export function commitStoryWorktreeScopeIfNeeded(
   declaredScopeFiles: string[] = [],
   commitType = "feat",
   strictDeclaredScope = false,
+  sourceContract?: "setfarm.implementation-slice.v2",
 ): { committed: boolean; sha: string; stagedFiles: string[]; error: string } {
   if (!workdir || !fs.existsSync(workdir)) {
     return { committed: false, sha: "", stagedFiles: [], error: "PLATFORM_STORY_COMMIT_MISSING_WORKDIR" };
+  }
+
+  if(sourceContract === "setfarm.implementation-slice.v2") {
+    if(!strictDeclaredScope||declaredScopeFiles.length===0)
+      return {committed:false,sha:"",stagedFiles:[],error:"PLATFORM_NATIVE_COMMIT_EXACT_SCOPE_REQUIRED"};
+    try {
+      // The authenticated native completion already supplies exact writable
+      // paths. Unhide only their tracked subset before reading status; newly
+      // allowed files remain untracked for the ordinary strict status/add path.
+      const allowed=new Set(declaredScopeFiles.map(normalizeScopeFile));
+      const listed=String(execPlatformGit(["--literal-pathspecs","ls-files","-z","--",...allowed],{
+        cwd:workdir,encoding:"utf8",timeout:10_000,stdio:["pipe","pipe","pipe"],
+      })).split("\0").filter(Boolean);
+      if(listed.some(file=>!allowed.has(file))) throw Error("native tracked scope differs from exact declared paths");
+      const tracked=[...new Set(listed)];
+      if(tracked.length) for(const flag of ["--no-assume-unchanged","--no-skip-worktree"]) {
+        execPlatformGit(["update-index",flag,"--",...tracked],{
+          cwd:workdir,timeout:10_000,stdio:["pipe","pipe","pipe"],
+        });
+      }
+    } catch(error) {
+      return {committed:false,sha:"",stagedFiles:[],error:`PLATFORM_NATIVE_COMMIT_INDEX_VISIBILITY_FAILED: ${formatCommandError(error)}`};
+    }
   }
 
   let status = "";
@@ -11289,6 +11313,7 @@ ${prd}`;
               [...declaredWritablePaths],
               v3CompletionContext.recovery ? "fix" : "feat",
               true,
+              completionSlice.schema === "setfarm.implementation-slice.v2" ? completionSlice.schema : undefined,
             );
             if (candidateCommit.error) {
               throw new Error(`V3_CANDIDATE_COMMIT_REJECTED:${candidateCommit.error}`);

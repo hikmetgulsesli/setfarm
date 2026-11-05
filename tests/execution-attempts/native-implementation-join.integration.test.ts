@@ -1467,7 +1467,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const failed=await deliveries.findActiveForStory({runId:value.runId,storyId:"US-002"});assert.ok(failed);
     const dispatch=await deliveries.findDispatch(failed.dispatchId);assert.ok(dispatch);
     assert.equal(dispatch.dispatchClass,"product_implementation");
-    const repair=await claimStep(agentId,value.input.callerGatewayAgent,{...value.input.runtimeIntent,
+    const repair=await claimStep("feature-dev_developer",value.input.callerGatewayAgent,{...value.input.runtimeIntent,
       sessionId:`${value.input.runtimeIntent.sessionId}-dependent-repair`,ownerInstanceId:`${value.runId}-dependent-repair`},
       {workflowId:"feature-dev",recoveryDispatchClass:"product_implementation"});
     assert.equal(repair.found,true,JSON.stringify({repair,state:await publicationDiagnostics(value)}));
@@ -1573,7 +1573,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(await realpath(resolveWorktreeBaseDir(value.repo, "feature-dev_developer")),
       path.join(ownedAgentWorkspace, "story-worktrees"), "actual recovery destination must be fixture-owned before claimStep");
     const successor = await claimStep("feature-dev_developer", value.input.callerGatewayAgent, {
-      schema: "setfarm.runtime-claim-intent.v1", sessionId: mode === "control" ? "RTS_native-task11-real-recovery-successor" : `RTS_native-task11-recovery-${mode}`,
+      schema: "setfarm.runtime-claim-intent.v1", sessionId: mode === "control" ? "RTS_native-task11-real-recovery-successor" : nativeJoinRuntimeSessionId(`task11-recovery-${mode}`),
       runtimeAgentId: "native-task11-repair-runtime", runtimeKind: "local_process",
       ownerInstanceId: "native-task11-live-repair-owner",
     }, { workflowId: "feature-dev", recoveryDispatchClass: "product_implementation" });
@@ -1887,10 +1887,72 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       agentContext.writeAuthority.allowedPaths.map(async file=>[file,
         await readFile(path.join(handoff.workdir,file),"utf8")+`// Accepted writer ${handoff.storyId} for ${file}\n`])))
       : originalOwned + `// Accepted native component ${handoff.storyId}\n`;
-    const secondCompletion = await completeNeverStartedNativeSession(value, {
-      compiled: secondContext, handoff, envelope: secondEnvelope,
-      sessionId: secondRuntime.sessionId, ownerInstanceId: secondRuntime.ownerInstanceId,
-    }, candidateContents);
+    let secondCompletion:Awaited<ReturnType<typeof completeNeverStartedNativeSession>>;
+    if(mode === "shared_writer") {
+      if(typeof candidateContents === "string") assert.fail("shared writer requires its actual two-path candidate");
+      // B genuinely produces the shared app delta, but its owned notes fail the
+      // actual API build. No accepted row, source finding or repair grant is seeded.
+      const failed=await completeNeverStartedNativeSession(value,{
+        compiled:secondContext,handoff,envelope:secondEnvelope,
+        sessionId:secondRuntime.sessionId,ownerInstanceId:secondRuntime.ownerInstanceId,
+      },{...candidateContents,"src/notes.ts":"export const brokenNotes = ;\n"});
+      assert.equal(failed.accepted.state,"accepted","model completion acceptance is distinct from product evidence success");
+      const initialSharedCandidate=execFileSync("git",["--no-replace-objects","show",`${failed.candidateSource.source_after_sha}:src/index.ts`],
+        {cwd:value.repo,encoding:"utf8",stdio:"pipe"});
+      assert.equal(initialSharedCandidate,candidateContents["src/index.ts"],
+        "B's shared app write must enter its immutable candidate before any repair");
+      const ownerApp=before[0]!.nativeAuthority!.fileSignatures.find(file=>file.path==="src/index.ts");assert.ok(ownerApp);
+      assert.notEqual(createHash("sha256").update(initialSharedCandidate).digest("hex"),ownerApp.contentHash,
+        "this is a genuine later shared write, not the earlier owner's unchanged blob");
+      const {createRecoveryDeliveryRepository}=await import("../../src/recovery/recovery-delivery-repository.js");
+      const deliveries=createRecoveryDeliveryRepository(database.sql);
+      const delivery=await deliveries.findActiveForStory({runId:value.runId,storyId:"US-002"});assert.ok(delivery);
+      const dispatch=await deliveries.findDispatch(delivery.dispatchId);assert.ok(dispatch);
+      const revision=await deliveries.findRevision(delivery.revisionId);assert.ok(revision);
+      assert.equal(dispatch.dispatchClass,"product_implementation");
+      const repair=await claimStep(value.input.claimAgentId,value.input.callerGatewayAgent,{...value.input.runtimeIntent,
+        sessionId:`${value.input.runtimeIntent.sessionId}-shared-repair`,ownerInstanceId:`${value.runId}-shared-repair`},
+        {workflowId:"feature-dev",recoveryDispatchClass:"product_implementation"});
+      assert.equal(repair.found,true,JSON.stringify({repair,state:await publicationDiagnostics(value)}));
+      assert.equal(repair.runId,value.runId);assert.equal(repair.storyId,"US-002");
+      assert.ok(repair.attempt&&repair.claimId&&repair.runtimeSessionId&&repair.v3ImplementationHandoff);
+      const repairHandoff=V3ImplementationClaimHandoffSchema.parse(repair.v3ImplementationHandoff);
+      if(repairHandoff.schema!=="setfarm.v3-implementation-claim-handoff.v2")assert.fail("real native repair required");
+      const repairAuthority=createV3ImplementationContext({handoff:repairHandoff});
+      assert.deepEqual([...repairAuthority.writeAuthority.allowedPaths].sort(),[...revision.allowedPaths].sort(),
+        "retain actual compiler/finding-derived authority; never fabricate a notes-only grant");
+      const repairContext=await loadV3ImplementationAttemptContext({runId:value.runId,storyId:"US-002",attemptId:repair.attempt.attemptId});
+      assert.deepEqual(repairContext.sourceBefore,{sha:failed.candidateSource.source_after_sha,treeHash:failed.candidateSource.source_after_tree_hash});
+      const repairRuntime=await createRuntimeSessionRepository(database.sql).findById(repair.runtimeSessionId);assert.ok(repairRuntime);
+      const repairEnvelope=ClaimEnvelopeV1Schema.parse({schema:"setfarm.claim-envelope.v1",protocol:"v3",issuedAt:new Date().toISOString(),
+        runId:value.runId,stepId:repair.stepId,workflowStepId:repair.workflowStepId,storyId:repair.storyId,storyDbId:repair.storyDbId,
+        claimId:repair.claimId,claimGeneration:repair.claimGeneration,claimAgentId:repairRuntime.claimAgentId,
+        runtimeAgentId:repairRuntime.runtimeAgentId,workdir:repairHandoff.workdir,repo:value.repo,attempt:repair.attempt});
+      assert.equal(await readFile(path.join(repairHandoff.workdir,"src/index.ts"),"utf8"),candidateContents["src/index.ts"]);
+      secondCompletion=await completeNeverStartedNativeSession(value,{compiled:repairContext,handoff:repairHandoff,envelope:repairEnvelope,
+        sessionId:repairRuntime.sessionId,ownerInstanceId:repairRuntime.ownerInstanceId},
+        {"src/notes.ts":candidateContents["src/notes.ts"]+"// genuine notes-only repair preserves the shared app writer\n"});
+      const acceptedRows=await database.sql<Array<{output:string}>>`SELECT output FROM runtime_completion_requests
+        WHERE attempt_id=${repair.attempt.attemptId} AND claim_id=${repair.claimId}
+          AND state='accepted' AND apply_phase='effects_committed'`;
+      assert.equal(acceptedRows.length,1);
+      const {V3ImplementationAgentOutputV1Schema}=await import("../../src/execution/v3-implementation-output.js");
+      const repairOutput=V3ImplementationAgentOutputV1Schema.parse(JSON.parse(acceptedRows[0]!.output));
+      if(repairOutput.disposition!=="ready_for_evidence")assert.fail("real accepted model repair output required");
+      assert.deepEqual(repairOutput.changes.map(change=>change.path),["src/notes.ts"]);
+      const productDelta=execFileSync("git",["--no-replace-objects","diff","--name-only",repairContext.sourceBefore.sha,
+        secondCompletion.candidateSource.source_after_sha,"--","src/index.ts","src/notes.ts"],
+        {cwd:value.repo,encoding:"utf8",stdio:"pipe"}).trim();
+      assert.equal(productDelta,"src/notes.ts","only the notes source changes during repair");
+      const retainedApp=execFileSync("git",["--no-replace-objects","show",`${secondCompletion.candidateSource.source_after_sha}:src/index.ts`],
+        {cwd:value.repo,encoding:"utf8",stdio:"pipe"});
+      assert.equal(retainedApp,candidateContents["src/index.ts"]);
+    } else {
+      secondCompletion = await completeNeverStartedNativeSession(value, {
+        compiled: secondContext, handoff, envelope: secondEnvelope,
+        sessionId: secondRuntime.sessionId, ownerInstanceId: secondRuntime.ownerInstanceId,
+      }, candidateContents);
+    }
     assert.equal(secondCompletion.accepted.state, "accepted");
     const stories = await database.sql<Array<{ story_id: string; status: string }>>`
       SELECT story_id,status FROM stories WHERE run_id=${value.runId} ORDER BY story_index`;
@@ -1922,6 +1984,12 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(route.status, "accepted_candidate_ready", JSON.stringify(route));
     if (route.status !== "accepted_candidate_ready") assert.fail("actual complete final evidence matrix required");
     assert.deepEqual(route.sourceRevision, exactFinal);
+    if(mode === "shared_writer") {
+      if(typeof candidateContents === "string")assert.fail("shared writer candidate map required");
+      assert.equal(execFileSync("git",["--no-replace-objects","show",`${exactFinal.sha}:src/index.ts`],
+        {cwd:value.repo,encoding:"utf8",stdio:"pipe"}),candidateContents["src/index.ts"],
+        "actual integrated final source must retain the authenticated shared writer");
+    }
     assert.deepEqual(route.stories.map(story => story.storyId).sort(), stories.map(story => story.story_id).sort());
     const { createAcceptedCandidateRepository } = await import("../../src/evidence/accepted-candidate-repository.js");
     const candidates = createAcceptedCandidateRepository({ sql: database.sql,

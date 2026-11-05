@@ -1,5 +1,5 @@
 import type { NativeImplementationContextV3 } from "../execution/v3-native-implementation-attempt.js";
-import type {PreparedNativeEvidenceMerge} from "./v3-evidence-only-publication.js";
+import type {PreparedNativeEvidenceMerge,NativeEvidenceOnlySettlementLease} from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -13,7 +13,7 @@ import { EvidencePlanV1Schema, type EvidencePlanV1 } from "../evidence/evidence-
 import { EvidencePlanV2Schema, compileEvidencePlanV2, type EvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
 import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import { createAttemptRepository } from "../execution/attempt-repository.js";
-import { readNativeEvidenceOnlySourceAuthority } from "./v3-evidence-only-publication.js";
+import { readNativeEvidenceOnlySourceAuthority,readNativeEvidenceOnlySettlementLease } from "./v3-evidence-only-publication.js";
 import type { ExecutionAttemptV1 } from "../execution/schemas/execution-attempt-v1.js";
 import { FindingSetV1Schema, type FindingSetV1 } from "../findings/finding-set.js";
 import { createGithubReviewResolutionEvidenceRepository } from "../findings/github-review-resolution-evidence-repository.js";
@@ -616,7 +616,7 @@ async function assertRecoverySlice(input: Readonly<{
       }
     }
     if (
-      directive
+      (directive && slice.schema !== "setfarm.implementation-slice.v2")
       || (slice.schema !== "setfarm.implementation-slice.v2" && !sameSliceRevision(context.slice, dispatch.sourceRevision))
       || delivery.executionSliceHash !== context.sliceHash
       || context.slice.packetHash !== dispatch.packetHash
@@ -902,6 +902,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     decisionRef: string;
     now: Date;
     nativeEvidenceMerge?:PreparedNativeEvidenceMerge;
+    nativeEvidenceLease?:NativeEvidenceOnlySettlementLease;
   }>): Promise<RecoveryCaseV1> {
     for (let cycle = 0; cycle < 4; cycle += 1) {
       const current = await findings.findRecoveryCase(input.recoveryCaseId);
@@ -938,7 +939,8 @@ export function createV3RecoveryCoordinator(sql: Sql) {
           evidenceBundleHashes: [input.evidenceBundleHash],
         },
         decisionRef: input.decisionRef,
-      }, { now: input.now, ...(input.nativeEvidenceMerge?{nativeEvidenceMerge:input.nativeEvidenceMerge}:{}) });
+      }, { now: input.now, ...(input.nativeEvidenceMerge?{nativeEvidenceMerge:input.nativeEvidenceMerge}:{}),
+        ...(input.nativeEvidenceLease?{nativeEvidenceLease:input.nativeEvidenceLease}:{}) });
       if (transitioned.status === "transitioned") return transitioned.recoveryCase;
     }
     fail("V3_RECOVERY_TERMINAL_CAS_EXHAUSTED", "terminal transition did not converge after replay");
@@ -1148,7 +1150,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     transaction: postgres.TransactionSql,
     nativeDownstream?: NativeImplementationContextV3,
   ): Promise<V3RecoveryCoordinatorResult> {
-    if (context.slice.recovery) {
+    if (context.slice.recovery && !nativeDownstream) {
       fail("V3_RECOVERY_INITIAL_SLICE_HAS_DIRECTIVE", "initial evidence cannot contain a recovery directive");
     }
     const attemptId = context.evidenceBundle.attemptId;
@@ -1248,6 +1250,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     now: Date,
     query: Pick<Sql, "unsafe">,
     nativeEvidenceMerge?:PreparedNativeEvidenceMerge,
+    nativeEvidenceLease?:NativeEvidenceOnlySettlementLease,
   ): Promise<V3RecoveryCoordinatorResult> {
     if (context.evidenceBundle.attemptId !== raw.attemptId) {
       fail("V3_RECOVERY_INPUT_ATTEMPT_MISMATCH", "input and evidence bundle name different attempts");
@@ -1302,6 +1305,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
         }),
         now,
         ...(nativeEvidenceMerge?{nativeEvidenceMerge}:{}),
+        ...(nativeEvidenceLease?{nativeEvidenceLease}:{}),
       });
       const revision = await deliveries.findCurrentRevision(recoveryCase.recoveryCaseId);
       if (!revision) fail("V3_RECOVERY_CURRENT_REVISION_MISSING", "resolved case has no revision");
@@ -1566,6 +1570,11 @@ export function createV3RecoveryCoordinator(sql: Sql) {
           fail("V3_RECOVERY_DOWNSTREAM_AUTHORITY_MISMATCH","native semantic contract and integrated candidate lack authentic downstream ownership");
         nativeDownstream=compiled;
       }
+      const nativeEvidenceLease=raw.kind==="recovery_evidence"
+        &&context.slice.schema==="setfarm.implementation-slice.v2"&&context.evidenceBundle.aggregateVerdict==="pass"
+        ?await readNativeEvidenceOnlySettlementLease(sql,{runId:context.evidenceBundle.runId,storyId:context.evidenceBundle.storyId,
+          attemptId:raw.attemptId,revisionId:raw.revisionId,dispatchId:raw.dispatchId,recoveryCaseId:raw.recoveryCaseId})
+        :undefined;
       const ownerKey = `setfarm:v3-recovery:${context.evidenceBundle.runId}:${context.evidenceBundle.storyId}`;
       // One story-level decision owner must finish revision advancement plus
       // authorization/terminalization before a concurrent replay observes it.
@@ -1579,7 +1588,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
         );
         return raw.kind === "initial_evidence"
           ? coordinateInitial(raw, context, now, transaction, nativeDownstream)
-          : coordinateRecovery(raw, context, now, transaction, options.nativeEvidenceMerge);
+          : coordinateRecovery(raw, context, now, transaction, options.nativeEvidenceMerge,nativeEvidenceLease);
       }) as Promise<V3RecoveryCoordinatorResult>;
     },
   };

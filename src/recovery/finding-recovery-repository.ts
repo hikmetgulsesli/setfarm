@@ -1,4 +1,4 @@
-import type {PreparedNativeEvidenceMerge} from "./v3-evidence-only-publication.js";
+import type {PreparedNativeEvidenceMerge,NativeEvidenceOnlySettlementLease} from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
@@ -779,7 +779,7 @@ export function createFindingRecoveryRepository(sql: Sql) {
 
     async transitionRecoveryCase(
       input: unknown,
-      options: Readonly<{ now?: Date; nativeEvidenceMerge?:PreparedNativeEvidenceMerge }> = {},
+      options: Readonly<{ now?: Date; nativeEvidenceMerge?:PreparedNativeEvidenceMerge; nativeEvidenceLease?:NativeEvidenceOnlySettlementLease }> = {},
     ): Promise<RecoveryTransitionResult> {
       const transition = RecoveryTransitionInputSchema.parse(input);
       const requestedTime = new Date(options.now ?? new Date());
@@ -837,7 +837,7 @@ export function createFindingRecoveryRepository(sql: Sql) {
                 const {settleNativeEvidenceOnlySuccessInTransaction}=await import("./v3-evidence-only-publication.js");
                 await settleNativeEvidenceOnlySuccessInTransaction(transaction,{
                   ...transition.recoveryEvidence,runId:current.runId,storyId:current.storyId,recoveryCaseId:current.recoveryCaseId,
-                });
+                },options.nativeEvidenceLease);
               }
             }
             const identity = await one<RecoveryTerminalEvidenceIdentityRow>(
