@@ -178,6 +178,15 @@ function commandArguments(): string[] {
     && command.every((cell, index) => cell === fixedNativeReviewCommand[index])) {
     return command;
   }
+  const fixedNativeLineageCommand = [
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "--test-name-pattern=native review R[67]",
+    "tests/execution-attempts/native-implementation-join.integration.test.ts",
+  ] as const;
+  if (command.length === fixedNativeLineageCommand.length
+    && command.every((cell, index) => cell === fixedNativeLineageCommand[index])) {
+    return command;
+  }
   if (
     command.length !== 6
     || command[0] !== "node"

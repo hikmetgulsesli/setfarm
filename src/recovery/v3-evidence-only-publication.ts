@@ -867,7 +867,7 @@ export async function readNativeAcceptedModelSourceAuthority(
   return Object.freeze({...row,modelOutput:output,completionPlan});
 }
 
-/** Native clean-origin evidence refresh: SQL-only source/contract custody.
+/** Native evidence refresh: SQL-only immediate source/contract custody.
  * The current candidate is the accepted terminal source owner; the slice and
  * plan remain its immutable original base contracts. No caller-provided proof. */
 export async function readNativeEvidenceOnlySourceAuthority(
@@ -878,12 +878,22 @@ export async function readNativeEvidenceOnlySourceAuthority(
   const rows = await sql.unsafe<Array<{ attempt_id: string; generation: number; authority_hash: string;
     compilation_report_hash: string; branch: string; worktree: string; evidence_refs: string;
     evidence_plan_artifact_hash: string }>>(`
+    WITH RECURSIVE source_revision_history AS (
+      SELECT current.* FROM recovery_case_revisions current
+      WHERE current.recovery_case_id=$1 AND current.revision_id=$2
+        AND current.run_id=$4 AND current.story_id=$5 AND current.packet_hash=$6
+      UNION ALL
+      SELECT parent.* FROM recovery_case_revisions parent JOIN source_revision_history child
+        ON parent.revision_id=child.parent_revision_id AND parent.recovery_case_id=child.recovery_case_id
+        AND parent.revision_number=child.revision_number-1 AND parent.run_id=child.run_id
+        AND parent.story_id=child.story_id AND parent.packet_hash=child.packet_hash
+    )
     SELECT a.attempt_id,a.generation,b.authority_hash,a.compilation_report_hash,a.branch,a.worktree,a.evidence_refs,
       revision.evidence_plan_artifact_hash
     FROM recovery_cases c JOIN recovery_case_revisions revision ON revision.recovery_case_id=c.recovery_case_id
       AND revision.revision_id=c.current_revision_id
     JOIN recovery_revision_dispatches d ON d.revision_id=revision.revision_id AND d.recovery_case_id=c.recovery_case_id
-    JOIN execution_attempts a ON a.run_id=c.run_id AND a.story_id=c.story_id AND c.prior_attempt_refs::jsonb ? a.attempt_id
+    JOIN execution_attempts a ON a.run_id=c.run_id AND a.story_id=c.story_id
     JOIN v3_preparation_authority_attempts_v2 b ON a.evidence_refs::jsonb ? ('setfarm://preparation-authority-v2/'||b.authority_hash)
     JOIN v3_preparation_authorities_v2 origin ON origin.authority_hash=b.authority_hash
       AND origin.run_id=a.run_id AND origin.story_id=a.story_id AND origin.packet_hash=a.packet_hash
@@ -904,6 +914,30 @@ export async function readNativeEvidenceOnlySourceAuthority(
       AND d.dispatch_class='evidence_only' AND revision.expected_delta->>'kind'='evidence_refresh'
       AND revision.allowed_paths='[]'::jsonb
       AND a.step_id='implement' AND a.role IN ('developer','supervisor')
+      AND (
+        (a.recovery_dispatch_id IS NULL AND a.recovery_case_revision_id IS NULL
+          AND c.prior_attempt_refs::jsonb ? a.attempt_id
+          AND EXISTS (SELECT 1 FROM source_revision_history opening
+            WHERE opening.revision_number=1 AND opening.parent_revision_id IS NULL
+              AND opening.finding_set_hash=c.finding_set_hash AND opening.finding_ids=c.finding_ids
+              AND opening.contract_slice_hash=c.slice_hash AND opening.source_sha=c.source_sha
+              AND opening.source_tree_hash=c.source_tree_hash))
+        OR EXISTS (
+          SELECT 1 FROM internal_production_v3_recovery_claim_publications_v1 publication
+          JOIN source_revision_history parent ON parent.revision_id=publication.revision_id
+            AND parent.revision_id<>revision.revision_id
+          JOIN recovery_revision_dispatches source_dispatch ON source_dispatch.dispatch_id=publication.dispatch_id
+            AND source_dispatch.revision_id=parent.revision_id AND source_dispatch.recovery_case_id=c.recovery_case_id
+            AND source_dispatch.packet_hash=parent.packet_hash AND source_dispatch.contract_slice_hash=parent.contract_slice_hash
+            AND source_dispatch.source_sha=parent.source_sha AND source_dispatch.source_tree_hash=parent.source_tree_hash
+          WHERE publication.claim_id=a.claim_id AND publication.runtime_session_id=runtime.session_id
+            AND publication.run_id=a.run_id AND publication.workflow_step_id=a.step_id AND publication.story_id=a.story_id
+            AND publication.step_db_id=q.step_db_id AND publication.story_db_id=runtime.story_db_id
+            AND publication.dispatch_id=a.recovery_dispatch_id AND publication.revision_id=a.recovery_case_revision_id
+            AND source_dispatch.dispatch_class=a.attempt_class
+            AND parent.source_sha=a.source_before_sha AND parent.source_tree_hash=a.source_before_tree_hash
+        )
+      )
       AND a.disposition NOT IN ('claimed','running','superseded')
       AND a.evidence_refs::jsonb ? ('setfarm://artifact/'||revision.evidence_plan_artifact_hash)
       AND q.state='accepted' AND q.apply_phase='effects_committed' AND q.claim_outcome IN ('completed','failed')
@@ -925,7 +959,7 @@ export async function readNativeEvidenceOnlySourceAuthority(
 
 
 /**
- * Read-only SQL authority for the clean initial native evidence-refresh branch.
+ * Read-only SQL authority for the native evidence-refresh source branch.
  * Original inconclusive evidence and its actual accepted claim outcome are
  * preserved; the original runtime is released and the verifier has no RCR.
  * IDs locate rows, never supply evidence. The same query is used inside the
@@ -1016,7 +1050,6 @@ export async function readNativeEvidenceOnlyTerminalAuthority(
       AND original.branch=a.branch AND original.worktree=a.worktree
       AND original.role IN ('developer','supervisor') AND original.disposition='inconclusive'
       AND original.evidence_refs::jsonb ? ('setfarm://artifact/'||rev.evidence_plan_artifact_hash)
-      AND rc.prior_attempt_refs::jsonb ? original.attempt_id
     JOIN v3_preparation_authority_attempts_v2 initial ON original.evidence_refs::jsonb ? ('setfarm://preparation-authority-v2/'||initial.authority_hash)
     JOIN execution_attempts custody ON custody.attempt_id=initial.attempt_id AND custody.claim_id=initial.claim_id
       AND custody.slice_hash=initial.slice_hash AND custody.run_id=a.run_id AND custody.story_id=a.story_id
@@ -1078,8 +1111,18 @@ export async function readNativeEvidenceOnlyTerminalAuthority(
   `, [input.attemptId,input.runId,input.stepId,input.storyId,input.packetHash]);
   const row=rows[0];
   if(rows.length!==1||!row) fail("V3_NATIVE_EVIDENCE_SUCCESS_MISSING","one exact canonical terminal native nonmodel child is required");
-  const sourceProvenance=await readNativeAcceptedModelSourceAuthority(query,{runId:input.runId,storyId:input.storyId,
-    attemptId:row.source_owner_attempt_id,packetHash:input.packetHash});
+  // Reuse the same current-revision/source-owner relation as pre-execution
+  // publication. Opening case refs are history, not a later candidate locator.
+  const sourceAuthority=await readNativeEvidenceOnlySourceAuthority(query,{
+    runId:input.runId,storyId:input.storyId,recoveryCaseId:row.recovery_case_id,
+    revisionId:row.revision_id,dispatchId:row.dispatch_id,packetHash:input.packetHash,
+    contractSliceHash:row.slice_hash,findingSetHash:row.finding_set_hash,
+    sourceRevision:{sha:row.source_sha,treeHash:row.source_tree_hash},
+    priorEvidencePlanArtifactHash:row.evidence_plan_artifact_hash,
+  });
+  if(sourceAuthority.attempt_id!==row.source_owner_attempt_id)
+    fail("V3_NATIVE_EVIDENCE_SUCCESS_WITNESS_MISMATCH","terminal verifier source differs from its current revision authority");
+  const sourceProvenance=sourceAuthority.provenance;
   if(sourceProvenance.authority_hash!==row.authority_hash||sourceProvenance.slice_hash!==row.slice_hash
     ||sourceProvenance.generation+1!==row.generation||sourceProvenance.source_after_sha!==row.source_sha
     ||sourceProvenance.source_after_tree_hash!==row.source_tree_hash)

@@ -113,3 +113,41 @@ test('native implementation review rejects changed patterns files extra flags an
   for(const value of variants)assert.throws(()=>command(value),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
   assert.throws(()=>command(NATIVE_REVIEW,{separator:false}),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
 });
+
+const NATIVE_LINEAGE=Object.freeze([...PREFIX,'--test-name-pattern=native review R[67]',
+  'tests/execution-attempts/native-implementation-join.integration.test.ts']);
+test('native lineage review uses only the owned two-leaf vector with unchanged full and review controls',()=>{
+  const input={root:'/tmp/setfarm-task6a-pg.Abc123',port:55439};
+  const lineage=privatePlan({...input,mode:'native-lineage-review'});
+  const full=privatePlan({...input,mode:'native-implementation-join'});
+  const review=privatePlan({...input,mode:'native-implementation-review'});
+  assert.deepEqual(Array.from(lineage.test),['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',...NATIVE_LINEAGE]);
+  assert.deepEqual(Array.from(full.test),['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+    ...PREFIX,NATIVE_LINEAGE.at(-1)]);
+  assert.deepEqual(Array.from(review.test),['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',...NATIVE_REVIEW]);
+  assert.deepEqual(Array.from(lineage.initdb),Array.from(full.initdb));
+  assert.deepEqual(Array.from(lineage.server),Array.from(full.server));
+  assert.ok(Object.isFrozen(lineage)&&Object.isFrozen(lineage.test));
+  const actual=command(Array.from(lineage.test).slice(4));
+  assert.deepEqual(actual,Array.from(NATIVE_LINEAGE));
+  assert.deepEqual(shards(actual),[undefined]);
+  for(const mode of ['native-lineage-review extra','NATIVE-LINEAGE-REVIEW','native-lineage-review;echo denied',
+    '--test-name-pattern=native review R[67]'])
+    assert.throws(()=>privatePlan({...input,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  for(const overrides of [{port:5432},{port:1023},{port:65536},{root:'/tmp/arbitrary'},{root:input.root+'/child'}])
+    assert.throws(()=>privatePlan({...input,...overrides,mode:'native-lineage-review'}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+});
+test('native lineage review rejects caller variants files extra flags and multiple files',()=>{
+  const variants=NATIVE_LINEAGE.map((cell,index)=>NATIVE_LINEAGE.map((value,i)=>i===index?cell+' changed':value));
+  variants.push([...NATIVE_LINEAGE,'extra'],NATIVE_LINEAGE.slice(0,-1),
+    [...PREFIX,'--test-name-pattern=.*',NATIVE_LINEAGE.at(-1)],
+    [...PREFIX,'--test-name-pattern=^native review R[67]$',NATIVE_LINEAGE.at(-1)],
+    [...PREFIX,'--test-name-pattern=native review R[6-7]',NATIVE_LINEAGE.at(-1)],
+    [...PREFIX,'--test-name-pattern=native review R[678]',NATIVE_LINEAGE.at(-1)],
+    [...PREFIX,NATIVE_LINEAGE[5],'tests/findings/repository.test.ts'],
+    [...NATIVE_LINEAGE,'tests/findings/repository.test.ts'],
+    [...PREFIX,'--test-only',NATIVE_LINEAGE[5],NATIVE_LINEAGE.at(-1)],
+    [...PREFIX,NATIVE_LINEAGE[5],NATIVE_LINEAGE[5],NATIVE_LINEAGE.at(-1)]);
+  for(const value of variants)assert.throws(()=>command(value),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
+  assert.throws(()=>command(NATIVE_LINEAGE,{separator:false}),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
+});

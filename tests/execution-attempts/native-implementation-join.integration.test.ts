@@ -1974,10 +1974,40 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       }, candidateContents);
     }
     assert.equal(secondCompletion.accepted.state, "accepted");
-    const stories = await database.sql<Array<{ story_id: string; status: string }>>`
-      SELECT story_id,status FROM stories WHERE run_id=${value.runId} ORDER BY story_index`;
+    const stories = await database.sql<Array<{ story_id: string; status: string; merge_status: string | null }>>`
+      SELECT story_id,status,merge_status FROM stories WHERE run_id=${value.runId} ORDER BY story_index`;
     assert.deepEqual(stories.map(story => story.story_id), value.packet.storyPlan.stories.map(story => story.id));
-    assert.ok(stories.every(story => story.status === "done" || story.status === "verified"), JSON.stringify(stories));
+    let continuationDiagnostics: unknown;
+    if(mode === "shared_writer" && stories.some(story => story.status !== "done" && story.status !== "verified")) {
+      const [attempts,evidence,cases,deliveries,observations] = await Promise.all([
+        database.sql`SELECT a.attempt_id,a.story_id,a.generation,a.attempt_class,a.disposition,a.slice_hash,
+          a.source_before_sha,a.source_before_tree_hash,a.source_after_sha,a.source_after_tree_hash,
+          a.recovery_case_revision_id,a.recovery_dispatch_id,q.state AS completion_state,q.apply_phase,q.claim_outcome,
+          runtime.state AS runtime_state
+          FROM execution_attempts a LEFT JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id
+          LEFT JOIN runtime_sessions runtime ON runtime.session_id=q.runtime_session_id AND runtime.attempt_id=a.attempt_id
+          WHERE a.run_id=${value.runId} ORDER BY a.story_id,a.generation`,
+        database.sql`SELECT evidence_bundle_hash,attempt_id,story_id,slice_hash,source_sha,source_tree_hash,aggregate_verdict,
+          (SELECT jsonb_agg(jsonb_build_object('predicateRef',p->>'predicateRef','verdict',p->>'verdict','required',p->'required'))
+            FROM jsonb_array_elements(payload->'predicates') p) AS predicates
+          FROM evidence_bundles WHERE run_id=${value.runId} ORDER BY created_at,evidence_bundle_hash`,
+        database.sql`SELECT recovery_case_id,story_id,status,owner,current_revision_id,finding_set_hash,finding_ids,
+          packet_hash,slice_hash,source_sha,source_tree_hash,terminal FROM recovery_cases
+          WHERE run_id=${value.runId} ORDER BY created_at,recovery_case_id`,
+        database.sql`SELECT dispatch_id,revision_id,recovery_case_id,story_id,state,attempt_id,claim_id,attempt_count,
+          execution_slice_hash,terminal_result FROM recovery_dispatch_deliveries
+          WHERE run_id=${value.runId} ORDER BY created_at,dispatch_id`,
+        database.sql`SELECT phase,check_id,summary,detail FROM run_observations
+          WHERE run_id=${value.runId} ORDER BY created_at,id`,
+      ]);
+      const fixtureLog = process.env.SETFARM_DB_PATH
+        ? await readFile(path.join(path.dirname(process.env.SETFARM_DB_PATH), "logs/workflow.log"), "utf8").catch(() => "")
+        : "";
+      continuationDiagnostics={attempts,evidence,cases,deliveries,observations,
+        fixtureLogTail:fixtureLog.split("\n").filter(line=>line.includes(value.runId)).slice(-80).join("\n").slice(-12_000)};
+    }
+    assert.ok(stories.every(story => story.status === "done" || story.status === "verified"),
+      JSON.stringify({stories,continuationDiagnostics}));
     const finalSteps = await database.sql<Array<{ status: string }>>`SELECT status FROM steps WHERE id=${finalStepDbId}`;
     assert.equal(finalSteps[0]?.status, "pending", "real implementation continuation must advance the downstream stage");
 
