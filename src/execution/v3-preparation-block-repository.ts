@@ -1,5 +1,6 @@
 import { V3PreparationClaimAuthorityError, v3PreparationStoryLockIdentity } from "./v3-preparation-claim-authority.js";
 import type postgres from "postgres";
+import { readNativeOperationalSuccessAuthority } from "./v3-native-operational-success-authority.js";
 import { readNativeEvidenceOnlySuccessAuthority } from "../recovery/v3-evidence-only-publication.js";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
@@ -228,6 +229,21 @@ async function loadExactDependencyAuthorities(
   const authorities: V3PreparationDependencyAttemptAuthorityV1[] = [];
   for (const dependency of dependencies) {
     const row = rowByAttempt.get(dependency.attemptId!);
+    if(row?.attempt_class==="infrastructure_retry") {
+      const success=await readNativeOperationalSuccessAuthority(transaction,{
+        runId:input.runId,stepId:input.stepId,storyId:dependency.storyId,
+        packetHash:input.packetHash,attemptId:dependency.attemptId!,
+      });
+      if(row.disposition!==dependency.disposition||success.sourceAfter.sha!==dependency.sourceAfterSha
+        ||success.sourceAfter.treeHash!==dependency.sourceAfterTreeHash) {
+        preparationFail("V3_PREPARATION_DEPENDENCY_ATTEMPT_MISMATCH","accepted fallback differs from selected native dependency");
+      }
+      authorities.push(V3PreparationDependencyAttemptAuthorityV1Schema.parse({
+        storyId:dependency.storyId,attemptId:success.attemptId,attemptClass:"infrastructure_retry",
+        disposition:"verified",sourceRevision:success.sourceAfter,operationalRetry:success.operationalRetry,
+      }));
+      continue;
+    }
     if (row?.attempt_class === "evidence_only") {
       const success = await readNativeEvidenceOnlySuccessAuthority(transaction, {
         runId:input.runId,stepId:input.stepId,storyId:dependency.storyId,

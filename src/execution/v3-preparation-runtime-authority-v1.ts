@@ -22,9 +22,9 @@ export { V3_PREPARATION_CLAIM_AUTHORITY_V2_MAX_CANONICAL_BYTES };
 function requireNativeDependency(
   dependencies: readonly { attemptClass: string }[], context: z.RefinementCtx,
 ): void {
-  if (!dependencies.some(dependency => dependency.attemptClass === "evidence_only")) {
+  if (!dependencies.some(dependency => ["evidence_only", "infrastructure_retry"].includes(dependency.attemptClass))) {
     context.addIssue({code: "custom", path: ["dependencyAttempts"],
-      message: "Runtime native branch requires an independent evidence refresh"});
+      message: "Runtime native branch requires a genuine native successor"});
   }
 }
 
@@ -44,8 +44,24 @@ export const NativeEvidenceRefreshWitnessV1Schema = z.object({
   evidenceBundleHash: Sha256Schema,
 }).strict();
 
+export const NativeOperationalRetryWitnessV1Schema = z.object({
+  kind: z.literal("native_operational_retry"),
+  priorAttemptId: z.string().regex(/^ATT_[A-Za-z0-9-]{16,160}$/),
+  priorClaimId: z.number().int().positive(),
+  priorGeneration: z.number().int().positive(),
+  initialAuthorityHash: Sha256Schema,
+  directiveHash: Sha256Schema,
+  directiveArtifactHash: Sha256Schema,
+  evidencePlanArtifactHash: Sha256Schema,
+  evidenceBundleHash: Sha256Schema,
+}).strict();
+
 export const V3PreparationDependencyAttemptAuthorityV1Schema = z.union([
   HistoricalDependencyV1Schema,
+  HistoricalDependencyV1Schema.extend({
+    attemptClass: z.literal("infrastructure_retry"), disposition: z.literal("verified"),
+    operationalRetry: NativeOperationalRetryWitnessV1Schema,
+  }).strict(),
   HistoricalDependencyV1Schema.extend({
     attemptClass: z.literal("evidence_only"),
     disposition: z.literal("verified"),
@@ -130,6 +146,18 @@ export type V3PreparationClaimAuthorityPayloadV1 = z.infer<
 
 export const V3PreparationDependencyAttemptAuthorityV2Schema = z.union([
   HistoricalDependencyV2Schema,
+  ImplementationDependencyOutputV2Schema.safeExtend({
+    attemptId: HistoricalDependencyV2Schema.shape.attemptId,
+    attemptGeneration: HistoricalDependencyV2Schema.shape.attemptGeneration,
+    attemptClass: z.literal("infrastructure_retry"), disposition: z.literal("verified"),
+    operationalRetry: NativeOperationalRetryWitnessV1Schema,
+  }).strict().superRefine((value, context) => {
+    if (value.attemptGeneration !== value.operationalRetry.priorGeneration + 1
+      || value.attemptId === value.operationalRetry.priorAttemptId) {
+      context.addIssue({ code: "custom", path: ["operationalRetry"],
+        message: "Accepted fallback must be the distinct immediate operational successor" });
+    }
+  }),
   // Extend the original refined dependency contract without overwriting the
   // disjoint model discriminant. safeExtend retains every inherited check.
   ImplementationDependencyOutputV2Schema.safeExtend({
@@ -249,7 +277,7 @@ export type V3PreparationClaimAuthorityV2 = z.infer<
 export function createV3PreparationClaimAuthorityV1(
   input: Omit<V3PreparationClaimAuthorityPayloadV1, "schema" | "authorityVersion">,
 ): V3PreparationClaimAuthorityV1 {
-  if (!input.dependencyAttempts.some(dependency => dependency.attemptClass === "evidence_only")) {
+  if (!input.dependencyAttempts.some(dependency => ["evidence_only", "infrastructure_retry"].includes(dependency.attemptClass))) {
     return createHistoricalAuthorityV1({ ...input,
       dependencyAttempts: input.dependencyAttempts.map(dependency => HistoricalDependencyV1Schema.parse(dependency)),
     });
@@ -265,7 +293,7 @@ export function createV3PreparationClaimAuthorityV1(
 export function createV3PreparationClaimAuthorityV2(
   input: Omit<V3PreparationClaimAuthorityPayloadV2, "schema" | "authorityVersion" | "packetSchema">,
 ): V3PreparationClaimAuthorityV2 {
-  if (!input.dependencyAttempts.some(dependency => dependency.attemptClass === "evidence_only")) {
+  if (!input.dependencyAttempts.some(dependency => ["evidence_only", "infrastructure_retry"].includes(dependency.attemptClass))) {
     return createHistoricalAuthorityV2({ ...input,
       dependencyAttempts: input.dependencyAttempts.map(dependency => HistoricalDependencyV2Schema.parse(dependency)),
     });
@@ -290,6 +318,7 @@ export function projectV3PreparationRuntimeAuthorityV1(raw: V3PreparationClaimAu
       storyId: dependency.storyId, attemptId: dependency.attemptId, attemptClass: dependency.attemptClass,
       disposition: dependency.disposition, sourceRevision: dependency.sourceAfter,
       ...(dependency.attemptClass === "evidence_only" ? { evidenceRefresh: dependency.evidenceRefresh } : {}),
+      ...(dependency.attemptClass === "infrastructure_retry" ? { operationalRetry: dependency.operationalRetry } : {}),
     })),
   });
 }

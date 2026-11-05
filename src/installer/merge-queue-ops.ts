@@ -1,6 +1,15 @@
 import { authenticateNativeEvidenceContinuationOwner,readNativeEvidenceOnlySuccessAuthority,
   type NativeEvidenceContinuationOwner } from "../recovery/v3-evidence-only-publication.js";
 import { getSql as nativeEvidenceSql } from "../db-pg.js";
+import { createHash } from "node:crypto";
+import { z } from "zod";
+import { canonicalJsonStringify,hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { SourceRevisionV1Schema } from "../execution/schemas/execution-attempt-v1.js";
+import { RuntimeCompletionPlanV1Schema } from "../execution/schemas/runtime-completion-plan-v1.js";
+import { V3ImplementationAgentOutputV1Schema } from "../execution/v3-implementation-output.js";
+import { currentRuntimeCompletionOwnerCapability } from "../execution/runtime-completion-owner-context.js";
+import { EvidenceBundleV2Schema,computeEvidenceBundleHash } from "../evidence/evidence-bundle-v2.js";
+
 /**
  * Merge Queue Operations (merge-queue-ops.ts)
  *
@@ -910,6 +919,106 @@ export function mergeStoryIntoFeature(
   }
 }
 
+// Preserve the code-owned record already written by native model completion.
+// This grants no merge/claim authority and never reconstructs acceptance bytes.
+async function preserveNativeModelAcceptanceAfterMerge(input: Readonly<{
+  runId:string;storyDbId:string;storyId:string;attemptId:string;sourceSha:string|null;
+}>):Promise<void> {
+  const cap=currentRuntimeCompletionOwnerCapability();
+  await nativeEvidenceSql().begin(async tx=>{
+    const rows=await tx.unsafe<Array<{
+      story_output:string;story_generation:number;output:string;output_hash:string;packet_hash:string;slice_hash:string;
+      source_before_sha:string;source_before_tree_hash:string;source_after_sha:string;source_after_tree_hash:string;
+      bundle_hash:string;bundle_payload:unknown;request_id:string;claim_id:string;step_db_id:string;
+      completion_plan:unknown;completion_plan_hash:string;
+    }>>(`
+      SELECT story.output AS story_output,story.claim_generation AS story_generation,q.output,q.output_hash,
+        a.packet_hash,a.slice_hash,a.source_before_sha,a.source_before_tree_hash,a.source_after_sha,a.source_after_tree_hash,
+        bundle.evidence_bundle_hash AS bundle_hash,bundle.payload AS bundle_payload,
+        q.request_id,q.claim_id::text,q.step_db_id,q.completion_plan,q.completion_plan_hash
+      FROM stories story JOIN runs run ON run.id=story.run_id AND run.protocol='v3' AND run.status IN ('running','resuming')
+      JOIN execution_attempts a ON a.attempt_id=$4 AND a.run_id=story.run_id AND a.story_id=story.story_id
+        AND a.step_id='implement' AND a.packet_hash=run.packet_hash AND a.source_after_sha=$5
+        AND a.disposition='verified' AND a.branch=story.story_branch
+        AND a.attempt_class IN ('product_implementation','supervisor_repair','infrastructure_retry')
+        AND a.role=CASE WHEN a.attempt_class='supervisor_repair' THEN 'supervisor' ELSE 'developer' END
+      JOIN semantic_artifacts packet ON packet.artifact_hash=a.packet_hash AND packet.artifact_type='setfarm.product-build-packet.v3'
+      JOIN claim_log claim ON claim.id=a.claim_id AND claim.run_id=a.run_id AND claim.step_id=a.step_id
+        AND claim.story_id=a.story_id AND claim.agent_id=a.agent_id AND claim.outcome='completed'
+      JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id AND q.run_id=a.run_id
+        AND q.workflow_step_id=a.step_id AND q.story_id=a.story_id AND q.output_hash=a.output_hash AND q.claim_outcome=claim.outcome
+      JOIN runtime_sessions runtime ON runtime.session_id=q.runtime_session_id AND runtime.claim_id=a.claim_id
+        AND runtime.attempt_id=a.attempt_id AND runtime.run_id=a.run_id AND runtime.workflow_step_id=a.step_id
+        AND runtime.step_db_id=q.step_db_id AND runtime.story_db_id=story.id AND runtime.story_id=a.story_id AND runtime.claim_agent_id=a.agent_id
+      JOIN v3_story_claim_runtime_bindings_v1 binding ON binding.claim_id=a.claim_id AND binding.runtime_session_id=runtime.session_id
+        AND binding.run_id=a.run_id AND binding.step_db_id=q.step_db_id AND binding.workflow_step_id='implement'
+        AND binding.subject_kind='story_member' AND binding.story_db_id=story.id AND binding.story_id=story.story_id
+        AND binding.story_index=story.story_index AND binding.story_claim_generation=story.claim_generation
+      JOIN evidence_bundles bundle ON bundle.run_id=a.run_id AND bundle.story_id=a.story_id AND bundle.attempt_id=a.attempt_id
+        AND bundle.packet_hash=a.packet_hash AND bundle.slice_hash=a.slice_hash
+        AND bundle.source_sha=a.source_after_sha AND bundle.source_tree_hash=a.source_after_tree_hash AND bundle.aggregate_verdict='pass'
+        AND a.evidence_refs::jsonb ? ('setfarm://evidence-bundle/' || bundle.evidence_bundle_hash)
+      WHERE story.run_id=$1 AND story.id=$2 AND story.story_id=$3 AND story.status IN ('done','verified')
+        AND story.claimed_by IS NULL AND story.claimed_at IS NULL
+        AND NOT EXISTS(SELECT 1 FROM execution_attempts newer WHERE newer.run_id=a.run_id
+          AND newer.step_id=a.step_id AND newer.story_id=a.story_id AND newer.generation>a.generation)
+        AND ((q.state='accepted' AND q.apply_phase='effects_committed' AND runtime.state='released')
+          OR (q.state='processing' AND q.apply_phase='owner_committed' AND runtime.state='drained'
+            AND q.request_id=$6 AND q.owner_instance_id=$7 AND q.owner_attempt_count=$8 AND q.lease_expires_at>clock_timestamp()))
+      FOR UPDATE OF story,q
+    `,[input.runId,input.storyDbId,input.storyId,input.attemptId,input.sourceSha,
+      cap?.requestId??null,cap?.ownerInstanceId??null,cap?.ownerAttemptCount??0]);
+    const row=rows[0];
+    if(rows.length!==1||!row)throw Error("V3_NATIVE_MODEL_MERGE_ACCEPTANCE_OWNER_MISMATCH");
+    const accepted=z.object({
+      schema:z.literal("setfarm.v3-story-acceptance-record.v1"),storyId:z.string(),attemptId:z.string(),
+      packetHash:z.string(),sliceHash:z.string(),sourceRevision:SourceRevisionV1Schema,
+      evidenceBundleRef:z.string(),findingSetRef:z.null(),aggregateVerdict:z.literal("pass"),
+      failureClass:z.null(),agentOutputHash:z.string(),
+    }).strict().parse(JSON.parse(row.story_output));
+    const model=V3ImplementationAgentOutputV1Schema.parse(JSON.parse(row.output));
+    const bundle=EvidenceBundleV2Schema.parse(row.bundle_payload);
+    const plan=RuntimeCompletionPlanV1Schema.parse(row.completion_plan);
+    if(row.story_output!==canonicalJsonStringify(accepted)
+      ||accepted.storyId!==input.storyId||accepted.attemptId!==input.attemptId
+      ||accepted.packetHash!==row.packet_hash||accepted.sliceHash!==row.slice_hash
+      ||accepted.sourceRevision.sha!==row.source_after_sha||accepted.sourceRevision.treeHash!==row.source_after_tree_hash
+      ||accepted.evidenceBundleRef!==`setfarm://evidence-bundle/${row.bundle_hash}`
+      ||accepted.agentOutputHash!==row.output_hash
+      ||createHash("sha256").update(row.output,"utf8").digest("hex")!==row.output_hash
+      ||model.disposition!=="ready_for_evidence"||model.attemptId!==input.attemptId
+      ||model.packetHash!==row.packet_hash||model.sliceHash!==row.slice_hash
+      ||model.sourceBefore.sha!==row.source_before_sha||model.sourceBefore.treeHash!==row.source_before_tree_hash
+      ||computeEvidenceBundleHash(bundle)!==row.bundle_hash||bundle.aggregateVerdict!=="pass"
+      ||bundle.runId!==input.runId||bundle.storyId!==input.storyId||bundle.attemptId!==input.attemptId
+      ||bundle.packetHash!==row.packet_hash||bundle.sliceHash!==row.slice_hash
+      ||bundle.sourceRevision.sha!==row.source_after_sha||bundle.sourceRevision.treeHash!==row.source_after_tree_hash
+      ||!bundle.predicates.length||bundle.predicates.some(p=>p.required&&p.verdict!=="pass")
+      ||hashCanonicalJson(plan)!==row.completion_plan_hash||plan.requestId!==row.request_id
+      ||plan.runId!==input.runId||plan.stepDbId!==row.step_db_id||plan.workflowStepId!=="implement"
+      ||plan.claimId!==Number(row.claim_id)||plan.outputHash!==row.output_hash||plan.kind!=="story_completion"
+      ||plan.subject?.storyDbId!==input.storyDbId||plan.subject?.storyId!==input.storyId
+      ||plan.subject?.sourceSha!==row.source_after_sha) {
+      throw Error("V3_NATIVE_MODEL_MERGE_ACCEPTANCE_RECORD_MISMATCH");
+    }
+    // Leave output untouched. CAS and the live-owner predicate protect against
+    // a new story owner or a lease expiring during bounded record validation.
+    const changed=await tx.unsafe<Array<{id:string}>>(`
+      UPDATE stories story SET merge_status='merged',status='verified',updated_at=clock_timestamp()
+      WHERE story.id=$1 AND story.run_id=$2 AND story.story_id=$3 AND story.output=$4
+        AND story.claim_generation=$5 AND story.status IN ('done','verified')
+        AND story.claimed_by IS NULL AND story.claimed_at IS NULL
+        AND EXISTS(SELECT 1 FROM runtime_completion_requests q WHERE q.request_id=$6 AND q.output_hash=$7
+          AND q.completion_plan_hash=$8 AND ((q.state='accepted' AND q.apply_phase='effects_committed')
+            OR (q.state='processing' AND q.apply_phase='owner_committed' AND q.request_id=$9
+              AND q.owner_instance_id=$10 AND q.owner_attempt_count=$11 AND q.lease_expires_at>clock_timestamp())))
+      RETURNING story.id
+    `,[input.storyDbId,input.runId,input.storyId,row.story_output,row.story_generation,row.request_id,row.output_hash,
+      row.completion_plan_hash,cap?.requestId??null,cap?.ownerInstanceId??null,cap?.ownerAttemptCount??0]);
+    if(changed.length!==1)throw Error("V3_NATIVE_MODEL_MERGE_ACCEPTANCE_CAS_LOST");
+  });
+}
+
 // ── Merge Queue Runner ──────────────────────────────────────────────
 
 /**
@@ -1021,15 +1130,22 @@ export async function runMergeQueue(
           SELECT a.attempt_id,a.attempt_class,a.packet_hash,p.artifact_type FROM execution_attempts a
           JOIN semantic_artifacts p ON p.artifact_hash=a.packet_hash WHERE a.run_id=$1 AND a.story_id=$2
           ORDER BY a.generation DESC,a.updated_at DESC LIMIT 1`,[runId,story.story_id]);
-        if(attempts[0]?.attempt_class==="evidence_only"&&attempts[0].artifact_type==="setfarm.product-build-packet.v3") {
-          const accepted=await readNativeEvidenceOnlySuccessAuthority(nativeEvidenceSql(),{runId,stepId:"implement",
-            storyId:story.story_id,packetHash:attempts[0].packet_hash,attemptId:attempts[0].attempt_id});
-          if(accepted.storyOutput!==accepted.acceptanceOutput||accepted.sourceAfter.sha!==story.source_after_sha)
-            throw new Error("V3_NATIVE_EVIDENCE_MERGE_ACCEPTANCE_MISMATCH");
-          output=accepted.acceptanceOutput;
+        const modelAttempt=attempts[0];
+        if(modelAttempt?.artifact_type==="setfarm.product-build-packet.v3"
+          && ["product_implementation","supervisor_repair","infrastructure_retry"].includes(modelAttempt.attempt_class)) {
+          await preserveNativeModelAcceptanceAfterMerge({runId,storyDbId:story.id,storyId:story.story_id,
+            attemptId:modelAttempt.attempt_id,sourceSha:story.source_after_sha});
+        } else {
+          if(attempts[0]?.attempt_class==="evidence_only"&&attempts[0].artifact_type==="setfarm.product-build-packet.v3") {
+            const accepted=await readNativeEvidenceOnlySuccessAuthority(nativeEvidenceSql(),{runId,stepId:"implement",
+              storyId:story.story_id,packetHash:attempts[0].packet_hash,attemptId:attempts[0].attempt_id});
+            if(accepted.storyOutput!==accepted.acceptanceOutput||accepted.sourceAfter.sha!==story.source_after_sha)
+              throw new Error("V3_NATIVE_EVIDENCE_MERGE_ACCEPTANCE_MISMATCH");
+            output=accepted.acceptanceOutput;
+          }
+          await pgRun("UPDATE stories SET merge_status='merged',status='verified',output=$1,updated_at=$2 WHERE id=$3",
+            [output,now(),story.id]);
         }
-        await pgRun("UPDATE stories SET merge_status='merged',status='verified',output=$1,updated_at=$2 WHERE id=$3",
-          [output,now(),story.id]);
       }
       if(!pendingNative) emitEvent({
         ts: now(), event: "story.verified", runId, workflowId: wfId,

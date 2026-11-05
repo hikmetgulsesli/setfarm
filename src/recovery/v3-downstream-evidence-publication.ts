@@ -1,3 +1,4 @@
+import { readNativeOperationalSuccessAuthority } from "../execution/v3-native-operational-success-authority.js";
 import path from "node:path";
 import { readNativeEvidenceOnlySuccessAuthority } from "./v3-evidence-only-publication.js";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
@@ -226,7 +227,7 @@ async function lockStory(
 const NATIVE_DOWNSTREAM_LINEAGE = "setfarm://native-downstream-lineage-v1/";
 type NativeDownstreamQuery = Pick<Sql, "unsafe"> | Pick<TransactionSql, "unsafe">;
 export type NativeDownstreamSourceOwner = Readonly<{
-  ownerKind: "accepted_model" | "native_evidence_refresh";
+  ownerKind: "accepted_model" | "native_evidence_refresh" | "native_operational_retry";
   attempt_id: string; slice_hash: string; compilation_report_hash: string;
   source_after_sha: string; source_after_tree_hash: string; output_hash: string;
   repo: string; run_context: string;
@@ -269,6 +270,20 @@ export async function readNativeDownstreamSourceOwner(query: NativeDownstreamQue
       ||success.outputHash!==current.output_hash||!current.repo)
       fail("V3_NATIVE_DOWNSTREAM_SOURCE_OWNER_REQUIRED","settled native verifier lacks its exact accepted story/source/contract");
     return Object.freeze({ownerKind:"native_evidence_refresh",attempt_id:success.attemptId,
+      slice_hash:success.sliceHash,compilation_report_hash:success.compilationReportHash,
+      source_after_sha:success.sourceAfter.sha,source_after_tree_hash:success.sourceAfter.treeHash,
+      output_hash:success.outputHash,repo:current.repo,run_context:current.run_context});
+  }
+  if(current.attempt_class==="infrastructure_retry") {
+    // Reuse the shared authentic model-success relation. The original failed
+    // model stays provenance; the actual accepted successor supplies output.
+    const success=await readNativeOperationalSuccessAuthority(query,{runId:input.runId,stepId:"implement",
+      storyId:input.storyId,packetHash:input.packetHash,attemptId:current.attempt_id});
+    if(success.sliceHash!==current.slice_hash||success.compilationReportHash!==current.compilation_report_hash
+      ||success.sourceAfter.sha!==current.source_after_sha||success.sourceAfter.treeHash!==current.source_after_tree_hash
+      ||success.outputHash!==current.output_hash||!current.repo)
+      fail("V3_NATIVE_DOWNSTREAM_SOURCE_OWNER_REQUIRED","accepted operational successor differs from actual candidate/contract");
+    return Object.freeze({ownerKind:"native_operational_retry",attempt_id:success.attemptId,
       slice_hash:success.sliceHash,compilation_report_hash:success.compilationReportHash,
       source_after_sha:success.sourceAfter.sha,source_after_tree_hash:success.sourceAfter.treeHash,
       output_hash:success.outputHash,repo:current.repo,run_context:current.run_context});

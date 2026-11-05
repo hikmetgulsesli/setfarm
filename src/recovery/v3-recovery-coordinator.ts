@@ -1,3 +1,4 @@
+import type { NativeImplementationContextV3 } from "../execution/v3-native-implementation-attempt.js";
 import type {PreparedNativeEvidenceMerge} from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
@@ -40,6 +41,7 @@ import type {
 } from "./recovery-case.js";
 import {
   V3DownstreamEvidenceAuthorityV1Schema,
+  readNativeDownstreamAttemptAuthority,
   type V3DownstreamEvidenceAuthorityV1,
 } from "./v3-downstream-evidence-publication.js";
 import {
@@ -1143,6 +1145,8 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     raw: z.infer<typeof InitialEvidenceInputSchema>,
     context: ParsedEvidenceContext,
     now: Date,
+    transaction: postgres.TransactionSql,
+    nativeDownstream?: NativeImplementationContextV3,
   ): Promise<V3RecoveryCoordinatorResult> {
     if (context.slice.recovery) {
       fail("V3_RECOVERY_INITIAL_SLICE_HAS_DIRECTIVE", "initial evidence cannot contain a recovery directive");
@@ -1151,7 +1155,21 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     if (!attemptId) fail("V3_RECOVERY_EVIDENCE_ATTEMPT_REQUIRED", "initial evidence requires an exact attempt");
     const attempt = await attempts.findById(attemptId);
     if (!attempt) fail("V3_RECOVERY_ATTEMPT_NOT_FOUND", `attempt ${attemptId} does not exist`);
-    if (!sameSliceRevision(context.slice, attempt.sourceBefore)) {
+    if(nativeDownstream) {
+      const authority=nativeDownstream.downstreamEvidence;
+      if(!authority||!raw.downstreamAuthority||context.slice.schema!=="setfarm.implementation-slice.v2")
+        fail("V3_RECOVERY_DOWNSTREAM_AUTHORITY_MISMATCH","native downstream evidence lacks preauthenticated lineage");
+      const lineage=await readNativeDownstreamAttemptAuthority(transaction,attempt);
+      if(lineage.parentClaimId!==raw.downstreamAuthority.parentClaimId
+        ||lineage.parentClaimId!==authority.parentClaimId
+        ||lineage.sourceOwner.attempt_id!==authority.sourceOwnerAttemptId
+        ||attempt.attemptId!==nativeDownstream.attempt.attemptId
+        ||attempt.sliceHash!==nativeDownstream.sliceHash
+        ||attempt.compilationReportHash!==nativeDownstream.compilationReportHash
+        ||!sameRevision(attempt.sourceBefore,nativeDownstream.sourceBefore)
+        ||!sameRevision(attempt.sourceBefore,context.evidenceBundle.sourceRevision))
+        fail("V3_RECOVERY_DOWNSTREAM_AUTHORITY_MISMATCH","current child/source owner differs from preauthenticated native final authority");
+    } else if (!sameSliceRevision(context.slice, attempt.sourceBefore)) {
       fail("V3_RECOVERY_INITIAL_SLICE_SOURCE_MISMATCH", "initial slice does not match the attempt source-before fence");
     }
     if (raw.downstreamAuthority && (
@@ -1530,6 +1548,24 @@ export function createV3RecoveryCoordinator(sql: Sql) {
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) fail("V3_RECOVERY_TIME_INVALID", "coordinator time is invalid");
       const context = parseContext(raw);
+      let nativeDownstream:NativeImplementationContextV3|undefined;
+      if(raw.kind==="initial_evidence"&&raw.downstreamAuthority&&context.slice.schema==="setfarm.implementation-slice.v2") {
+        const attemptId=context.evidenceBundle.attemptId;
+        if(!attemptId) fail("V3_RECOVERY_EVIDENCE_ATTEMPT_REQUIRED","native downstream evidence requires its actual child");
+        // Full indexed CAS/original custody/current final Git authentication is
+        // outside the coordinator transaction. Inside, only existing rows rejoin.
+        const {loadV3ImplementationAttemptContext}=await import("../execution/v3-implementation-attempt.js");
+        const compiled=await loadV3ImplementationAttemptContext({runId:context.evidenceBundle.runId,
+          storyId:context.evidenceBundle.storyId,attemptId});
+        if(compiled.kind!=="native-dispatch-ready"||!compiled.downstreamEvidence
+          ||compiled.downstreamEvidence.parentClaimId!==raw.downstreamAuthority.parentClaimId
+          ||compiled.sliceHash!==context.sliceHash||compiled.evidencePlanArtifactHash!==context.evidencePlanArtifactHash
+          ||canonicalJsonStringify(compiled.slice)!==canonicalJsonStringify(context.slice)
+          ||canonicalJsonStringify(compiled.evidencePlan)!==canonicalJsonStringify(context.evidencePlan)
+          ||!sameRevision(compiled.sourceBefore,context.evidenceBundle.sourceRevision))
+          fail("V3_RECOVERY_DOWNSTREAM_AUTHORITY_MISMATCH","native semantic contract and integrated candidate lack authentic downstream ownership");
+        nativeDownstream=compiled;
+      }
       const ownerKey = `setfarm:v3-recovery:${context.evidenceBundle.runId}:${context.evidenceBundle.storyId}`;
       // One story-level decision owner must finish revision advancement plus
       // authorization/terminalization before a concurrent replay observes it.
@@ -1542,7 +1578,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
           "V3_RECOVERY_DATABASE_TIME_UNAVAILABLE",
         );
         return raw.kind === "initial_evidence"
-          ? coordinateInitial(raw, context, now)
+          ? coordinateInitial(raw, context, now, transaction, nativeDownstream)
           : coordinateRecovery(raw, context, now, transaction, options.nativeEvidenceMerge);
       }) as Promise<V3RecoveryCoordinatorResult>;
     },

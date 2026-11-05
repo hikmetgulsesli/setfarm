@@ -1,4 +1,6 @@
 import type postgres from "postgres";
+import { readNativeOperationalSuccessAuthority } from "./v3-native-operational-success-authority.js";
+import { OperationalRetryDirectiveV1Schema } from "./operational-retry-directive.js";
 import { readNativeEvidenceOnlySuccessAuthority, readNativeEvidenceOnlySourceAuthority,
   readNativeEvidenceOnlyTerminalAuthority, type V3EvidenceOnlyPublicationLeaseV1,
 } from "../recovery/v3-evidence-only-publication.js";
@@ -290,9 +292,26 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
           && (success.attemptId===input.attemptId || success.sourceOwner.attemptId===input.attemptId);
       }
     }
+    if(!acceptedCustody && custody.length===1 && row.attempt_class==="product_implementation") {
+      const successors=await query.unsafe<Array<{attempt_id:string}>>(`
+        SELECT successor.attempt_id FROM execution_attempts successor
+        JOIN execution_attempts prior ON prior.attempt_id=$5 AND prior.run_id=successor.run_id
+          AND prior.step_id=successor.step_id AND prior.story_id=successor.story_id
+          AND successor.generation=prior.generation+1 AND successor.slice_hash=prior.slice_hash
+          AND successor.source_before_sha=prior.source_before_sha AND successor.source_before_tree_hash=prior.source_before_tree_hash
+        WHERE successor.run_id=$1 AND successor.step_id=$2 AND successor.story_id=$3 AND successor.packet_hash=$4
+          AND successor.attempt_class='infrastructure_retry' AND successor.disposition='verified'
+      `,[input.runId,row.step_id,row.story_id,row.packet_hash,input.attemptId]);
+      if(successors.length===1) {
+        const success=await readNativeOperationalSuccessAuthority(query,{runId:input.runId,
+          stepId:row.step_id,storyId:row.story_id,packetHash:row.packet_hash,attemptId:successors[0]!.attempt_id});
+        acceptedCustody=success.operationalRetry.priorAttemptId===input.attemptId
+          && success.operationalRetry.priorClaimId===claimId(row.claim_id);
+      }
+    }
     if(!acceptedCustody || custody.length!==1) {
-      // Never backfill a witness. A failed source owner is readable only through
-      // its exact resolved independent verifier, not by relabeling its RCR.
+      // Never backfill a witness. Original provenance is readable through its
+      // exact accepted model successor or resolved independent verifier.
       repositoryFail("V3_NATIVE_GIT_CUSTODY_WITNESS_REQUIRED", "removed worktree requires genuine custody and exact model or nonmodel terminal authority");
     }
   }
@@ -377,6 +396,8 @@ export async function readV3NativeDependencyAuthority(
   const selected = await query.unsafe<Array<{ attempt_class: string }>>(
     "SELECT attempt_class FROM execution_attempts WHERE attempt_id=$1 AND run_id=$2 AND step_id=$3 AND story_id=$4 AND packet_hash=$5",
     [input.attemptId,input.runId,input.stepId,input.storyId,input.packetHash]);
+  const operational = selected.length === 1 && selected[0]!.attempt_class === "infrastructure_retry"
+    ? await readNativeOperationalSuccessAuthority(query,input) : undefined;
   if (selected.length === 1 && selected[0]!.attempt_class === "evidence_only") {
     const success=await readNativeEvidenceOnlySuccessAuthority(query,input);
     if (!["done","verified"].includes(success.storyStatus) || success.storyOutput!==success.acceptanceOutput) {
@@ -425,10 +446,11 @@ export async function readV3NativeDependencyAuthority(
       ON c.attempt_id=a.attempt_id AND c.claim_id=a.claim_id AND c.run_id=a.run_id
       AND c.story_id=a.story_id AND c.output_hash=a.output_hash
     WHERE a.attempt_id=$1 AND a.run_id=$2 AND a.step_id=$3 AND a.packet_hash=$4 AND a.story_id=$5
-      AND a.attempt_class IN ('product_implementation','supervisor_repair')
+      AND (a.attempt_class IN ('product_implementation','supervisor_repair')
+        OR ($6::boolean AND a.attempt_class='infrastructure_retry'))
       AND a.disposition IN ('produced_delta','already_satisfied','verified')
       AND c.state='accepted' AND c.apply_phase='effects_committed'`,
-  [input.attemptId, input.runId, input.stepId, input.packetHash, input.storyId]);
+  [input.attemptId, input.runId, input.stepId, input.packetHash, input.storyId, Boolean(operational)]);
   const row = rows[0];
   if (rows.length !== 1 || !row?.slice_hash || !row.output_hash || !row.source_after_sha
     || !row.source_after_tree_hash || !row.worktree
@@ -449,6 +471,31 @@ export async function readV3NativeDependencyAuthority(
     || slice.sourceRevision.sha !== row.source_before_sha || slice.sourceRevision.treeHash !== row.source_before_tree_hash) {
     repositoryFail("V3_NATIVE_DEPENDENCY_IDENTITY_MISMATCH", "terminal native slice/output is crossed with another attempt");
   }
+  if (operational) {
+    const directiveEnvelope=await readV3NativeIndexedArtifact(reader,operational.operationalRetry.directiveArtifactHash);
+    const directive=OperationalRetryDirectiveV1Schema.parse(directiveEnvelope.payload);
+    const planEnvelope=await readV3NativeIndexedArtifact(reader,operational.operationalRetry.evidencePlanArtifactHash);
+    const expectedPaths=slice.files.filter(file=>file.role==="owned"||file.role==="shared_writable").map(file=>file.path).sort();
+    if(slice.recovery || directiveEnvelope.artifactType!=="setfarm.operational-retry-directive.v1"
+      || canonicalJsonStringify(directiveEnvelope.producer)!==canonicalJsonStringify(packet.producer)
+      || directive.directiveHash!==operational.operationalRetry.directiveHash
+      || directive.runId!==input.runId||directive.stepId!==input.stepId||directive.storyId!==input.storyId
+      || directive.priorAttempt.attemptId!==operational.operationalRetry.priorAttemptId
+      || directive.priorAttempt.claimId!==operational.operationalRetry.priorClaimId
+      || directive.priorAttempt.generation!==operational.operationalRetry.priorGeneration
+      || directive.priorAttempt.terminalDisposition!=="inconclusive"
+      || directive.priorAttempt.packetHash!==input.packetHash||directive.priorAttempt.sliceHash!==row.slice_hash
+      || canonicalJsonStringify(directive.priorAttempt.sourceBefore)!==canonicalJsonStringify(operational.sourceBefore)
+      || canonicalJsonStringify(directive.nextSourceRevision)!==canonicalJsonStringify(operational.sourceBefore)
+      || canonicalJsonStringify(directive.expectedDelta.allowedPaths)!==canonicalJsonStringify(expectedPaths)
+      || operational.generation!==row.generation||operational.sliceHash!==row.slice_hash||operational.outputHash!==row.output_hash
+      || packet.refs.compilationReport!==operational.compilationReportHash
+      || planEnvelope.artifactType!=="setfarm.evidence-plan.v2"
+      || canonicalJsonStringify(planEnvelope.producer)!==canonicalJsonStringify(packet.producer)
+      || canonicalJsonStringify(planEnvelope.payload)!==canonicalJsonStringify(compileEvidencePlanV2({slice,sliceHash:row.slice_hash}))) {
+      repositoryFail("V3_NATIVE_OPERATIONAL_DEPENDENCY_MISMATCH","accepted fallback differs from its exact original operational contract");
+    }
+  }
   const story = packet.storyPlan.stories.find(story => story.id === input.storyId);
   if (!story) repositoryFail("V3_NATIVE_DEPENDENCY_STORY_MISSING", "terminal story absent from native packet");
   const files = packet.buildTopology.pathBindings.filter(binding => story.ownedPathRefs.includes(binding.id))
@@ -457,6 +504,7 @@ export async function readV3NativeDependencyAuthority(
   return V3PreparationDependencyAttemptAuthorityV2Schema.parse({ storyId: input.storyId,
     attemptId: row.attempt_id, attemptGeneration: row.generation, attemptClass: row.attempt_class,
     disposition: row.disposition, sliceHash: row.slice_hash, outputHash: row.output_hash, sourceAfter,
+    ...(operational ? { operationalRetry: operational.operationalRetry } : {}),
     fileSignatures: await captureNativeAttemptFileSignatures(query, { runId: input.runId,
       attemptId: row.attempt_id, source: sourceAfter, files }) });
 }
@@ -638,6 +686,19 @@ export async function recheckV3NativePreparationInTransaction(
     repositoryFail("V3_NATIVE_PREPARATION_PACKET_MISMATCH", "native packet/report changed before publication");
   }
   for (const dependency of native.dependencyAttempts) {
+    if (dependency.attemptClass === "infrastructure_retry") {
+      const success=await readNativeOperationalSuccessAuthority(transaction,{
+        runId:native.runId,stepId:native.stepId,storyId:dependency.storyId,
+        packetHash:native.packetHash,attemptId:dependency.attemptId,
+      });
+      if(success.generation!==dependency.attemptGeneration||success.sliceHash!==dependency.sliceHash
+        ||success.outputHash!==dependency.outputHash
+        ||canonicalJsonStringify(success.sourceAfter)!==canonicalJsonStringify(dependency.sourceAfter)
+        ||canonicalJsonStringify(success.operationalRetry)!==canonicalJsonStringify(dependency.operationalRetry)) {
+        repositoryFail("V3_NATIVE_PREPARATION_DEPENDENCY_MISMATCH","accepted operational fallback changed before publication");
+      }
+      continue;
+    }
     if (dependency.attemptClass === "evidence_only") {
       const success=await readNativeEvidenceOnlySuccessAuthority(transaction,{
         runId:native.runId,stepId:native.stepId,storyId:dependency.storyId,

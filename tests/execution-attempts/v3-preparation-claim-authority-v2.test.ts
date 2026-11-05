@@ -209,6 +209,74 @@ describe("runtime preparation authority preserves frozen migration contracts", (
     assert.equal(verified.attemptId, `ATT_${"b".repeat(16)}`);
   });
 
+
+  it("keeps accepted operational fallback DATA strict beside model and verifier dependencies", () => {
+    const model = dependency("US-001", "a");
+    const refresh = verifier();
+    const fallback = RuntimeDependencyV2Schema.parse({
+      ...dependency("US-003", "d"), attemptGeneration: 3,
+      attemptClass: "infrastructure_retry", disposition: "verified",
+      operationalRetry: {
+        kind: "native_operational_retry", priorAttemptId: `ATT_${"e".repeat(16)}`,
+        priorClaimId: 17, priorGeneration: 2, initialAuthorityHash: "f".repeat(64),
+        directiveHash: "a".repeat(64), directiveArtifactHash: "b".repeat(64),
+        evidencePlanArtifactHash: "c".repeat(64), evidenceBundleHash: "e".repeat(64),
+      },
+    });
+    if (fallback.attemptClass !== "infrastructure_retry") assert.fail("typed operational branch required");
+    const value = createRuntimeV2({
+      ...input(), storyId: "US-004", projectedDependencyIds: ["US-003", "US-001", "US-002"],
+      dependencyAttempts: [fallback, model, refresh],
+    });
+    assert.deepEqual(RuntimeV2Schema.parse(value), value);
+    assert.deepEqual(value.dependencyAttempts.map(item => item.attemptClass),
+      ["product_implementation", "evidence_only", "infrastructure_retry"]);
+    assert.equal(canonicalJsonStringify(value.dependencyAttempts[0]), canonicalJsonStringify(model));
+    assert.equal(fallback.outputHash, "d".repeat(64));
+    assert.notEqual(fallback.outputHash, fallback.operationalRetry.evidenceBundleHash);
+    assert.equal(V3PreparationClaimAuthorityV2Schema.safeParse(value).success, false);
+    const projected = projectV3PreparationRuntimeAuthorityV1(value);
+    assert.deepEqual(RuntimeV1Schema.parse(projected), projected);
+    assert.equal(V3PreparationClaimAuthorityV1Schema.safeParse(projected).success, false);
+    const projectedFallback = projected.dependencyAttempts.find(item => item.attemptClass === "infrastructure_retry");
+    assert.ok(projectedFallback && projectedFallback.attemptClass === "infrastructure_retry");
+    assert.deepEqual(projectedFallback.operationalRetry, fallback.operationalRetry);
+
+    const { operationalRetry: _witness, ...withoutWitness } = fallback;
+    const invalidFallbacks = [
+      ["missing witness", withoutWitness],
+      ["extra witness field", { ...fallback, operationalRetry: { ...fallback.operationalRetry, extraAuthority: true } }],
+      ["wrong witness kind", { ...fallback, operationalRetry: { ...fallback.operationalRetry, kind: "native_evidence_refresh" } }],
+      ["self predecessor", { ...fallback, operationalRetry: { ...fallback.operationalRetry, priorAttemptId: fallback.attemptId } }],
+      ["non-immediate generation", { ...fallback, attemptGeneration: 4 }],
+      ["non-verified fallback", { ...fallback, disposition: "produced_delta" }],
+    ] as const;
+    for (const [label, candidate] of invalidFallbacks) {
+      assert.equal(RuntimeV2Schema.safeParse(rehash({
+        ...value, dependencyAttempts: [model, refresh, candidate],
+      })).success, false, label);
+    }
+    for (const [label, dependencies] of [
+      ["model cannot carry operational witness", [{ ...model, operationalRetry: fallback.operationalRetry }, refresh, fallback]],
+      ["verifier cannot carry operational witness", [model, { ...refresh, operationalRetry: fallback.operationalRetry }, fallback]],
+    ] as const) {
+      assert.equal(RuntimeV2Schema.safeParse(rehash({
+        ...value, dependencyAttempts: dependencies,
+      })).success, false, label);
+    }
+    const { operationalRetry: _projectedWitness, ...projectedWithoutWitness } = projectedFallback;
+    for (const candidate of [projectedWithoutWitness, { ...projectedFallback,
+      operationalRetry: { ...projectedFallback.operationalRetry, extraAuthority: true },
+    }]) {
+      assert.equal(RuntimeV1Schema.safeParse(rehash({
+        ...projected, dependencyAttempts: [...projected.dependencyAttempts.slice(0, 2), candidate],
+      })).success, false);
+    }
+    const historical = createV3PreparationClaimAuthorityV2(input());
+    assert.equal(canonicalJsonStringify(createRuntimeV2(input())), canonicalJsonStringify(historical));
+    assert.equal(createRuntimeV2(input()).authorityHash, historical.authorityHash);
+  });
+
   it("rejects recomputed mixed hashes with missing, duplicate, crossed or extra authority", () => {
     const native = verifier();
     assert.equal(native.attemptClass, "evidence_only");

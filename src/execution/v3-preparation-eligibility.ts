@@ -245,7 +245,7 @@ export function createPostgresTerminalDependencyAttemptReader(sql: postgres.Sql,
           AND packet_hash = $3
           AND story_id = ANY($4::text[])
           AND (attempt_class IN ('product_implementation', 'supervisor_repair')
-            OR ($5::boolean AND attempt_class='evidence_only' AND disposition='verified'))
+            OR ($5::boolean AND attempt_class IN ('evidence_only','infrastructure_retry') AND disposition='verified'))
           AND disposition IN ('produced_delta', 'already_satisfied', 'verified')
         ORDER BY story_id, generation DESC, attempt_id DESC`,
       [input.runId, input.stepId, input.packetHash, [...input.storyIds], native],
