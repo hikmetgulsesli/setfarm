@@ -23,6 +23,7 @@ const OWNER_BACKED_TESTS = new Set([
   "manual-control-orphan-bootstrap-v1.integration.test.ts",
   "migration-runtime-preservation.test.ts",
   "migration33-current-entry-observers.test.ts",
+  "native-implementation-join.integration.test.ts",
   "operational-event-delivery.test.ts",
   "operational-outbox-publisher.test.ts",
   "operational-outbox-repository.test.ts",

@@ -11,13 +11,11 @@ import {
   type V3NormalImplementationStoryRow,
   type V3TerminalDependencyAttemptProjection,
 } from "../../src/execution/v3-normal-implementation-preclaim.js";
-import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
-import { produceImplementationSourceMapV1 } from "../../src/product-compiler/producers/implementation-source-map-v1.js";
-import { ProductBuildPacketV3Schema } from "../../src/product-compiler/schemas/product-build-packet-v3.js";
 import {
   createV3PreparationClaimAuthorityV1,
   type V3PreparationClaimAuthorityV1,
 } from "../../src/execution/v3-preparation-claim-authority.js";
+import { V3PreparationClaimAuthorityV2Schema } from "../../src/execution/v3-preparation-claim-authority-v2.js";
 import {
   V3PreparationBlockV1Schema,
   type V3PreparationBlockV1,
@@ -29,12 +27,11 @@ import type {
   SealedRuntimePacketV3,
 } from "../../src/product-compiler/runtime-artifact-reader.js";
 import { buildMinimalValidV3Contracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
-import { buildNoDesignProductBuildPacketV3Contracts } from "../product-compiler/fixtures/product-build-packet-v3.js";
+import { nativeJoinPacket } from "./helpers/native-implementation-join-fixture.js";
 
 const RUN_ID = "run-v3-normal-preclaim";
 const STEP_ID = "implement";
 const PACKET_HASH = "e".repeat(64);
-const NATIVE_V3_RELEASE_SHA = "c".repeat(40);
 
 function git(repo: string, args: readonly string[]): string {
   return execFileSync("git", [...args], {
@@ -92,100 +89,8 @@ function packet(): SealedRuntimePacketV1 {
   };
 }
 
-function semanticEnvelopeHash(
-  artifactType: string,
-  producer: SealedRuntimePacketV3["producer"],
-  payload: unknown,
-): string {
-  return hashCanonicalJson({
-    schema: "setfarm.semantic-artifact-envelope.v1",
-    artifactType,
-    producer,
-    payload,
-  });
-}
-
-function nativeV3Packet(): SealedRuntimePacketV3 {
-  const contracts = buildNoDesignProductBuildPacketV3Contracts();
-  const producer = {
-    pass: "v3-normal-preclaim-test",
-    codeSha: NATIVE_V3_RELEASE_SHA,
-    toolVersions: {},
-  };
-  const sourceMap = produceImplementationSourceMapV1(contracts.implementationSourceInputsV1);
-  assert.equal(sourceMap.status, "produced", JSON.stringify(sourceMap));
-  if (sourceMap.status !== "produced") throw new Error("unreachable");
-  const refs = {
-    productSpec: semanticEnvelopeHash("setfarm.product-spec.v2", producer, contracts.productSpecV2),
-    designGraph: null,
-    buildTopology: semanticEnvelopeHash("setfarm.build-topology.v1", producer, contracts.buildTopologyV1),
-    storyPlan: semanticEnvelopeHash("setfarm.story-plan.v2", producer, contracts.storyPlanV2),
-    designSourceClosure: semanticEnvelopeHash(
-      "setfarm.design-source-closure.v2",
-      producer,
-      contracts.designSourceClosureV2,
-    ),
-    implementationSourceMap: semanticEnvelopeHash(
-      "setfarm.implementation-source-map.v1",
-      producer,
-      sourceMap.sourceMap,
-    ),
-  };
-  const compiler = { version: "4.0.0", codeSha: NATIVE_V3_RELEASE_SHA };
-  const packetPayload = ProductBuildPacketV3Schema.parse({
-    schema: "setfarm.product-build-packet.v3",
-    packetVersion: 3,
-    parentPacketHashes: [],
-    designSourceKind: "none",
-    productSpecV2Hash: refs.productSpec,
-    designGraphV2Hash: null,
-    buildTopologyV1Hash: refs.buildTopology,
-    storyPlanV2Hash: refs.storyPlan,
-    designSourceClosureV2Hash: refs.designSourceClosure,
-    implementationSourceMapV1Hash: refs.implementationSourceMap,
-    compiler,
-    validationIds: ["VALIDATE_NATIVE_V3_PRECLAIM"],
-  });
-  const packetHash = semanticEnvelopeHash("setfarm.product-build-packet.v3", producer, packetPayload);
-  const compilationReport = {
-    schema: "setfarm.product-compilation-report.v3" as const,
-    compiler,
-    inputHashes: ["9".repeat(64)],
-    diagnostics: [],
-    validationIds: packetPayload.validationIds,
-    status: "sealed" as const,
-    artifactHashes: {
-      productSpecV2: refs.productSpec,
-      designGraphV2: null,
-      buildTopologyV1: refs.buildTopology,
-      storyPlanV2: refs.storyPlan,
-      designSourceClosureV2: refs.designSourceClosure,
-      implementationSourceMapV1: refs.implementationSourceMap,
-    },
-    packetHash,
-  };
-  return {
-    runId: RUN_ID,
-    packetHash,
-    producer,
-    productSpec: contracts.productSpecV2,
-    designGraph: null,
-    buildTopology: contracts.buildTopologyV1,
-    storyPlan: contracts.storyPlanV2,
-    designSourceClosure: contracts.designSourceClosureV2,
-    implementationSourceMap: sourceMap.sourceMap,
-    packet: packetPayload,
-    compilationReport,
-    refs: {
-      ...refs,
-      packet: packetHash,
-      compilationReport: semanticEnvelopeHash(
-        "setfarm.product-compilation-report.v3",
-        producer,
-        compilationReport,
-      ),
-    },
-  };
+function nativeV3Packet(twoStories = false): SealedRuntimePacketV3 {
+  return nativeJoinPacket(RUN_ID, twoStories);
 }
 
 function row(input: Readonly<{
@@ -320,6 +225,91 @@ describe("v3 normal implementation preclaim", () => {
 
   afterEach(async () => {
     await rm(repo, { recursive: true, force: true });
+  });
+
+  // Break: returning V1 scheduling readiness alone for a native packet.
+  it("pairs native readiness with exact V2 report, base and state authority", async () => {
+    const packet = nativeV3Packet();
+    const result = await createV3NormalImplementationPreclaim(dependencies({
+      packet: () => packet,
+      stories: [row({ storyId: "US-001" })],
+    })).prepare({ runId: RUN_ID, stepId: STEP_ID, repo, requestedBaseRef: "base" });
+    assert.equal(result.status, "ready", JSON.stringify(result));
+    if (result.status !== "ready") assert.fail("native packet must become ready");
+    assert.ok("nativeAuthority" in result, "native readiness must retain a separate V2 authority");
+    const native = V3PreparationClaimAuthorityV2Schema.parse(result.nativeAuthority);
+    assert.equal(native.packetSchema, "setfarm.product-build-packet.v3");
+    assert.equal(native.compilationReportHash, packet.refs.compilationReport);
+    assert.equal(result.authority.schema, "setfarm.v3-preparation-claim-authority.v1");
+    assert.deepEqual(native.baseRevision, { sha: firstSha, treeHash: firstTree });
+    for (const key of ["runId", "stepId", "storyId", "packetHash", "stateVersion"] as const) {
+      assert.equal(native[key], result.authority[key]);
+    }
+    assert.deepEqual(native.dependencyAttempts, []);
+  });
+
+  // Break: enriching a newer dependency instead of the selected terminal attempt,
+  // or dropping its generation/output/signatures between eligibility and readiness.
+  it("retains the complete selected terminal dependency in two-story native readiness", async () => {
+    const packet = nativeV3Packet(true);
+    const terminal = {
+      storyId: "US-001", attemptId: "ATT_native-terminal-generation-A", disposition: "produced_delta" as const,
+      sourceAfterSha: firstSha, sourceAfterTreeHash: firstTree,
+      nativeAuthority: {
+        storyId: "US-001", attemptId: "ATT_native-terminal-generation-A", attemptGeneration: 3,
+        attemptClass: "product_implementation" as const, disposition: "produced_delta" as const,
+        sliceHash: "1".repeat(64), outputHash: "2".repeat(64),
+        sourceAfter: { sha: firstSha, treeHash: firstTree },
+        fileSignatures: [{ pathRef: "PATH_APP", path: "src/index.ts", presence: "present" as const,
+          contentHash: "3".repeat(64) }],
+      },
+    };
+    const result = await createV3NormalImplementationPreclaim(dependencies({
+      packet: () => packet, attempts: () => [terminal],
+    })).prepare({ runId: RUN_ID, stepId: STEP_ID, repo, requestedBaseRef: "base" });
+    assert.equal(result.status, "ready", JSON.stringify(result));
+    if (result.status !== "ready") assert.fail("terminal dependency must be selected");
+    assert.ok("nativeAuthority" in result, "native dependency signatures must survive readiness");
+    const native = V3PreparationClaimAuthorityV2Schema.parse(result.nativeAuthority);
+    assert.deepEqual(native.projectedDependencyIds, ["US-001"]);
+    assert.deepEqual(native.dependencyAttempts, [terminal.nativeAuthority]);
+    assert.equal(result.authority.dependencyAttempts[0]?.attemptId, terminal.attemptId);
+  });
+
+  it("refuses missing or crossed native dependency witnesses before claim admission", async () => {
+    const packet = nativeV3Packet(true);
+    for (const nativeAuthority of [undefined, {
+      storyId: "US-001", attemptId: "ATT_different-terminal-generation", attemptGeneration: 2,
+      attemptClass: "product_implementation", disposition: "produced_delta",
+      sliceHash: "1".repeat(64), outputHash: "2".repeat(64),
+      sourceAfter: { sha: firstSha, treeHash: firstTree }, fileSignatures: [],
+    }]) {
+      const result = await createV3NormalImplementationPreclaim(dependencies({
+        packet: () => packet, attempts: () => [{
+          storyId: "US-001", attemptId: "ATT_selected-terminal-generation", disposition: "produced_delta",
+          sourceAfterSha: firstSha, sourceAfterTreeHash: firstTree, nativeAuthority,
+        }],
+      })).prepare({ runId: RUN_ID, stepId: STEP_ID, repo, requestedBaseRef: "base" });
+      assert.equal(result.status, "blocked", "V1 terminal projection cannot substitute for native witnesses");
+      if (result.status !== "blocked") assert.fail("expected fail-closed native dependency");
+      assert.equal(result.error.code, "V3_NORMAL_PRECLAIM_AUTHORITY_INVALID");
+      assert.equal(result.consumesClaim, false);
+      assert.equal(result.dispatchModel, false);
+    }
+  });
+
+  it("keeps historical readiness bytes unchanged and carries no native authority", async () => {
+    const blocks = fakeBlockRepository({ fixedStateVersion: 7 });
+    const result = await createV3NormalImplementationPreclaim(dependencies({
+      stories: [row({ storyId: "US-001" })], blockRepository: blocks.repository,
+    })).prepare({ runId: RUN_ID, stepId: STEP_ID, repo, requestedBaseRef: "base" });
+    assert.equal(result.status, "ready");
+    if (result.status !== "ready") assert.fail("historical readiness regression");
+    assert.equal("nativeAuthority" in result, false);
+    const expected = createV3PreparationClaimAuthorityV1({ stateVersion: 7, runId: RUN_ID,
+      stepId: STEP_ID, storyId: "US-001", packetHash: PACKET_HASH,
+      baseRevision: { sha: firstSha, treeHash: firstTree }, projectedDependencyIds: [], dependencyAttempts: [] });
+    assert.equal(JSON.stringify(result.authority), JSON.stringify(expected));
   });
 
   it("accepts an exact native ProductBuildPacketV3 and rejects child-ref drift before selection", async () => {
