@@ -1,4 +1,6 @@
 import type postgres from "postgres";
+import { readNativeEvidenceOnlySuccessAuthority } from "../recovery/v3-evidence-only-publication.js";
+import { compileEvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
@@ -14,13 +16,13 @@ import { LegacyImplementationSliceV2Schema } from "../product-compiler/schemas/i
 import { V3ImplementationAgentOutputV1Schema } from "./v3-implementation-output.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import { V3_SOURCE_SNAPSHOT_V2_DEFAULT_LIMITS } from "./v3-source-snapshot-v2.js";
-import { createV3PreparationClaimAuthorityV1, type V3PreparationClaimAuthorityV1 } from "./v3-preparation-claim-authority.js";
+import { projectV3PreparationRuntimeAuthorityV1, type V3PreparationClaimAuthorityV1 } from "./v3-preparation-runtime-authority-v1.js";
 import {
   V3PreparationClaimAuthorityV2Schema,
   type V3PreparationClaimAuthorityV2,
   V3PreparationDependencyAttemptAuthorityV2Schema,
   type V3PreparationDependencyAttemptAuthorityV2,
-} from "./v3-preparation-claim-authority-v2.js";
+} from "./v3-preparation-runtime-authority-v1.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -33,17 +35,9 @@ export function createV3NativePreparationArtifactReader(sql: Sql, artifacts?: V3
     artifactLimits: artifacts?.artifactLimits ?? resolveProductArtifactCapacity() });
 }
 
-/** Recover the original V1 scheduling bytes from the lossless paired V2 authority. */
+/** Pure runtime projection preserves historical model scheduling bytes. */
 export function readinessFromNativePreparationV2(authority: V3PreparationClaimAuthorityV2): V3PreparationClaimAuthorityV1 {
-  return createV3PreparationClaimAuthorityV1({
-    stateVersion: authority.stateVersion, runId: authority.runId, stepId: authority.stepId,
-    storyId: authority.storyId, packetHash: authority.packetHash, baseRevision: authority.baseRevision,
-    projectedDependencyIds: [...authority.projectedDependencyIds],
-    dependencyAttempts: authority.dependencyAttempts.map(dependency => ({
-      storyId: dependency.storyId, attemptId: dependency.attemptId, attemptClass: dependency.attemptClass,
-      disposition: dependency.disposition, sourceRevision: dependency.sourceAfter,
-    })),
-  });
+  return projectV3PreparationRuntimeAuthorityV1(authority);
 }
 
 const NATIVE_GIT_CUSTODY_REF_PREFIX = "setfarm://native-git-custody-v1/";
@@ -171,8 +165,8 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
     claim_id: string | null; branch: string | null; worktree: string | null; evidence_refs: string;
     source_before_sha: string; source_before_tree_hash: string;
     source_after_sha: string | null; source_after_tree_hash: string | null; accepted: boolean;
-    recovery_dispatch_id: string | null; attempt_class: string;
-  }>>(`SELECT a.claim_id::text,a.branch,a.worktree,a.evidence_refs,
+    recovery_dispatch_id: string | null; attempt_class: string; step_id: string; story_id: string; packet_hash: string;
+  }>>(`SELECT a.claim_id::text,a.branch,a.worktree,a.evidence_refs,a.step_id,a.story_id,a.packet_hash,
       a.source_before_sha,a.source_before_tree_hash,a.source_after_sha,a.source_after_tree_hash,a.recovery_dispatch_id,a.attempt_class,
       EXISTS (SELECT 1 FROM runtime_completion_requests q
         JOIN runtime_sessions s ON s.session_id=q.runtime_session_id AND s.attempt_id=a.attempt_id
@@ -272,10 +266,33 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
     if (canonicalJsonStringify(current) !== canonicalJsonStringify(canonical.common)) {
       repositoryFail("V3_NATIVE_GIT_CUSTODY_ORIGIN_MISMATCH", "surviving original worktree belongs to another Git object database");
     }
-  } else if (!row.accepted || custody.length !== 1) {
-    // No backfill from matching objects: a removed historical worktree without
-    // its original reservation witness cannot establish common-dir custody.
-    repositoryFail("V3_NATIVE_GIT_CUSTODY_WITNESS_REQUIRED", "removed worktree requires its genuine original witness and accepted/released tuple");
+  } else {
+    let acceptedCustody=row.accepted;
+    if (!acceptedCustody && custody.length===1
+      && (row.attempt_class==="evidence_only" || row.attempt_class==="product_implementation")) {
+      const verifiers=await query.unsafe<Array<{ attempt_id:string }>>(`
+        SELECT a.attempt_id FROM execution_attempts a
+        JOIN recovery_dispatch_deliveries d ON d.attempt_id=a.attempt_id AND d.claim_id=a.claim_id
+          AND d.dispatch_id=a.recovery_dispatch_id AND d.revision_id=a.recovery_case_revision_id
+        JOIN recovery_cases c ON c.recovery_case_id=d.recovery_case_id AND c.current_revision_id=d.revision_id
+        WHERE a.run_id=$1 AND a.step_id=$2 AND a.story_id=$3 AND a.packet_hash=$4
+          AND a.attempt_class='evidence_only' AND a.disposition='verified'
+          AND d.state='succeeded' AND c.status='resolved'
+          AND (a.attempt_id=$5 OR c.prior_attempt_refs::jsonb ? $5)
+      `,[input.runId,row.step_id,row.story_id,row.packet_hash,input.attemptId]);
+      if(verifiers.length===1) {
+        const success=await readNativeEvidenceOnlySuccessAuthority(query,{runId:input.runId,
+          stepId:row.step_id,storyId:row.story_id,packetHash:row.packet_hash,attemptId:verifiers[0]!.attempt_id});
+        acceptedCustody=["done","verified"].includes(success.storyStatus)
+          && success.storyOutput===success.acceptanceOutput
+          && (success.attemptId===input.attemptId || success.sourceOwner.attemptId===input.attemptId);
+      }
+    }
+    if(!acceptedCustody || custody.length!==1) {
+      // Never backfill a witness. A failed source owner is readable only through
+      // its exact resolved independent verifier, not by relabeling its RCR.
+      repositoryFail("V3_NATIVE_GIT_CUSTODY_WITNESS_REQUIRED", "removed worktree requires genuine custody and exact model or nonmodel terminal authority");
+    }
   }
   const actual = nativeCustodyRevision(canonical.repo, input.source.sha);
   if (canonicalJsonStringify(actual) !== canonicalJsonStringify(input.source)) {
@@ -355,6 +372,46 @@ export async function readV3NativeDependencyAuthority(
   input: Readonly<{ runId: string; stepId: string; packetHash: string; storyId: string; attemptId: string }>,
   artifacts?: V3NativePreparationArtifacts,
 ): Promise<V3PreparationDependencyAttemptAuthorityV2> {
+  const selected = await query.unsafe<Array<{ attempt_class: string }>>(
+    "SELECT attempt_class FROM execution_attempts WHERE attempt_id=$1 AND run_id=$2 AND step_id=$3 AND story_id=$4 AND packet_hash=$5",
+    [input.attemptId,input.runId,input.stepId,input.storyId,input.packetHash]);
+  if (selected.length === 1 && selected[0]!.attempt_class === "evidence_only") {
+    const success=await readNativeEvidenceOnlySuccessAuthority(query,input);
+    if (!["done","verified"].includes(success.storyStatus) || success.storyOutput!==success.acceptanceOutput) {
+      repositoryFail("V3_NATIVE_DEPENDENCY_STORY_NOT_ACCEPTED","resolved verification has no durable story acceptance");
+    }
+    const reader=createV3NativePreparationArtifactReader(sql,artifacts);
+    const packet=await reader.readExactSealedPacket(input.runId);
+    const envelope=await readV3NativeIndexedArtifact(reader,success.sliceHash);
+    const slice=LegacyImplementationSliceV2Schema.parse(envelope.payload);
+    const planEnvelope=await readV3NativeIndexedArtifact(reader,success.evidenceRefresh.evidencePlanArtifactHash);
+    const originalOutput=V3ImplementationAgentOutputV1Schema.parse(JSON.parse(success.sourceOwner.output));
+    if (!("implementationSourceMap" in packet) || packet.packetHash!==input.packetHash
+      || packet.refs.compilationReport!==success.compilationReportHash
+      || envelope.artifactType!=="setfarm.implementation-slice.v2" || slice.recovery
+      || canonicalJsonStringify(envelope.producer)!==canonicalJsonStringify(packet.producer)
+      || slice.packetHash!==input.packetHash || slice.storyId!==input.storyId
+      || canonicalJsonStringify(slice.sourceRevision)!==canonicalJsonStringify(success.sourceOwner.sourceBefore)
+      || originalOutput.disposition!=="ready_for_evidence" || originalOutput.attemptId!==success.sourceOwner.attemptId
+      || originalOutput.packetHash!==input.packetHash || originalOutput.sliceHash!==success.sliceHash
+      || canonicalJsonStringify(originalOutput.sourceBefore)!==canonicalJsonStringify(success.sourceOwner.sourceBefore)
+      || planEnvelope.artifactType!=="setfarm.evidence-plan.v2"
+      || canonicalJsonStringify(planEnvelope.producer)!==canonicalJsonStringify(packet.producer)
+      || canonicalJsonStringify(planEnvelope.payload)!==canonicalJsonStringify(compileEvidencePlanV2({slice,sliceHash:success.sliceHash}))) {
+      repositoryFail("V3_NATIVE_DEPENDENCY_IDENTITY_MISMATCH","native verifier and original immutable source contract are crossed");
+    }
+    const story=packet.storyPlan.stories.find(story=>story.id===input.storyId);
+    if(!story) repositoryFail("V3_NATIVE_DEPENDENCY_STORY_MISSING","verified story absent from native packet");
+    const files=packet.buildTopology.pathBindings.filter(binding=>story.ownedPathRefs.includes(binding.id))
+      .map(binding=>({pathRef:binding.id,path:binding.path}));
+    return V3PreparationDependencyAttemptAuthorityV2Schema.parse({
+      storyId:input.storyId,attemptId:success.attemptId,attemptGeneration:success.generation,
+      attemptClass:"evidence_only",disposition:"verified",sliceHash:success.sliceHash,
+      outputHash:success.outputHash,sourceAfter:success.sourceAfter,evidenceRefresh:success.evidenceRefresh,
+      fileSignatures:await captureNativeAttemptFileSignatures(query,{runId:input.runId,
+        attemptId:success.attemptId,source:success.sourceAfter,files}),
+    });
+  }
   const rows = await query.unsafe<Array<{
     attempt_id: string; generation: number; attempt_class: string; disposition: string;
     slice_hash: string | null; output_hash: string | null; source_after_sha: string | null;
@@ -579,6 +636,20 @@ export async function recheckV3NativePreparationInTransaction(
     repositoryFail("V3_NATIVE_PREPARATION_PACKET_MISMATCH", "native packet/report changed before publication");
   }
   for (const dependency of native.dependencyAttempts) {
+    if (dependency.attemptClass === "evidence_only") {
+      const success=await readNativeEvidenceOnlySuccessAuthority(transaction,{
+        runId:native.runId,stepId:native.stepId,storyId:dependency.storyId,
+        packetHash:native.packetHash,attemptId:dependency.attemptId,
+      });
+      if (!["done","verified"].includes(success.storyStatus) || success.storyOutput!==success.acceptanceOutput
+        || success.generation!==dependency.attemptGeneration || success.sliceHash!==dependency.sliceHash
+        || success.outputHash!==dependency.outputHash
+        || canonicalJsonStringify(success.sourceAfter)!==canonicalJsonStringify(dependency.sourceAfter)
+        || canonicalJsonStringify(success.evidenceRefresh)!==canonicalJsonStringify(dependency.evidenceRefresh)) {
+        repositoryFail("V3_NATIVE_PREPARATION_DEPENDENCY_MISMATCH","resolved native verification changed before publication");
+      }
+      continue;
+    }
     const rows = await transaction.unsafe<Array<{ generation: number; attempt_class: string; disposition: string;
       slice_hash: string; output_hash: string; source_after_sha: string; source_after_tree_hash: string; output: string }>>(
       `SELECT a.generation,a.attempt_class,a.disposition,a.slice_hash,a.output_hash,a.source_after_sha,a.source_after_tree_hash,c.output

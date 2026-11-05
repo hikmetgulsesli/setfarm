@@ -1,4 +1,6 @@
+import { V3PreparationClaimAuthorityError, v3PreparationStoryLockIdentity } from "./v3-preparation-claim-authority.js";
 import type postgres from "postgres";
+import { readNativeEvidenceOnlySuccessAuthority } from "../recovery/v3-evidence-only-publication.js";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -15,11 +17,10 @@ import {
 } from "./v3-preparation-decision.js";
 import {
   createV3PreparationClaimAuthorityV1,
-  V3PreparationClaimAuthorityError,
-  v3PreparationStoryLockIdentity,
+  V3PreparationDependencyAttemptAuthorityV1Schema,
   type V3PreparationClaimAuthorityV1,
   type V3PreparationDependencyAttemptAuthorityV1,
-} from "./v3-preparation-claim-authority.js";
+} from "./v3-preparation-runtime-authority-v1.js";
 import {
   inspectAuthenticatedV3SupervisorRetryPreparationSourceV1,
   type AuthenticatedV3SupervisorRetryPreparationSourceV1,
@@ -224,8 +225,26 @@ async function loadExactDependencyAuthorities(
     [attemptIds],
   );
   const rowByAttempt = new Map(rows.map((row) => [row.attempt_id, row]));
-  const authorities = dependencies.map((dependency) => {
+  const authorities: V3PreparationDependencyAttemptAuthorityV1[] = [];
+  for (const dependency of dependencies) {
     const row = rowByAttempt.get(dependency.attemptId!);
+    if (row?.attempt_class === "evidence_only") {
+      const success = await readNativeEvidenceOnlySuccessAuthority(transaction, {
+        runId:input.runId,stepId:input.stepId,storyId:dependency.storyId,
+        packetHash:input.packetHash,attemptId:dependency.attemptId!,
+      });
+      if (!["done","verified"].includes(success.storyStatus) || success.storyOutput!==success.acceptanceOutput
+        || row.disposition !== dependency.disposition
+        || success.sourceAfter.sha !== dependency.sourceAfterSha
+        || success.sourceAfter.treeHash !== dependency.sourceAfterTreeHash) {
+        preparationFail("V3_PREPARATION_DEPENDENCY_ATTEMPT_MISMATCH","native verification no longer owns the exact accepted dependency");
+      }
+      authorities.push(V3PreparationDependencyAttemptAuthorityV1Schema.parse({
+        storyId:dependency.storyId,attemptId:success.attemptId,attemptClass:"evidence_only",
+        disposition:"verified",sourceRevision:success.sourceAfter,evidenceRefresh:success.evidenceRefresh,
+      }));
+      continue;
+    }
     if (
       !row
       || row.run_id !== input.runId
@@ -242,7 +261,7 @@ async function loadExactDependencyAuthorities(
         `dependency ${dependency.storyId} is not bound to the exact successful packet attempt`,
       );
     }
-    return {
+    authorities.push({
       storyId: dependency.storyId,
       attemptId: row.attempt_id,
       attemptClass: row.attempt_class as "product_implementation" | "supervisor_repair",
@@ -251,9 +270,9 @@ async function loadExactDependencyAuthorities(
         sha: row.source_after_sha!,
         treeHash: row.source_after_tree_hash!,
       },
-    };
-  }).sort((left, right) => left.storyId.localeCompare(right.storyId));
-  return authorities;
+    });
+  }
+  return authorities.sort((left, right) => left.storyId.localeCompare(right.storyId));
 }
 
 async function upsertBlockedPreparationState(

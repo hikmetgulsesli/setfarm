@@ -25,7 +25,7 @@ import { createV3ArtifactRefKeyV2 } from "./v3-artifact-ref-key-v2.js";
 import {
   V3PreparationClaimAuthorityV2Schema,
   type V3PreparationClaimAuthorityV2,
-} from "./v3-preparation-claim-authority-v2.js";
+} from "./v3-preparation-runtime-authority-v1.js";
 import {
   captureV3ImplementationSourceSnapshotsV2,
   type V3SourceSnapshotLimitsV2,

@@ -8,7 +8,7 @@ import { EvidencePlanV2Schema, compileEvidencePlanV2 } from "../evidence/evidenc
 import { FindingSetV1Schema } from "../findings/finding-set.js";
 import { GithubReviewThreadEvidenceV1Schema } from "../findings/github-review-source.js";
 import { ExecutionAttemptV1Schema, SourceRevisionV1Schema } from "./schemas/execution-attempt-v1.js";
-import { V3PreparationClaimAuthorityV2Schema } from "./v3-preparation-claim-authority-v2.js";
+import { V3PreparationClaimAuthorityV2Schema } from "./v3-preparation-runtime-authority-v1.js";
 import { ModelExecutionProfileV1Schema, OperationalRetryDirectiveV1Schema, resolveV3ExecutionProfile } from "./operational-retry-directive.js";
 import { V3SupervisorRetryDirectiveV1Schema } from "./v3-supervisor-retry-directive.js";
 import { createV3ArtifactRefKeyV2 } from "./v3-artifact-ref-key-v2.js";

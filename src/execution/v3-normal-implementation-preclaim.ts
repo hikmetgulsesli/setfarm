@@ -19,7 +19,7 @@ import type { createV3PreparationBlockRepository } from "./v3-preparation-block-
 import {
   V3PreparationClaimAuthorityV1Schema,
   type V3PreparationClaimAuthorityV1,
-} from "./v3-preparation-claim-authority.js";
+} from "./v3-preparation-runtime-authority-v1.js";
 import {
   decideV3PreparationFailure,
   type V3PreparationBlockV1,
@@ -34,7 +34,7 @@ import type { AuthenticatedV3SupervisorRetryPreparationSourceV1 } from "./claim-
 import {
   createV3PreparationClaimAuthorityV2, V3PreparationDependencyAttemptAuthorityV2Schema,
   type V3PreparationClaimAuthorityV2, type V3PreparationDependencyAttemptAuthorityV2,
-} from "./v3-preparation-claim-authority-v2.js";
+} from "./v3-preparation-runtime-authority-v1.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_PENDING_STORIES = 5_000;

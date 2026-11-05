@@ -825,6 +825,20 @@ export function createFindingRecoveryRepository(sql: Sql) {
           const bundles = evidenceRows.map((row) => EvidenceBundleV2Schema.parse(row.payload));
           let requiredEvidencePlan = current.evidencePlan;
           if (transition.recoveryEvidence) {
+            if(transition.status==="resolved") {
+              const native=await transaction.unsafe<Array<{attempt_id:string}>>(`SELECT a.attempt_id FROM execution_attempts a
+                JOIN semantic_artifacts packet ON packet.artifact_hash=a.packet_hash AND packet.artifact_type='setfarm.product-build-packet.v3'
+                JOIN semantic_artifacts slice ON slice.artifact_hash=a.slice_hash AND slice.artifact_type='setfarm.implementation-slice.v2'
+                WHERE a.attempt_id=$1 AND a.run_id=$2 AND a.story_id=$3 AND a.attempt_class='evidence_only'`,
+                [transition.recoveryEvidence.attemptId,current.runId,current.storyId]);
+              if(native.length>1) throw new Error("V3_NATIVE_EVIDENCE_SUCCESS_SETTLEMENT_AMBIGUOUS");
+              if(native.length===1) {
+                const {settleNativeEvidenceOnlySuccessInTransaction}=await import("./v3-evidence-only-publication.js");
+                await settleNativeEvidenceOnlySuccessInTransaction(transaction,{
+                  ...transition.recoveryEvidence,runId:current.runId,storyId:current.storyId,recoveryCaseId:current.recoveryCaseId,
+                });
+              }
+            }
             const identity = await one<RecoveryTerminalEvidenceIdentityRow>(
               transaction,
               `SELECT revision.run_id,
@@ -1001,6 +1015,23 @@ export function createFindingRecoveryRepository(sql: Sql) {
           ],
         );
         if (!row) return { status: "stale_version" as const, recoveryCase: current };
+        if (transition.status==="resolved" && transition.recoveryEvidence) {
+          const native=await transaction.unsafe<Array<{attempt_id:string;packet_hash:string}>>(`
+            SELECT a.attempt_id,a.packet_hash FROM execution_attempts a
+            JOIN semantic_artifacts artifact ON artifact.artifact_hash=a.slice_hash
+              AND artifact.artifact_type='setfarm.implementation-slice.v2'
+            WHERE a.attempt_id=$1 AND a.run_id=$2 AND a.story_id=$3 AND a.step_id='implement'
+              AND a.attempt_class='evidence_only'
+          `,[transition.recoveryEvidence.attemptId,current.runId,current.storyId]);
+          if(native.length>1) throw new Error("V3_NATIVE_EVIDENCE_STORY_PROJECTION_AMBIGUOUS");
+          if(native[0]) {
+            const {projectNativeEvidenceOnlyStorySuccessInTransaction}=await import("./v3-evidence-only-publication.js");
+            await projectNativeEvidenceOnlyStorySuccessInTransaction(transaction,{
+              runId:current.runId,stepId:"implement",storyId:current.storyId,
+              packetHash:native[0].packet_hash,attemptId:native[0].attempt_id,
+            });
+          }
+        }
         return { status: "transitioned" as const, recoveryCase: mapRecoveryCase(row) };
       }) as Promise<RecoveryTransitionResult>;
     },

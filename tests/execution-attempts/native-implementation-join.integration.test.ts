@@ -15,7 +15,7 @@ import { createV3PreparationBlockRepository } from "../../src/execution/v3-prepa
 import { createV3PreparationClaimAuthorityV2 } from "../../src/execution/v3-preparation-claim-authority-v2.js";
 import { createV3PreparationClaimAuthorityV1 } from "../../src/execution/v3-preparation-claim-authority.js";
 import { readV3PreparationAuthorityV2 } from "../../src/execution/v3-preparation-authority-v2-repository.js";
-import { createV3NormalImplementationPreclaim } from "../../src/execution/v3-normal-implementation-preclaim.js";
+import { createV3NormalImplementationPreclaim, createPostgresV3PendingStoryReader } from "../../src/execution/v3-normal-implementation-preclaim.js";
 import { createV3ImplementationContext, V3ImplementationClaimHandoffSchema } from "../../src/execution/v3-implementation-handoff.js";
 import type { V3ImplementationAttemptResult } from "../../src/execution/v3-implementation-attempt.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
@@ -344,8 +344,16 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       FROM steps s JOIN runs r ON r.id=s.run_id WHERE s.agent_id=$1
         AND s.status IN ('pending','running') AND r.status IN ('running','resuming')
       ORDER BY selection_priority,s.step_index,s.status,s.id`,[value.input.claimAgentId,value.input.callerGatewayAgent]);
+    const defaultPendingStoryReaderRows = await createPostgresV3PendingStoryReader(database.sql)({
+      runId: value.runId, stepId: "implement",
+    });
+    const allowedRunContext = await database.sql`SELECT
+      context::jsonb->>'repo' AS repo, context::jsonb->>'branch' AS branch,
+      context::jsonb->>'BRANCH' AS "BRANCH", context::jsonb->>'implement_base_commit' AS implement_base_commit
+      FROM runs WHERE id=${value.runId}`;
     return { callerGatewayAgent: value.input.callerGatewayAgent, selectorAgentId: value.input.claimAgentId,
-      selectedByActualSelector, candidateFacts, runs, stories, steps, runtimes, completions };
+      selectedByActualSelector, candidateFacts, defaultPendingStoryReaderRows, allowedRunContext,
+      runs, stories, steps, runtimes, completions };
   }
 
   // Break: the actual normal caller still selects the legacy packet reader,
@@ -1246,9 +1254,12 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const blocks = await database.sql`SELECT phase,error_code,detail FROM v3_preparation_blocks
       WHERE run_id=${value.runId} ORDER BY opened_at,block_id`;
     const observations = await database.sql`SELECT phase,check_id,summary,detail,evidence FROM run_observations
-      WHERE run_id=${value.runId} AND (phase LIKE '%preparation%' OR phase LIKE '%preclaim%')`;
+      WHERE run_id=${value.runId} ORDER BY created_at,id`;
+    const fixtureLog = !second.found && process.env.SETFARM_DB_PATH
+      ? await readFile(path.join(path.dirname(process.env.SETFARM_DB_PATH), "logs/workflow.log"), "utf8").catch(() => "")
+      : "";
     assert.equal(second.found, true, JSON.stringify({ second, blocks, observations, selectionBefore,
-      state: await publicationDiagnostics(value) }));
+      fixtureLogTail: fixtureLog.slice(-12_000), state: await publicationDiagnostics(value) }));
     assert.equal(second.storyId, prepared.story.story_id);
     assert.ok(second.claimId && second.attempt && second.v3ImplementationHandoff && second.runtimeSessionId);
     const handoff = V3ImplementationClaimHandoffSchema.parse(second.v3ImplementationHandoff);

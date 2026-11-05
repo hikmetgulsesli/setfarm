@@ -1,7 +1,8 @@
+import { V3PreparationClaimAuthorityError, v3PreparationStoryLockIdentity } from "./v3-preparation-claim-authority.js";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import { hasPendingV3SinglePredecessorCompletionInTransactionV1 } from "./v3-predecessor-completion-claim-barrier-v1.js";
 import type postgres from "postgres";
-import { V3PreparationClaimAuthorityV2Schema, type V3PreparationClaimAuthorityV2 } from "./v3-preparation-claim-authority-v2.js";
+import { V3PreparationClaimAuthorityV2Schema, type V3PreparationClaimAuthorityV2 } from "./v3-preparation-runtime-authority-v1.js";
 import {
   authenticateV3NativePreparation, recheckV3NativePreparationInTransaction, publishV3PreparationAuthorityV2InTransaction,
   bindV3PreparationAuthorityClaimV2InTransaction, readV3PreparationAuthorityByClaimV2,
@@ -37,11 +38,9 @@ import {
   type RuntimeClaimIntentV1,
 } from "./runtime-session-repository.js";
 import {
-  V3PreparationClaimAuthorityError,
   V3PreparationClaimAuthorityV1Schema,
-  v3PreparationStoryLockIdentity,
   type V3PreparationClaimAuthorityV1,
-} from "./v3-preparation-claim-authority.js";
+} from "./v3-preparation-runtime-authority-v1.js";
 import {
   insertV3StoryClaimRuntimeBindingV1,
   loadAndRevalidateV3StoryClaimRuntimeBindingV1,

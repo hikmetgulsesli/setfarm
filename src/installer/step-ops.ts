@@ -112,8 +112,8 @@ import {
   loadAndRevalidateV3StoryClaimRuntimeBindingV1,
   type V3StoryClaimRuntimeSubjectV1,
 } from "../execution/v3-story-claim-runtime-binding-v1.js";
-import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-claim-authority.js";
-import type { V3PreparationClaimAuthorityV2 } from "../execution/v3-preparation-claim-authority-v2.js";
+import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-runtime-authority-v1.js";
+import type { V3PreparationClaimAuthorityV2 } from "../execution/v3-preparation-runtime-authority-v1.js";
 import { createV3PreparationBlockRepository } from "../execution/v3-preparation-block-repository.js";
 import {
   createPostgresTerminalDependencyAttemptReader,
@@ -8060,11 +8060,52 @@ export async function claimStep(
               ? `V3_RECOVERY_BUDGET_EXHAUSTED: story ${failedStory.story_id || failedStory.id} reached canonical blocked state`
               : `V3_RECOVERY_OWNER_MISSING: failed story ${failedStory.story_id || failedStory.id} has no active delivery or mandatory completion effect (case=${recovery?.recovery_status || "missing"})`;
           }
+          if (failedRunProtocol?.protocol === "v3") {
+            const requested = await pgBegin(async (transaction) => {
+              const { lockV3RecoveryRunMutationAuthorityInTransaction } = await import("../recovery/v3-recovery-run-mutation-authority.js");
+              const fence = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+                runId: step.run_id, storyId: failedStory.story_id,
+              });
+              // The discovery read may predate atomic nonmodel acceptance.
+              // Recheck the same story and all current owners while holding
+              // the existing run/termination mutation fence, then publish the
+              // actual termination intent in this same transaction.
+              const failed = await transaction.unsafe<Array<{ id: string }>>(`
+                SELECT story.id FROM stories story JOIN steps loop ON loop.run_id=story.run_id
+                WHERE story.id=$1 AND story.run_id=$2 AND story.story_id=$3 AND story.status='failed'
+                  AND loop.id=$4 AND loop.step_id='implement' AND loop.type='loop'
+                  AND loop.status IN ('pending','running')
+                  AND NOT EXISTS (SELECT 1 FROM stories running WHERE running.run_id=story.run_id AND running.status='running')
+                  AND NOT EXISTS (SELECT 1 FROM runtime_completion_requests q WHERE q.run_id=story.run_id AND q.story_db_id=story.id
+                    AND (q.state IN ('requested','draining','processing') OR EXISTS (
+                      SELECT 1 FROM runtime_completion_effects effect WHERE effect.request_id=q.request_id
+                        AND effect.mandatory AND effect.state NOT IN ('applied','reconciled'))))
+                  AND NOT EXISTS (SELECT 1 FROM recovery_dispatch_deliveries delivery
+                    WHERE delivery.run_id=story.run_id AND delivery.story_id=story.story_id
+                      AND delivery.state IN ('authorized','leased','attempt_reserved','running'))
+                FOR UPDATE OF story,loop`, [failedStory.id,step.run_id,failedStory.story_id,step.id]);
+              if(failed.length!==1) return false;
+              const updated = await transaction.unsafe<Array<{id:string}>>(`UPDATE steps
+                SET status='failed',current_story_id=NULL,output=$3,updated_at=$4
+                WHERE id=$1 AND run_id=$2 AND status IN ('pending','running') RETURNING id`,
+                [step.id,step.run_id,failureDiagnostic,fence.observedAt]);
+              if(updated.length!==1) throw new Error("V3_FAILED_STORY_TERMINATION_CAS_LOST");
+              await requestRunTerminationInTransaction(transaction,{
+                runId:step.run_id,targetStatus:"failed",requestedBy:"setfarm.installer.fail-run",
+                diagnostic:failureDiagnostic,evidence:{source:"installer.repo.failRun",terminalFailure:true},
+              });
+              return true;
+            });
+            if (!requested) return { found: false };
+          } else {
+            await pgRun(
+              "UPDATE steps SET status = 'failed', current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending', 'running')",
+              [failureDiagnostic, now(), step.id],
+            );
+          }
           logger.error(failureDiagnostic, { runId: step.run_id, stepId: step.step_id });
-          await pgRun(
-            "UPDATE steps SET status = 'failed', current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending', 'running')",
-            [failureDiagnostic, now(), step.id],
-          );
+          // Preserve the canonical wake-up, self-heal and contract-refresh work;
+          // the v3 branch already published this identical intent atomically.
           await failRun(step.run_id, true, failureDiagnostic);
           const failedWfId = await getWorkflowId(step.run_id);
           emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: failedWfId, stepId: step.step_id, detail: failureDiagnostic });

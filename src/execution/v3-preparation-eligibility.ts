@@ -2,7 +2,7 @@ import type postgres from "postgres";
 
 import type { ExactSealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
-import type { V3PreparationDependencyAttemptAuthorityV2 } from "./v3-preparation-claim-authority-v2.js";
+import type { V3PreparationDependencyAttemptAuthorityV2 } from "./v3-preparation-runtime-authority-v1.js";
 import { readV3NativeDependencyAuthority, type V3NativePreparationArtifacts } from "./v3-preparation-authority-v2-repository.js";
 import { V3ImplementationAttemptError } from "./v3-implementation-attempt.js";
 import {
@@ -227,6 +227,9 @@ export function createPostgresTerminalDependencyAttemptReader(sql: postgres.Sql,
     storyIds: readonly string[];
   }>): Promise<readonly TerminalDependencyAttempt[]> => {
     if (input.storyIds.length === 0) return [];
+    const packetRows = await sql.unsafe<Array<{ artifact_type: string }>>(
+      "SELECT artifact_type FROM semantic_artifacts WHERE artifact_hash=$1", [input.packetHash]);
+    const native = packetRows[0]?.artifact_type === "setfarm.product-build-packet.v3";
     const rows = await sql.unsafe<Array<{
       story_id: string;
       attempt_id: string;
@@ -241,14 +244,12 @@ export function createPostgresTerminalDependencyAttemptReader(sql: postgres.Sql,
           AND step_id = $2
           AND packet_hash = $3
           AND story_id = ANY($4::text[])
-          AND attempt_class IN ('product_implementation', 'supervisor_repair')
+          AND (attempt_class IN ('product_implementation', 'supervisor_repair')
+            OR ($5::boolean AND attempt_class='evidence_only' AND disposition='verified'))
           AND disposition IN ('produced_delta', 'already_satisfied', 'verified')
         ORDER BY story_id, generation DESC, attempt_id DESC`,
-      [input.runId, input.stepId, input.packetHash, [...input.storyIds]],
+      [input.runId, input.stepId, input.packetHash, [...input.storyIds], native],
     );
-    const packetRows = await sql.unsafe<Array<{ artifact_type: string }>>(
-      "SELECT artifact_type FROM semantic_artifacts WHERE artifact_hash=$1", [input.packetHash]);
-    const native = packetRows[0]?.artifact_type === "setfarm.product-build-packet.v3";
     const results: TerminalDependencyAttempt[] = [];
     for (const row of rows) {
       const nativeAuthority = native ? await readV3NativeDependencyAuthority(sql, sql, {

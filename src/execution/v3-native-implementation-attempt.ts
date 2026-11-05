@@ -24,8 +24,8 @@ import {
   readV3NativeDependencyAuthority, readV3NativeIndexedArtifact,
   type V3NativePreparationArtifacts,
 } from "./v3-preparation-authority-v2-repository.js";
-import type { V3PreparationClaimAuthorityV1 } from "./v3-preparation-claim-authority.js";
-import type { V3PreparationClaimAuthorityV2 } from "./v3-preparation-claim-authority-v2.js";
+import type { V3PreparationClaimAuthorityV1 } from "./v3-preparation-runtime-authority-v1.js";
+import type { V3PreparationClaimAuthorityV2 } from "./v3-preparation-runtime-authority-v1.js";
 import { compileEvidencePlanV2, type EvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
 import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-store.js";
 import type { SemanticArtifactProducerV1 } from "../product-compiler/schemas/common-v1.js";

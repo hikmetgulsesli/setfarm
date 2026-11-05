@@ -1259,7 +1259,13 @@ export function createV3RecoveryCoordinator(sql: Sql) {
       ...(context.findingSet ? { findingSetHash: context.findingSet.findingSetHash } : {}),
       ...(context.failureClass ? { failureClass: context.failureClass } : {}),
     });
-    await completeDeliveryExactly({ identity, context, coordinatorEventHash, now });
+    // Native verifier success is settled in the existing case transaction
+    // together with story acceptance/frozen route publication. Parsed schema
+    // alone grants nothing: that transaction rejoins the complete durable tuple.
+    if(!(context.slice.schema==="setfarm.implementation-slice.v2"
+      &&identity.attempt.attemptClass==="evidence_only"&&context.evidenceBundle.aggregateVerdict==="pass")) {
+      await completeDeliveryExactly({ identity, context, coordinatorEventHash, now });
+    }
 
     if (context.evidenceBundle.aggregateVerdict === "pass") {
       const recoveryCase = await transitionTerminal({

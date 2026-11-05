@@ -28,7 +28,7 @@ import {
 import { parseOperationalRetryAwareAttemptReservation } from "./operational-retry-reservation.js";
 import { V3RecoveryClaimHandoffV1Schema } from "../recovery/v3-recovery-claim-authority.js";
 import { FindingSetV1Schema } from "../findings/finding-set.js";
-import { V3PreparationClaimAuthorityV2Schema } from "./v3-preparation-claim-authority-v2.js";
+import { V3PreparationClaimAuthorityV2Schema } from "./v3-preparation-runtime-authority-v1.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
