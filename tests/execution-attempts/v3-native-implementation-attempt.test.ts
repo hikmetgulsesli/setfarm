@@ -6,6 +6,7 @@ import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifa
 import { verifyLegacyImplementationSliceV2 } from "../../src/product-compiler/slice-compiler-v2-legacy.js";
 import { createV3ImplementationAttemptV2Assembler } from "../../src/execution/v3-implementation-attempt-v2.js";
 import { createV3PreparationClaimAuthorityV2 } from "../../src/execution/v3-preparation-claim-authority-v2.js";
+import { captureNativeOriginalFileSignatures } from "../../src/execution/v3-preparation-authority-v2-repository.js";
 import { nativeJoinPacket, nativeJoinSourceFixture, NATIVE_JOIN_LIMITS } from "./helpers/native-implementation-join-fixture.js";
 
 // These are witness controls. Feature RED lives in preclaim and the owned join;
@@ -34,6 +35,9 @@ describe("native original compiler witnesses", () => {
     const value = await fixture();
     const original = structuredClone(value.assembled.sliceVerificationInput);
     await writeFile(path.join(value.worktree, "src/index.ts"), "export const implementationChanged = true;\n");
+    const originalFiles = captureNativeOriginalFileSignatures({ worktree: value.worktree, source: value.sourceBefore,
+      files: [{ pathRef: "PATH_APP", path: "src/index.ts" }] });
+    assert.deepEqual(originalFiles.map(({ path: _path, ...snapshot }) => snapshot), value.assembled.compilerInput.currentFiles);
     const verified = verifyLegacyImplementationSliceV2(original);
     assert.equal(verified.status, "verified", JSON.stringify(verified));
     if (verified.status !== "verified") assert.fail("immutable original witnesses must reproduce");
@@ -49,6 +53,9 @@ describe("native original compiler witnesses", () => {
     const changed = structuredClone(value.assembled.sliceVerificationInput);
     changed.compilerInput.currentFiles[0]!.contentHash = "f".repeat(64);
     assert.equal(verifyLegacyImplementationSliceV2(changed).status, "rejected");
+    assert.throws(() => captureNativeOriginalFileSignatures({ worktree: value.worktree,
+      source: { ...value.sourceBefore, treeHash: "f".repeat(40) }, files: [{ pathRef: "PATH_APP", path: "src/index.ts" }] }),
+    { code: "V3_NATIVE_ORIGINAL_SOURCE_MISMATCH" });
   });
 
   it("authenticates stored native slice bytes and refuses corrupted CAS", async () => {

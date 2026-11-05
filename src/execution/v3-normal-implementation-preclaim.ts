@@ -31,6 +31,10 @@ import {
 } from "./v3-preparation-eligibility.js";
 import { resolveV3GitRevision } from "./v3-git-revision.js";
 import type { AuthenticatedV3SupervisorRetryPreparationSourceV1 } from "./claim-runtime-publication.js";
+import {
+  createV3PreparationClaimAuthorityV2, V3PreparationDependencyAttemptAuthorityV2Schema,
+  type V3PreparationClaimAuthorityV2, type V3PreparationDependencyAttemptAuthorityV2,
+} from "./v3-preparation-claim-authority-v2.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_PENDING_STORIES = 5_000;
@@ -90,6 +94,7 @@ export type V3TerminalDependencyAttemptProjection = Readonly<{
   disposition: "produced_delta" | "already_satisfied" | "verified";
   sourceAfterSha: string | null;
   sourceAfterTreeHash: string | null;
+  nativeAuthority?: V3PreparationDependencyAttemptAuthorityV2;
 }>;
 
 type V3PreparationBlockRepository = Pick<
@@ -119,7 +124,10 @@ export type V3NormalImplementationPreclaimResult<
       packetHash: string;
       baseRevision: SourceRevisionV1;
       authority: V3PreparationClaimAuthorityV1;
-    }>;
+    } & (
+      | { packetSchema: "setfarm.product-build-packet.v3"; nativeAuthority: V3PreparationClaimAuthorityV2 }
+      | { packetSchema: "setfarm.product-build-packet.v1" | "setfarm.product-build-packet.v2"; nativeAuthority?: never }
+    )>;
 
 export type V3NormalImplementationPreclaimDependencies<
   TStory extends V3NormalImplementationStoryRow = V3NormalImplementationStoryRow,
@@ -712,6 +720,31 @@ export function createV3NormalImplementationPreclaim<
         }
       }
 
+      let nativeDependencies: V3PreparationDependencyAttemptAuthorityV2[] | undefined;
+      if ("implementationSourceMap" in packet) {
+        nativeDependencies = [];
+        const terminals = eligibility.terminalDependencyAttempts ?? [];
+        for (const dependency of eligibility.dependencyState) {
+          const matches = terminals.filter(terminal => terminal.attemptId === dependency.attemptId
+            && terminal.storyId === dependency.storyId);
+          const parsed = V3PreparationDependencyAttemptAuthorityV2Schema.safeParse(matches[0]?.nativeAuthority);
+          if (matches.length !== 1 || !parsed.success || parsed.data.attemptId !== dependency.attemptId
+            || parsed.data.storyId !== dependency.storyId || parsed.data.disposition !== dependency.disposition
+            || parsed.data.sourceAfter.sha !== dependency.sourceAfterSha
+            || parsed.data.sourceAfter.treeHash !== dependency.sourceAfterTreeHash) {
+            return blocked({ code: "V3_NORMAL_PRECLAIM_AUTHORITY_INVALID",
+              message: "native dependency witness differs from the exact selected terminal attempt",
+              story, packetHash: packet.packetHash, baseRevision });
+          }
+          nativeDependencies.push(parsed.data);
+        }
+        if (terminals.length !== nativeDependencies.length) {
+          return blocked({ code: "V3_NORMAL_PRECLAIM_AUTHORITY_INVALID",
+            message: "native dependency selection contains unrequested or duplicate terminal attempts",
+            story, packetHash: packet.packetHash, baseRevision });
+        }
+      }
+
       try {
         const resolution = await dependencies.blockRepository.resolveReady({
           runId: input.runId,
@@ -745,13 +778,23 @@ export function createV3NormalImplementationPreclaim<
             baseRevision,
           });
         }
-        return {
+        const ready = {
           status: "ready",
           story,
           packetHash: packet.packetHash,
           baseRevision,
           authority: parsedAuthority.data,
-        };
+        } as const;
+        if ("implementationSourceMap" in packet) {
+          return { ...ready, packetSchema: "setfarm.product-build-packet.v3",
+            nativeAuthority: createV3PreparationClaimAuthorityV2({
+              stateVersion: parsedAuthority.data.stateVersion, runId: input.runId, stepId: input.stepId,
+              storyId: story.story_id, packetHash: packet.packetHash,
+              compilationReportHash: packet.refs.compilationReport, baseRevision,
+              projectedDependencyIds: [...projectedDependencyIds], dependencyAttempts: nativeDependencies!,
+            }) };
+        }
+        return { ...ready, packetSchema: packet.packet.schema };
       } catch (error) {
         return blocked({
           code: "V3_NORMAL_PRECLAIM_AUTHORITY_FAILED",

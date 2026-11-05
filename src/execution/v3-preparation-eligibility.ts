@@ -2,6 +2,8 @@ import type postgres from "postgres";
 
 import type { ExactSealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
+import type { V3PreparationDependencyAttemptAuthorityV2 } from "./v3-preparation-claim-authority-v2.js";
+import { readV3NativeDependencyAuthority, type V3NativePreparationArtifacts } from "./v3-preparation-authority-v2-repository.js";
 import { V3ImplementationAttemptError } from "./v3-implementation-attempt.js";
 import {
   decideV3PreparationFailure,
@@ -15,6 +17,7 @@ type TerminalDependencyAttempt = Readonly<{
   disposition: "produced_delta" | "already_satisfied" | "verified";
   sourceAfterSha: string | null;
   sourceAfterTreeHash: string | null;
+  nativeAuthority?: V3PreparationDependencyAttemptAuthorityV2;
 }>;
 
 export type V3PreparationEligibilityResult =
@@ -23,6 +26,7 @@ export type V3PreparationEligibilityResult =
       packet: ExactSealedRuntimePacket;
       source: SourceRevisionV1;
       dependencyState: readonly V3PreparationDependencyStateV1[];
+      terminalDependencyAttempts?: readonly TerminalDependencyAttempt[];
     }>
   | Readonly<{
       status: "blocked";
@@ -209,12 +213,13 @@ export function createV3PreparationEligibilityEvaluator(dependencies: Eligibilit
         packet,
         source,
         dependencyState,
+        ...("implementationSourceMap" in packet ? { terminalDependencyAttempts: attempts } : {}),
       };
     },
   });
 }
 
-export function createPostgresTerminalDependencyAttemptReader(sql: postgres.Sql) {
+export function createPostgresTerminalDependencyAttemptReader(sql: postgres.Sql, artifacts?: V3NativePreparationArtifacts) {
   return async (input: Readonly<{
     runId: string;
     stepId: string;
@@ -241,12 +246,19 @@ export function createPostgresTerminalDependencyAttemptReader(sql: postgres.Sql)
         ORDER BY story_id, generation DESC, attempt_id DESC`,
       [input.runId, input.stepId, input.packetHash, [...input.storyIds]],
     );
-    return rows.map((row) => ({
-      storyId: row.story_id,
-      attemptId: row.attempt_id,
-      disposition: row.disposition,
-      sourceAfterSha: row.source_after_sha,
-      sourceAfterTreeHash: row.source_after_tree_hash,
-    }));
+    const packetRows = await sql.unsafe<Array<{ artifact_type: string }>>(
+      "SELECT artifact_type FROM semantic_artifacts WHERE artifact_hash=$1", [input.packetHash]);
+    const native = packetRows[0]?.artifact_type === "setfarm.product-build-packet.v3";
+    const results: TerminalDependencyAttempt[] = [];
+    for (const row of rows) {
+      const nativeAuthority = native ? await readV3NativeDependencyAuthority(sql, sql, {
+        runId: input.runId, stepId: input.stepId, packetHash: input.packetHash,
+        storyId: row.story_id, attemptId: row.attempt_id,
+      }, artifacts) : undefined;
+      results.push({ storyId: row.story_id, attemptId: row.attempt_id, disposition: row.disposition,
+        sourceAfterSha: row.source_after_sha, sourceAfterTreeHash: row.source_after_tree_hash,
+        ...(nativeAuthority ? { nativeAuthority } : {}) });
+    }
+    return results;
   };
 }
