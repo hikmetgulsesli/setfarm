@@ -39,6 +39,212 @@ function assertMappedIntrinsicIcons(code: string, iconNames: readonly string[]):
   }
 }
 
+function withValueChannelScreen(body: string, inspect: (code: string, tmp: string) => void): void {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-value-channel-"));
+  try {
+    const stitchDir = path.join(tmp, "stitch");
+    fs.mkdirSync(stitchDir);
+    fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+      { screenId: "value-channel", title: "Value Channel" },
+    ]));
+    writeHtml(path.join(stitchDir, "value-channel.html"), body);
+    execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], { cwd: process.cwd(), stdio: "pipe" });
+    inspect(fs.readFileSync(path.join(tmp, "src/screens/ValueChannel.tsx"), "utf8"), tmp);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// Narrow semantic contract control: div/main/p do not accept React's native
+// value prop. This is not qualification against the full React declarations.
+function valueChannelTypeErrors(code: string, tmp: string): readonly ts.Diagnostic[] {
+  const sourcePath = path.join(tmp, "value-contract.tsx");
+  const declarationPath = path.join(tmp, "value-contract.d.ts");
+  fs.writeFileSync(sourcePath, code);
+  fs.writeFileSync(declarationPath, `declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+      main: { children?: unknown; className?: string };
+      div: { children?: unknown; id?: string; className?: string; role?: string };
+      p: { children?: unknown };
+    }
+  }`);
+  const program = ts.createProgram([sourcePath, declarationPath], {
+    noEmit: true,
+    strict: true,
+    skipLibCheck: true,
+    types: [],
+    jsx: ts.JsxEmit.Preserve,
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+  });
+  return ts.getPreEmitDiagnostics(program).filter((entry) => entry.category === ts.DiagnosticCategory.Error);
+}
+
+function valueChannelTagAttributes(code: string, id: string): [string, string | undefined][] {
+  const source = ts.createSourceFile("screen.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let found: [string, string | undefined][] | undefined;
+  function visit(node: ts.Node): void {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const attributes: [string, string | undefined][] = node.attributes.properties
+        .filter(ts.isJsxAttribute)
+        .map((attribute) => [attribute.name.getText(source), attribute.initializer?.getText(source)]);
+      if (attributes.some(([name, value]) => name === "id" && value === JSON.stringify(id))) found = attributes;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.ok(found, `missing fixture element ${id}`);
+  return found;
+}
+
+describe("stitch non-native value channel", () => {
+  it("semantically type-checks converted non-native value without losing exact observable identity", () => {
+    withValueChannelScreen('<main><div id="status" value="refreshed" data-value="refreshed" data-observable-refs="OBS_REFRESH" data-surface-id="SURF_STATUS">Ready</div></main>', (code, tmp) => {
+      const errors = valueChannelTypeErrors(code, tmp);
+      assert.deepEqual(errors.map((entry) => ({ code: entry.code, message: ts.flattenDiagnosticMessageText(entry.messageText, "\n") })), []);
+      assert.deepEqual(valueChannelTagAttributes(code, "status"), [
+        ["id", '"status"'], ["data-value", '"refreshed"'],
+        ["data-observable-refs", '"OBS_REFRESH"'], ["data-surface-id", '"SURF_STATUS"'],
+      ]);
+      assert.match(code, />Ready<\/div>/);
+    });
+  });
+
+  it("uses a semantic contract control that rejects illegal div value with TS2322", () => {
+    withValueChannelScreen("<main><div>Ready</div></main>", (_code, tmp) => {
+      const errors = valueChannelTypeErrors('export const invalid = <div value="refreshed" />;', tmp);
+      assert.equal(errors.length, 1);
+      assert.equal(errors[0]!.code, 2322);
+    });
+  });
+
+  it("renames value-only attributes while preserving empty whitespace entities and quoted tag boundaries", () => {
+    withValueChannelScreen(`<main>
+      <div id="empty" value=""></div>
+      <div id="spaces" value="  \t  "></div>
+      <div id="quoted" value=' A > B &amp; &quot;C&quot; / ' data-note="keep value='other' > /">value="untouched"</div>
+    </main>`, (code) => {
+      assert.deepEqual(valueChannelTagAttributes(code, "empty"), [["id", '"empty"'], ["data-value", '""']]);
+      assert.deepEqual(valueChannelTagAttributes(code, "spaces"), [["id", '"spaces"'], ["data-value", '"  \t  "']]);
+      assert.deepEqual(valueChannelTagAttributes(code, "quoted"), [
+        ["id", '"quoted"'], ["data-value", "' A > B &amp; &quot;C&quot; / '"],
+        ["data-note", '"keep value=\'other\' > /"'],
+      ]);
+      assert.match(code, />value="untouched"<\/div>/);
+    });
+  });
+
+  it("collapses exactly equal value payloads in either order including empty and whitespace", () => {
+    withValueChannelScreen(`<main>
+      <div id="first" value="same" data-value='same'></div>
+      <div id="last" data-value="same" value='same'></div>
+      <div id="empty" value="" data-value=""></div>
+      <div id="spaces" data-value="  " value="  "></div>
+    </main>`, (code) => {
+      for (const [id, payload] of [["first", "'same'"], ["last", '"same"'], ["empty", '""'], ["spaces", '"  "']]) {
+        assert.deepEqual(valueChannelTagAttributes(code, id!), [["id", JSON.stringify(id)], ["data-value", payload]]);
+      }
+    });
+  });
+
+  for (const attributes of [
+    "value", "value data-value", "data-value value",
+    'value data-value=""', 'data-value="" value',
+    'value="" data-value', 'data-value value=""',
+  ]) {
+    it(`preserves bare HTML value as an explicit empty channel: ${attributes}`, () => {
+      withValueChannelScreen(`<main><div id="bare" ${attributes}></div><div id="absent"></div></main>`, (code) => {
+        assert.deepEqual(valueChannelTagAttributes(code, "bare"), [["id", '"bare"'], ["data-value", '""']]);
+        assert.deepEqual(valueChannelTagAttributes(code, "absent"), [["id", '"absent"']]);
+      });
+    });
+  }
+
+  for (const attributes of [
+    'value data-value="nonempty"', 'data-value="nonempty" value',
+    'value="nonempty" data-value', 'data-value value="nonempty"',
+  ]) {
+    it(`refuses bare HTML value channel conflicts: ${attributes}`, () => {
+      assert.throws(() => withValueChannelScreen(`<main><div ${attributes}></div></main>`, () => {}), (error: unknown) => {
+        assert.ok(error instanceof Error && "stderr" in error);
+        assert.match(String(error.stderr), /STITCH_JSX_VALUE_CHANNEL_CONFLICT/);
+        return true;
+      });
+    });
+  }
+
+  it("preserves inline style value-like text without manufacturing a channel", () => {
+    withValueChannelScreen(`<main><div id="styled" style="font-family: '} value=changed'">Ready</div></main>`, (code) => {
+      assert.deepEqual(valueChannelTagAttributes(code, "styled"), [
+        ["id", '"styled"'], ["style", `{{fontFamily: "'} value=changed'"}}`],
+      ]);
+      assert.match(code, />Ready<\/div>/);
+    });
+  });
+
+  it("preserves inline style value-like text beside a real value channel without false conflict", () => {
+    withValueChannelScreen(`<main><div id="styled" style="font-family: '} value=changed'" value="refreshed">Ready</div></main>`, (code) => {
+      assert.deepEqual(valueChannelTagAttributes(code, "styled"), [
+        ["id", '"styled"'], ["style", `{{fontFamily: "'} value=changed'"}}`], ["data-value", '"refreshed"'],
+      ]);
+      assert.match(code, />Ready<\/div>/);
+    });
+  });
+
+  it("preserves lowercase namespace member component value props including independent data-value", () => {
+    withValueChannelScreen(`<main>
+      <ui.Status id="member-only" value="component"></ui.Status>
+      <ui.Status id="member-both" value="component" data-value="independent"></ui.Status>
+    </main>`, (code) => {
+      assert.deepEqual(valueChannelTagAttributes(code, "member-only"), [["id", '"member-only"'], ["value", '"component"']]);
+      assert.deepEqual(valueChannelTagAttributes(code, "member-both"), [
+        ["id", '"member-both"'], ["value", '"component"'], ["data-value", '"independent"'],
+      ]);
+      assert.match(code, /<ui\.Status id="member-only"/);
+      assert.match(code, /<ui\.Status id="member-both"/);
+    });
+  });
+
+  for (const attributes of [
+    'value="changed" data-value="stale"', 'data-value="stale" value="changed"',
+    'value="" data-value=" "', 'value=" x " data-value="x"',
+    'value="first" value="different" data-value="first"',
+    'data-value="first" data-value="different" value="first"',
+  ]) {
+    it(`refuses conflicting payloads before generic deduplication: ${attributes}`, () => {
+      assert.throws(() => withValueChannelScreen(`<main><div ${attributes}>Ready</div></main>`, () => {}), (error: unknown) => {
+        assert.ok(error instanceof Error && "stderr" in error);
+        assert.match(String(error.stderr), /STITCH_JSX_VALUE_CHANNEL_CONFLICT/);
+        return true;
+      });
+    });
+  }
+
+  it("preserves value on every allowed native tag and on component and custom-element props", () => {
+    withValueChannelScreen(`<main>
+      <button id="button" value="native">Save</button><data id="data" value="native">Data</data>
+      <input id="input" value="native"><li id="li" value="native">Item</li>
+      <meter id="meter" value="native"></meter><option id="option" value="native">Option</option>
+      <param id="param" value="native" /><progress id="progress" value="native"></progress>
+      <select id="select" value="native"><option>Pick</option></select><textarea id="textarea" value="native"></textarea>
+      <StatusPanel id="component" value="component" data-value="independent"></StatusPanel>
+      <status-panel id="custom" value="custom" data-value="independent"></status-panel>
+    </main>`, (code) => {
+      for (const id of ["button", "data", "input", "li", "meter", "option", "param", "progress", "select", "textarea"]) {
+        const attributes = valueChannelTagAttributes(code, id);
+        assert.ok(attributes.some(([name, value]) => name === "value" && value === '"native"'), id);
+        assert.ok(!attributes.some(([name]) => name === "data-value"), id);
+      }
+      for (const [id, payload] of [["component", '"component"'], ["custom", '"custom"']]) {
+        const attributes = valueChannelTagAttributes(code, id!);
+        assert.ok(attributes.some(([name, value]) => name === "value" && value === payload), id);
+        assert.ok(attributes.some(([name, value]) => name === "data-value" && value === '"independent"'), id);
+      }
+    });
+  });
+});
+
 describe("stitch-to-jsx", () => {
   it("falls back to SCREEN_MAP when DESIGN_MANIFEST is empty but HTML exists", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-screen-map-fallback-"));

@@ -1405,12 +1405,57 @@ function normalizeVoidElementStartTags(input) {
   return out + source.slice(cursor);
 }
 
+const NATIVE_JSX_VALUE_TAGS = new Set([
+  "button", "data", "input", "li", "meter", "option", "param", "progress", "select", "textarea",
+]);
+
+function normalizeIntrinsicValueChannels(input) {
+  return mapOpeningTagsRespectingQuotes(input, ({ tagName, attrs, original }) => {
+    // A member component such as ui.Status leaves .Status after the traversal's
+    // tag-name prefix. Require the actual intrinsic name to end here.
+    if (attrs && !/^[\s/]/.test(attrs)) return original;
+    if (!/^[a-z]/.test(tagName) || tagName.includes("-") || NATIVE_JSX_VALUE_TAGS.has(tagName)) return original;
+    const attrPattern = /\s+([A-Za-z_:$][\w:.-]*)(?:\s*=\s*("[^"]*"|'[^']*'|\{[^}]*\}|[^\s"'=<>]+))?/g;
+    const channels = [];
+    for (const match of attrs.matchAll(attrPattern)) {
+      const name = match[1].toLowerCase();
+      if (name !== "value" && name !== "data-value") continue;
+      const rawPayload = match[2];
+      // A present bare HTML attribute has an empty payload. Preserve all other
+      // payload content exactly; quote delimiters are not payload.
+      const payload = rawPayload?.startsWith('"') || rawPayload?.startsWith("'")
+        ? rawPayload.slice(1, -1)
+        : rawPayload ?? "";
+      channels.push({ name, payload, bare: rawPayload === undefined, text: match[0], start: match.index, end: match.index + match[0].length });
+    }
+    if (!channels.some((channel) => channel.name === "value")) return original;
+    if (channels.some((channel) => channel.payload !== channels[0].payload)) {
+      failConversion("STITCH_JSX_VALUE_CHANNEL_CONFLICT", "Intrinsic value and data-value payloads conflict");
+    }
+    const retained = channels.find((channel) => channel.name === "data-value") || channels[0];
+    let out = "";
+    let cursor = 0;
+    for (const channel of channels) {
+      out += attrs.slice(cursor, channel.start);
+      if (channel === retained) {
+        const text = channel.name === "value"
+          ? channel.text.replace(/^(\s+)value\b/i, "$1data-value")
+          : channel.text;
+        out += channel.bare ? `${text}=""` : text;
+      }
+      cursor = channel.end;
+    }
+    return `<${tagName}${out}${attrs.slice(cursor)}>`;
+  });
+}
+
 function htmlToJsx(html) {
   let out = normalizeVoidElementStartTags(normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(stripInlineEventHandlerAttributes(html)))))
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<link[^>]*\/?\s*>/gi, "")
-    .replace(/<meta[^>]*\/?\s*>/gi, "")
-      .replace(/style="([^"]+)"/g, (_, s) => inlineStyleToJsx(s));
+    .replace(/<meta[^>]*\/?\s*>/gi, "");
+  out = normalizeIntrinsicValueChannels(out)
+    .replace(/style="([^"]+)"/g, (_, s) => inlineStyleToJsx(s));
   out = normalizeStyleTagChildren(out);
   out = escapeDiagnosticPseudoTags(out);
   return dedupeJsxAttributes(escapeJsxTextBraces(normalizeHtmlComments(out)));
