@@ -40,7 +40,8 @@ export async function readAuthenticatedSubscriptionSuperviseContractsV1(envelope
     const compiled=await loadV3ImplementationAttemptContext({runId:envelope.runId,storyId:row.story_id,attemptId:row.attempt_id});
     if(!["produced_delta","already_satisfied","verified"].includes(compiled.attempt.disposition))refuse();
     contexts.push({storyDbId:row.story_db_id,storyClaimGeneration:row.story_claim_generation,slice:compiled.slice,sliceHash:compiled.sliceHash,
-      ...(compiled.slice.recovery?{allowedPaths:compiled.slice.recovery.allowedPaths}: {})});
+      ...(compiled.slice.recovery?{allowedPaths:compiled.slice.schema==="setfarm.implementation-slice.v2"
+        ?compiled.slice.recovery.expectedSourceDelta.changes.map(change=>change.path):compiled.slice.recovery.allowedPaths}: {})});
   }
   return frozen({subject:resolved.subject,rows:resolved.rows,contexts});
 }

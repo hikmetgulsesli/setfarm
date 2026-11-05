@@ -39,6 +39,8 @@ export function planPrivatePostgresTestsV1({root,port,mode}={}){
       '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
       '--import','tsx','--test','--test-concurrency=1',
       'tests/execution-attempts/native-implementation-join.integration.test.ts',
+      'tests/findings/v3-recovery-coordinator.test.ts',
+      'tests/findings/v3-evidence-only-worker.test.ts',
     ]:mode==='runtime-sessions'?[
       '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
       '--import','tsx','--test','--test-concurrency=1',

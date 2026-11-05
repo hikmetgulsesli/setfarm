@@ -17,6 +17,7 @@ import { createV3NormalImplementationPreclaim } from "../../src/execution/v3-nor
 import { createV3ImplementationContext, V3ImplementationClaimHandoffSchema } from "../../src/execution/v3-implementation-handoff.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
+import { V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1 } from "../../src/execution/v3-predecessor-completion-claim-barrier-v1.js";
 import { createV3ImplementationAttemptV2Assembler } from "../../src/execution/v3-implementation-attempt-v2.js";
 import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1, createCompilerStoryEnglishAdmissionClaimProofV1 } from "../../src/execution/compiler-story-english-admission-ledger-v1.js";
 import { seedCanonicalCompilerStoryAdmissionFixture } from "./helpers/compiler-story-english-admission-fixture.js";
@@ -177,14 +178,14 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       SELECT id,story_id,status,claim_generation FROM stories WHERE run_id=${value.runId} ORDER BY story_index
     `;
     const steps = await database.sql`
-      SELECT id,step_id,status FROM steps WHERE run_id=${value.runId} ORDER BY step_id
+      SELECT id,step_id,status,agent_id,type,loop_config,current_story_id,step_index FROM steps WHERE run_id=${value.runId} ORDER BY step_id
     `;
     const runtimes = await database.sql`
       SELECT session_id,workflow_step_id,story_id,state,claim_id FROM runtime_sessions WHERE run_id=${value.runId}
     `;
-    return { callerGatewayAgent: value.input.callerGatewayAgent,
-      occupiedGatewayBranch: "claim-runtime-publication: other active run assigned to callerGatewayAgent",
-      runs, stories, steps, runtimes };
+    const completions = await database.sql`SELECT request_id,workflow_step_id,state,apply_phase
+      FROM runtime_completion_requests WHERE run_id=${value.runId} ORDER BY workflow_step_id`;
+    return { callerGatewayAgent: value.input.callerGatewayAgent, runs, stories, steps, runtimes, completions };
   }
 
   // Break: the actual normal caller still selects the legacy packet reader,
@@ -206,10 +207,23 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.deepEqual(await countEffects(value), { claims: 0, attempts: 0, bindings: 0, runtimes: 0 });
 
     const { claimStep } = await import("../../src/installer/step-ops.js");
+    assert.ok(productionDb);
+    const selected = await productionDb.pgQuery(`SELECT current_database() AS database_name,
+      s.id,s.agent_id,s.status,s.type,s.loop_config,r.status AS run_status,
+      ${V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1} AS predecessor_blocked,
+      EXISTS (SELECT 1 FROM steps prev WHERE prev.run_id=s.run_id AND prev.step_index<s.step_index
+        AND prev.status NOT IN ('done','failed','skipped','verified')) AS predecessor_unfinished
+      FROM steps s JOIN runs r ON r.id=s.run_id WHERE s.id=$1 AND s.agent_id=$2`,
+    [value.admission.implementStepDbId, agentId]);
+    assert.equal(selected.length, 1, JSON.stringify({ selected, fixture: await publicationDiagnostics(value) }));
+    assert.equal(selected[0]!.database_name, database.database, "actual caller and admission fixture must use the same owned database");
+    assert.equal(selected[0]!.predecessor_blocked, false, JSON.stringify(selected));
+    assert.equal(selected[0]!.predecessor_unfinished, false, JSON.stringify(selected));
+    assert.deepEqual(JSON.parse(selected[0]!.loop_config), { over: "stories", mergeStrategy: "direct-merge" });
     const claimed = await claimStep(agentId, value.input.callerGatewayAgent, value.input.runtimeIntent);
     const blocks = await database.sql`SELECT phase,error_code,detail FROM v3_preparation_blocks WHERE run_id=${value.runId}`;
     assert.equal(claimed.found, true, JSON.stringify({ claim: claimed, blocks, effects: await countEffects(value),
-      admission: await publicationDiagnostics(value) }));
+      selected, admission: await publicationDiagnostics(value) }));
     assert.equal(claimed.runId, value.runId);
     assert.equal(claimed.storyId, "US-001");
     assert.equal(claimed.claimAgentId, agentId);
@@ -234,6 +248,10 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       attempt_id: claimed.attempt.attemptId, slice_hash: handoff.sliceHash }]);
     const publishedPlan = await value.store.get(handoff.evidencePlanArtifactHash);
     assert.deepEqual(publishedPlan.envelope, nativeJoinEnvelope("setfarm.evidence-plan.v2", handoff.evidencePlan));
+    const replay = await claimStep(agentId, value.input.callerGatewayAgent, value.input.runtimeIntent);
+    assert.equal(replay.claimId, claimed.claimId);
+    assert.deepEqual(replay.attempt, claimed.attempt);
+    assert.deepEqual(replay.v3ImplementationHandoff, claimed.v3ImplementationHandoff);
     assert.deepEqual(await countEffects(value), { claims: 1, attempts: 1, bindings: 1, runtimes: 1 });
   });
 

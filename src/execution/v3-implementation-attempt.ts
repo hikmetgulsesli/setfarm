@@ -64,6 +64,12 @@ import {
   type V3SupervisorRetryDirectiveV1,
 } from "./v3-supervisor-retry-directive.js";
 
+import {
+  createNativeV3ImplementationContextService, createNativeV3ImplementationAttemptHandoff,
+  type NativeImplementationContextV3,
+} from "./v3-native-implementation-attempt.js";
+import { readV3PreparationAuthorityByClaimV2 } from "./v3-preparation-authority-v2-repository.js";
+
 export type V3ReviewEvidenceArtifact = Readonly<{
   artifactHash: string;
   evidence: GithubReviewThreadEvidenceV1;
@@ -93,7 +99,9 @@ export type V3ImplementationAttemptInput = Readonly<{
   downstreamEvidenceAuthority?: V3DownstreamEvidenceAuthorityV1;
 }>;
 
-export type V3ImplementationAttemptResult = Readonly<{
+export type LegacyV3ImplementationAttemptResult = Readonly<{
+  /** Legacy result bytes remain unchanged; only the native variant has kind. */
+  kind?: never;
   attempt: ExecutionAttemptV1;
   artifactProducer: SemanticArtifactProducerV1;
   slice: ImplementationSliceV1;
@@ -124,6 +132,8 @@ export type V3ImplementationAttemptResult = Readonly<{
   }>;
 }>;
 
+export type V3ImplementationAttemptResult = LegacyV3ImplementationAttemptResult | NativeImplementationContextV3;
+
 export function createV3ImplementationAttemptHandoffV1(input: Readonly<{
   stepDbId: string;
   storyDbId: string;
@@ -133,6 +143,9 @@ export function createV3ImplementationAttemptHandoffV1(input: Readonly<{
   compiled: V3ImplementationAttemptResult;
 }>) {
   const compiled = input.compiled;
+  if (compiled.kind === "native-dispatch-ready") {
+    return createNativeV3ImplementationAttemptHandoff({ ...input, compiled });
+  }
   const executionAuthority = compiled.attempt.attemptClass === "supervisor_repair"
     ? { role: "supervisor" as const, attemptClass: "supervisor_repair" as const }
     : compiled.attempt.attemptClass === "infrastructure_retry"
@@ -799,7 +812,7 @@ async function loadReviewEvidenceArtifacts(input: Readonly<{
 
 export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDependencies) {
   return Object.freeze({
-    async reserve(input: V3ImplementationAttemptInput): Promise<V3ImplementationAttemptResult> {
+    async reserve(input: V3ImplementationAttemptInput): Promise<LegacyV3ImplementationAttemptResult> {
       const recoveryEvidenceOnly = input.evidenceOnlyLease !== undefined;
       const downstreamEvidence = input.downstreamEvidenceAuthority !== undefined;
       const operationalRetry = input.operationalRetry
@@ -1479,7 +1492,7 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
       runId: string;
       storyId: string;
       attemptId: string;
-    }>): Promise<V3ImplementationAttemptResult> {
+    }>): Promise<LegacyV3ImplementationAttemptResult> {
       const [packet, attempt] = await Promise.all([
         dependencies.readPacket(input.runId),
         dependencies.findAttempt(input.attemptId),
@@ -1777,10 +1790,26 @@ function runtimeCompiler() {
   return defaultCompiler;
 }
 
-export function reserveV3ImplementationAttempt(
+export async function reserveV3ImplementationAttempt(
   input: V3ImplementationAttemptInput,
 ): Promise<V3ImplementationAttemptResult> {
-  return runtimeCompiler().reserve(input);
+  const options = { sql: getSql(), artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() };
+  const packet = await createRuntimeArtifactReader(options).readExactSealedPacket(input.runId);
+  if (!("implementationSourceMap" in packet)) return runtimeCompiler().reserve(input);
+  // Task9's V2 relation is initial-only. Never erase a successor discriminator
+  // to coerce it through that relation; its authentic join is a separate path.
+  if (!input.claimId || input.stepId !== "implement" || input.role !== "developer"
+    || input.findingSetHash || input.operationalRetry || input.supervisorRetry || input.recoveryDelivery
+    || input.evidenceOnlyLease || input.downstreamEvidenceAuthority) {
+    throw new Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
+  }
+  const origin = await readV3PreparationAuthorityByClaimV2(options.sql, input.claimId);
+  if (!origin) throw new Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
+  return createNativeV3ImplementationContextService(options).reserve({
+    claimId: input.claimId, nativeAuthorityHash: origin.authorityHash, runId: input.runId,
+    stepId: input.stepId, storyId: input.storyId, role: input.role, agentId: input.agentId,
+    branch: input.branch, worktree: input.worktree,
+  });
 }
 
 export function reserveV3EvidenceOnlyImplementationAttempt(input: Readonly<{
@@ -1823,10 +1852,13 @@ export function reserveV3DownstreamEvidenceAttempt(input: Readonly<{
   });
 }
 
-export function loadV3ImplementationAttemptContext(input: Readonly<{
+export async function loadV3ImplementationAttemptContext(input: Readonly<{
   runId: string;
   storyId: string;
   attemptId: string;
 }>): Promise<V3ImplementationAttemptResult> {
-  return runtimeCompiler().loadAttemptContext(input);
+  const options = { sql: getSql(), artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() };
+  const packet = await createRuntimeArtifactReader(options).readExactSealedPacket(input.runId);
+  if (!("implementationSourceMap" in packet)) return runtimeCompiler().loadAttemptContext(input);
+  return createNativeV3ImplementationContextService(options).loadAttemptContext(input);
 }

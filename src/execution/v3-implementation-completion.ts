@@ -6,7 +6,7 @@ import {
   createV3ImplementationAttemptHandoffV1,
   loadV3ImplementationAttemptContext,
 } from "./v3-implementation-attempt.js";
-import { createV3ImplementationContextV1 } from "./v3-implementation-handoff.js";
+import { createV3ImplementationContext } from "./v3-implementation-handoff.js";
 import { compileV3ImplementationAgentOutputV1 } from "./v3-implementation-output.js";
 import type { ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
 import type { RuntimeCompletionSubmissionEvidenceV1 } from "./schemas/runtime-completion-submission-evidence-v1.js";
@@ -74,7 +74,7 @@ export async function compileV3ImplementationCompletionProposal(input: Readonly<
   });
   const compilation = compileV3ImplementationAgentOutputV1(
     input.rawProposal,
-    createV3ImplementationContextV1({ handoff }),
+    createV3ImplementationContext({ handoff }),
   );
   return Object.freeze({
     output: canonicalJsonStringify(compilation.output),

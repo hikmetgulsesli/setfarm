@@ -2,7 +2,7 @@ import type postgres from "postgres";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { z } from "zod";
-import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
 import { IndexedArtifactPublisher } from "../product-compiler/indexed-artifact-publisher.js";
 import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "../product-compiler/artifact-store-authority.js";
@@ -24,6 +24,12 @@ import {
 } from "./v3-preparation-authority-v2-repository.js";
 import type { V3PreparationClaimAuthorityV1 } from "./v3-preparation-claim-authority.js";
 import type { V3PreparationClaimAuthorityV2 } from "./v3-preparation-claim-authority-v2.js";
+import { compileEvidencePlanV2, type EvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
+import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-store.js";
+import type { SemanticArtifactProducerV1 } from "../product-compiler/schemas/common-v1.js";
+import { createV3ImplementationClaimHandoffV2, type V3ImplementationClaimHandoffV2 } from "./v3-implementation-handoff-v2.js";
+import { createV3ImplementationContext } from "./v3-implementation-handoff.js";
+import { resolveV3ExecutionProfile, type ModelExecutionProfileV1 } from "./operational-retry-directive.js";
 import type { ExecutionAttemptV1, SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 
 export type NativePreparedImplementationV3 = Readonly<{
@@ -205,4 +211,122 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
     return result;
   }
   return Object.freeze({ reserve, loadPreparedAttempt });
+}
+
+/** A genuine initial prepared owner upgraded with its deterministic native plan.
+ * Successor ownership is deliberately not represented by this initial type. */
+export type NativeImplementationContextV3 = Readonly<Omit<NativePreparedImplementationV3, "kind"> & {
+  kind: "native-dispatch-ready";
+  artifactProducer: SemanticArtifactProducerV1;
+  evidencePlan: EvidencePlanV2;
+  evidencePlanArtifactHash: string;
+  evidencePlanRefKey: string;
+  packetHash: string;
+  compilationReportHash: string;
+  packetEnvelope: V3ImplementationClaimHandoffV2["packetEnvelope"];
+  compilationReportEnvelope: V3ImplementationClaimHandoffV2["compilationReportEnvelope"];
+  executionProfile: ModelExecutionProfileV1;
+  operationalRetry?: never;
+  supervisorRetry?: never;
+  recovery?: never;
+}>;
+
+export function createNativeV3ImplementationAttemptHandoff(input: Readonly<{
+  compiled: NativeImplementationContextV3;
+  stepDbId: string; storyDbId: string; claimId: number; branch: string; workdir: string;
+}>): V3ImplementationClaimHandoffV2 {
+  const compiled = input.compiled;
+  if (compiled.attempt.claimId !== input.claimId || compiled.attempt.stepId !== "implement"
+    || compiled.attempt.branch !== input.branch || compiled.attempt.worktree !== input.workdir) {
+    throw new Error("V3_NATIVE_PREPARED_ORIGIN_MISMATCH");
+  }
+  return createV3ImplementationClaimHandoffV2({
+    schema: "setfarm.v3-implementation-claim-handoff.v2", protocol: "v3",
+    runId: compiled.attempt.runId, stepId: input.stepDbId, workflowStepId: "implement",
+    storyId: compiled.attempt.storyId, storyDbId: input.storyDbId, claimId: input.claimId,
+    attemptId: compiled.attempt.attemptId, attemptGeneration: compiled.attempt.generation,
+    branch: input.branch, workdir: input.workdir,
+    packetHash: compiled.packetHash, compilationReportHash: compiled.compilationReportHash,
+    sliceHash: compiled.sliceHash, sliceRef: compiled.sliceRefKey,
+    evidencePlanHash: compiled.evidencePlan.planHash,
+    evidencePlanArtifactHash: compiled.evidencePlanArtifactHash, evidencePlanRef: compiled.evidencePlanRefKey,
+    executionAuthority: { role: "developer", attemptClass: "product_implementation" },
+    executionProfile: compiled.executionProfile, sourceBefore: compiled.sourceBefore,
+    artifactProducer: compiled.artifactProducer, packetEnvelope: compiled.packetEnvelope,
+    compilationReportEnvelope: compiled.compilationReportEnvelope, nativeAuthority: compiled.nativeAuthority,
+    implementationSlice: compiled.slice, evidencePlan: compiled.evidencePlan,
+  });
+}
+
+/** Publication/readback layer over Task9's unchanged raw initial reservation.
+ * Loading never republishes or reads mutable source as original authority. */
+export function createNativeV3ImplementationContextService(options: V3NativePreparationArtifacts & Readonly<{ sql: postgres.Sql }>) {
+  const preparedService = createNativeV3ImplementationAttemptService(options);
+  const publicationAuthority = resolveArtifactStorePublicationAuthorityMode();
+  const capacityLeaseProvider = publicationAuthority === "hybrid-required"
+    ? createHybridArtifactStoreCapacityLeaseProviderV1({ sql: options.sql, artifactRoot: options.artifactRoot, purpose: "writer" })
+    : undefined;
+  const reader = createRuntimeArtifactReader({ ...options, publicationAuthorityMode: publicationAuthority,
+    ...(capacityLeaseProvider ? { capacityLeaseProvider } : {}) });
+  const publisher = new IndexedArtifactPublisher({ index: reader.index, store: reader.store,
+    publicationAuthority, ownerInstanceId: `native-context:${process.pid}` });
+
+  async function compileContext(prepared: NativePreparedImplementationV3): Promise<NativeImplementationContextV3> {
+    const packet = await reader.readExactSealedPacket(prepared.attempt.runId);
+    if (!("implementationSourceMap" in packet) || packet.packetHash !== prepared.nativeAuthority.packetHash
+      || packet.refs.compilationReport !== prepared.nativeAuthority.compilationReportHash) {
+      throw new Error("V3_NATIVE_PREPARED_PACKET_MISMATCH");
+    }
+    const evidencePlan = compileEvidencePlanV2({ slice: prepared.slice, sliceHash: prepared.sliceHash });
+    const evidencePlanArtifactHash = hashCanonicalJson(planEnvelope(packet.producer, evidencePlan));
+    const compiled: NativeImplementationContextV3 = { ...prepared, kind: "native-dispatch-ready",
+      artifactProducer: packet.producer, evidencePlan, evidencePlanArtifactHash,
+      evidencePlanRefKey: createV3ArtifactRefKeyV2("evidence_plan", prepared.attempt.storyId, evidencePlanArtifactHash),
+      packetHash: packet.packetHash, compilationReportHash: packet.refs.compilationReport,
+      packetEnvelope: { schema: "setfarm.semantic-artifact-envelope.v1", artifactType: "setfarm.product-build-packet.v3",
+        producer: packet.producer, payload: packet.packet },
+      compilationReportEnvelope: { schema: "setfarm.semantic-artifact-envelope.v1", artifactType: "setfarm.product-compilation-report.v3",
+        producer: packet.producer, payload: packet.compilationReport },
+      executionProfile: resolveV3ExecutionProfile("primary"),
+    };
+    return Object.freeze(compiled);
+  }
+
+  function planEnvelope(producer: SemanticArtifactProducerV1, plan: EvidencePlanV2) {
+    return SemanticArtifactEnvelopeV1Schema.parse({ schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.evidence-plan.v2", producer, payload: plan });
+  }
+
+  async function loadAttemptContext(raw: unknown): Promise<NativeImplementationContextV3> {
+    const compiled = await compileContext(await preparedService.loadPreparedAttempt(raw));
+    const envelope = await readV3NativeIndexedArtifact(reader, compiled.evidencePlanArtifactHash);
+    const refs = await options.sql.unsafe<Array<{ artifact_hash: string }>>(
+      "SELECT artifact_hash FROM run_artifact_refs WHERE run_id=$1 AND ref_key=$2",
+      [compiled.attempt.runId, compiled.evidencePlanRefKey]);
+    if (refs.length !== 1 || refs[0]!.artifact_hash !== compiled.evidencePlanArtifactHash
+      || !same(envelope, planEnvelope(compiled.artifactProducer, compiled.evidencePlan))) {
+      throw new Error("V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH");
+    }
+    return compiled;
+  }
+
+  async function reserve(raw: unknown): Promise<NativeImplementationContextV3> {
+    const input = ReserveInputSchema.parse(raw);
+    const compiled = await compileContext(await preparedService.reserve(input));
+    const identities = await options.sql.unsafe<Array<{ step_id: string; story_id: string }>>(
+      `SELECT s.id AS step_id, st.id AS story_id FROM steps s JOIN stories st ON st.run_id=s.run_id
+        WHERE s.run_id=$1 AND s.step_id=$2 AND st.story_id=$3`, [input.runId, input.stepId, input.storyId]);
+    if (identities.length !== 1) throw new Error("V3_IMPLEMENTATION_COMPLETION_IDENTITY_REQUIRED");
+    // Exercise the existing full-context capacity guard using actual owner IDs,
+    // not placeholders. Failure cannot publish a model context.
+    createV3ImplementationContext({ handoff: createNativeV3ImplementationAttemptHandoff({ compiled,
+      stepDbId: identities[0]!.step_id, storyDbId: identities[0]!.story_id, claimId: input.claimId,
+      branch: input.branch, workdir: input.worktree }) });
+    const published = await publisher.put(planEnvelope(compiled.artifactProducer, compiled.evidencePlan));
+    if (published.hash !== compiled.evidencePlanArtifactHash) throw new Error("V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH");
+    await reader.index.addRunArtifactRef({ runId: input.runId,
+      refKey: compiled.evidencePlanRefKey, artifactHash: published.hash });
+    return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: compiled.attempt.attemptId });
+  }
+  return Object.freeze({ reserve, loadAttemptContext });
 }

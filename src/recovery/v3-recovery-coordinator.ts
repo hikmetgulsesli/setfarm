@@ -8,6 +8,8 @@ import {
   type EvidenceBundleV2,
 } from "../evidence/evidence-bundle-v2.js";
 import { EvidencePlanV1Schema, type EvidencePlanV1 } from "../evidence/evidence-plan-v1.js";
+import { EvidencePlanV2Schema, compileEvidencePlanV2, type EvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
+import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import { createAttemptRepository } from "../execution/attempt-repository.js";
 import type { ExecutionAttemptV1 } from "../execution/schemas/execution-attempt-v1.js";
 import { FindingSetV1Schema, type FindingSetV1 } from "../findings/finding-set.js";
@@ -91,9 +93,9 @@ type FailureClassV1 = z.infer<typeof FailureClassV1Schema>;
 type DispatchClass = RecoveryRevisionDispatchV1["dispatchClass"];
 
 type ParsedEvidenceContext = Readonly<{
-  slice: ImplementationSliceV1;
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2;
   sliceHash: string;
-  evidencePlan: EvidencePlanV1;
+  evidencePlan: EvidencePlanV1 | EvidencePlanV2;
   evidencePlanArtifactHash: string;
   evidenceBundle: EvidenceBundleV2;
   findingSet?: FindingSetV1;
@@ -193,10 +195,11 @@ function sameRevision(
 }
 
 function sameSliceRevision(
-  slice: ImplementationSliceV1,
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2,
   source: Readonly<{ sha: string; treeHash: string }>,
 ): boolean {
-  return slice.sourceRevision.baseSha === source.sha && slice.sourceRevision.treeHash === source.treeHash;
+  return (slice.schema === "setfarm.implementation-slice.v2" ? slice.sourceRevision.sha : slice.sourceRevision.baseSha) === source.sha
+    && slice.sourceRevision.treeHash === source.treeHash;
 }
 
 function sameCanonical(left: unknown, right: unknown): boolean {
@@ -298,8 +301,16 @@ export function computeMachineEvidenceFingerprintV1(input: EvidenceBundleV2): st
 }
 
 function parseContext(raw: z.infer<typeof V3RecoveryCoordinatorInputSchema>): ParsedEvidenceContext {
-  const slice = ImplementationSliceV1Schema.parse(raw.slice);
-  const evidencePlan = EvidencePlanV1Schema.parse(raw.evidencePlan);
+  const slice = z.union([ImplementationSliceV1Schema, LegacyImplementationSliceV2Schema]).parse(raw.slice);
+  const evidencePlan = slice.schema === "setfarm.implementation-slice.v2"
+    ? EvidencePlanV2Schema.parse(raw.evidencePlan) : EvidencePlanV1Schema.parse(raw.evidencePlan);
+  if (slice.schema === "setfarm.implementation-slice.v2") {
+    if (!sameCanonical(evidencePlan, compileEvidencePlanV2({ slice, sliceHash: raw.sliceHash }))
+      || hashCanonicalJson({ schema: "setfarm.semantic-artifact-envelope.v1", artifactType: "setfarm.evidence-plan.v2",
+        producer: slice.producer, payload: evidencePlan }) !== raw.evidencePlanArtifactHash) {
+      fail("V3_RECOVERY_CONTEXT_IDENTITY_MISMATCH", "native plan must reproduce its exact native slice and immutable envelope");
+    }
+  }
   const evidenceBundle = EvidenceBundleV2Schema.parse(raw.evidenceBundle);
   const findingSet = raw.findingSet === undefined ? undefined : FindingSetV1Schema.parse(raw.findingSet);
   const bundleHash = computeEvidenceBundleHash(evidenceBundle);
@@ -329,7 +340,10 @@ function validateEvidenceContext(context: ParsedEvidenceContext): void {
   ) {
     fail("V3_RECOVERY_CONTEXT_IDENTITY_MISMATCH", "slice, plan and evidence do not share one packet/story/slice identity");
   }
-  const productPredicateRefs = canonical(slice.requiredEvidence.map((predicate) => predicate.id));
+  const requiredEvidence = slice.schema === "setfarm.implementation-slice.v2"
+    ? slice.contract.product.evidencePredicates.filter(predicate => predicate.required && slice.story.evidenceRefs.includes(predicate.id))
+    : slice.requiredEvidence;
+  const productPredicateRefs = canonical(requiredEvidence.map((predicate) => predicate.id));
   const commandPredicateRefs = evidencePlan.commands.map((command) => `EVID_COMMAND_${command.commandRef}`);
   const requiredPredicates = canonical([...productPredicateRefs, ...commandPredicateRefs]);
   if (!exactStrings(evidencePlan.predicateRefs, productPredicateRefs)) {
@@ -339,7 +353,7 @@ function validateEvidenceContext(context: ParsedEvidenceContext): void {
   if (!exactStrings(bundlePredicateRefs, requiredPredicates)) {
     fail("V3_RECOVERY_EVIDENCE_BUNDLE_INCOMPLETE", "evidence bundle is not the exact slice predicate set");
   }
-  const slicePredicateById = new Map(slice.requiredEvidence.map((predicate) => [predicate.id, predicate]));
+  const slicePredicateById = new Map(requiredEvidence.map((predicate) => [predicate.id, predicate]));
   const commandByPredicate = new Map(evidencePlan.commands.map((command) => [
     `EVID_COMMAND_${command.commandRef}`,
     command,
@@ -418,8 +432,10 @@ function validateFailureFindingSet(context: ParsedEvidenceContext): FindingSetV1
   const writablePaths = canonical(slice.files
     .filter((file) => file.role === "owned" || file.role === "shared_writable")
     .map((file) => file.path));
+  const recoveryPaths = slice.schema === "setfarm.implementation-slice.v2" && slice.recovery
+    ? new Set(slice.recovery.expectedSourceDelta.changes.map(change => change.path)) : undefined;
   const compilerLocatablePaths = writablePaths.length > 0
-    ? writablePaths
+    ? writablePaths.filter(path => !recoveryPaths || recoveryPaths.has(path))
     : canonical(slice.files.filter((file) => file.role !== "dependency").map((file) => file.path));
   for (const finding of findingSet.findings) {
     if (finding.status !== "open" || finding.classification !== "structured" || !finding.expectedPredicateRef) {
@@ -456,15 +472,17 @@ function recoveryEvidenceRefs(context: ParsedEvidenceContext): string[] {
 }
 
 function deriveSourceRecovery(
-  slice: ImplementationSliceV1,
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2,
   findingSet: FindingSetV1,
 ): Readonly<{
   owner: "implement" | "supervisor";
   expectedDelta: Extract<RecoveryCaseDraftV1["expectedDelta"], { kind: "source_change" }>;
   allowedPaths: string[];
 }> | undefined {
+  const recoveryPaths = slice.schema === "setfarm.implementation-slice.v2" && slice.recovery
+    ? new Set(slice.recovery.expectedSourceDelta.changes.map(change => change.path)) : undefined;
   const allowedPaths = canonical(slice.files
-    .filter((file) => file.role === "owned" || file.role === "shared_writable")
+    .filter((file) => (file.role === "owned" || file.role === "shared_writable") && (!recoveryPaths || recoveryPaths.has(file.path)))
     .map((file) => file.path));
   const allowed = new Set(allowedPaths);
   const requiredPaths = canonical(findingSet.findings
@@ -536,7 +554,8 @@ function assertRecoverySlice(input: Readonly<{
   delivery: RecoveryDispatchDeliveryRecord;
 }>): void {
   const { context, revision, dispatch, delivery } = input;
-  const directive = context.slice.recovery;
+  const slice = context.slice;
+  const directive = slice.recovery;
   if (dispatch.dispatchClass === "evidence_only") {
     if (
       directive
@@ -552,20 +571,41 @@ function assertRecoverySlice(input: Readonly<{
     }
     return;
   }
+  if (slice.schema === "setfarm.implementation-slice.v2") {
+    const recovery = slice.recovery;
+    const delta = recovery?.expectedSourceDelta;
+    if (!recovery || !delta || !("mode" in delta) || delta.mode !== "generated_repair"
+      || recovery.findingSet.findingSetHash !== dispatch.findingSetHash
+      || recovery.findingSet.sliceHash !== dispatch.contractSliceHash
+      || !exactStrings(recovery.findingSet.findings.map(finding => finding.findingId), dispatch.findingIds)
+      || !sameRevision(recovery.sourceRevision, dispatch.sourceRevision)
+      || !sameSliceRevision(slice, dispatch.sourceRevision)
+      || !sameCanonical(delta.expectedDelta, revision.expectedDelta)
+      || !exactStrings(delta.allowedPaths, revision.allowedPaths)
+      || delivery.executionSliceHash !== context.sliceHash) {
+      fail("V3_RECOVERY_SLICE_DISPATCH_MISMATCH", "native execution slice differs from the authenticated durable recovery revision and dispatch");
+    }
+    const writable = new Set(slice.files.filter(file => file.role === "owned" || file.role === "shared_writable").map(file => file.path));
+    if (delta.allowedPaths.some(path => !writable.has(path))) {
+      fail("V3_RECOVERY_PATH_AUTHORITY_INVALID", "native recovery grants a non-writable topology path");
+    }
+    return;
+  }
+  const legacyDirective = slice.recovery;
   if (
-    !directive
-    || directive.recoveryCaseRevisionId !== revision.revisionId
-    || directive.recoveryDispatchId !== dispatch.dispatchId
-    || directive.dispatchClass !== dispatch.dispatchClass
-    || directive.findingSetHash !== dispatch.findingSetHash
-    || directive.contractSliceHash !== dispatch.contractSliceHash
-    || !exactStrings(directive.findingIds, dispatch.findingIds)
+    !legacyDirective
+    || legacyDirective.recoveryCaseRevisionId !== revision.revisionId
+    || legacyDirective.recoveryDispatchId !== dispatch.dispatchId
+    || legacyDirective.dispatchClass !== dispatch.dispatchClass
+    || legacyDirective.findingSetHash !== dispatch.findingSetHash
+    || legacyDirective.contractSliceHash !== dispatch.contractSliceHash
+    || !exactStrings(legacyDirective.findingIds, dispatch.findingIds)
     || !sameSliceRevision(context.slice, dispatch.sourceRevision)
-    || directive.sourceRevision.baseSha !== dispatch.sourceRevision.sha
-    || directive.sourceRevision.treeHash !== dispatch.sourceRevision.treeHash
-    || !sameCanonical(directive.expectedDelta, revision.expectedDelta)
-    || !exactStrings(directive.allowedPaths, revision.allowedPaths)
-    || directive.evidencePlanArtifactHash !== revision.evidencePlanArtifactHash
+    || legacyDirective.sourceRevision.baseSha !== dispatch.sourceRevision.sha
+    || legacyDirective.sourceRevision.treeHash !== dispatch.sourceRevision.treeHash
+    || !sameCanonical(legacyDirective.expectedDelta, revision.expectedDelta)
+    || !exactStrings(legacyDirective.allowedPaths, revision.allowedPaths)
+    || legacyDirective.evidencePlanArtifactHash !== revision.evidencePlanArtifactHash
     || delivery.executionSliceHash !== context.sliceHash
   ) {
     fail("V3_RECOVERY_SLICE_DISPATCH_MISMATCH", "execution slice is not the exact revision-bound recovery directive");
@@ -573,7 +613,7 @@ function assertRecoverySlice(input: Readonly<{
   const writable = canonical(context.slice.files
     .filter((file) => file.role === "owned" || file.role === "shared_writable")
     .map((file) => file.path));
-  if (directive.allowedPaths.some((path) => !writable.includes(path))) {
+  if (legacyDirective.allowedPaths.some((path) => !writable.includes(path))) {
     fail("V3_RECOVERY_PATH_AUTHORITY_INVALID", "recovery directive grants a non-writable topology path");
   }
 }

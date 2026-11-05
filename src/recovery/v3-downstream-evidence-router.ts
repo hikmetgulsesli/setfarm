@@ -21,7 +21,7 @@ import {
   type ExecutionAttemptV1,
   type SourceRevisionV1,
 } from "../execution/schemas/execution-attempt-v1.js";
-import { createRuntimeArtifactReader, type SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
+import { createRuntimeArtifactReader, type ExactSealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import { resolveProductArtifactCapacity, resolveProductArtifactDir } from "../runtime-config.js";
 import { createFindingRecoveryRepository } from "./finding-recovery-repository.js";
@@ -284,7 +284,7 @@ function terminalVerdict(bundle: EvidenceBundleV2): "pass" | "fail" | "inconclus
 }
 
 export type V3DownstreamEvidenceRouterDependencies = Readonly<{
-  readPacket(runId: string): Promise<SealedRuntimePacket>;
+  readPacket(runId: string): Promise<ExactSealedRuntimePacket>;
   readStories(input: Readonly<{ runId: string; storyIds: readonly string[] }>): Promise<readonly StoryIdentity[]>;
   reserveAttempt(input: Readonly<{
     authority: V3DownstreamEvidenceAuthorityV1;
@@ -308,7 +308,7 @@ export type V3DownstreamEvidenceRouterDependencies = Readonly<{
     findingSet?: FindingSetV1;
   }>): Promise<ExecutionAttemptV1>;
   executeEvidence(input: Readonly<{
-    packet: SealedRuntimePacket;
+    packet: ExactSealedRuntimePacket;
     context: V3ImplementationAttemptResult;
     worktree: string;
   }>): Promise<EvidenceBundleV2>;
@@ -458,7 +458,8 @@ export function createV3DownstreamEvidenceRouter(
           }
           findingSet = createFindingSetFromEvidenceBundleV2({
             workdir: input.worktree,
-            slice: context.slice,
+            ...(context.slice.schema === "setfarm.implementation-slice.v2"
+              ? { slice: context.slice, sourceRevision: sourceAfter } : { slice: context.slice }),
             sliceHash: context.sliceHash,
             bundle,
           });
@@ -626,7 +627,7 @@ export function createPostgresV3DownstreamEvidenceRouter(sql: Sql = getSql()) {
   const findings = createFindingRecoveryRepository(sql);
   const coordinator = createV3RecoveryCoordinator(sql);
   return createV3DownstreamEvidenceRouter({
-    readPacket: (runId) => reader.readSealedPacket(runId),
+    readPacket: (runId) => reader.readExactSealedPacket(runId),
     readStories: (input) => readExactStories(sql, input),
     reserveAttempt: (input) => reserveV3DownstreamEvidenceAttempt(input),
     loadAttemptContext: (input) => loadV3ImplementationAttemptContext(input),

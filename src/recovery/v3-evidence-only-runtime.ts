@@ -251,7 +251,8 @@ export function createV3EvidenceOnlyRuntimeDependencies(
         runId: lease.runId,
         storyId: lease.storyId,
         workdir: context.workdir,
-        stackPackId: context.slice.runtimeEvidence?.stackPackId,
+        stackPackId: context.slice.schema === "setfarm.implementation-slice.v2"
+          ? context.slice.build.runtimeEvidenceContract?.stackPackId : context.slice.runtimeEvidence?.stackPackId,
         v3: {
           slice: context.slice,
           sliceHash: context.sliceHash,

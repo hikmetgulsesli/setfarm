@@ -21,6 +21,8 @@ import {
   compileEvidencePlanV1,
   type EvidencePlanV1,
 } from "../evidence/evidence-plan-v1.js";
+import { EvidencePlanV2Schema, compileEvidencePlanV2, type EvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
+import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import { createAttemptRepository } from "../execution/attempt-repository.js";
 import type {
   ExecutionAttemptV1,
@@ -116,9 +118,9 @@ export type V3EvidenceOnlyLeaseV1 = z.infer<typeof LeaseSchema>;
 export type V3EvidenceOnlyAttemptContext = Readonly<{
   attempt: ExecutionAttemptV1;
   workdir: string;
-  slice: ImplementationSliceV1;
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2;
   sliceHash: string;
-  evidencePlan: EvidencePlanV1;
+  evidencePlan: EvidencePlanV1 | EvidencePlanV2;
   evidencePlanArtifactHash: string;
 }>;
 
@@ -577,7 +579,7 @@ async function acquireCandidate(
   }) as Promise<V3EvidenceOnlyLeaseV1 | undefined>;
 }
 
-function expectedEvidenceRefs(plan: EvidencePlanV1): string[] {
+function expectedEvidenceRefs(plan: EvidencePlanV1 | EvidencePlanV2): string[] {
   return [
     ...plan.predicateRefs,
     ...plan.commands.map((command) => `EVID_COMMAND_${command.commandRef}`),
@@ -588,8 +590,10 @@ function assertAttemptContext(
   lease: V3EvidenceOnlyLeaseV1,
   raw: V3EvidenceOnlyAttemptContext,
 ): V3EvidenceOnlyAttemptContext {
-  const slice = ImplementationSliceV1Schema.parse(raw.slice);
-  const plan = EvidencePlanV1Schema.parse(raw.evidencePlan);
+  const slice = raw.slice.schema === "setfarm.implementation-slice.v2"
+    ? LegacyImplementationSliceV2Schema.parse(raw.slice) : ImplementationSliceV1Schema.parse(raw.slice);
+  const plan = slice.schema === "setfarm.implementation-slice.v2"
+    ? EvidencePlanV2Schema.parse(raw.evidencePlan) : EvidencePlanV1Schema.parse(raw.evidencePlan);
   const sliceHash = Sha256Schema.parse(raw.sliceHash);
   const planArtifactHash = Sha256Schema.parse(raw.evidencePlanArtifactHash);
   const attempt = raw.attempt;
@@ -598,13 +602,17 @@ function assertAttemptContext(
     slice.recovery
     || slice.packetHash !== lease.packetHash
     || slice.storyId !== lease.storyId
-    || slice.sourceRevision.baseSha !== lease.sourceRevision.sha
+    || (slice.schema === "setfarm.implementation-slice.v2" ? slice.sourceRevision.sha : slice.sourceRevision.baseSha) !== lease.sourceRevision.sha
     || slice.sourceRevision.treeHash !== lease.sourceRevision.treeHash
     || plan.packetHash !== lease.packetHash
     || plan.storyId !== lease.storyId
     || plan.sliceHash !== sliceHash
+    || (slice.schema === "setfarm.implementation-slice.v2"
+      && hashCanonicalJson({ schema: "setfarm.semantic-artifact-envelope.v1", artifactType: "setfarm.evidence-plan.v2",
+        producer: slice.producer, payload: plan }) !== planArtifactHash)
     || !exactStrings(expectedEvidenceRefs(plan), lease.evidencePlan)
-    || canonicalJsonStringify(plan) !== canonicalJsonStringify(compileEvidencePlanV1({ slice, sliceHash }))
+    || canonicalJsonStringify(plan) !== canonicalJsonStringify(slice.schema === "setfarm.implementation-slice.v2"
+      ? compileEvidencePlanV2({ slice, sliceHash }) : compileEvidencePlanV1({ slice, sliceHash }))
   ) {
     fail(
       "V3_EVIDENCE_ONLY_SEALED_CONTEXT_MISMATCH",
@@ -1169,7 +1177,8 @@ export function createV3EvidenceOnlyRecoveryWorker(
         bundle = assertCanonicalEvidence({ lease, context, result });
         findingSet = createFindingSetFromEvidenceBundleV2({
           workdir: context.workdir,
-          slice: context.slice,
+          ...(context.slice.schema === "setfarm.implementation-slice.v2"
+            ? { slice: context.slice, sourceRevision: sourceAfter } : { slice: context.slice }),
           sliceHash: context.sliceHash,
           bundle,
         });

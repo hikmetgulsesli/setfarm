@@ -22,12 +22,14 @@ async function implementation(){
   return import(MODULE.href);
 }
 const root='/tmp/setfarm-task6a-pg.Abc123';
-test('native implementation join selects exactly one owned file with unchanged private cluster controls',async()=>{
+test('native implementation join selects its fixed affected owned files with unchanged private cluster controls',async()=>{
   const {planPrivatePostgresTestsV1:plan}=await implementation();
   const value=plan({root,port:55439,mode:'native-implementation-join'});
   assert.deepEqual(value.test,['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
     'node','--import','tsx','--test','--test-concurrency=1',
-    'tests/execution-attempts/native-implementation-join.integration.test.ts']);
+    'tests/execution-attempts/native-implementation-join.integration.test.ts',
+    'tests/findings/v3-recovery-coordinator.test.ts',
+    'tests/findings/v3-evidence-only-worker.test.ts']);
   assert.equal(Object.isFrozen(value.test),true);
   assert.deepEqual(value.initdb,plan({root,port:55439,mode:'subscription-runtime'}).initdb);
   assert.deepEqual(value.server,plan({root,port:55439,mode:'subscription-runtime'}).server);
