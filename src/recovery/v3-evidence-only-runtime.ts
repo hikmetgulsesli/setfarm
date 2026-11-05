@@ -264,17 +264,102 @@ export function createV3EvidenceOnlyRuntimeDependencies(
     async captureSource(workdir) {
       const compiled=nativeSources.get(workdir);
       if(!compiled) return captureShadowSourceRevision(workdir);
-      const source=resolveV3GitRevision({repo:workdir,requestedRef:"HEAD",expectedSha:compiled.sourceBefore.sha});
-      if(canonicalJsonStringify(source)!==canonicalJsonStringify(compiled.sourceBefore))
-        fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native candidate HEAD/tree changed");
-      execFileSync("git",["--no-replace-objects","diff","--quiet","HEAD","--"],
-        {cwd:workdir,timeout:10_000,maxBuffer:16*1024*1024,stdio:["ignore","pipe","pipe"]});
-      const files=compiled.slice.files.map(file=>({pathRef:file.pathRef,path:file.path}));
-      const pinned=captureNativeOriginalFileSignatures({worktree:workdir,source,files})
-        .map(({path:_path,...snapshot})=>snapshot);
+      // The closure map contains only real reserve/reload results. Reproduce
+      // that exact native authority before using any semantic readonly input.
+      const authenticated=await loadV3ImplementationAttemptContext({runId:compiled.attempt.runId,
+        storyId:compiled.attempt.storyId,attemptId:compiled.attempt.attemptId});
+      if(authenticated.kind!=="native-dispatch-ready"||!authenticated.evidenceOnly||!compiled.evidenceOnly
+        ||authenticated.attempt.worktree!==workdir||authenticated.attempt.branch!==compiled.attempt.branch
+        ||authenticated.attempt.generation!==compiled.attempt.generation
+        ||authenticated.attempt.fenceToken!==compiled.attempt.fenceToken
+        ||authenticated.attempt.claimId!==compiled.attempt.claimId
+        ||authenticated.sliceHash!==compiled.sliceHash
+        ||authenticated.evidencePlanArtifactHash!==compiled.evidencePlanArtifactHash
+        ||canonicalJsonStringify(authenticated.slice)!==canonicalJsonStringify(compiled.slice)
+        ||canonicalJsonStringify(authenticated.evidencePlan)!==canonicalJsonStringify(compiled.evidencePlan)
+        ||canonicalJsonStringify(authenticated.nativeAuthority)!==canonicalJsonStringify(compiled.nativeAuthority)
+        ||canonicalJsonStringify(authenticated.evidenceOnly)!==canonicalJsonStringify(compiled.evidenceOnly)
+        ||canonicalJsonStringify(authenticated.sourceBefore)!==canonicalJsonStringify(compiled.sourceBefore))
+        fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native source context no longer reproduces its owned authority");
+      const env:NodeJS.ProcessEnv={...process.env,GIT_NO_REPLACE_OBJECTS:"1",GIT_OPTIONAL_LOCKS:"0",GIT_TERMINAL_PROMPT:"0"};
+      for(const key of ["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR","GIT_INDEX_FILE","GIT_OBJECT_DIRECTORY","GIT_ALTERNATE_OBJECT_DIRECTORIES","GIT_NAMESPACE"]) delete env[key];
+      const git=(args:string[])=>execFileSync("git",["--no-replace-objects","--literal-pathspecs",...args],
+        {cwd:workdir,env,encoding:"utf8",timeout:10_000,maxBuffer:16*1024*1024,stdio:["ignore","pipe","pipe"]});
+      const assertCandidate=()=>{
+        const actual=resolveV3GitRevision({repo:workdir,requestedRef:"HEAD",expectedSha:authenticated.sourceBefore.sha});
+        if(canonicalJsonStringify(actual)!==canonicalJsonStringify(authenticated.sourceBefore))
+          fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native candidate HEAD/tree changed");
+        git(["diff","--cached","--quiet","HEAD","--"]);
+        git(["diff","--quiet","HEAD","--"]);
+        return actual;
+      };
+      const source=assertCandidate();
+      const index=git(["ls-files","--stage","-z"]);
+      // Enumerate the complete immutable tracked tree, independently of index
+      // flags. Semantic files include declared absences; all other paths receive
+      // local snapshot-check refs only, never a grant or execution input.
+      const tree=new Map<string,{mode:string;blob:string}>();
+      for(const entry of git(["ls-tree","-r","-z","--full-tree",source.sha,"--"]).split("\0").filter(Boolean)) {
+        const match=/^(100644|100755) blob ([a-f0-9]{40}|[a-f0-9]{64})\t([^\0]+)$/.exec(entry);
+        if(!match||tree.has(match[3]!))
+          fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native tracked source requires unique regular blobs");
+        tree.set(match[3]!,{mode:match[1]!,blob:match[2]!});
+      }
+      const indexed=index.split("\0").filter(Boolean);
+      const indexedPaths=new Set<string>();
+      if(indexed.length!==tree.size||indexed.some(entry=>{
+        const match=/^(100644|100755) ([a-f0-9]{40}|[a-f0-9]{64}) 0\t([^\0]+)$/.exec(entry);
+        if(!match||indexedPaths.has(match[3]!)) return true;
+        indexedPaths.add(match[3]!);
+        const pinned=tree.get(match[3]!);
+        return !pinned||pinned.mode!==match[1]||pinned.blob!==match[2];
+      })) fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native index differs from exact pinned tracked tree");
+      const files=authenticated.slice.files.map(file=>({pathRef:file.pathRef,path:file.path}));
+      const paths=new Set(files.map(file=>file.path));
+      const checkRefs=new Set(files.map(file=>file.pathRef));
+      let checkId=0;
+      for(const trackedPath of tree.keys()) {
+        if(paths.has(trackedPath)) continue;
+        let pathRef:string;
+        do { pathRef=`PATH_NATIVE_CAPTURE_${checkId++}`; } while(checkRefs.has(pathRef));
+        checkRefs.add(pathRef);
+        paths.add(trackedPath);
+        files.push({pathRef,path:trackedPath});
+      }
+      const pinned=captureNativeOriginalFileSignatures({worktree:workdir,source,files});
+      const expected=pinned.map(snapshot=>{
+        const {path:_path,...candidate}=snapshot;
+        const file=authenticated.slice.files.find(file=>file.pathRef===snapshot.pathRef&&file.path===snapshot.path);
+        if(!file) return candidate; // Full-tree check path, never semantic authority.
+        const semantic={pathRef:file.pathRef,presence:file.presence,contentHash:file.contentHash};
+        if(file.role!=="shared_readonly"||canonicalJsonStringify(candidate)===canonicalJsonStringify(semantic)) return candidate;
+        // The native loader already reproduces sealed grant/owner semantics and
+        // authentic accepted dependency attempts. Only their exact readonly DATA
+        // may differ from the pinned candidate; every other byte stays pinned.
+        const dependencies=authenticated.nativeAuthority.dependencyAttempts.filter(dependency=>
+          dependency.fileSignatures.some(signature=>signature.pathRef===file.pathRef&&signature.path===file.path));
+        const dependency=dependencies[0];
+        const signature=dependency?.fileSignatures.find(signature=>signature.pathRef===file.pathRef&&signature.path===file.path);
+        const contract=authenticated.slice.dependencyOutputs.find(output=>output.storyId===dependency?.storyId);
+        const grants=authenticated.slice.sharedGrants.filter(grant=>grant.toOwnerRef===authenticated.slice.story.ownerRef
+          &&grant.pathRefs.includes(file.pathRef)&&grant.permissions.includes("read")&&!grant.permissions.includes("write"));
+        if(dependencies.length!==1||!dependency||!signature||!contract||grants.length!==1
+          ||signature.presence!=="present"||snapshot.presence!=="present"
+          ||canonicalJsonStringify(signature)!==canonicalJsonStringify({path:file.path,...semantic})
+          ||canonicalJsonStringify(contract)!==canonicalJsonStringify({storyId:dependency.storyId,
+            sliceHash:dependency.sliceHash,outputHash:dependency.outputHash,sourceAfter:dependency.sourceAfter,
+            fileSignatures:dependency.fileSignatures})
+          ||authenticated.slice.recovery?.expectedSourceDelta.changes.some(change=>change.path===file.path)
+          ||git(["ls-files","-z","--",file.path])!==file.path+"\0")
+          fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native readonly input lacks exact accepted dependency authority");
+        return semantic;
+      });
       const current=captureV3ImplementationSourceSnapshotsV2({worktree:workdir,files}).snapshots;
-      if(canonicalJsonStringify(pinned)!==canonicalJsonStringify(current))
-        fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native candidate regular blobs changed");
+      if(canonicalJsonStringify(expected)!==canonicalJsonStringify(current))
+        fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native candidate or authenticated readonly input regular bytes changed");
+      assertCandidate();
+      if(git(["ls-files","--stage","-z"])!==index)
+        fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native candidate index changed during capture");
       return source;
     },
 
