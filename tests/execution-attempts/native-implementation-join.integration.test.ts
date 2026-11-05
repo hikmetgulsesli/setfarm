@@ -475,18 +475,44 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(findings.runId, value.runId);
     assert.equal(findings.sliceHash, completed.compiled.sliceHash);
     assert.ok(findings.findings.length > 0);
-    const lease = await deliveries.leaseNext({ runId: value.runId, storyId: "US-001",
+    const { createV3RecoveryClaimAuthority } = await import("../../src/recovery/v3-recovery-claim-authority.js");
+    const recoveryClaims = createV3RecoveryClaimAuthority(database.sql);
+    const expiredHandoff = await recoveryClaims.acquireRecoveryClaim({ runId: value.runId, storyId: "US-001",
       ownerInstanceId: "native-task11-expired-repair-owner", leaseMs: 20 });
-    assert.ok(lease?.leaseExpiresAt && lease.leaseToken);
+    assert.equal(expiredHandoff.status, "lease_acquired");
+    assert.equal(expiredHandoff.dispatchId, dispatch.dispatchId);
+    assert.equal(expiredHandoff.revisionId, revision.revisionId);
+    const lease = expiredHandoff.lease;
     // Real database-clock expiry; no timestamps or lease rows are overwritten.
-    await new Promise(resolve => setTimeout(resolve, Math.max(30, Date.parse(lease.leaseExpiresAt!) - Date.now() + 30)));
+    await new Promise(resolve => setTimeout(resolve, Math.max(30, Date.parse(lease.expiresAt) - Date.now() + 30)));
+    const expiry = await database.sql<Array<{ expired: boolean }>>`
+      SELECT lease_expires_at <= clock_timestamp() AS expired FROM recovery_dispatch_deliveries
+      WHERE dispatch_id=${dispatch.dispatchId} AND owner_instance_id=${lease.ownerInstanceId} AND lease_token=${lease.leaseToken}`;
+    assert.deepEqual(expiry.map(row => ({ ...row })), [{ expired: true }]);
+    await assert.rejects(recoveryClaims.acquireRecoveryClaim({ runId: value.runId, storyId: "US-001",
+      ownerInstanceId: lease.ownerInstanceId, continuation: { kind: "unreserved_lease", leaseToken: lease.leaseToken } }),
+    { code: "V3_RECOVERY_CONTINUATION_STALE" });
+    const beforeSuccessor = await deliveries.findDelivery(dispatch.dispatchId);
+    assert.equal(beforeSuccessor?.ownerInstanceId, lease.ownerInstanceId);
+    assert.equal(beforeSuccessor?.leaseToken, lease.leaseToken);
+    assert.equal(beforeSuccessor?.attemptCount, 0,
+      "only the actual claimStep router may acquire the next live delivery and publish the successor");
     const { claimStep } = await import("../../src/installer/step-ops.js");
     const successor = await claimStep("feature-dev_developer", value.input.callerGatewayAgent, {
       schema: "setfarm.runtime-claim-intent.v1", sessionId: "RTS_native-task11-real-recovery-successor",
       runtimeAgentId: "native-task11-repair-runtime", runtimeKind: "local_process",
       ownerInstanceId: "native-task11-live-repair-owner",
     }, { workflowId: "feature-dev", recoveryDispatchClass: "product_implementation" });
-    assert.equal(successor.found, true, JSON.stringify({ successor, delivery: await deliveries.findDelivery(delivery.dispatchId) }));
+    const preparation = await database.sql`SELECT phase,check_id,summary,detail,evidence
+      FROM run_observations WHERE run_id=${value.runId} AND phase='v3-recovery-claim' ORDER BY created_at,id`;
+    const publications = await database.sql`SELECT claim_id::text,runtime_session_id,dispatch_id,revision_id,status
+      FROM internal_production_v3_recovery_claim_publications_v1 WHERE run_id=${value.runId}`;
+    const fixtureLog = process.env.SETFARM_DB_PATH
+      ? await readFile(path.join(path.dirname(process.env.SETFARM_DB_PATH), "logs/workflow.log"), "utf8").catch(() => "")
+      : "";
+    assert.equal(successor.found, true, JSON.stringify({ successor,
+      delivery: await deliveries.findDelivery(delivery.dispatchId), preparation, publications,
+      ownership: await publicationDiagnostics(value), fixtureLogTail: fixtureLog.slice(-12_000) }));
     assert.equal(successor.runId, value.runId);
     assert.equal(successor.storyId, "US-001");
     assert.ok(successor.attempt && successor.v3ImplementationHandoff);

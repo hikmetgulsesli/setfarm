@@ -104,7 +104,7 @@ export function nativeJoinPacket(runId: string, twoStories = false, runnableCli 
       schema: "setfarm.runtime-evidence-contract.v1", adapter: "http-service", stackPackId: "node-express-api",
       server: { argv: ["node", "dist/index.js"], cwd: ".", timeoutMs: 30_000,
         ...(runnableApi ? { env: { HOST: "{{HOST}}", PORT: "{{PORT}}" } } : {}) },
-      ...(runnableApi ? { initial: { method: "GET", path: "/state", expectedStatus: 200,
+      ...(runnableApi ? { initial: { method: "GET", path: "/state", headers: {}, expectedStatus: 200,
         timeoutMs: 30_000, capture: { format: "json", statePointer: "/state" } } } : {}),
       readiness: { method: "GET", path: "/health", expectedStatus: 200, timeoutMs: 30_000 },
       actions: contracts.productSpecV2.actions.map(action => ({
