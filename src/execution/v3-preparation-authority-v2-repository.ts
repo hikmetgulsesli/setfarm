@@ -1,6 +1,8 @@
 import type postgres from "postgres";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { lstatSync, realpathSync } from "node:fs";
+import path from "node:path";
 
 import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
 import { Sha256Schema, NormalizedRelativeLocatorSchema } from "../product-compiler/schemas/common-v1.js";
@@ -10,7 +12,6 @@ import { resolveProductArtifactDir, resolveProductArtifactCapacity } from "../ru
 import { topologyPathAbsenceHash } from "../product-compiler/schemas/build-topology-v1.js";
 import { LegacyImplementationSliceV2Schema } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import { V3ImplementationAgentOutputV1Schema } from "./v3-implementation-output.js";
-import { captureV3GitCommitRevision } from "./v3-git-revision.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import { V3_SOURCE_SNAPSHOT_V2_DEFAULT_LIMITS } from "./v3-source-snapshot-v2.js";
 import { createV3PreparationClaimAuthorityV1, type V3PreparationClaimAuthorityV1 } from "./v3-preparation-claim-authority.js";
@@ -45,11 +46,244 @@ export function readinessFromNativePreparationV2(authority: V3PreparationClaimAu
   });
 }
 
+const NATIVE_GIT_CUSTODY_REF_PREFIX = "setfarm://native-git-custody-v1/";
+type NativeGitQuery = Pick<Sql, "unsafe"> | Pick<TransactionSql, "unsafe">;
+type NativeGitCustodyInput = Readonly<{
+  runId: string; claimId: number; worktree: string; branch: string; sourceBefore: SourceRevisionV1;
+}>;
+
+function nativeCustodyEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" };
+  // The canonical repository argument owns object lookup, never inherited Git
+  // redirection to a different worktree, index, common directory or object store.
+  for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"]) delete env[key];
+  return env;
+}
+
+function nativeCustodyGit(repo: string, args: string[]): string {
+  return execFileSync("git", ["--no-replace-objects", "--literal-pathspecs", ...args], {
+    cwd: repo, timeout: 10_000, maxBuffer: 16_384, encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"], env: nativeCustodyEnvironment(),
+  }).trim();
+}
+
+function nativeGitCommonDirectory(repo: string) {
+  const reported = nativeCustodyGit(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (!path.isAbsolute(reported) || /[\r\n\0]/.test(reported)) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_INVALID", "Git common directory must be one absolute path");
+  }
+  const directory = realpathSync(reported);
+  const stat = lstatSync(directory, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_INVALID", "Git common directory is not a canonical directory");
+  }
+  return { path: directory, dev: stat.dev.toString(), ino: stat.ino.toString() };
+}
+
+function nativeCustodyRevision(repo: string, sha: string): SourceRevisionV1 {
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha)
+    || nativeCustodyGit(repo, ["cat-file", "-t", sha]) !== "commit") {
+    repositoryFail("V3_NATIVE_ORIGINAL_SOURCE_MISMATCH", "native source must identify an exact commit object");
+  }
+  const treeHash = nativeCustodyGit(repo, ["rev-parse", "--verify", "--end-of-options", `${sha}^{tree}`]);
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(treeHash) || treeHash.length !== sha.length) {
+    repositoryFail("V3_NATIVE_ORIGINAL_SOURCE_MISMATCH", "native source must retain its exact Git root tree");
+  }
+  return { sha, treeHash };
+}
+
+async function nativeCanonicalRunRepository(query: NativeGitQuery, input: NativeGitCustodyInput) {
+  const rows = await query.unsafe<Array<{ context: string }>>(
+    `SELECT r.context FROM runs r JOIN claim_log c ON c.run_id=r.id
+      WHERE r.id=$1 AND c.id=$2 AND r.protocol='v3' AND r.status IN ('running','resuming')`,
+    [input.runId, input.claimId]);
+  if (rows.length !== 1) repositoryFail("V3_NATIVE_GIT_CUSTODY_RUN_INVALID", "native locator requires the actual active run and claim");
+  const context: unknown = JSON.parse(rows[0]!.context);
+  if (!context || typeof context !== "object" || Array.isArray(context) || !("repo" in context)
+    || typeof context.repo !== "string" || !path.isAbsolute(context.repo) || /[\r\n\0]/.test(context.repo)) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_RUN_INVALID", "active run has no canonical repository locator");
+  }
+  const repo = realpathSync(context.repo);
+  const stat = lstatSync(repo);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) repositoryFail("V3_NATIVE_GIT_CUSTODY_RUN_INVALID", "run repository is not a directory");
+  const common = nativeGitCommonDirectory(repo);
+  const ref = `refs/heads/${input.branch}`;
+  nativeCustodyGit(repo, ["check-ref-format", ref]);
+  const retainedCommit = nativeCustodyGit(repo, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`]);
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(retainedCommit)) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_BRANCH_INVALID", "original branch has no retained exact commit");
+  }
+  const original = nativeCustodyRevision(repo, input.sourceBefore.sha);
+  if (canonicalJsonStringify(original) !== canonicalJsonStringify(input.sourceBefore)) {
+    repositoryFail("V3_NATIVE_ORIGINAL_SOURCE_MISMATCH", "canonical repository does not reproduce the original pinned tree");
+  }
+  nativeCustodyGit(repo, ["merge-base", "--is-ancestor", input.sourceBefore.sha, retainedCommit]);
+  const witness = {
+    runId: input.runId, claimId: input.claimId, repo, common,
+    worktree: input.worktree, branch: input.branch, sourceBefore: input.sourceBefore,
+  };
+  return { runRepo: context.repo, repo, common, retainedCommit,
+    evidenceRef: NATIVE_GIT_CUSTODY_REF_PREFIX + createHash("sha256").update(canonicalJsonStringify(witness)).digest("hex") };
+}
+
+const authenticatedNativeGitCustodies = new WeakMap<object, string>();
+export type AuthenticatedNativeGitCustody = Readonly<{
+  owner: NativeGitCustodyInput; runRepo: string; evidenceRef: string;
+}>;
+
+/** Complete Git and canonical filesystem observations before reservation's
+ * transaction. No caller supplies a custody URI or repository locator. */
+export async function authenticateNativeGitCustody(query: NativeGitQuery, input: NativeGitCustodyInput): Promise<AuthenticatedNativeGitCustody> {
+  const canonical = await nativeCanonicalRunRepository(query, input);
+  const worktreeCommon = nativeGitCommonDirectory(input.worktree);
+  if (canonicalJsonStringify(worktreeCommon) !== canonicalJsonStringify(canonical.common)
+    || nativeCustodyGit(input.worktree, ["symbolic-ref", "HEAD"]) !== `refs/heads/${input.branch}`) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_ORIGIN_MISMATCH", "original worktree is not the canonical run repository's exact branch");
+  }
+  const snapshot = Object.freeze({
+    owner: Object.freeze({ ...input, sourceBefore: Object.freeze({ ...input.sourceBefore }) }),
+    runRepo: canonical.runRepo, evidenceRef: canonical.evidenceRef,
+  });
+  authenticatedNativeGitCustodies.set(snapshot, canonicalJsonStringify(snapshot));
+  return snapshot;
+}
+
+/** Existing reservation already holds its advisory/run locks. Recheck only DB
+ * identity through that same transaction; never perform Git or a pool query. */
+export async function recheckNativeGitCustodyInTransaction(transaction: TransactionSql, snapshot: AuthenticatedNativeGitCustody): Promise<void> {
+  if (authenticatedNativeGitCustodies.get(snapshot) !== canonicalJsonStringify(snapshot)) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_UNAUTHENTICATED", "custody snapshot was not produced by original Git authentication");
+  }
+  const rows = await transaction.unsafe<Array<{ repo: string }>>(
+    `SELECT r.context::jsonb->>'repo' AS repo FROM runs r JOIN claim_log c ON c.run_id=r.id
+      WHERE r.id=$1 AND c.id=$2 AND r.protocol='v3' AND r.status IN ('running','resuming')`,
+    [snapshot.owner.runId, snapshot.owner.claimId]);
+  if (rows.length !== 1 || rows[0]!.repo !== snapshot.runRepo) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_RUN_CHANGED", "actual canonical run repository changed before reservation");
+  }
+}
+
+async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
+  runId: string; attemptId: string; source: SourceRevisionV1;
+}>) {
+  const rows = await query.unsafe<Array<{
+    claim_id: string | null; branch: string | null; worktree: string | null; evidence_refs: string;
+    source_before_sha: string; source_before_tree_hash: string;
+    source_after_sha: string | null; source_after_tree_hash: string | null; accepted: boolean;
+    recovery_dispatch_id: string | null;
+  }>>(`SELECT a.claim_id::text,a.branch,a.worktree,a.evidence_refs,
+      a.source_before_sha,a.source_before_tree_hash,a.source_after_sha,a.source_after_tree_hash,a.recovery_dispatch_id,
+      EXISTS (SELECT 1 FROM runtime_completion_requests q
+        JOIN runtime_sessions s ON s.session_id=q.runtime_session_id AND s.attempt_id=a.attempt_id
+          AND s.claim_id=a.claim_id AND s.run_id=a.run_id AND s.story_id=a.story_id
+          AND s.step_db_id=q.step_db_id AND s.workflow_step_id=a.step_id
+        JOIN claim_log c ON c.id=a.claim_id AND c.run_id=a.run_id AND c.story_id=a.story_id AND c.step_id=a.step_id
+        WHERE q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id AND q.run_id=a.run_id
+          AND q.story_id=a.story_id AND q.workflow_step_id=a.step_id AND q.output_hash=a.output_hash
+          AND q.state='accepted' AND q.apply_phase='effects_committed' AND q.claim_outcome='completed'
+          AND s.state='released' AND c.outcome='completed'
+          AND a.disposition IN ('produced_delta','already_satisfied','verified')) AS accepted
+    FROM execution_attempts a WHERE a.run_id=$1 AND a.attempt_id=$2`, [input.runId, input.attemptId]);
+  const row = rows[0];
+  if (rows.length !== 1 || !row?.claim_id || !row.branch || !row.worktree) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_ATTEMPT_INVALID", "native attempt lacks its exact original owner/branch/worktree");
+  }
+  const sourceBefore = { sha: row.source_before_sha, treeHash: row.source_before_tree_hash };
+  const sourceAfter = row.source_after_sha && row.source_after_tree_hash
+    ? { sha: row.source_after_sha, treeHash: row.source_after_tree_hash } : undefined;
+  if (canonicalJsonStringify(input.source) !== canonicalJsonStringify(sourceBefore)
+    && (!sourceAfter || canonicalJsonStringify(input.source) !== canonicalJsonStringify(sourceAfter))) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_SOURCE_INVALID", "requested object is not the attempt's pinned original or candidate");
+  }
+  const owner = { runId: input.runId, claimId: claimId(row.claim_id), branch: row.branch,
+    worktree: row.worktree, sourceBefore };
+  const refs: unknown = JSON.parse(row.evidence_refs);
+  if (!Array.isArray(refs) || refs.some(ref => typeof ref !== "string")) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_REFERENCE_INVALID", "attempt evidence references are not a string array");
+  }
+  let custodyOwner = owner;
+  if (row.recovery_dispatch_id) {
+    const originRefs = refs.filter((ref: string) => ref.startsWith("setfarm://preparation-authority-v2/"));
+    if (originRefs.length !== 1) repositoryFail("V3_NATIVE_GIT_CUSTODY_REFERENCE_INVALID", "successor must retain one initial authority");
+    const origins = await query.unsafe<Array<{ claim_id: string; branch: string; worktree: string;
+      source_before_sha: string; source_before_tree_hash: string; evidence_refs: string }>>(
+      `SELECT initial.claim_id::text,initial.branch,initial.worktree,initial.source_before_sha,
+          initial.source_before_tree_hash,initial.evidence_refs
+       FROM v3_preparation_authority_attempts_v2 b
+       JOIN execution_attempts initial ON initial.attempt_id=b.attempt_id AND initial.claim_id=b.claim_id AND initial.slice_hash=b.slice_hash
+       JOIN execution_attempts successor ON successor.run_id=initial.run_id AND successor.step_id=initial.step_id
+         AND successor.story_id=initial.story_id AND successor.packet_hash=initial.packet_hash
+         AND successor.compilation_report_hash=initial.compilation_report_hash
+       JOIN internal_production_v3_recovery_claim_publications_v1 p ON p.claim_id=successor.claim_id
+         AND p.run_id=successor.run_id AND p.workflow_step_id=successor.step_id AND p.story_id=successor.story_id
+         AND p.dispatch_id=successor.recovery_dispatch_id AND p.revision_id=successor.recovery_case_revision_id
+       WHERE b.authority_hash=$1 AND successor.attempt_id=$2 AND successor.run_id=$3
+         AND initial.attempt_class='product_implementation' AND initial.role='developer'
+         AND initial.recovery_dispatch_id IS NULL AND initial.recovery_case_revision_id IS NULL`,
+      [originRefs[0]!.slice("setfarm://preparation-authority-v2/".length), input.attemptId, input.runId]);
+    const origin = origins[0];
+    if (origins.length !== 1 || !origin?.branch || !origin.worktree
+      || canonicalJsonStringify(JSON.parse(origin.evidence_refs).filter((ref: string) => ref.startsWith(NATIVE_GIT_CUSTODY_REF_PREFIX)))
+        !== canonicalJsonStringify(refs.filter((ref: string) => ref.startsWith(NATIVE_GIT_CUSTODY_REF_PREFIX)))) {
+      repositoryFail("V3_NATIVE_GIT_CUSTODY_REFERENCE_INVALID", "successor custody must equal the genuine initial reservation witness");
+    }
+    custodyOwner = { runId: input.runId, claimId: claimId(origin.claim_id), branch: origin.branch,
+      worktree: origin.worktree, sourceBefore: { sha: origin.source_before_sha, treeHash: origin.source_before_tree_hash } };
+  }
+  const canonical = await nativeCanonicalRunRepository(query, custodyOwner);
+  const custody = refs.filter((ref: string) => ref.startsWith(NATIVE_GIT_CUSTODY_REF_PREFIX));
+  if (custody.length > 1 || (custody.length === 1 && custody[0] !== canonical.evidenceRef)) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_REFERENCE_INVALID", "original custody witness is ambiguous or differs from the canonical repository");
+  }
+  let worktreeExists = true;
+  try { lstatSync(row.worktree); }
+  catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") worktreeExists = false;
+    else throw error;
+  }
+  if (worktreeExists) {
+    const current = nativeGitCommonDirectory(row.worktree);
+    if (canonicalJsonStringify(current) !== canonicalJsonStringify(canonical.common)) {
+      repositoryFail("V3_NATIVE_GIT_CUSTODY_ORIGIN_MISMATCH", "surviving original worktree belongs to another Git object database");
+    }
+  } else if (!row.accepted || custody.length !== 1) {
+    // No backfill from matching objects: a removed historical worktree without
+    // its original reservation witness cannot establish common-dir custody.
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_WITNESS_REQUIRED", "removed worktree requires its genuine original witness and accepted/released tuple");
+  }
+  const actual = nativeCustodyRevision(canonical.repo, input.source.sha);
+  if (canonicalJsonStringify(actual) !== canonicalJsonStringify(input.source)) {
+    repositoryFail("V3_NATIVE_ORIGINAL_SOURCE_MISMATCH", "canonical source object does not reproduce its pinned root tree");
+  }
+  const ownRef = `refs/heads/${row.branch}`;
+  nativeCustodyGit(canonical.repo, ["check-ref-format", ownRef]);
+  const retainedCommit = nativeCustodyGit(canonical.repo, ["rev-parse", "--verify", "--end-of-options", `${ownRef}^{commit}`]);
+  nativeCustodyGit(canonical.repo, ["merge-base", "--is-ancestor", input.source.sha, retainedCommit]);
+  if (sourceAfter) nativeCustodyGit(canonical.repo, ["merge-base", "--is-ancestor", sourceBefore.sha, sourceAfter.sha]);
+  return { ...canonical, retainedAttemptCommit: retainedCommit };
+}
+
+/** Reads regular immutable blobs only; never substitutes current working bytes.
+ * Recheck locator identity around the bounded existing snapshot capture. */
+export async function captureNativeAttemptFileSignatures(query: NativeGitQuery, input: Readonly<{
+  runId: string; attemptId: string; source: SourceRevisionV1;
+  files: readonly Readonly<{ pathRef: string; path: string }>[];
+}>) {
+  const before = await nativeAttemptGitLocator(query, input);
+  const files = captureNativeOriginalFileSignatures({ worktree: before.repo, source: input.source, files: input.files });
+  const after = await nativeAttemptGitLocator(query, input);
+  if (canonicalJsonStringify(before) !== canonicalJsonStringify(after)) {
+    repositoryFail("V3_NATIVE_GIT_CUSTODY_CHANGED", "canonical repository or retained branch changed during immutable capture");
+  }
+  return files;
+}
+
 /** Immutable Git objects, never the current worktree, are original source authority. */
 export function captureNativeOriginalFileSignatures(input: Readonly<{
   worktree: string; source: SourceRevisionV1; files: readonly Readonly<{ pathRef: string; path: string }>[];
 }>) {
-  const actual = captureV3GitCommitRevision({ repo: input.worktree, commitSha: input.source.sha });
+  const actual = nativeCustodyRevision(input.worktree, input.source.sha);
   if (canonicalJsonStringify(actual) !== canonicalJsonStringify(input.source)) {
     repositoryFail("V3_NATIVE_ORIGINAL_SOURCE_MISMATCH", "original commit does not reproduce its pinned root tree");
   }
@@ -60,7 +294,7 @@ export function captureNativeOriginalFileSignatures(input: Readonly<{
   let total = 0;
   const runGit = (args: string[], maxBuffer: number) => execFileSync("git", ["--no-replace-objects", "--literal-pathspecs", ...args], {
     cwd: input.worktree, timeout: 10_000, maxBuffer, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+    env: nativeCustodyEnvironment(),
   });
   return [...input.files].sort((a, b) => a.pathRef < b.pathRef ? -1 : a.pathRef > b.pathRef ? 1 : 0).map(file => {
     NormalizedRelativeLocatorSchema.parse(file.path);
@@ -139,7 +373,8 @@ export async function readV3NativeDependencyAuthority(
   return V3PreparationDependencyAttemptAuthorityV2Schema.parse({ storyId: input.storyId,
     attemptId: row.attempt_id, attemptGeneration: row.generation, attemptClass: row.attempt_class,
     disposition: row.disposition, sliceHash: row.slice_hash, outputHash: row.output_hash, sourceAfter,
-    fileSignatures: captureNativeOriginalFileSignatures({ worktree: row.worktree, source: sourceAfter, files }) });
+    fileSignatures: await captureNativeAttemptFileSignatures(query, { runId: input.runId,
+      attemptId: row.attempt_id, source: sourceAfter, files }) });
 }
 
 export type V3PreparationAuthorityV2PublicationStatus = "published" | "duplicate";

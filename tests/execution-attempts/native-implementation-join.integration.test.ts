@@ -438,6 +438,15 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       storyId: envelope.storyId, output: processing.output };
     await runWithRuntimeCompletionOwner(capability, () => completeStep(envelope.stepId, processing.output,
       envelope, { deferContinuationToEffectLedger: true }));
+    const candidateRows = await database.sql<Array<{ source_after_sha: string; source_after_tree_hash: string }>>`
+      SELECT source_after_sha,source_after_tree_hash FROM execution_attempts WHERE attempt_id=${compiled.attempt.attemptId}`;
+    assert.equal(candidateRows.length, 1);
+    const candidateSource = candidateRows[0]!;
+    assert.match(candidateSource.source_after_sha, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+    const candidateTree = execFileSync("git", ["--no-replace-objects", "rev-parse", "--verify", "--end-of-options",
+      `${candidateSource.source_after_sha}^{tree}`], { cwd: value.repo, encoding: "utf8", stdio: "pipe" }).trim();
+    assert.equal(candidateSource.source_after_tree_hash, candidateTree,
+      "owned native candidate must persist the exact committed Git root tree before continuation cleanup");
     assert.equal(await completions.heartbeatProcessing({ requestId, ownerInstanceId,
       ownerAttemptCount: processing.ownerAttemptCount }), true);
     const result = await runWithRuntimeCompletionOwner(capability, () => runRuntimeCompletionEffectLedger({
@@ -815,6 +824,9 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(result.attempt.agentId, "feature-dev_developer");
     assert.equal("evidencePlan" in result, false);
     assert.equal("handoff" in result, false);
+    const custodyRefs = result.attempt.evidenceRefs.filter(ref => ref.startsWith("setfarm://native-git-custody-v1/"));
+    assert.equal(custodyRefs.length, 1);
+    assert.match(custodyRefs[0]!, /^setfarm:\/\/native-git-custody-v1\/[a-f0-9]{64}$/);
     assert.deepEqual(result.readiness, value.readiness);
     assert.deepEqual(result.nativeAuthority, value.nativeAuthority);
     assert.deepEqual(await native.reserve(input), result);
@@ -846,6 +858,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const input = reserveInput(value, publication.claimId);
     for (const wrong of [{ role: "feature-dev_developer" }, { role: "supervisor" },
       { agentId: "someone-else" }, { claimId: publication.claimId + 1 }, { storyId: "US-002" },
+      { evidenceRefs: [`setfarm://native-git-custody-v1/${"f".repeat(64)}`] },
       { attemptClass: "infrastructure_retry" }, { attemptClass: "supervisor_repair" },
       { recoveryDelivery: { dispatchId: "untrusted" } }]) {
       await assert.rejects(native.reserve({ ...input, ...wrong }));

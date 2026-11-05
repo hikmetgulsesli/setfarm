@@ -5326,7 +5326,20 @@ async function claimV3RecoveryWork(
   }
   let observedSource: Awaited<ReturnType<typeof captureShadowSourceRevision>>;
   try {
-    observedSource = await captureShadowSourceRevision(storyWorkdir);
+    const recoveryPacket = await createRuntimeArtifactReader({ sql: getSql(),
+      artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity(),
+    }).readExactSealedPacket(step.run_id);
+    if (recoveryPacket.packetHash !== handoff.directive.packetHash) throw new Error("V3_RECOVERY_PACKET_MISMATCH");
+    if ("implementationSourceMap" in recoveryPacket) {
+      resolveV3GitRevision({ repo: storyWorkdir, requestedRef: "HEAD", expectedSha: baseRef });
+      const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+        cwd: storyWorkdir, timeout: 10_000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (status.byteLength) throw new Error("V3_NATIVE_RECOVERY_SOURCE_CHANGED");
+      observedSource = captureV3GitCommitRevision({ repo: storyWorkdir, commitSha: baseRef });
+    } else {
+      observedSource = await captureShadowSourceRevision(storyWorkdir);
+    }
   } catch (error) {
     removeStoryWorktree(repo, storyBranch, agentId);
     await recordRecoveryPreparationFailure(
@@ -11239,7 +11252,13 @@ ${prd}`;
             if (candidateCommit.error) {
               throw new Error(`V3_CANDIDATE_COMMIT_REJECTED:${candidateCommit.error}`);
             }
-            v3CandidateSource = await captureShadowSourceRevision(wd);
+            if (completionSlice.schema === "setfarm.implementation-slice.v2") {
+              const candidateSha = candidateCommit.committed ? candidateCommit.sha : v3CompletionContext.sourceBefore.sha;
+              resolveV3GitRevision({ repo: wd, requestedRef: "HEAD", expectedSha: candidateSha });
+              v3CandidateSource = captureV3GitCommitRevision({ repo: wd, commitSha: candidateSha });
+            } else {
+              v3CandidateSource = await captureShadowSourceRevision(wd);
+            }
             if (candidateCommit.committed && candidateCommit.sha !== v3CandidateSource.sha) {
               throw new Error("V3_CANDIDATE_COMMIT_SOURCE_IDENTITY_MISMATCH");
             }

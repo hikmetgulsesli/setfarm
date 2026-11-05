@@ -27,6 +27,8 @@ import {
 } from "./schemas/execution-attempt-v1.js";
 import { parseOperationalRetryAwareAttemptReservation } from "./operational-retry-reservation.js";
 import { V3RecoveryClaimHandoffV1Schema } from "../recovery/v3-recovery-claim-authority.js";
+import { FindingSetV1Schema } from "../findings/finding-set.js";
+import { V3PreparationClaimAuthorityV2Schema } from "./v3-preparation-claim-authority-v2.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -573,6 +575,117 @@ async function lockAndAssertRecoveryClaimPublicationForAttemptBirth(
   return handoff;
 }
 
+/** Native generated recovery is a distinct consumer of existing durable
+ * recovery authority. It never binds another attempt to the initial V2 row. */
+async function lockNativeRecoveryPredecessor(
+  transaction: TransactionSql,
+  reservation: ReturnType<typeof parseOperationalRetryAwareAttemptReservation>,
+  handoff: ReturnType<typeof V3RecoveryClaimHandoffV1Schema.parse>,
+): Promise<Readonly<{ attemptId: string; generation: number }>> {
+  const authority = reservation.recoveryExecutionSliceAuthority;
+  if (authority?.kind !== "native") throw new Error("NATIVE_RECOVERY_EXECUTION_AUTHORITY_REQUIRED");
+  const { slice } = authority;
+  const recovery = slice.recovery;
+  if (!recovery) throw new Error("NATIVE_RECOVERY_EXECUTION_AUTHORITY_REQUIRED");
+  const delta = recovery.expectedSourceDelta;
+  if (!("mode" in delta) || delta.mode !== "generated_repair"
+    || authority.executionSliceHash !== reservation.sliceHash
+    || !sameCanonical(delta.expectedDelta, handoff.directive.expectedDelta)
+    || !sameCanonical(delta.allowedPaths, handoff.directive.allowedPaths)
+    || recovery.findingSet.runId !== reservation.runId
+    || recovery.findingSet.findingSetHash !== handoff.directive.findingSetHash
+    || recovery.findingSet.sliceHash !== handoff.directive.contractSliceHash
+    || !sameCanonical(recovery.findingSet.findings.map(finding => finding.findingId), handoff.directive.findingIds)
+    || !sameCanonical(recovery.sourceRevision, handoff.directive.sourceRevision)
+    || !sameCanonical(recovery.findingSet.sourceRevision, handoff.directive.sourceRevision)
+    || reservation.role !== (handoff.dispatchClass === "supervisor_repair" ? "supervisor" : "developer")) {
+    throw new Error("RECOVERY_DELIVERY_NATIVE_SLICE_AUTHORITY_MISMATCH");
+  }
+  // The same publication check already holds the parent finding row and exact
+  // revision/dispatch/case locks. Compare the full immutable finding payload,
+  // not only a caller's embedded hash or list of source locators.
+  const findingRows = await transaction.unsafe<Array<{ payload: unknown }>>(
+    "SELECT payload FROM finding_sets WHERE finding_set_hash=$1", [handoff.directive.findingSetHash]);
+  if (findingRows.length !== 1
+    || !sameCanonical(FindingSetV1Schema.parse(findingRows[0]!.payload), recovery.findingSet)) {
+    throw new Error("RECOVERY_DELIVERY_NATIVE_FINDING_MISMATCH");
+  }
+  // prior_attempt_refs is an existing canonical set, not an ordered chain.
+  // The newest actual predecessor carries the initial native authority ref;
+  // resolve it through the genuine initial binding, never bind the successor
+  // to that row or assume the case's first member itself was an initial attempt.
+  const origins = await transaction.unsafe<Array<{
+    authority_hash: string; authority_payload: unknown; attempt_id: string;
+    claim_id: string; source_before_sha: string; source_before_tree_hash: string;
+    slice_hash: string; compilation_report_hash: string;
+  }>>(`SELECT b.authority_hash,p.authority_payload,a.attempt_id,a.claim_id::text,
+      a.source_before_sha,a.source_before_tree_hash,a.slice_hash,a.compilation_report_hash
+    FROM recovery_cases c
+    JOIN execution_attempts predecessor ON predecessor.attempt_id IN (SELECT jsonb_array_elements_text(c.prior_attempt_refs::jsonb))
+    JOIN execution_attempts a ON a.run_id=predecessor.run_id AND a.step_id=predecessor.step_id AND a.story_id=predecessor.story_id
+    JOIN v3_preparation_authority_attempts_v2 b ON b.attempt_id=a.attempt_id
+      AND b.claim_id=a.claim_id AND b.slice_hash=a.slice_hash
+      AND predecessor.evidence_refs::jsonb ? ('setfarm://preparation-authority-v2/' || b.authority_hash)
+    JOIN v3_preparation_authorities_v2 p ON p.authority_hash=b.authority_hash
+      AND p.run_id=a.run_id AND p.step_id=a.step_id AND p.story_id=a.story_id
+    WHERE c.recovery_case_id=$1 AND a.run_id=$2 AND a.step_id=$3 AND a.story_id=$4
+      AND a.packet_hash=$5 AND a.compilation_report_hash=$6
+      AND predecessor.generation=(SELECT MAX(latest.generation) FROM execution_attempts latest
+        WHERE latest.run_id=$2 AND latest.step_id=$3 AND latest.story_id=$4
+          AND latest.recovery_dispatch_id IS DISTINCT FROM $7)
+      AND a.attempt_class='product_implementation' AND a.role='developer'
+      AND a.recovery_case_revision_id IS NULL AND a.recovery_dispatch_id IS NULL`,
+  [handoff.recoveryCaseId, reservation.runId, reservation.stepId, reservation.storyId,
+    reservation.packetHash!, reservation.compilationReportHash, reservation.recoveryDispatchId!]);
+  if (origins.length !== 1) throw new Error("RECOVERY_DELIVERY_NATIVE_ORIGIN_AMBIGUOUS");
+  const originRow = origins[0]!;
+  const origin = V3PreparationClaimAuthorityV2Schema.parse(typeof originRow.authority_payload === "string"
+    ? JSON.parse(originRow.authority_payload) : originRow.authority_payload);
+  if (origin.authorityHash !== originRow.authority_hash || origin.runId !== reservation.runId
+    || origin.stepId !== reservation.stepId || origin.storyId !== reservation.storyId
+    || origin.packetHash !== reservation.packetHash || origin.compilationReportHash !== reservation.compilationReportHash
+    || origin.baseRevision.sha !== originRow.source_before_sha || origin.baseRevision.treeHash !== originRow.source_before_tree_hash
+    || !sameCanonical(origin.dependencyAttempts.map(({ attemptId: _id, attemptGeneration: _generation,
+      attemptClass: _class, disposition: _disposition, ...dependency }) => dependency), slice.dependencyOutputs)) {
+    throw new Error("RECOVERY_DELIVERY_NATIVE_ORIGIN_MISMATCH");
+  }
+  const originRef = `setfarm://preparation-authority-v2/${origin.authorityHash}`;
+  if (!sameCanonical(reservation.evidenceRefs.filter(ref => ref.startsWith("setfarm://preparation-authority-v2/")), [originRef])) {
+    throw new Error("RECOVERY_DELIVERY_NATIVE_ORIGIN_REFERENCE_MISMATCH");
+  }
+  const predecessors = await transaction.unsafe<AttemptRow[]>(
+    `SELECT * FROM execution_attempts WHERE run_id=$1 AND step_id=$2 AND story_id=$3
+      AND recovery_dispatch_id IS DISTINCT FROM $4 ORDER BY generation DESC LIMIT 1 FOR UPDATE`,
+    [reservation.runId, reservation.stepId, reservation.storyId, reservation.recoveryDispatchId!]);
+  const predecessor = predecessors[0];
+  if (!predecessor || predecessor.claim_id === String(reservation.claimId)
+    || !["failed", "inconclusive", "no_progress", "produced_delta", "already_satisfied", "verified"].includes(predecessor.disposition)
+    || predecessor.packet_hash !== reservation.packetHash
+    || predecessor.compilation_report_hash !== reservation.compilationReportHash
+    || predecessor.slice_hash !== handoff.directive.contractSliceHash
+    || predecessor.source_after_sha !== handoff.directive.sourceRevision.sha
+    || predecessor.source_after_tree_hash !== handoff.directive.sourceRevision.treeHash
+    || !sameCanonical(evidenceRefs(predecessor.evidence_refs).filter(ref => ref.startsWith("setfarm://preparation-authority-v2/")), [originRef])) {
+    throw new Error("RECOVERY_DELIVERY_NATIVE_PREDECESSOR_MISMATCH");
+  }
+  const terminal = await transaction.unsafe<Array<{ attempt_id: string }>>(
+    `SELECT a.attempt_id FROM execution_attempts a
+      JOIN recovery_cases c ON c.recovery_case_id=$1
+        AND c.prior_attempt_refs::jsonb ? a.attempt_id
+      JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id
+        AND q.run_id=a.run_id AND q.story_id=a.story_id AND q.workflow_step_id=a.step_id AND q.output_hash=a.output_hash
+      JOIN runtime_sessions s ON s.session_id=q.runtime_session_id AND s.attempt_id=a.attempt_id
+        AND s.claim_id=a.claim_id AND s.run_id=a.run_id AND s.story_id=a.story_id
+        AND s.step_db_id=q.step_db_id AND s.workflow_step_id=a.step_id
+      JOIN claim_log cl ON cl.id=a.claim_id AND cl.run_id=a.run_id AND cl.story_id=a.story_id
+        AND cl.step_id=a.step_id AND cl.outcome=q.claim_outcome
+      WHERE a.attempt_id=$2 AND q.state='accepted' AND q.apply_phase='effects_committed'
+        AND q.claim_outcome IN ('completed','failed') AND s.state='released'`,
+    [handoff.recoveryCaseId, predecessor.attempt_id]);
+  if (terminal.length !== 1) throw new Error("RECOVERY_DELIVERY_NATIVE_PREDECESSOR_NOT_ACCEPTED");
+  return { attemptId: predecessor.attempt_id, generation: predecessor.generation };
+}
+
 function mapAttempt(row: AttemptRow): ExecutionAttemptV1 {
   return ExecutionAttemptV1Schema.parse({
     schema: "setfarm.execution-attempt.v1",
@@ -770,6 +883,7 @@ export async function reserveAttemptInTransaction(
   );
   if (boundClaims.length !== 1) throw new Error("ATTEMPT_CLAIM_BINDING_INVALID");
 
+  let nativeRecoveryPredecessor: Readonly<{ attemptId: string; generation: number }> | undefined;
   let leaseClock: Date | undefined;
   let recoveryDeliveryLeaseExpiresAt: Date | string | undefined;
   if (reservation.recoveryDispatchId) {
@@ -808,7 +922,10 @@ export async function reserveAttemptInTransaction(
     const authoritativeContractSliceHash = authenticatedRecoveryHandoff?.directive.contractSliceHash
       ?? delivery.contract_slice_hash;
     const executionSliceAuthority = reservation.recoveryExecutionSliceAuthority;
-    if (
+    if (executionSliceAuthority?.kind === "native") {
+      if (!authenticatedRecoveryHandoff) throw new Error("RECOVERY_DELIVERY_NATIVE_CLAIM_AUTHORITY_REQUIRED");
+      nativeRecoveryPredecessor = await lockNativeRecoveryPredecessor(transaction, reservation, authenticatedRecoveryHandoff);
+    } else if (
       executionSliceAuthority
         ? executionSliceAuthority.executionSliceHash !== reservation.sliceHash
           || !authenticatedRecoveryHandoff
@@ -868,6 +985,8 @@ export async function reserveAttemptInTransaction(
         || existingRecoveryAttempt.agent_id !== (reservation.agentId ?? null)
         || existingRecoveryAttempt.branch !== (reservation.branch ?? null)
         || existingRecoveryAttempt.worktree !== (reservation.worktree ?? null)
+        || (nativeRecoveryPredecessor !== undefined
+          && existingRecoveryAttempt.generation !== nativeRecoveryPredecessor.generation + 1)
       ) throw new Error("RECOVERY_DELIVERY_ATTEMPT_IDENTITY_MISMATCH");
       const adopted = await adoptExactExistingAttemptOwnerInTransaction(
         transaction,
@@ -969,6 +1088,9 @@ export async function reserveAttemptInTransaction(
     && generation !== reservation.predecessorAttempt.generation + 1
   ) {
     throw new Error("ATTEMPT_PREDECESSOR_GENERATION_INVALID");
+  }
+  if (nativeRecoveryPredecessor && generation !== nativeRecoveryPredecessor.generation + 1) {
+    throw new Error("RECOVERY_DELIVERY_NATIVE_PREDECESSOR_GENERATION_INVALID");
   }
   const attemptId = identityFactory.attemptId();
   const fenceToken = identityFactory.fenceToken();

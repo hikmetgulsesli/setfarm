@@ -1796,6 +1796,15 @@ export async function reserveV3ImplementationAttempt(
   const options = { sql: getSql(), artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() };
   const packet = await createRuntimeArtifactReader(options).readExactSealedPacket(input.runId);
   if (!("implementationSourceMap" in packet)) return runtimeCompiler().reserve(input);
+  if (input.recoveryDelivery) {
+    if (!input.claimId || input.stepId !== "implement" || input.operationalRetry || input.supervisorRetry
+      || input.evidenceOnlyLease || input.downstreamEvidenceAuthority) throw new Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
+    return createNativeV3ImplementationContextService(options).reserveRecovery({
+      claimId: input.claimId, runId: input.runId, stepId: input.stepId, storyId: input.storyId,
+      role: input.role, agentId: input.agentId, branch: input.branch, worktree: input.worktree,
+      findingSetHash: input.findingSetHash, recoveryDelivery: input.recoveryDelivery,
+    });
+  }
   // Task9's V2 relation is initial-only. Never erase a successor discriminator
   // to coerce it through that relation; its authentic join is a separate path.
   if (!input.claimId || input.stepId !== "implement" || input.role !== "developer"

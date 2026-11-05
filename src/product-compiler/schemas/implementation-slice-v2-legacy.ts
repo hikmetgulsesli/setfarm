@@ -1395,6 +1395,8 @@ export const ImplementationSliceV2Schema = z.object({
 
   if (value.recovery) {
     const recovery = value.recovery;
+    const delta = recovery.expectedSourceDelta;
+    const generatedRepair = "mode" in delta && delta.mode === "generated_repair";
     if (
       recovery.findingSet.packetHash !== value.packetHash
       || recovery.findingSet.storyId !== value.storyId
@@ -1402,7 +1404,15 @@ export const ImplementationSliceV2Schema = z.object({
       || !equalSourceRevision(recovery.sourceRevision, value.sourceRevision)
       || recovery.findingSet.findings.some((finding) => finding.status !== "open")
       || recovery.findingSet.findings.some((finding) =>
-        !finding.expectedPredicateRef || !value.story.evidenceRefs.includes(finding.expectedPredicateRef))
+        !finding.expectedPredicateRef || (!value.story.evidenceRefs.includes(finding.expectedPredicateRef)
+          && !(generatedRepair && finding.classification === "structured"
+            && value.build.commands.some(command =>
+              (command.kind === "build" || command.kind === "test" || command.kind === "evidence")
+              // Match the canonical evidence producer's exact selected command
+              // identity; command evidence is not a ProductSpec predicate.
+              && finding.expectedPredicateRef === `EVID_COMMAND_${command.id}`
+              && finding.invariantRef === `INV_COMMAND_${command.kind.toUpperCase()}`
+              && finding.origin === (command.kind === "build" ? "build" : command.kind === "test" ? "test" : "runtime")))))
     ) {
       context.addIssue({
         code: "custom",
@@ -1410,7 +1420,6 @@ export const ImplementationSliceV2Schema = z.object({
         message: "Recovery finding set must bind exact packet/story/current source and contain only open findings",
       });
     }
-    const delta = recovery.expectedSourceDelta;
     if ("mode" in delta && delta.mode === "generated_repair") {
       const findingInvariants = sorted([...new Set(recovery.findingSet.findings.map(finding => finding.invariantRef))]);
       if (!sameStrings(delta.expectedDelta.invariantRefs, findingInvariants)) {

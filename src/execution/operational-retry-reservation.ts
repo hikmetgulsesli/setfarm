@@ -6,6 +6,8 @@ import {
 } from "./schemas/execution-attempt-v1.js";
 import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-envelope.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 }
+  from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import {
   ImplementationSliceV1Schema,
   type ImplementationRecoveryDirectiveV1,
@@ -24,8 +26,13 @@ export type OperationalRetryPredecessorFenceV1 = z.infer<
 export type OperationalRetryAwareAttemptReservation = ExecutionAttemptReservationV1 & Readonly<{
   predecessorAttempt?: OperationalRetryPredecessorFenceV1;
   recoveryExecutionSliceAuthority?: Readonly<{
+    kind?: never;
     executionSliceHash: string;
     recovery: ImplementationRecoveryDirectiveV1;
+  }> | Readonly<{
+    kind: "native";
+    executionSliceHash: string;
+    slice: LegacyImplementationSliceV2;
   }>;
 }>;
 
@@ -47,6 +54,24 @@ export function parseOperationalRetryAwareAttemptReservation(
     | undefined;
   if (recoveryExecutionSliceEnvelope !== undefined) {
     const envelope = SemanticArtifactEnvelopeV1Schema.parse(recoveryExecutionSliceEnvelope);
+    if (envelope.artifactType === "setfarm.implementation-slice.v2") {
+      const slice = LegacyImplementationSliceV2Schema.parse(envelope.payload);
+      if (hashCanonicalJson(envelope) !== base.sliceHash
+        || hashCanonicalJson(envelope.producer) !== hashCanonicalJson(slice.producer)
+        || slice.packetHash !== base.packetHash || slice.storyId !== base.storyId
+        || slice.sourceRevision.sha !== base.sourceBefore.sha
+        || slice.sourceRevision.treeHash !== base.sourceBefore.treeHash || !slice.recovery
+        || slice.recovery.findingSet.runId !== base.runId
+        || slice.recovery.findingSet.findingSetHash !== base.findingSetHash
+        || !base.recoveryCaseRevisionId || !base.recoveryDispatchId
+        || (base.attemptClass !== "product_implementation" && base.attemptClass !== "supervisor_repair")
+        || base.role !== (base.attemptClass === "supervisor_repair" ? "supervisor" : "developer")) {
+        throw new Error("ATTEMPT_RECOVERY_EXECUTION_SLICE_AUTHORITY_INVALID");
+      }
+      parsedRecoveryExecutionSliceAuthority = Object.freeze({
+        kind: "native", executionSliceHash: base.sliceHash!, slice,
+      });
+    } else {
     const slice = ImplementationSliceV1Schema.parse(envelope.payload);
     if (
       envelope.artifactType !== "setfarm.implementation-slice.v1"
@@ -63,8 +88,9 @@ export function parseOperationalRetryAwareAttemptReservation(
       executionSliceHash: base.sliceHash!,
       recovery: slice.recovery,
     });
+    }
   }
-  if (parsedRecoveryExecutionSliceAuthority) {
+  if (parsedRecoveryExecutionSliceAuthority && parsedRecoveryExecutionSliceAuthority.kind !== "native") {
     if (
       !base.recoveryDispatchId
       || base.attemptClass === "evidence_only"

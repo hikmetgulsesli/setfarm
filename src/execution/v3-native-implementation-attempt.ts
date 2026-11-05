@@ -7,8 +7,8 @@ import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifac
 import { IndexedArtifactPublisher } from "../product-compiler/indexed-artifact-publisher.js";
 import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "../product-compiler/artifact-store-authority.js";
 import { resolveArtifactStorePublicationAuthorityMode } from "../runtime-config.js";
-import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
-import { verifyLegacyImplementationSliceV2 } from "../product-compiler/slice-compiler-v2-legacy.js";
+import { ImplementationRecoveryDirectiveV2Schema, LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
+import { compileLegacyImplementationSliceV2, verifyLegacyImplementationSliceV2 } from "../product-compiler/slice-compiler-v2-legacy.js";
 import { Sha256Schema, StoryIdSchema } from "../product-compiler/schemas/common-v1.js";
 import { createAttemptRepository, lockAttemptReservationOwnerInTransaction, reserveAttemptInTransaction } from "./attempt-repository.js";
 import { createV3ImplementationAttemptV2Assembler, nativeImplementationSourcePathsV3 } from "./v3-implementation-attempt-v2.js";
@@ -17,7 +17,9 @@ import { resolveV3GitRevision } from "./v3-git-revision.js";
 import { captureV3ImplementationSourceSnapshotsV2 } from "./v3-source-snapshot-v2.js";
 import {
   authenticateV3NativePreparation, recheckV3NativePreparationInTransaction, bindV3PreparationAuthorityAttemptV2InTransaction,
-  captureNativeOriginalFileSignatures, readinessFromNativePreparationV2,
+  captureNativeAttemptFileSignatures, captureNativeOriginalFileSignatures,
+  authenticateNativeGitCustody, recheckNativeGitCustodyInTransaction,
+  readinessFromNativePreparationV2,
   readV3PreparationAuthorityByClaimV2, readV3PreparationAuthorityByAttemptV2,
   readV3NativeDependencyAuthority, readV3NativeIndexedArtifact,
   type V3NativePreparationArtifacts,
@@ -31,6 +33,21 @@ import { createV3ImplementationClaimHandoffV2, type V3ImplementationClaimHandoff
 import { createV3ImplementationContext } from "./v3-implementation-handoff.js";
 import { resolveV3ExecutionProfile, type ModelExecutionProfileV1 } from "./operational-retry-directive.js";
 import type { ExecutionAttemptV1, SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
+
+import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
+import { createFindingRecoveryRepository } from "../recovery/finding-recovery-repository.js";
+import { createV3RecoveryClaimAuthority, V3RecoveryClaimHandoffV1Schema } from "../recovery/v3-recovery-claim-authority.js";
+import type { RecoveryCaseRevisionV1, RecoveryRevisionDispatchV1 } from "../recovery/recovery-delivery.js";
+import type { FindingSetV1 } from "../findings/finding-set.js";
+import type { GithubReviewThreadEvidenceV1 } from "../findings/github-review-source.js";
+
+type NativeRecoveryContextV3 = Readonly<{
+  revision: RecoveryCaseRevisionV1; dispatch: RecoveryRevisionDispatchV1; findingSet: FindingSetV1;
+  reviewEvidenceArtifacts: readonly Readonly<{ artifactHash: string; evidence: GithubReviewThreadEvidenceV1 }>[];
+}>;
+type NativeRecoveryPreparedV3 = Readonly<Omit<NativePreparedImplementationV3, "kind"> & {
+  kind: "native-recovery-prepared"; recovery: NativeRecoveryContextV3;
+}>;
 
 export type NativePreparedImplementationV3 = Readonly<{
   kind: "native-prepared";
@@ -50,6 +67,13 @@ const ReserveInputSchema = z.object({
   branch: z.string().min(1).max(1_000), worktree: z.string().min(1).max(4_000).refine(path.isAbsolute),
 }).strict();
 export type NativeImplementationReservationV3 = z.input<typeof ReserveInputSchema>;
+const RecoveryReserveInputSchema = ReserveInputSchema.omit({ nativeAuthorityHash: true, role: true }).extend({
+  role: z.enum(["developer", "supervisor"]), findingSetHash: Sha256Schema.optional(),
+  recoveryDelivery: z.object({ dispatchId: z.string().regex(/^RDISP_[a-f0-9]{64}$/),
+    revisionId: z.string().regex(/^RREV_[a-f0-9]{64}$/), ownerInstanceId: z.string().min(1).max(500),
+    leaseToken: z.string().min(16).max(500) }).strict(),
+}).strict();
+type NativeRecoveryReservationV3 = z.infer<typeof RecoveryReserveInputSchema>;
 const LocatorSchema = z.object({ runId: z.string().min(1).max(500), storyId: StoryIdSchema,
   attemptId: z.string().regex(/^ATT_[A-Za-z0-9-]{16,160}$/) }).strict();
 
@@ -114,8 +138,9 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
       }, options);
       if (!same(actual, dependency)) throw new Error("V3_NATIVE_PREPARED_DEPENDENCY_MISMATCH");
     }
-    const snapshots = captureNativeOriginalFileSignatures({ worktree: attempt.worktree,
-      source: origin.authority.baseRevision, files: nativeImplementationSourcePathsV3(packet, input.storyId) });
+    const snapshots = await captureNativeAttemptFileSignatures(options.sql, { runId: input.runId,
+      attemptId: input.attemptId, source: origin.authority.baseRevision,
+      files: nativeImplementationSourcePathsV3(packet, input.storyId) });
     const verified = verifyLegacyImplementationSliceV2({ slice, compilerInput: {
       packetHash: packet.packetHash, packet: packet.packet, productSpec: packet.productSpec,
       designGraph: packet.designGraph, buildTopology: packet.buildTopology, storyPlan: packet.storyPlan,
@@ -144,6 +169,10 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
       readPacket: runId => reader.readExactSealedPacket(runId),
     }).assemble({ runId: input.runId, stepId: input.stepId, storyId: input.storyId,
       worktree: input.worktree, preparationAuthority: authority });
+    const gitCustody = assembled ? await authenticateNativeGitCustody(options.sql, {
+      runId: input.runId, claimId: input.claimId, worktree: input.worktree, branch: input.branch,
+      sourceBefore: authority.baseRevision,
+    }) : undefined;
     if (assembled) {
       const published = await publisher.put(assembled.envelope);
       if (published.hash !== assembled.sliceHash) throw new Error("V3_NATIVE_SLICE_PUBLICATION_MISMATCH");
@@ -182,6 +211,8 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
       if (status.byteLength || !same(head, authority.baseRevision) || !same(current.snapshots, assembled.compilerInput.currentFiles)) {
         throw new Error("V3_NATIVE_RESERVATION_SOURCE_CHANGED");
       }
+      if (!gitCustody) throw new Error("V3_NATIVE_GIT_CUSTODY_UNAUTHENTICATED");
+      await recheckNativeGitCustodyInTransaction(transaction, gitCustody);
       const reserved = await reserveAttemptInTransaction(transaction, {
         claimId: input.claimId, runId: input.runId, stepId: input.stepId, storyId: input.storyId,
         attemptClass: "product_implementation", packetHash: authority.packetHash,
@@ -189,7 +220,7 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
         sourceBefore: authority.baseRevision, role: input.role, agentId: input.agentId,
         branch: input.branch, worktree: input.worktree,
         evidenceRefs: [`setfarm://claim-log/${input.claimId}`, `setfarm://artifact/${assembled.sliceHash}`,
-          `setfarm://preparation-authority-v2/${authority.authorityHash}`],
+          `setfarm://preparation-authority-v2/${authority.authorityHash}`, gitCustody.evidenceRef],
       });
       if (reserved.status !== "reserved") throw new Error("V3_NATIVE_RESERVATION_CONFLICT");
       await transaction.unsafe(
@@ -213,8 +244,8 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
   return Object.freeze({ reserve, loadPreparedAttempt });
 }
 
-/** A genuine initial prepared owner upgraded with its deterministic native plan.
- * Successor ownership is deliberately not represented by this initial type. */
+/** Native context retains initial origin separately from an authenticated
+ * recovery execution row and its current-source deterministic plan. */
 export type NativeImplementationContextV3 = Readonly<Omit<NativePreparedImplementationV3, "kind"> & {
   kind: "native-dispatch-ready";
   artifactProducer: SemanticArtifactProducerV1;
@@ -228,7 +259,7 @@ export type NativeImplementationContextV3 = Readonly<Omit<NativePreparedImplemen
   executionProfile: ModelExecutionProfileV1;
   operationalRetry?: never;
   supervisorRetry?: never;
-  recovery?: never;
+  recovery?: NativeRecoveryContextV3;
 }>;
 
 export function createNativeV3ImplementationAttemptHandoff(input: Readonly<{
@@ -240,6 +271,13 @@ export function createNativeV3ImplementationAttemptHandoff(input: Readonly<{
     || compiled.attempt.branch !== input.branch || compiled.attempt.worktree !== input.workdir) {
     throw new Error("V3_NATIVE_PREPARED_ORIGIN_MISMATCH");
   }
+  const attempt = compiled.attempt;
+  const executionAuthority = attempt.attemptClass === "supervisor_repair"
+    ? { role: "supervisor", attemptClass: "supervisor_repair" }
+    : { role: "developer", attemptClass: "product_implementation" };
+  if (attempt.role !== executionAuthority.role || attempt.attemptClass !== executionAuthority.attemptClass) {
+    throw new Error("V3_IMPLEMENTATION_HANDOFF_MODEL_AUTHORITY_REQUIRED");
+  }
   return createV3ImplementationClaimHandoffV2({
     schema: "setfarm.v3-implementation-claim-handoff.v2", protocol: "v3",
     runId: compiled.attempt.runId, stepId: input.stepDbId, workflowStepId: "implement",
@@ -250,11 +288,20 @@ export function createNativeV3ImplementationAttemptHandoff(input: Readonly<{
     sliceHash: compiled.sliceHash, sliceRef: compiled.sliceRefKey,
     evidencePlanHash: compiled.evidencePlan.planHash,
     evidencePlanArtifactHash: compiled.evidencePlanArtifactHash, evidencePlanRef: compiled.evidencePlanRefKey,
-    executionAuthority: { role: "developer", attemptClass: "product_implementation" },
+    executionAuthority,
     executionProfile: compiled.executionProfile, sourceBefore: compiled.sourceBefore,
     artifactProducer: compiled.artifactProducer, packetEnvelope: compiled.packetEnvelope,
     compilationReportEnvelope: compiled.compilationReportEnvelope, nativeAuthority: compiled.nativeAuthority,
     implementationSlice: compiled.slice, evidencePlan: compiled.evidencePlan,
+    ...(compiled.recovery ? { findingSet: compiled.recovery.findingSet,
+      reviewEvidenceArtifacts: compiled.recovery.reviewEvidenceArtifacts,
+      recoveryAttempt: { attemptId: attempt.attemptId, claimId: attempt.claimId, runId: attempt.runId,
+        stepId: attempt.stepId, storyId: attempt.storyId, generation: attempt.generation,
+        attemptClass: attempt.attemptClass, role: attempt.role, packetHash: attempt.packetHash,
+        compilationReportHash: attempt.compilationReportHash, sliceHash: attempt.sliceHash,
+        sourceBefore: attempt.sourceBefore, findingSetHash: attempt.findingSetHash,
+        recoveryCaseRevisionId: attempt.recoveryCaseRevisionId, recoveryDispatchId: attempt.recoveryDispatchId },
+    } : {}),
   });
 }
 
@@ -271,7 +318,241 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
   const publisher = new IndexedArtifactPublisher({ index: reader.index, store: reader.store,
     publicationAuthority, ownerInstanceId: `native-context:${process.pid}` });
 
-  async function compileContext(prepared: NativePreparedImplementationV3): Promise<NativeImplementationContextV3> {
+  const recoveryDeliveries = createRecoveryDeliveryRepository(options.sql);
+  const recoveryFindings = createFindingRecoveryRepository(options.sql);
+  const attempts = createAttemptRepository(options.sql);
+
+  // Read actual publication and immutable rows before constructing any recovery
+  // slice. Reservation still rechecks these under its existing locks and CAS.
+  async function recoveryInputs(input: NativeRecoveryReservationV3, attempt?: ExecutionAttemptV1) {
+    const [revision, dispatch, delivery] = await Promise.all([
+      recoveryDeliveries.findRevision(input.recoveryDelivery.revisionId),
+      recoveryDeliveries.findDispatch(input.recoveryDelivery.dispatchId),
+      recoveryDeliveries.findDelivery(input.recoveryDelivery.dispatchId),
+    ]);
+    if (!revision || !dispatch || !delivery) throw new Error("V3_NATIVE_RECOVERY_AUTHORITY_MISSING");
+    const rows = await options.sql.unsafe<Array<{ handoff_canonical_json: string; handoff_hash: string }>>(
+      `SELECT p.handoff_canonical_json,p.handoff_hash
+       FROM internal_production_v3_recovery_claim_publications_v1 p
+       JOIN claim_log c ON c.id=p.claim_id AND c.run_id=p.run_id
+         AND c.step_id=p.workflow_step_id AND c.story_id=p.story_id
+       JOIN runtime_sessions s ON s.session_id=p.runtime_session_id AND s.claim_id=c.id
+         AND s.run_id=p.run_id AND s.workflow_step_id=p.workflow_step_id
+         AND s.step_db_id=p.step_db_id AND s.story_db_id=p.story_db_id AND s.story_id=p.story_id
+         AND s.claim_agent_id=c.agent_id
+       WHERE p.claim_id=$1 AND p.run_id=$2 AND p.workflow_step_id=$3 AND p.story_id=$4
+         AND p.revision_id=$5 AND p.dispatch_id=$6 AND c.agent_id=$7`,
+      [input.claimId, input.runId, input.stepId, input.storyId, revision.revisionId, dispatch.dispatchId, input.agentId]);
+    if (rows.length !== 1) throw new Error("V3_NATIVE_RECOVERY_CLAIM_PUBLICATION_MISSING");
+    const handoff = V3RecoveryClaimHandoffV1Schema.parse(JSON.parse(rows[0]!.handoff_canonical_json));
+    const findingSet = await recoveryFindings.findFindingSet(dispatch.findingSetHash);
+    const directive = {
+      packetHash: revision.packetHash, contractSliceHash: revision.contractSliceHash,
+      sourceRevision: revision.sourceRevision, findingSetHash: revision.findingSetHash,
+      findingIds: revision.findingIds, expectedDelta: revision.expectedDelta,
+      allowedPaths: revision.allowedPaths, evidencePlan: revision.evidencePlan,
+      ...(revision.evidencePlanArtifactHash ? { evidencePlanArtifactHash: revision.evidencePlanArtifactHash } : {}),
+    };
+    if (rows[0]!.handoff_canonical_json !== canonicalJsonStringify(handoff)
+      || rows[0]!.handoff_hash !== hashCanonicalJson(handoff)
+      || handoff.runId !== input.runId || handoff.storyId !== input.storyId
+      || handoff.revisionId !== revision.revisionId || handoff.dispatchId !== dispatch.dispatchId
+      || handoff.recoveryCaseId !== revision.recoveryCaseId || dispatch.recoveryCaseId !== revision.recoveryCaseId
+      || dispatch.revisionId !== revision.revisionId || handoff.dispatchClass !== dispatch.dispatchClass
+      || handoff.recoveryOwner !== revision.owner || revision.runId !== input.runId || revision.storyId !== input.storyId
+      || dispatch.runId !== input.runId || dispatch.storyId !== input.storyId
+      || !same(handoff.directive, directive) || dispatch.packetHash !== revision.packetHash
+      || dispatch.contractSliceHash !== revision.contractSliceHash || !same(dispatch.sourceRevision, revision.sourceRevision)
+      || dispatch.findingSetHash !== revision.findingSetHash || !same(dispatch.findingIds, revision.findingIds)
+      || !same(dispatch.evidencePlan, revision.evidencePlan) || dispatch.evidencePlanArtifactHash !== revision.evidencePlanArtifactHash
+      || !findingSet || findingSet.findingSetHash !== revision.findingSetHash
+      || findingSet.runId !== input.runId || findingSet.storyId !== input.storyId
+      || findingSet.packetHash !== revision.packetHash || findingSet.sliceHash !== revision.contractSliceHash
+      || !same(findingSet.sourceRevision, revision.sourceRevision)
+      || !same(findingSet.findings.map(finding => finding.findingId), revision.findingIds)
+      || (input.findingSetHash !== undefined && input.findingSetHash !== findingSet.findingSetHash)
+      || handoff.lease.ownerInstanceId !== input.recoveryDelivery.ownerInstanceId
+      || handoff.lease.leaseToken !== input.recoveryDelivery.leaseToken
+      || delivery.ownerInstanceId !== handoff.lease.ownerInstanceId || delivery.leaseToken !== handoff.lease.leaseToken
+      || delivery.leaseExpiresAt !== handoff.lease.expiresAt
+      || input.role !== (handoff.dispatchClass === "supervisor_repair" ? "supervisor" : "developer")) {
+      throw new Error("V3_NATIVE_RECOVERY_AUTHORITY_MISMATCH");
+    }
+    if (attempt && (attempt.claimId !== input.claimId || delivery.claimId !== input.claimId
+      || delivery.attemptId !== attempt.attemptId || delivery.executionSliceHash !== attempt.sliceHash
+      || delivery.attemptCount !== 1 || attempt.recoveryCaseRevisionId !== revision.revisionId
+      || attempt.recoveryDispatchId !== dispatch.dispatchId || attempt.findingSetHash !== findingSet.findingSetHash
+      || attempt.attemptClass !== handoff.dispatchClass || attempt.role !== input.role
+      || !same(attempt.sourceBefore, revision.sourceRevision))) {
+      throw new Error("V3_NATIVE_RECOVERY_ATTEMPT_MISMATCH");
+    }
+    // Resolve the genuine predecessor's initial binding; never synthesize a V2
+    // authority at the recovery base or insert this successor into that relation.
+    const priorRows = await options.sql.unsafe<Array<{ attempt_id: string }>>(
+      `SELECT a.attempt_id FROM execution_attempts a JOIN recovery_cases c
+         ON c.recovery_case_id=$1 AND c.prior_attempt_refs::jsonb ? a.attempt_id
+       JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id
+         AND q.run_id=a.run_id AND q.workflow_step_id=a.step_id AND q.story_id=a.story_id AND q.output_hash=a.output_hash
+       JOIN runtime_sessions s ON s.session_id=q.runtime_session_id AND s.attempt_id=a.attempt_id
+         AND s.claim_id=a.claim_id AND s.run_id=a.run_id AND s.story_id=a.story_id
+         AND s.step_db_id=q.step_db_id AND s.workflow_step_id=a.step_id
+       JOIN claim_log cl ON cl.id=a.claim_id AND cl.outcome=q.claim_outcome
+       WHERE a.run_id=$2 AND a.step_id=$3 AND a.story_id=$4 AND a.recovery_dispatch_id IS DISTINCT FROM $5
+         AND ($6::integer IS NULL OR a.generation=$6)
+         AND q.state='accepted' AND q.apply_phase='effects_committed' AND s.state='released'
+         AND q.claim_outcome IN ('completed','failed') ORDER BY a.generation DESC LIMIT 1`,
+      [handoff.recoveryCaseId, input.runId, input.stepId, input.storyId, dispatch.dispatchId,
+        attempt ? attempt.generation - 1 : null]);
+    const predecessor = priorRows[0] ? await attempts.findById(priorRows[0].attempt_id) : undefined;
+    const originRefs = predecessor?.evidenceRefs.filter(ref => ref.startsWith("setfarm://preparation-authority-v2/")) ?? [];
+    if (!predecessor || originRefs.length !== 1 || predecessor.sliceHash !== revision.contractSliceHash
+      || !same(predecessor.sourceAfter, revision.sourceRevision)) throw new Error("V3_NATIVE_RECOVERY_PREDECESSOR_MISMATCH");
+    const originRows = await options.sql.unsafe<Array<{ attempt_id: string }>>(
+      `SELECT b.attempt_id FROM v3_preparation_authority_attempts_v2 b
+       JOIN execution_attempts a ON a.attempt_id=b.attempt_id AND a.claim_id=b.claim_id AND a.slice_hash=b.slice_hash
+       WHERE b.authority_hash=$1 AND a.run_id=$2 AND a.step_id=$3 AND a.story_id=$4`,
+      [originRefs[0]!.slice("setfarm://preparation-authority-v2/".length), input.runId, input.stepId, input.storyId]);
+    const origin = originRows[0] && originRows.length === 1
+      ? await readV3PreparationAuthorityByAttemptV2(options.sql, originRows[0].attempt_id) : undefined;
+    const initial = originRows[0] ? await attempts.findById(originRows[0].attempt_id) : undefined;
+    if (!origin || !initial || initial.attemptClass !== "product_implementation" || initial.role !== "developer"
+      || initial.recoveryDispatchId || initial.recoveryCaseRevisionId || initial.claimId !== origin.claimId
+      || initial.packetHash !== origin.authority.packetHash || initial.compilationReportHash !== origin.authority.compilationReportHash
+      || !same(initial.sourceBefore, origin.authority.baseRevision) || initial.packetHash !== revision.packetHash
+      || predecessor.compilationReportHash !== initial.compilationReportHash
+      || (attempt && (attempt.packetHash !== initial.packetHash || attempt.compilationReportHash !== initial.compilationReportHash
+        || !same(attempt.evidenceRefs.filter(ref => ref.startsWith("setfarm://preparation-authority-v2/")), originRefs)))) {
+      throw new Error("V3_NATIVE_RECOVERY_ORIGIN_MISMATCH");
+    }
+    return { revision, dispatch, findingSet, handoff, delivery, predecessor, origin: origin.authority,
+      reviewEvidenceArtifacts: [] };
+  }
+
+  async function compileRecovery(input: NativeRecoveryReservationV3, authority: Awaited<ReturnType<typeof recoveryInputs>>,
+    attempt?: ExecutionAttemptV1) {
+    const packet = await reader.readExactSealedPacket(input.runId);
+    if (!("implementationSourceMap" in packet) || packet.packetHash !== authority.origin.packetHash
+      || packet.refs.compilationReport !== authority.origin.compilationReportHash) throw new Error("V3_NATIVE_PREPARED_PACKET_MISMATCH");
+    for (const dependency of authority.origin.dependencyAttempts) {
+      const actual = await readV3NativeDependencyAuthority(options.sql, options.sql, {
+        runId: input.runId, stepId: input.stepId, packetHash: packet.packetHash,
+        storyId: dependency.storyId, attemptId: dependency.attemptId,
+      }, options);
+      if (!same(actual, dependency)) throw new Error("V3_NATIVE_PREPARED_DEPENDENCY_MISMATCH");
+    }
+    const files = nativeImplementationSourcePathsV3(packet, input.storyId);
+    const current = attempt
+      ? await captureNativeAttemptFileSignatures(options.sql, { runId: input.runId, attemptId: attempt.attemptId,
+          source: authority.revision.sourceRevision, files })
+      : captureNativeOriginalFileSignatures({ worktree: input.worktree, source: authority.revision.sourceRevision, files });
+    const changes = current.filter(file => authority.revision.allowedPaths.includes(file.path))
+      .map(({ pathRef, path, presence, contentHash }) => ({ pathRef, path, before: { presence, contentHash } }));
+    const recovery = ImplementationRecoveryDirectiveV2Schema.parse({
+      schema: "setfarm.implementation-recovery-directive.v2", findingSet: authority.findingSet,
+      sourceRevision: authority.revision.sourceRevision,
+      expectedSourceDelta: { schema: "setfarm.implementation-source-delta.v2", mode: "generated_repair",
+        expectedDelta: authority.revision.expectedDelta, allowedPaths: authority.revision.allowedPaths, changes },
+    });
+    const compilerInput = {
+      packetHash: packet.packetHash, packet: packet.packet, productSpec: packet.productSpec,
+      designGraph: packet.designGraph, buildTopology: packet.buildTopology, storyPlan: packet.storyPlan,
+      designSourceClosure: packet.designSourceClosure, implementationSourceMap: packet.implementationSourceMap,
+      storyId: input.storyId, sourceRevision: authority.revision.sourceRevision, producer: packet.producer,
+      currentFiles: current.map(({ path: _path, ...snapshot }) => snapshot), recovery,
+      dependencyOutputs: authority.origin.dependencyAttempts.map(({ attemptId: _id, attemptGeneration: _generation,
+        attemptClass: _class, disposition: _disposition, ...output }) => output),
+    };
+    const compiled = compileLegacyImplementationSliceV2(compilerInput);
+    if (compiled.status !== "compiled") throw new Error(`V3_NATIVE_RECOVERY_COMPILATION_REJECTED:${JSON.stringify(compiled.diagnostics)}`);
+    const verified = verifyLegacyImplementationSliceV2({ slice: compiled.slice, compilerInput });
+    if (verified.status !== "verified" || verified.sliceHash !== compiled.sliceHash) throw new Error("V3_NATIVE_RECOVERY_REPRODUCTION_FAILED");
+    return { ...compiled, current, sliceRefKey: createV3ArtifactRefKeyV2("slice", input.storyId, compiled.sliceHash) };
+  }
+
+  async function loadRecoveryPrepared(attempt: ExecutionAttemptV1): Promise<NativeRecoveryPreparedV3> {
+    if (!attempt.worktree || !attempt.branch || !attempt.claimId || !attempt.recoveryDispatchId || !attempt.recoveryCaseRevisionId) {
+      throw new Error("V3_NATIVE_RECOVERY_ATTEMPT_MISMATCH");
+    }
+    const delivery = await recoveryDeliveries.findDelivery(attempt.recoveryDispatchId);
+    const input = RecoveryReserveInputSchema.parse({ claimId: attempt.claimId, runId: attempt.runId,
+      stepId: attempt.stepId, storyId: attempt.storyId, role: attempt.role, agentId: attempt.agentId,
+      branch: attempt.branch, worktree: attempt.worktree, findingSetHash: attempt.findingSetHash,
+      recoveryDelivery: { dispatchId: attempt.recoveryDispatchId, revisionId: attempt.recoveryCaseRevisionId,
+        ownerInstanceId: delivery?.ownerInstanceId, leaseToken: delivery?.leaseToken } });
+    const authority = await recoveryInputs(input, attempt);
+    const assembled = await compileRecovery(input, authority, attempt);
+    const envelope = await readV3NativeIndexedArtifact(reader, assembled.sliceHash);
+    const refs = await options.sql.unsafe<Array<{ artifact_hash: string }>>(
+      "SELECT artifact_hash FROM run_artifact_refs WHERE run_id=$1 AND ref_key=$2", [input.runId, assembled.sliceRefKey]);
+    if (attempt.sliceHash !== assembled.sliceHash || !same(envelope, assembled.envelope)
+      || refs.length !== 1 || refs[0]!.artifact_hash !== assembled.sliceHash
+      || !attempt.evidenceRefs.includes(`setfarm://artifact/${assembled.sliceHash}`)) throw new Error("V3_NATIVE_RECOVERY_REFERENCE_MISMATCH");
+    return { kind: "native-recovery-prepared", readiness: readinessFromNativePreparationV2(authority.origin),
+      nativeAuthority: authority.origin, attempt, slice: assembled.slice, sliceHash: assembled.sliceHash,
+      sliceRefKey: assembled.sliceRefKey, sourceBefore: authority.revision.sourceRevision,
+      recovery: { revision: authority.revision, dispatch: authority.dispatch,
+        findingSet: authority.findingSet, reviewEvidenceArtifacts: authority.reviewEvidenceArtifacts } };
+  }
+
+  async function reserveRecovery(raw: unknown): Promise<NativeImplementationContextV3> {
+    const input = RecoveryReserveInputSchema.parse(raw);
+    const authority = await recoveryInputs(input);
+    const held = await createV3RecoveryClaimAuthority(options.sql).acquireRecoveryClaim({
+      runId: input.runId, storyId: input.storyId, ownerInstanceId: input.recoveryDelivery.ownerInstanceId,
+      continuation: authority.delivery.attemptId ? { kind: "attempt", attemptId: authority.delivery.attemptId }
+        : { kind: "unreserved_lease", leaseToken: input.recoveryDelivery.leaseToken },
+    });
+    if (!same(held.directive, authority.handoff.directive) || !same(held.lease, authority.handoff.lease)) {
+      throw new Error("V3_NATIVE_RECOVERY_LIVE_LEASE_MISMATCH");
+    }
+    const gitCustody = await authenticateNativeGitCustody(options.sql, {
+      runId: input.runId, claimId: input.claimId, worktree: input.worktree, branch: input.branch,
+      sourceBefore: authority.revision.sourceRevision,
+    });
+    // A replay reloads immutable pinned source and never requires current edits
+    // to equal sourceBefore. The lower reservation still authenticates its lease.
+    const assembled = await compileRecovery(input, authority);
+    if (!authority.delivery.attemptId) {
+      const head = resolveV3GitRevision({ repo: input.worktree, requestedRef: "HEAD", expectedSha: authority.revision.sourceRevision.sha });
+      const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+        cwd: input.worktree, timeout: 10_000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (status.byteLength || !same(head, authority.revision.sourceRevision)) throw new Error("V3_NATIVE_RECOVERY_SOURCE_CHANGED");
+    }
+    const published = await publisher.put(assembled.envelope);
+    if (published.hash !== assembled.sliceHash) throw new Error("V3_NATIVE_SLICE_PUBLICATION_MISMATCH");
+    const reservation = await options.sql.begin(async transaction => {
+      await lockAttemptReservationOwnerInTransaction(transaction, input);
+      await recheckNativeGitCustodyInTransaction(transaction, gitCustody);
+      const result = await reserveAttemptInTransaction(transaction, {
+        claimId: input.claimId, runId: input.runId, stepId: input.stepId, storyId: input.storyId,
+        attemptClass: authority.handoff.dispatchClass, packetHash: authority.origin.packetHash,
+        compilationReportHash: authority.origin.compilationReportHash, sliceHash: assembled.sliceHash,
+        sourceBefore: authority.revision.sourceRevision, findingSetHash: authority.findingSet.findingSetHash,
+        recoveryCaseRevisionId: authority.revision.revisionId, recoveryDispatchId: authority.dispatch.dispatchId,
+        recoveryDeliveryLease: { ownerInstanceId: held.lease.ownerInstanceId, leaseToken: held.lease.leaseToken },
+        recoveryExecutionSliceEnvelope: assembled.envelope,
+        role: input.role, agentId: input.agentId, branch: input.branch, worktree: input.worktree,
+        evidenceRefs: [`setfarm://claim-log/${input.claimId}`, `setfarm://artifact/${assembled.sliceHash}`,
+          `setfarm://preparation-authority-v2/${authority.origin.authorityHash}`,
+          `setfarm://finding-set/${authority.findingSet.findingSetHash}`,
+          `setfarm://recovery-revision/${authority.revision.revisionId}`, `setfarm://recovery-dispatch/${authority.dispatch.dispatchId}`,
+          ...authority.predecessor.evidenceRefs.filter(ref => ref.startsWith("setfarm://native-git-custody-v1/"))],
+      });
+      if (result.status !== "reserved") throw new Error("V3_NATIVE_RESERVATION_CONFLICT");
+      await transaction.unsafe("INSERT INTO run_artifact_refs(run_id,ref_key,artifact_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+        [input.runId, assembled.sliceRefKey, assembled.sliceHash]);
+      const refs = await transaction.unsafe<Array<{ artifact_hash: string }>>(
+        "SELECT artifact_hash FROM run_artifact_refs WHERE run_id=$1 AND ref_key=$2", [input.runId, assembled.sliceRefKey]);
+      if (refs[0]?.artifact_hash !== assembled.sliceHash) throw new Error("V3_NATIVE_RESERVATION_REFERENCE_CONFLICT");
+      return result.attempt;
+    });
+    const compiled = await compileContext(await loadRecoveryPrepared(reservation));
+    await publishContext(input, compiled);
+    return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: reservation.attemptId });
+  }
+
+  async function compileContext(prepared: NativePreparedImplementationV3 | NativeRecoveryPreparedV3): Promise<NativeImplementationContextV3> {
     const packet = await reader.readExactSealedPacket(prepared.attempt.runId);
     if (!("implementationSourceMap" in packet) || packet.packetHash !== prepared.nativeAuthority.packetHash
       || packet.refs.compilationReport !== prepared.nativeAuthority.compilationReportHash) {
@@ -298,7 +579,11 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
   }
 
   async function loadAttemptContext(raw: unknown): Promise<NativeImplementationContextV3> {
-    const compiled = await compileContext(await preparedService.loadPreparedAttempt(raw));
+    const input = LocatorSchema.parse(raw);
+    const attempt = await attempts.findById(input.attemptId);
+    if (!attempt || attempt.runId !== input.runId || attempt.storyId !== input.storyId) throw new Error("V3_NATIVE_PREPARED_ORIGIN_MISMATCH");
+    const compiled = await compileContext(attempt.recoveryDispatchId
+      ? await loadRecoveryPrepared(attempt) : await preparedService.loadPreparedAttempt(input));
     const envelope = await readV3NativeIndexedArtifact(reader, compiled.evidencePlanArtifactHash);
     const refs = await options.sql.unsafe<Array<{ artifact_hash: string }>>(
       "SELECT artifact_hash FROM run_artifact_refs WHERE run_id=$1 AND ref_key=$2",
@@ -313,6 +598,12 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
   async function reserve(raw: unknown): Promise<NativeImplementationContextV3> {
     const input = ReserveInputSchema.parse(raw);
     const compiled = await compileContext(await preparedService.reserve(input));
+    await publishContext(input, compiled);
+    return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: compiled.attempt.attemptId });
+  }
+
+  async function publishContext(input: NativeImplementationReservationV3 | NativeRecoveryReservationV3,
+    compiled: NativeImplementationContextV3): Promise<void> {
     const identities = await options.sql.unsafe<Array<{ step_id: string; story_id: string }>>(
       `SELECT s.id AS step_id, st.id AS story_id FROM steps s JOIN stories st ON st.run_id=s.run_id
         WHERE s.run_id=$1 AND s.step_id=$2 AND st.story_id=$3`, [input.runId, input.stepId, input.storyId]);
@@ -326,7 +617,6 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     if (published.hash !== compiled.evidencePlanArtifactHash) throw new Error("V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH");
     await reader.index.addRunArtifactRef({ runId: input.runId,
       refKey: compiled.evidencePlanRefKey, artifactHash: published.hash });
-    return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: compiled.attempt.attemptId });
   }
-  return Object.freeze({ reserve, loadAttemptContext });
+  return Object.freeze({ reserve, reserveRecovery, loadAttemptContext });
 }

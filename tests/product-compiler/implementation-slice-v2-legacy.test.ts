@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import { hashRuntimeEvidenceContractV1 } from "../../src/evidence/runtime-evidence-contract-v1.js";
-import { createFindingSetV1 } from "../../src/findings/finding-set.js";
+import { compileEvidencePlanV2 } from "../../src/evidence/evidence-plan-v2.js";
+import { createCanonicalEvidenceBundleV2 } from "../../src/evidence/canonical-evidence-runner.js";
+import { createFindingSetFromEvidenceBundleV2 } from "../../src/findings/evidence-finding-set.js";
+import { createFindingSetV1, type FindingDraftV1 } from "../../src/findings/finding-set.js";
 import { SemanticArtifactEnvelopeV1Schema } from "../../src/product-compiler/artifact-store.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { produceDesignInteractionGraphV2 } from "../../src/product-compiler/producers/design-graph-v2.js";
@@ -1587,5 +1594,109 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
       const refused = compileImplementationSliceV2({ ...input, recovery: { ...generated, expectedSourceDelta: delta } });
       assert.equal(refused.status, "rejected", "generated mode must reject after fiction, scope expansion and stale before witnesses");
     }
+  });
+
+  it("native Task11 generated repair binds genuine canonical command findings", async () => {
+    const value = await stitchCompilerFixture();
+    const prior = compileOrThrow(value.input);
+    // Exact-mode control remains unchanged before exercising generated command
+    // authority. No command predicate is appended to ProductSpec or StoryPlan.
+    const exact = recoveryDirective(value.input, { pathRef: "PATH_SHARED_WRITE",
+      currentHash: value.input.currentFiles.find(file => file.pathRef === "PATH_SHARED_WRITE")!.contentHash,
+      afterHash: sha("task11-exact-command-control-after"), priorSliceHash: prior.sliceHash });
+    const exactResult = compileOrThrow({ ...value.input, recovery: exact });
+    assert.deepEqual(exactResult.slice.recovery, exact);
+    assert.equal(exactResult.sliceHash, hashCanonicalJson(exactResult.envelope));
+
+    const plan = compileEvidencePlanV2({ slice: prior.slice, sliceHash: prior.sliceHash });
+    const build = plan.commands.find(command => command.kind === "build");
+    assert.ok(build, "fixture must contain a genuinely selected native build command");
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-native-command-finding-"));
+    try {
+      const input = structuredClone(value.input);
+      input.sourceRevision = { sha: "7".repeat(40), treeHash: "8".repeat(40) };
+      const writable = prior.slice.files.filter(file => file.role === "owned" || file.role === "shared_writable");
+      for (const file of writable) {
+        // The existing sealed Stitch fixture hashes this exact single-key
+        // canonical JSON as its generated screen bytes. Keep that immutable
+        // source-map witness; only other current files model candidate edits.
+        const bytes = file.path === GENERATED_SCREEN_PATH
+          ? JSON.stringify({ label: "generated-play-page" })
+          : `// current failed candidate source for ${file.path}\n`;
+        const contentHash = createHash("sha256").update(bytes).digest("hex");
+        if (file.path === GENERATED_SCREEN_PATH) {
+          assert.equal(contentHash, GENERATED_SCREEN_HASH);
+          assert.equal(contentHash, file.contentHash);
+          assert.equal(prior.slice.storySourceMap.screens.find(screen => screen.pathRef === file.pathRef)?.contentHash, contentHash);
+        }
+        await mkdir(path.dirname(path.join(root, file.path)), { recursive: true });
+        await writeFile(path.join(root, file.path), bytes);
+        const snapshot = input.currentFiles.find(item => item.pathRef === file.pathRef);
+        assert.ok(snapshot);
+        snapshot.presence = "present";
+        snapshot.contentHash = contentHash;
+      }
+      const stamp = "2026-11-05T00:00:00.000Z";
+      // A deterministic failed-command trace feeds the real canonical producer.
+      // This pure test claims no spawned process or physical runtime evidence.
+      const canonical = createCanonicalEvidenceBundleV2({ runId: "run-native-command-finding",
+        storyId: input.storyId, attemptId: "ATT_native-command-finding-0001", workdir: root,
+        sourceRevision: input.sourceRevision, slice: prior.slice, plan,
+        startedAt: stamp, completedAt: stamp, execution: { interactions: [],
+          commands: plan.commands.map(command => ({ commandRef: command.commandRef,
+            exitCode: command.commandRef === build.commandRef ? 1 : 0,
+            stdout: "", stderr: command.commandRef === build.commandRef ? "build fixture failure" : "",
+            startedAt: stamp, completedAt: stamp })) } });
+      const emitted = createFindingSetFromEvidenceBundleV2({ workdir: root, slice: prior.slice,
+        sliceHash: prior.sliceHash, sourceRevision: input.sourceRevision, bundle: canonical.bundle });
+      assert.ok(emitted);
+      const commandPredicate = canonical.bundle.predicates.find(predicate => predicate.invariantRef === "INV_COMMAND_BUILD");
+      assert.ok(commandPredicate);
+      assert.equal(commandPredicate.predicateRef, `EVID_COMMAND_${build.commandRef}`);
+      const finding = emitted.findings.find(item => item.expectedPredicateRef === commandPredicate.predicateRef);
+      assert.ok(finding);
+      assert.equal(finding.origin, "build");
+      assert.equal(prior.slice.story.evidenceRefs.includes(finding.expectedPredicateRef!), false);
+      const { findingId: _findingId, ...draft } = finding;
+      const changes = writable.map(file => {
+        const snapshot = input.currentFiles.find(item => item.pathRef === file.pathRef)!;
+        return { pathRef: file.pathRef, path: file.path,
+          before: { presence: snapshot.presence, contentHash: snapshot.contentHash } };
+      }).sort((left, right) => left.pathRef < right.pathRef ? -1 : left.pathRef > right.pathRef ? 1 : 0);
+      const allowedPaths = changes.map(change => change.path).sort();
+      const recoveryFor = (selected: FindingDraftV1) => ({
+        schema: "setfarm.implementation-recovery-directive.v2",
+        findingSet: createFindingSetV1({ runId: emitted.runId, storyId: emitted.storyId,
+          packetHash: emitted.packetHash, sliceHash: emitted.sliceHash, sourceRevision: emitted.sourceRevision,
+          findings: [selected] }), sourceRevision: input.sourceRevision,
+        expectedSourceDelta: { schema: "setfarm.implementation-source-delta.v2", mode: "generated_repair",
+          expectedDelta: { kind: "source_change", invariantRefs: [selected.invariantRef], requiredPaths: allowedPaths },
+          allowedPaths, changes },
+      });
+      const recovery = recoveryFor(draft);
+      const result = compileImplementationSliceV2({ ...input, recovery });
+      assert.equal(result.status, "compiled", JSON.stringify(result));
+      if (result.status !== "compiled") assert.fail("actual native command finding must authorize only its generated repair");
+      assert.deepEqual(result.slice.recovery?.findingSet, recovery.findingSet);
+      assert.equal(verifyImplementationSliceV2({ slice: result.slice,
+        compilerInput: { ...input, recovery } }).status, "verified");
+      for (const bad of [
+        { ...draft, expectedPredicateRef: "EVID_COMMAND_CMD_NOT_SELECTED" },
+        { ...draft, invariantRef: "INV_COMMAND_TEST" },
+        { ...draft, origin: "runtime" },
+        { ...draft, sourceLocators: draft.sourceLocators.map(locator => ({ ...locator, contentHash: sha("stale-command-locator") })) },
+      ] satisfies FindingDraftV1[]) {
+        assert.equal(compileImplementationSliceV2({ ...input, recovery: recoveryFor(bad) }).status, "rejected",
+          "unknown command, crossed command kind/invariant/origin and stale current locator must refuse");
+      }
+      const unselected = prior.slice.build.commands.find(command => !plan.commands.some(selected => selected.commandRef === command.id));
+      if (unselected) {
+        assert.equal(compileImplementationSliceV2({ ...input,
+          recovery: recoveryFor({ ...draft, expectedPredicateRef: `EVID_COMMAND_${unselected.id}`,
+            invariantRef: `INV_COMMAND_${unselected.kind.toUpperCase()}` }) }).status, "rejected");
+      }
+      assert.deepEqual(compileOrThrow({ ...value.input, recovery: exact }), exactResult,
+        "generated command support must not alter old exact slice bytes or hashes");
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
