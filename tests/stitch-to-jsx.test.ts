@@ -149,6 +149,64 @@ describe("stitch non-native value channel", () => {
   });
 
   for (const attributes of [
+    "value", "value data-value", "data-value value",
+    'value data-value=""', 'data-value="" value',
+    'value="" data-value', 'data-value value=""',
+  ]) {
+    it(`preserves bare HTML value as an explicit empty channel: ${attributes}`, () => {
+      withValueChannelScreen(`<main><div id="bare" ${attributes}></div><div id="absent"></div></main>`, (code) => {
+        assert.deepEqual(valueChannelTagAttributes(code, "bare"), [["id", '"bare"'], ["data-value", '""']]);
+        assert.deepEqual(valueChannelTagAttributes(code, "absent"), [["id", '"absent"']]);
+      });
+    });
+  }
+
+  for (const attributes of [
+    'value data-value="nonempty"', 'data-value="nonempty" value',
+    'value="nonempty" data-value', 'data-value value="nonempty"',
+  ]) {
+    it(`refuses bare HTML value channel conflicts: ${attributes}`, () => {
+      assert.throws(() => withValueChannelScreen(`<main><div ${attributes}></div></main>`, () => {}), (error: unknown) => {
+        assert.ok(error instanceof Error && "stderr" in error);
+        assert.match(String(error.stderr), /STITCH_JSX_VALUE_CHANNEL_CONFLICT/);
+        return true;
+      });
+    });
+  }
+
+  it("preserves inline style value-like text without manufacturing a channel", () => {
+    withValueChannelScreen(`<main><div id="styled" style="font-family: '} value=changed'">Ready</div></main>`, (code) => {
+      assert.deepEqual(valueChannelTagAttributes(code, "styled"), [
+        ["id", '"styled"'], ["style", `{{fontFamily: "'} value=changed'"}}`],
+      ]);
+      assert.match(code, />Ready<\/div>/);
+    });
+  });
+
+  it("preserves inline style value-like text beside a real value channel without false conflict", () => {
+    withValueChannelScreen(`<main><div id="styled" style="font-family: '} value=changed'" value="refreshed">Ready</div></main>`, (code) => {
+      assert.deepEqual(valueChannelTagAttributes(code, "styled"), [
+        ["id", '"styled"'], ["style", `{{fontFamily: "'} value=changed'"}}`], ["data-value", '"refreshed"'],
+      ]);
+      assert.match(code, />Ready<\/div>/);
+    });
+  });
+
+  it("preserves lowercase namespace member component value props including independent data-value", () => {
+    withValueChannelScreen(`<main>
+      <ui.Status id="member-only" value="component"></ui.Status>
+      <ui.Status id="member-both" value="component" data-value="independent"></ui.Status>
+    </main>`, (code) => {
+      assert.deepEqual(valueChannelTagAttributes(code, "member-only"), [["id", '"member-only"'], ["value", '"component"']]);
+      assert.deepEqual(valueChannelTagAttributes(code, "member-both"), [
+        ["id", '"member-both"'], ["value", '"component"'], ["data-value", '"independent"'],
+      ]);
+      assert.match(code, /<ui\.Status id="member-only"/);
+      assert.match(code, /<ui\.Status id="member-both"/);
+    });
+  });
+
+  for (const attributes of [
     'value="changed" data-value="stale"', 'data-value="stale" value="changed"',
     'value="" data-value=" "', 'value=" x " data-value="x"',
     'value="first" value="different" data-value="first"',
