@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -552,6 +553,7 @@ const fixture = ${JSON.stringify(fixture)};
 const supported = new Set(["MODEL_ID_UNSPECIFIED", "GEMINI_3_8_FLASH", "GEMINI_3_5_FLASH_LITE"]);
 globalThis.fetch = async (url, options) => {
   if (String(url) === "https://example.invalid/status.html") {
+    if (fixture.mode === "auth401" || fixture.mode === "auth403") return new Response("private body token=do-not-publish", { status: Number(fixture.mode.slice(4)) });
     return new Response(Buffer.from(fixture.html, "base64"));
   }
   if (String(url) === "https://example.invalid/status.png") {
@@ -626,6 +628,25 @@ describe("stitch-api live model request compatibility", () => {
         }
       });
     }
+  }
+
+  for (const status of [401, 403]) {
+    it(`preserves typed HTML HTTP ${status} denial after accepted generation without replay`, () => {
+      const result = runGenerationCommandOffline("generate-all-screens-attempt", undefined, `auth${status}`);
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.deepEqual(result.requests.map((request) => request.params?.name ?? request.method),
+        ["initialize", "generate_screen_from_text"]);
+      const transport = JSON.parse(result.stdout);
+      assert.equal(transport.directScreenEvidence[0].disposition, "admitted_renderable_screen");
+      assert.deepEqual(transport.downloaded[0].artifactDownloadFailure, {
+        artifactKind: "html", httpStatus: status,
+        sourceRefHash: createHash("sha256").update("https://example.invalid/status.html").digest("hex"),
+        code: "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED",
+      });
+      assert.equal(transport.downloaded[0].htmlFile, undefined);
+      assert.deepEqual(result.artifacts, []);
+      assert.doesNotMatch(JSON.stringify(transport.downloaded), /https:|private body|do-not-publish|offline-dummy-only/);
+    });
   }
 
   for (const mode of ["reject", "ambiguous"]) {
