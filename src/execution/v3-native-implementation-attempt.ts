@@ -144,14 +144,40 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
     const snapshots = await captureNativeAttemptFileSignatures(options.sql, { runId: input.runId,
       attemptId: input.attemptId, source: origin.authority.baseRevision,
       files: nativeImplementationSourcePathsV3(packet, input.storyId) });
+    // Initial assembly observes declared dependency copies over the pinned base.
+    // Reproduce those bytes from their authenticated immutable source signatures,
+    // never from mutable worker files or by replacing the durable base revision.
+    const story=packet.storyPlan.stories.find(candidate=>candidate.id===input.storyId);
+    if(!story) throw new Error("V3_NATIVE_PREPARED_DEPENDENCY_MISMATCH");
+    const reproductionFiles=snapshots.map(snapshot=>{
+      const binding=packet.buildTopology.pathBindings.find(candidate=>candidate.id===snapshot.pathRef);
+      const owner=binding&&packet.buildTopology.owners.find(candidate=>candidate.id===binding.ownerRef);
+      if(!binding||binding.path!==snapshot.path) throw new Error("V3_NATIVE_PREPARED_DEPENDENCY_MISMATCH");
+      if(!owner||owner.kind!=="story"||!story.dependsOn.includes(owner.storyRef)) {
+        const {path:_path,...baseSnapshot}=snapshot;
+        return baseSnapshot;
+      }
+      const grants=packet.buildTopology.sharedGrants.filter(grant=>story.sharedGrantRefs.includes(grant.id)
+        &&grant.fromOwnerRef===owner.id&&grant.toOwnerRef===story.ownerRef&&grant.pathRefs.includes(snapshot.pathRef));
+      if(story.ownedPathRefs.includes(snapshot.pathRef)||grants.length!==1)
+        throw new Error("V3_NATIVE_PREPARED_DEPENDENCY_MISMATCH");
+      const dependencies=origin.authority.dependencyAttempts.filter(dependency=>dependency.storyId===owner.storyRef);
+      const signatures=dependencies.flatMap(dependency=>dependency.fileSignatures)
+        .filter(signature=>signature.pathRef===snapshot.pathRef&&signature.path===snapshot.path);
+      if(dependencies.length!==1||signatures.length!==1) throw new Error("V3_NATIVE_PREPARED_DEPENDENCY_MISMATCH");
+      const {path:_path,...signature}=signatures[0]!;
+      return signature;
+    });
     const verified = verifyLegacyImplementationSliceV2({ slice, compilerInput: {
       packetHash: packet.packetHash, packet: packet.packet, productSpec: packet.productSpec,
       designGraph: packet.designGraph, buildTopology: packet.buildTopology, storyPlan: packet.storyPlan,
       designSourceClosure: packet.designSourceClosure, implementationSourceMap: packet.implementationSourceMap,
       storyId: input.storyId, sourceRevision: origin.authority.baseRevision, producer: packet.producer,
-      currentFiles: snapshots.map(({ path: _path, ...snapshot }) => snapshot),
-      dependencyOutputs: origin.authority.dependencyAttempts.map(({ attemptId: _id, attemptGeneration: _generation,
-        attemptClass: _class, disposition: _disposition, ...output }) => output),
+      currentFiles: reproductionFiles,
+      dependencyOutputs: origin.authority.dependencyAttempts.map(dependency=>({
+        storyId:dependency.storyId,sliceHash:dependency.sliceHash,outputHash:dependency.outputHash,
+        sourceAfter:dependency.sourceAfter,fileSignatures:dependency.fileSignatures,
+      })),
     } });
     if (verified.status !== "verified" || verified.sliceHash !== origin.sliceHash) throw new Error("V3_NATIVE_PREPARED_REPRODUCTION_FAILED");
     return Object.freeze({ kind: "native-prepared", readiness: readinessFromNativePreparationV2(origin.authority),
@@ -479,8 +505,10 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
       designSourceClosure: packet.designSourceClosure, implementationSourceMap: packet.implementationSourceMap,
       storyId: input.storyId, sourceRevision: authority.revision.sourceRevision, producer: packet.producer,
       currentFiles: current.map(({ path: _path, ...snapshot }) => snapshot), recovery,
-      dependencyOutputs: authority.origin.dependencyAttempts.map(({ attemptId: _id, attemptGeneration: _generation,
-        attemptClass: _class, disposition: _disposition, ...output }) => output),
+      dependencyOutputs: authority.origin.dependencyAttempts.map(dependency=>({
+        storyId:dependency.storyId,sliceHash:dependency.sliceHash,outputHash:dependency.outputHash,
+        sourceAfter:dependency.sourceAfter,fileSignatures:dependency.fileSignatures,
+      })),
     };
     const compiled = compileLegacyImplementationSliceV2(compilerInput);
     if (compiled.status !== "compiled") throw new Error(`V3_NATIVE_RECOVERY_COMPILATION_REJECTED:${JSON.stringify(compiled.diagnostics)}`);

@@ -603,8 +603,11 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(fallback.sliceHash, origin.sliceHash);
     assert.equal(fallback.evidencePlanArtifactHash, origin.evidencePlanArtifactHash);
     assert.deepEqual(fallback.sourceBefore, origin.sourceBefore);
-    assert.deepEqual(createV3ImplementationContext({ handoff }).writeAuthority,
-      createV3ImplementationContext({ handoff: initialHandoff }).writeAuthority);
+    const fallbackWriteAuthority = createV3ImplementationContext({ handoff }).writeAuthority;
+    const initialWriteAuthority = createV3ImplementationContext({ handoff: initialHandoff }).writeAuthority;
+    assert.equal(initialWriteAuthority.mode, "initial");
+    assert.equal(fallbackWriteAuthority.mode, "operational_retry");
+    assert.deepEqual(fallbackWriteAuthority.allowedPaths, initialWriteAuthority.allowedPaths);
     const retryRuntime = await sessions.findById(retry.runtimeSessionId);
     assert.ok(retryRuntime);
     assert.equal(retryRuntime.state, "reserved");

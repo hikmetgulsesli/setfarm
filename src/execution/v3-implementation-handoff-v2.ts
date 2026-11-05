@@ -76,7 +76,10 @@ export const V3ImplementationClaimHandoffV2Schema = z.object({
   }
   if (origin.runId !== value.runId || origin.stepId !== value.workflowStepId || origin.storyId !== value.storyId
     || origin.packetHash !== value.packetHash || origin.compilationReportHash !== value.compilationReportHash
-    || !same(origin.dependencyAttempts.map(({ attemptId: _id, attemptGeneration: _generation, attemptClass: _class, disposition: _disposition, ...dependency }) => dependency), slice.dependencyOutputs)) {
+    || !same(origin.dependencyAttempts.map(dependency=>({
+      storyId:dependency.storyId,sliceHash:dependency.sliceHash,outputHash:dependency.outputHash,
+      sourceAfter:dependency.sourceAfter,fileSignatures:dependency.fileSignatures,
+    })), slice.dependencyOutputs)) {
     fail("nativeAuthority", "Native origin must bind exact run/story/packet/report/dependency witnesses");
   }
   try {

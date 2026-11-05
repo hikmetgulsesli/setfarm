@@ -839,10 +839,32 @@ export type NativeEvidenceWorktreeCustody = Readonly<{
   runId:string; storyId:string; dispatchId:string; revisionId:string;
   ownerInstanceId:string; leaseToken:string; worktree:string; repo:string;
   candidate:SourceRevisionV1; common:Readonly<{path:string;dev:string;ino:string}>;
-  directory:Readonly<{dev:string;ino:string}>; branch:string; retainedCommit:string;
+  directory:Readonly<{dev:string;ino:string}>;
+  parent:Readonly<{lexicalPath:string;canonicalPath:string;dev:string;ino:string}>;
+  branch:string; retainedCommit:string;
   created:boolean;
 }>;
 const nativeEvidenceWorktreeCustodies=new WeakMap<object,string>();
+
+/** Keep the exact durable lexical path. Only the host's standard Darwin
+ * /tmp -> /private/tmp alias is admitted; descendant/other symlinks still fail. */
+function captureNativeEvidenceWorktreeParent(worktree:string) {
+  const lexicalPath=path.dirname(worktree);
+  const canonicalPath=realpathSync(lexicalPath);
+  const standardTemporaryAlias=process.platform==="darwin" && (lexicalPath==="/tmp"||lexicalPath.startsWith("/tmp/"))
+    && lstatSync("/tmp").isSymbolicLink() && realpathSync("/tmp")==="/private/tmp"
+    && canonicalPath===`/private/tmp${lexicalPath.slice(4)}`;
+  if(canonicalPath!==lexicalPath&&!standardTemporaryAlias)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_PATH_INVALID","original parent is not canonical or the exact standard temporary alias");
+  const parent=lstatSync(canonicalPath,{bigint:true});
+  if(!parent.isDirectory()||parent.isSymbolicLink())
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_PATH_INVALID","original canonical parent must be an existing regular directory");
+  return Object.freeze({lexicalPath,canonicalPath,dev:parent.dev.toString(),ino:parent.ino.toString()});
+}
+function recheckNativeEvidenceWorktreeParent(worktree:string,parent:NativeEvidenceWorktreeCustody["parent"]) {
+  if(canonicalJsonStringify(captureNativeEvidenceWorktreeParent(worktree))!==canonicalJsonStringify(parent))
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_PATH_INVALID","original parent path or directory identity changed");
+}
 
 async function authenticateNativeEvidenceWorktreeLease(
   query:NativeGitQuery, lease:V3EvidenceOnlyPublicationLeaseV1,
@@ -900,9 +922,11 @@ export async function ensureNativeEvidenceOnlyWorktree(
   const authenticated=await authenticateNativeEvidenceWorktreeLease(query,lease);
   const {owner,canonical}=authenticated;
   if(!path.isAbsolute(owner.worktree)||/[\r\n\0]/.test(owner.worktree)
-    ||path.resolve(owner.worktree)!==owner.worktree||owner.worktree===canonical.repo
-    ||realpathSync(path.dirname(owner.worktree))!==path.dirname(owner.worktree))
-    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_PATH_INVALID","original worktree requires an exact canonical existing parent");
+    ||path.resolve(owner.worktree)!==owner.worktree||owner.worktree===canonical.repo)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_PATH_INVALID","original worktree requires its exact absolute stored path");
+  const parent=captureNativeEvidenceWorktreeParent(owner.worktree);
+  if(path.join(parent.canonicalPath,path.basename(owner.worktree))===canonical.repo)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_PATH_INVALID","original worktree cannot alias its canonical run repository");
   let exists=true;
   try {
     const stat=lstatSync(owner.worktree);
@@ -913,12 +937,16 @@ export async function ensureNativeEvidenceOnlyWorktree(
   }
   if(!exists) {
     const registrations=nativeCustodyGit(canonical.repo,["worktree","list","--porcelain","-z"]);
-    if(registrations.includes(`worktree ${owner.worktree}\0`))
+    const canonicalWorktree=path.join(parent.canonicalPath,path.basename(owner.worktree));
+    if(registrations.includes(`worktree ${owner.worktree}\0`)
+      ||registrations.includes(`worktree ${canonicalWorktree}\0`))
       repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_STALE_REGISTRATION","missing path still has a Git registration; never force/prune another owner");
     // A second exact lease/custody read immediately precedes the external effect.
     await authenticateNativeEvidenceWorktreeLease(query,lease);
+    recheckNativeEvidenceWorktreeParent(owner.worktree,parent);
     nativeCustodyGit(canonical.repo,["worktree","add","--detach","--",owner.worktree,lease.sourceRevision.sha]);
   }
+  recheckNativeEvidenceWorktreeParent(owner.worktree,parent);
   const currentCommon=nativeGitCommonDirectory(owner.worktree);
   if(canonicalJsonStringify(currentCommon)!==canonicalJsonStringify(canonical.common)
     ||nativeCustodyGit(owner.worktree,["rev-parse","--verify","HEAD"])!==lease.sourceRevision.sha)
@@ -927,11 +955,12 @@ export async function ensureNativeEvidenceOnlyWorktree(
   const after=await authenticateNativeEvidenceWorktreeLease(query,lease);
   if(after.canonical.retainedCommit!==canonical.retainedCommit)
     repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_BRANCH_CHANGED","restoration must preserve the retained branch exactly");
+  recheckNativeEvidenceWorktreeParent(owner.worktree,parent);
   const directory=lstatSync(owner.worktree,{bigint:true});
   const snapshot=Object.freeze({runId:lease.runId,storyId:lease.storyId,dispatchId:lease.dispatchId,revisionId:lease.revisionId,
     ownerInstanceId:lease.ownerInstanceId,leaseToken:lease.leaseToken,worktree:owner.worktree,repo:canonical.repo,
     candidate:Object.freeze({...lease.sourceRevision}),common:Object.freeze({...canonical.common}),
-    directory:Object.freeze({dev:directory.dev.toString(),ino:directory.ino.toString()}),
+    directory:Object.freeze({dev:directory.dev.toString(),ino:directory.ino.toString()}),parent,
     branch:owner.branch,retainedCommit:canonical.retainedCommit,created:!exists});
   nativeEvidenceWorktreeCustodies.set(snapshot,canonicalJsonStringify(snapshot));
   return snapshot;
@@ -954,6 +983,7 @@ export async function cleanupNativeEvidenceOnlyWorktree(
     packetHash:lease.packetHash,attemptId:authenticated.row.attempt_id});
   if(terminal.stage!=="pending_acceptance"||terminal.worktree!==snapshot.worktree)
     repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_CLEANUP_NOT_TERMINAL","passing terminal child must retain the real live delivery");
+  recheckNativeEvidenceWorktreeParent(snapshot.worktree,snapshot.parent);
   const directory=lstatSync(snapshot.worktree,{bigint:true});
   if(!directory.isDirectory()||directory.isSymbolicLink()||directory.dev.toString()!==snapshot.directory.dev
     ||directory.ino.toString()!==snapshot.directory.ino
@@ -970,7 +1000,9 @@ export async function cleanupNativeEvidenceOnlyWorktree(
   // Force applies only to untracked build/evidence output in the exact directory
   // created above. Tracked candidate changes already refused. No branch push,
   // reset, ref deletion, autosave or new retention ref occurs.
+  recheckNativeEvidenceWorktreeParent(snapshot.worktree,snapshot.parent);
   nativeCustodyGit(snapshot.repo,["worktree","remove","--force","--",snapshot.worktree]);
+  recheckNativeEvidenceWorktreeParent(snapshot.worktree,snapshot.parent);
   const after=await authenticateNativeEvidenceWorktreeLease(query,lease);
   if(after.canonical.retainedCommit!==snapshot.retainedCommit
     ||canonicalJsonStringify(nativeCustodyRevision(snapshot.repo,snapshot.candidate.sha))!==canonicalJsonStringify(snapshot.candidate))
