@@ -10,7 +10,7 @@ import { resolveArtifactStorePublicationAuthorityMode } from "../runtime-config.
 import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import { verifyLegacyImplementationSliceV2 } from "../product-compiler/slice-compiler-v2-legacy.js";
 import { Sha256Schema, StoryIdSchema } from "../product-compiler/schemas/common-v1.js";
-import { createAttemptRepository, reserveAttemptInTransaction } from "./attempt-repository.js";
+import { createAttemptRepository, lockAttemptReservationOwnerInTransaction, reserveAttemptInTransaction } from "./attempt-repository.js";
 import { createV3ImplementationAttemptV2Assembler, nativeImplementationSourcePathsV3 } from "./v3-implementation-attempt-v2.js";
 import { createV3ArtifactRefKeyV2 } from "./v3-artifact-ref-key-v2.js";
 import { resolveV3GitRevision } from "./v3-git-revision.js";
@@ -147,6 +147,9 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
     });
     let committedAttemptId = "";
     await options.sql.begin(async transaction => {
+      // Publication replay locks the run before the claim. Acquire the existing
+      // attempt advisory and run locks first, including on native replay.
+      await lockAttemptReservationOwnerInTransaction(transaction, input);
       const live = await transaction.unsafe<Array<{ state_version: number; state_fingerprint: string }>>(
         `SELECT s.state_version,s.state_fingerprint FROM claim_log c
           JOIN runs r ON r.id=c.run_id

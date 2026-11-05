@@ -696,6 +696,32 @@ export type FenceUpdateResult =
   | Readonly<{ status: "running"; attempt: ExecutionAttemptV1 }>
   | Readonly<{ status: "stale_fence" }>;
 
+/** Acquire reservation locks before callers lock claim or preparation rows. */
+export async function lockAttemptReservationOwnerInTransaction(
+  transaction: TransactionSql,
+  reservation: Readonly<{ runId: string; stepId: string; storyId: string }>,
+): Promise<void> {
+  const lockIdentity = hashCanonicalJson({
+    schema: "setfarm.execution-attempt-lock.v1",
+    runId: reservation.runId,
+    stepId: reservation.stepId,
+    storyId: reservation.storyId,
+  });
+  await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockIdentity]);
+
+  const runRows = await transaction.unsafe<{ status: string; protocol: string }[]>(
+    "SELECT status, protocol FROM runs WHERE id = $1 LIMIT 1 FOR KEY SHARE",
+    [reservation.runId],
+  );
+  if (runRows.length !== 1) throw new Error("ATTEMPT_RUN_NOT_FOUND");
+  if (
+    !["running", "resuming"].includes(runRows[0]!.status)
+    || !["shadow", "v3"].includes(runRows[0]!.protocol)
+  ) {
+    throw new Error("ATTEMPT_RUN_NOT_ACTIVE_COMPILER_OWNER");
+  }
+}
+
 /**
  * Reserve an attempt inside a caller-owned transaction. This is the single
  * insertion/binding implementation used by both ordinary claim publication
@@ -722,25 +748,7 @@ export async function reserveAttemptInTransaction(
     throw new Error("ATTEMPT_TIME_INVALID");
   }
   const identityFactory = options.identityFactory ?? defaultAttemptIdentityFactory;
-  const lockIdentity = hashCanonicalJson({
-    schema: "setfarm.execution-attempt-lock.v1",
-    runId: reservation.runId,
-    stepId: reservation.stepId,
-    storyId: reservation.storyId,
-  });
-  await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockIdentity]);
-
-  const runRows = await transaction.unsafe<{ status: string; protocol: string }[]>(
-    "SELECT status, protocol FROM runs WHERE id = $1 LIMIT 1 FOR KEY SHARE",
-    [reservation.runId],
-  );
-  if (runRows.length !== 1) throw new Error("ATTEMPT_RUN_NOT_FOUND");
-  if (
-    !["running", "resuming"].includes(runRows[0]!.status)
-    || !["shadow", "v3"].includes(runRows[0]!.protocol)
-  ) {
-    throw new Error("ATTEMPT_RUN_NOT_ACTIVE_COMPILER_OWNER");
-  }
+  await lockAttemptReservationOwnerInTransaction(transaction, reservation);
   if (reservation.claimId === undefined) throw new Error("ATTEMPT_CLAIM_ID_REQUIRED");
   const boundClaims = await transaction.unsafe<Array<{ id: string }>>(
     `SELECT id::text
