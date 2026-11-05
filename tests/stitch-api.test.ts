@@ -718,9 +718,11 @@ function runGenerationCommandOffline(command: string, model?: string, mode = "ac
     const outputDir = path.join(root, "output");
     const preloadPath = path.join(root, "transport.mjs");
     fs.writeFileSync(promptPath, "Generate the Status Page");
+    const htmlBytes = Buffer.concat([Buffer.from(" \n"), validStitchHtml("<main><h1>Status Page</h1></main>"), Buffer.from("\n ")]);
+    const pngBytes = validStitchPng(173);
     const fixture = {
-      html: validStitchHtml("<main><h1>Status Page</h1></main>").toString("base64"),
-      png: validStitchPng(173).toString("base64"),
+      html: htmlBytes.toString("base64"),
+      png: pngBytes.toString("base64"),
       capturePath,
       mode,
     };
@@ -730,6 +732,7 @@ const fixture = ${JSON.stringify(fixture)};
 // Literal enum from the retained 2026-10-18 tools/list, independent of defaults.
 const supported = new Set(["MODEL_ID_UNSPECIFIED", "GEMINI_3_8_FLASH", "GEMINI_3_5_FLASH_LITE"]);
 globalThis.fetch = async (url, options) => {
+  if (String(url).startsWith("https://example.invalid/") && fixture.mode.startsWith("mcp")) throw new Error("MCP_FILE_URL_FETCH_FORBIDDEN");
   if (String(url) === "https://example.invalid/status.html") {
     if (fixture.mode === "auth401" || fixture.mode === "auth403") return new Response("private body token=do-not-publish", { status: Number(fixture.mode.slice(4)) });
     return new Response(Buffer.from(fixture.html, "base64"));
@@ -756,10 +759,27 @@ globalThis.fetch = async (url, options) => {
         screenshot: { downloadUrl: "https://example.invalid/status.png" }
       }] } };
     }
+  } else if (request.method === "tools/call" && request.params.name === "download_file") {
+    const name = request.params.arguments.name;
+    if (JSON.stringify(Object.keys(request.params.arguments)) !== JSON.stringify(["name"])) throw new Error("EXTRA_FILE_ARGUMENT");
+    if (name !== "projects/123/files/status-html" && name !== "projects/123/files/status-png") throw new Error("WRONG_FILE_NAME");
+    if (fixture.mode === "mcp-error") result = { isError: true, content: [{ type: "text", text: "file unavailable token=do-not-publish" }] };
+    else if (fixture.mode === "mcp-network") throw new TypeError("download interrupted token=do-not-publish");
+    else {
+      const payload = name.endsWith("-html") ? { html: Buffer.from(fixture.html, "base64").toString("utf8") } : { image: fixture.mode === "mcp-base64" ? fixture.png + "\\n" : fixture.png, imageMetadata: { mimeType: "png" } };
+      result = { structuredContent: payload, content: [{ type: "text", text: JSON.stringify(name.endsWith("-html") ? payload : { image_metadata: { mime_type: "png" }, image: payload.image }) }] };
+      if (fixture.mode === "mcp-conflict") result.content = [{ type: "text", text: JSON.stringify({ html: "conflicting HTML" }) }];
+    }
   } else if (request.method === "tools/call" && request.params.name === "get_project") {
     result = { content: [{ type: "text", text: JSON.stringify({ name: "projects/123", title: "Status Utility", designMd: "# Status Utility" }) }] };
   } else {
     throw new Error("Unexpected RPC: " + JSON.stringify(request));
+  }
+  if (fixture.mode.startsWith("mcp") && request.params?.name === "generate_screen_from_text") {
+    const screen = result.structuredContent.screens[0];
+    screen.htmlCode.name = "projects/123/files/status-html";
+    screen.screenshot.name = "projects/123/files/status-png";
+    if (fixture.mode === "mcp-name-only") { delete screen.htmlCode.downloadUrl; delete screen.screenshot.downloadUrl; }
   }
   return Response.json({ jsonrpc: "2.0", id: request.id, result });
 };
@@ -783,6 +803,8 @@ globalThis.fetch = async (url, options) => {
       stderr: execution.stderr,
       requests,
       artifacts: fs.existsSync(artifactRoot) ? fs.readdirSync(artifactRoot).sort() : [],
+      artifactHashes: fs.existsSync(artifactRoot) ? Object.fromEntries(fs.readdirSync(artifactRoot).map(name => [name, createHash("sha256").update(fs.readFileSync(path.join(artifactRoot, name))).digest("hex")])) : {},
+      expectedHashes: { html: createHash("sha256").update(htmlBytes).digest("hex"), png: createHash("sha256").update(pngBytes).digest("hex") },
     };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -851,5 +873,146 @@ describe("stitch-api live model request compatibility", () => {
     assert.equal(result.requests.length, 2);
     assert.equal(result.requests[1].params.arguments.modelId, " GEMINI_3_5_FLASH_LITE ");
     assert.deepEqual(result.artifacts, []);
+  });
+});
+
+function mcpFileSourceHash(name: string): string {
+  return createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify({ kind: "mcp_file", name })).digest("hex");
+}
+
+describe("Stitch MCP named File transport", () => {
+  for (const mode of ["mcp", "mcp-name-only"]) {
+    it(`reads ${mode} artifacts through the original MCP session and preserves exact bytes`, () => {
+      const result = runGenerationCommandOffline("generate-all-screens-attempt", undefined, mode);
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.deepEqual(result.requests.map(request => request.params?.name ?? request.method),
+        ["initialize", "generate_screen_from_text", "download_file", "download_file"]);
+      assert.deepEqual(result.requests.slice(2).map(request => request.params.arguments),
+        [{ name: "projects/123/files/status-html" }, { name: "projects/123/files/status-png" }]);
+      assert.deepEqual(result.artifacts, ["status.html", "status.png"]);
+      assert.deepEqual(result.artifactHashes, { "status.html": result.expectedHashes.html, "status.png": result.expectedHashes.png });
+      const transport = JSON.parse(result.stdout);
+      const evidence = transport.directScreenEvidence[0];
+      assert.deepEqual(evidence.htmlSourceRef, { kind: "mcp_file", name: "projects/123/files/status-html" });
+      assert.equal(evidence.htmlSourceRefHash, mcpFileSourceHash(evidence.htmlSourceRef.name));
+      assert.equal(evidence.screenshotSourceRefHash, mcpFileSourceHash("projects/123/files/status-png"));
+      assert.equal(evidence.htmlDownloadedArtifactHash, result.expectedHashes.html);
+      assert.equal(evidence.screenshotDownloadedArtifactHash, result.expectedHashes.png);
+      assert.equal(transport.downloaded[0].artifactDownloadFailure, undefined);
+      assert.doesNotMatch(result.stdout + result.stderr, /offline-dummy-only|MCP_FILE_URL_FETCH_FORBIDDEN/);
+    });
+  }
+  for (const mode of ["mcp-error", "mcp-network", "mcp-conflict"]) {
+    it(`seals ${mode} as a typed MCP file retrieval failure without HTTP fabrication or fallback`, () => {
+      const result = runGenerationCommandOffline("generate-all-screens-attempt", undefined, mode);
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.deepEqual(result.requests.map(request => request.params?.name ?? request.method),
+        ["initialize", "generate_screen_from_text", "download_file"]);
+      const failure = JSON.parse(result.stdout).downloaded[0].artifactDownloadFailure;
+      assert.deepEqual(failure, { artifactKind: "html", sourceRefHash: mcpFileSourceHash("projects/123/files/status-html"), code: "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED" });
+      assert.deepEqual(result.artifacts, []);
+      assert.doesNotMatch(result.stdout + result.stderr, /do-not-publish|offline-dummy-only|httpStatus/);
+    });
+  }
+  it("rejects noncanonical image base64 as content without a transport claim", () => {
+    const result = runGenerationCommandOffline("generate-all-screens-attempt", undefined, "mcp-base64");
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.deepEqual(result.requests.map(request => request.params?.name ?? request.method),
+      ["initialize", "generate_screen_from_text", "download_file", "download_file"]);
+    const receipt = JSON.parse(result.stdout).downloaded[0];
+    assert.equal(receipt.artifactDownloadFailure, undefined);
+    assert.equal(receipt.screenshotFile, undefined);
+    assert.deepEqual(result.artifacts, ["status.html"]);
+  });
+});
+
+
+describe("Stitch named File direct response identity", () => {
+  const named = () => ({ name: "projects/123/screens/status", title: "Status Page",
+    htmlCode: { name: "projects/123/files/html" }, screenshot: { name: "projects/123/files/png" } });
+  const partition = (screen: object) => partitionDirectScreenCandidates(collectScreenCandidatesFromResult({ structuredContent: { screens: [screen] } }));
+  it("admits File.name-only render evidence with domain separated source identity", () => {
+    const result = partition(named());
+    assert.equal(result.screens.length, 1);
+    assert.equal(result.evidence[0].htmlSourceRefHash, mcpFileSourceHash("projects/123/files/html"));
+    assert.equal(result.evidence[0].screenshotSourceRefHash, mcpFileSourceHash("projects/123/files/png"));
+    assert.deepEqual(result.evidence[0].missingEvidence, []);
+  });
+  for (const name of ["projects/999/files/html", "projects/123/files/../html", "projects/123/files/html/extra", "", " projects/123/files/html"]) {
+    it(`refuses invalid File.name ${JSON.stringify(name)} despite a valid fallback URL`, () => {
+      const screen = named();
+      screen.htmlCode = { name, downloadUrl: "https://example.invalid/fallback.html" } as typeof screen.htmlCode;
+      assert.equal(partition(screen).evidence[0].disposition, "excluded_identity_conflict");
+    });
+  }
+  it("rejects conflicting camel and snake File references", () => {
+    const screen = { ...named(), html_code: { name: "projects/123/files/foreign" } };
+    assert.equal(partition(screen).evidence[0].disposition, "excluded_identity_conflict");
+  });
+  it("does not splice separate named HTML and screenshot occurrences", () => {
+    const result = partitionDirectScreenCandidates(collectScreenCandidatesFromResult({
+      structuredContent: { screens: [{ name: "projects/123/screens/status", title: "Status Page", htmlCode: { name: "projects/123/files/html" } }] },
+      content: [{ type: "text", text: JSON.stringify({ screens: [{ name: "projects/123/screens/status", title: "Status Page", screenshot: { name: "projects/123/files/png" } }] }) }],
+    }));
+    assert.equal(result.evidence[0].disposition, "excluded_identity_conflict");
+    assert.ok(result.evidence[0].identityConflicts.includes("render_evidence_splice"));
+  });
+  it("preserves legacy bare URL hashes exactly", () => {
+    const result = partition({ name: "projects/123/screens/status", title: "Status Page", htmlCode: { downloadUrl: "https://example.invalid/html" }, screenshot: { downloadUrl: "https://example.invalid/png" } });
+    assert.equal(result.evidence[0].htmlSourceRefHash, createHash("sha256").update("https://example.invalid/html").digest("hex"));
+    assert.equal(result.evidence[0].htmlSourceRef, undefined);
+  });
+});
+
+// Exercise the public command and real MCP request builder; no provider access.
+function runGetScreenOffline(isError: boolean) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-get-screen-"));
+  try {
+    const capturePath = path.join(root, "requests.jsonl");
+    const preloadPath = path.join(root, "transport.mjs");
+    fs.writeFileSync(preloadPath, `
+import { appendFileSync } from "node:fs";
+const capturePath = ${JSON.stringify(capturePath)};
+globalThis.fetch = async (url, options) => {
+  if (String(url) !== "https://stitch.googleapis.com/mcp" || !options?.body) throw new Error("UNEXPECTED_REQUEST");
+  const request = JSON.parse(options.body);
+  appendFileSync(capturePath, JSON.stringify(request) + "\\n");
+  let result;
+  if (request.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "offline", version: "1" } };
+  else if (request.method === "tools/call" && request.params.name === "get_screen") {
+    result = ${JSON.stringify(isError
+      ? { isError: true, content: [{ type: "text", text: "INVALID_ARGUMENT: request refused" }] }
+      : { content: [{ type: "text", text: JSON.stringify({ name: "projects/123/screens/status", title: "Status Page" }) }] })};
+  } else throw new Error("UNEXPECTED_RPC");
+  return Response.json({ jsonrpc: "2.0", id: request.id, result });
+};
+`);
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("STITCH_") && key !== "NODE_OPTIONS"));
+    const result = spawnSync(process.execPath, ["--import", preloadPath, path.resolve("scripts/stitch-api.mjs"), "get-screen", "123", "status"], {
+      cwd: root, env: { ...env, STITCH_API_KEY: "offline-dummy-only" }, encoding: "utf8", timeout: 15_000,
+    });
+    assert.equal(result.error, undefined);
+    return { exitCode: result.status, stdout: result.stdout, stderr: result.stderr,
+      requests: fs.readFileSync(capturePath, "utf8").trim().split("\n").map(line => JSON.parse(line)) };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+describe("Stitch get-screen current MCP contract", () => {
+  it("sends the sole resource name argument through the actual CLI", () => {
+    const result = runGetScreenOffline(false);
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.deepEqual(result.requests.map(request => request.params?.name ?? request.method), ["initialize", "get_screen"]);
+    assert.deepEqual(result.requests[1].params.arguments, { name: "projects/123/screens/status" });
+    assert.deepEqual(JSON.parse(result.stdout), { name: "projects/123/screens/status", title: "Status Page" });
+  });
+  it("refuses an MCP get_screen error instead of printing null as success", () => {
+    const result = runGetScreenOffline(true);
+    assert.equal(result.exitCode, 1, result.stderr);
+    assert.equal(result.requests.filter(request => request.params?.name === "get_screen").length, 1);
+    assert.match(result.stderr, /INVALID_ARGUMENT|request refused/);
+    assert.notEqual(result.stdout.trim(), "null");
+    assert.doesNotMatch(result.stdout + result.stderr, /offline-dummy-only/);
   });
 });

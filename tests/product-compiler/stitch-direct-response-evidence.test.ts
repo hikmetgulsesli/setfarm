@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
 import { StitchDirectResponseEvidenceV1Schema } from "../../src/product-compiler/schemas/stitch-direct-response-evidence-v1.js";
@@ -123,4 +124,31 @@ describe("Stitch direct response evidence v1", () => {
     assert.equal(parsedV2.sourceVersion, "v2");
     assert.equal(parsedV2.capabilities.identityConflictEvidence, true);
   });
+});
+
+
+describe("Stitch direct MCP File provenance", () => {
+  const withFile = () => {
+    const value = evidenceV2();
+    const ref = { kind: "mcp_file", name: "projects/project-1/files/html" };
+    value.batches[0].candidates[0].htmlSourceRef = ref;
+    value.batches[0].candidates[0].htmlSourceRefHash = createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify(ref)).digest("hex");
+    return value;
+  };
+  it("accepts and preserves explicit named-file provenance", () => {
+    const value = withFile();
+    assert.deepEqual(StitchDirectResponseEvidenceV2Schema.parse(value), value);
+  });
+  for (const mutation of ["hash", "project", "traversal", "extra", "unavailable"]) {
+    it(`rejects forged named-file ${mutation}`, () => {
+      const value = withFile();
+      const candidate = value.batches[0].candidates[0];
+      if (mutation === "hash") candidate.htmlSourceRefHash = "d".repeat(64);
+      if (mutation === "project") value.projectId = "another-project";
+      if (mutation === "traversal") candidate.htmlSourceRef.name = "projects/project-1/files/../html";
+      if (mutation === "extra") candidate.htmlSourceRef.url = "https://example.invalid/html";
+      if (mutation === "unavailable") candidate.htmlAvailable = false;
+      assert.equal(StitchDirectResponseEvidenceV2Schema.safeParse(value).success, false);
+    });
+  }
 });

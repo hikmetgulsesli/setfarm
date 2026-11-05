@@ -610,6 +610,75 @@ test("atomic PLAN completion persists exact build and behavior authority", async
       }
     });
 
+    await t.test("preclaim projects the sealed MCP file retrieval infrastructure cause and replays without dispatch", async () => {
+      const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-preclaim-artifact-auth-"));
+      const cause = {
+        schema: "setfarm.operational-failure-cause.v1", workflowStepId: "design",
+        boundary: "product_compiler.design_source.artifact_download",
+        failureClass: "infrastructure_failure", failureCode: "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED",
+      };
+      try {
+        const contract = prepareV3DesignContractV2(row.canonical_prd);
+        const target = contract.generationTargets.targets[0]!;
+        const screenId = "preclaim-offline-render";
+        const htmlSourceRef = { kind: "mcp_file", name: "projects/artifact-access-project/files/preclaim-html" };
+        const sourceRefHash = createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify(htmlSourceRef)).digest("hex");
+        const transport = {
+          schema: "setfarm.stitch-attempt-transport.v1", total: 1,
+          screens: [{ screenId, title: target.expectedScreenTitle }], screenSource: "direct",
+          directCandidateTotal: 1, excludedDirectTotal: 0,
+          directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
+          directScreenEvidence: [{ screenId, title: target.expectedScreenTitle,
+            responsePaths: ["$result.screens[0]"], htmlAvailable: true, screenshotAvailable: true,
+            htmlSourceRef, htmlSourceRefHash: sourceRefHash, screenshotSourceRefHash: "c".repeat(64),
+            identityConflicts: [], disposition: "admitted_renderable_screen", missingEvidence: [],
+          }],
+          downloaded: [{ screenId, title: target.expectedScreenTitle,
+            downloadError: "MCP file retrieval failed", artifactDownloadFailure: {
+              artifactKind: "html", sourceRefHash, code: "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED" } }],
+        };
+        let dispatches = 0;
+        const input = {
+          sql: database.sql, repo, runId, prd: row.canonical_prd,
+          originClaimId: designClaimId, ownerClaimId: designClaimId,
+          ownerInstanceId: "design-prefetch-cause-test", producerReleaseSha: releaseSha,
+          deviceType: "DESKTOP" as const, englishAdmissionAuthority: ledgerAuthority,
+        };
+        const dependencies = {
+          ensureProject: async () => "artifact-access-project",
+          generateStage: async () => {
+            dispatches += 1;
+            return { disposition: "accepted" as const, response: transport,
+              rawEvidence: serializeAttemptTransportV2(transport),
+              artifacts: [] };
+          },
+        };
+        const result = await executeDesignPreclaimV2(input, dependencies);
+        assert.equal(result.status, "infrastructure_failure");
+        if (result.status === "accepted") throw new Error("Unexpected accepted fixture");
+        assert.equal(result.code, "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED");
+        assert.deepEqual(result.operationalFailureCause, cause);
+        assert.ok(result.attemptId);
+        const attempt = await new ProductCompilationAttemptRepository(database.sql).get(result.attemptId);
+        assert.ok(attempt?.failure);
+        assert.equal(attempt.disposition, "infrastructure_failure");
+        assert.equal(attempt.ordinal, 1);
+        assert.equal(attempt.outputRefs, null);
+        assert.equal(attempt.failure.operationalCauseHash, hashCanonicalJson(cause));
+        const bytes = fs.readFileSync(path.join(repo, attempt.attemptLocator, "raw/failure.json"));
+        const artifact = JSON.parse(bytes.toString("utf8"));
+        assert.deepEqual(bytes, canonicalJsonBytes(artifact));
+        assert.equal(createHash("sha256").update(bytes).digest("hex"), attempt.failure.failureArtifactHash);
+        assert.deepEqual(artifact.evidence.cause, result.operationalFailureCause);
+        assert.equal(artifact.evidence.phase, "artifact_download");
+        const replay = await executeDesignPreclaimV2(input, dependencies);
+        assert.deepEqual(replay, result);
+        assert.equal(dispatches, 1);
+      } finally {
+        fs.rmSync(repo, { recursive: true, force: true });
+      }
+    });
+
     for (const fixture of [
       { model: undefined, expected: "GEMINI_3_8_FLASH" },
       { model: "GEMINI_3_5_FLASH_LITE", expected: "GEMINI_3_5_FLASH_LITE" },
