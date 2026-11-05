@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { currentRuntimeCompletionOwnerCapability } from "./runtime-completion-owner-context.js";
 import { execFileSync } from "node:child_process";
 import { realpathSync, lstatSync, openSync, closeSync, fstatSync, ftruncateSync, readSync, writeSync, constants } from "node:fs";
 import { createHash } from "node:crypto";
@@ -41,7 +42,7 @@ import { createFindingRecoveryRepository } from "../recovery/finding-recovery-re
 import { createV3RecoveryClaimAuthority, V3RecoveryClaimHandoffV1Schema } from "../recovery/v3-recovery-claim-authority.js";
 import type { RecoveryCaseRevisionV1, RecoveryRevisionDispatchV1 } from "../recovery/recovery-delivery.js";
 import type { FindingSetV1 } from "../findings/finding-set.js";
-import { createV3EvidenceOnlyPublication, readNativeEvidenceOnlySourceAuthority,readNativeAcceptedModelSourceAuthority,
+import { createV3EvidenceOnlyPublication, readNativeEvidenceOnlySourceAuthority,readNativeAcceptedModelSourceAuthority,readNativeCurrentModelCompletionSourceAuthority,
   type V3EvidenceOnlyPublicationLeaseV1 } from "../recovery/v3-evidence-only-publication.js";
 import { createV3DownstreamEvidencePublication, V3DownstreamEvidenceAuthorityV1Schema,
   readNativeDownstreamSourceOwner, readNativeDownstreamAttemptAuthority,
@@ -1036,6 +1037,182 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     }
   }
 
+  /** Read-only proof for the queue's private native shared-conflict fallback.
+   * No caller supplies grant/producer/blob authority; every field is rederived
+   * from actual model ownership, immutable contracts, custody and Git objects. */
+  type SharedMergeInput=Readonly<{
+    runId:string;storyId:string;attemptId:string;worktree:string;branch:string;
+    sourceSha:string;targetSha:string;conflicts:readonly string[];
+  }>;
+  async function authenticateSharedMerge(input:SharedMergeInput) {
+    if(!input.conflicts.length) throw Error("V3_NATIVE_SHARED_MERGE_CONFLICT_SET_INVALID");
+    return authenticateSharedMergeAtTarget(input,input.targetSha);
+  }
+  async function authenticateSharedMergeAtTarget(input:SharedMergeInput,observedHeadSha:string) {
+    const packet=await reader.readExactSealedPacket(input.runId);
+    if(!("implementationSourceMap" in packet)) throw Error("V3_NATIVE_SHARED_MERGE_PACKET_REQUIRED");
+    const locator={runId:input.runId,storyId:input.storyId,attemptId:input.attemptId,packetHash:packet.packetHash};
+    const source=currentRuntimeCompletionOwnerCapability()
+      ?await readNativeCurrentModelCompletionSourceAuthority(options.sql,locator)
+      :await readNativeAcceptedModelSourceAuthority(options.sql,locator);
+    if(source.source_after_sha!==input.sourceSha) throw Error("V3_NATIVE_SHARED_MERGE_SOURCE_MISMATCH");
+    const context=await loadAttemptContext({runId:input.runId,storyId:input.storyId,attemptId:input.attemptId});
+    if(context.evidenceOnly||context.downstreamEvidence||context.sliceHash!==source.slice_hash
+      ||context.attempt.generation!==source.generation||context.attempt.disposition!=="verified")
+      throw Error("V3_NATIVE_SHARED_MERGE_MODEL_REQUIRED");
+    const initial=await preparedService.loadPreparedAttempt({runId:input.runId,storyId:input.storyId,attemptId:source.initial_attempt_id});
+    if(initial.nativeAuthority.authorityHash!==source.authority_hash) throw Error("V3_NATIVE_SHARED_MERGE_ORIGIN_MISMATCH");
+    const rows=await options.sql.unsafe<Array<{context:string}>>("SELECT context FROM runs WHERE id=$1 AND protocol='v3' AND status IN ('running','resuming')",[input.runId]);
+    const runContext=rows.length===1?z.record(z.string(),z.string()).parse(JSON.parse(rows[0]!.context)):undefined;
+    if(!runContext||runContext.repo!==input.worktree||runContext.branch!==input.branch)
+      throw Error("V3_NATIVE_SHARED_MERGE_REPOSITORY_MISMATCH");
+    const env:NodeJS.ProcessEnv={...process.env,GIT_NO_REPLACE_OBJECTS:"1",GIT_OPTIONAL_LOCKS:"0",GIT_TERMINAL_PROMPT:"0"};
+    for(const key of ["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR","GIT_INDEX_FILE","GIT_OBJECT_DIRECTORY","GIT_ALTERNATE_OBJECT_DIRECTORIES","GIT_NAMESPACE"]) delete env[key];
+    const git=(args:string[],maxBuffer=16*1024*1024)=>execFileSync("git",["--no-replace-objects","--literal-pathspecs",...args],{
+      cwd:input.worktree,env,timeout:10_000,maxBuffer,encoding:"utf8",stdio:["ignore","pipe","pipe"]});
+    const target=resolveV3GitRevision({repo:input.worktree,requestedRef:input.targetSha,expectedSha:input.targetSha});
+    const observedHead=resolveV3GitRevision({repo:input.worktree,requestedRef:"HEAD",expectedSha:observedHeadSha});
+    if(git(["rev-parse","--abbrev-ref","HEAD"]).trim()!==input.branch
+      ||git(["status","--porcelain=v1","-z","--untracked-files=all"]).length)
+      throw Error("V3_NATIVE_SHARED_MERGE_TARGET_CHANGED");
+    const conflicts=[...new Set(input.conflicts)].sort();
+    if(conflicts.length!==input.conflicts.length)
+      throw Error("V3_NATIVE_SHARED_MERGE_CONFLICT_SET_INVALID");
+    const allowedPaths=initial.slice.files.filter(file=>file.role==="owned"||file.role==="shared_writable").map(file=>file.path).sort();
+    const changed=git(["diff","--name-only","-z",initial.sourceBefore.sha,input.sourceSha,"--"]).split("\0").filter(Boolean);
+    if(changed.some(file=>!allowedPaths.includes(file))) throw Error("V3_NATIVE_SHARED_MERGE_CANDIDATE_SCOPE_INVALID");
+    const sourceRevision={sha:source.source_after_sha,treeHash:source.source_after_tree_hash};
+    const sourceFiles=await captureNativeAttemptFileSignatures(options.sql,{runId:input.runId,attemptId:input.attemptId,
+      source:sourceRevision,files:initial.slice.files.filter(file=>file.role==="shared_writable").map(({pathRef,path})=>({pathRef,path}))});
+    const story=packet.storyPlan.stories.find(story=>story.id===input.storyId);
+    if(!story) throw Error("V3_NATIVE_SHARED_MERGE_STORY_MISMATCH");
+    const regularBlob=(sha:string,file:string)=>{
+      const match=/^(100644|100755) blob ([a-f0-9]{40}|[a-f0-9]{64})\t([^\0]+)\0$/.exec(git(["ls-tree","-z",sha,"--",file],16_384));
+      if(!match||match[3]!==file) throw Error("V3_NATIVE_SHARED_MERGE_REGULAR_BLOB_REQUIRED");
+      return {mode:match[1]!,blob:match[2]!};
+    };
+    // A replay receipt must reproduce the entire result, not only shared
+    // paths. Owned writes also require their real initial target preimage.
+    const owned=initial.slice.files.filter(file=>file.role==="owned"&&changed.includes(file.path));
+    const ownedTarget=captureNativeOriginalFileSignatures({worktree:input.worktree,source:target,
+      files:owned.map(({pathRef,path})=>({pathRef,path}))});
+    if(owned.some(file=>!ownedTarget.some(signature=>same(signature,
+      {pathRef:file.pathRef,path:file.path,presence:file.presence,contentHash:file.contentHash}))))
+      throw Error("V3_NATIVE_SHARED_MERGE_OWNED_PREIMAGE_MISMATCH");
+    const mergeBases=git(["merge-base","--all",input.targetSha,input.sourceSha]).trim().split(/\s+/);
+    if(mergeBases.length!==1||!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(mergeBases[0]!))
+      throw Error("V3_NATIVE_SHARED_MERGE_BASE_AMBIGUOUS");
+    const paths:Array<{path:string;pathRef:string;mode:string;targetBlob:string;sourceBlob:string;
+      baseBlob:string;contentHash:string;producerAttemptId:string}>=[];
+    for(const file of initial.slice.files.filter(file=>file.role==="shared_writable")) {
+      const candidate=sourceFiles.find(signature=>signature.pathRef===file.pathRef&&signature.path===file.path);
+      if(!candidate||candidate.presence!=="present") throw Error("V3_NATIVE_SHARED_MERGE_REGULAR_BLOB_REQUIRED");
+      const binding=packet.buildTopology.pathBindings.find(binding=>binding.id===file.pathRef&&binding.path===file.path);
+      const owner=packet.buildTopology.owners.find(owner=>owner.id===binding?.ownerRef);
+      const grants=initial.slice.sharedGrants.filter(grant=>grant.fromOwnerRef===owner?.id&&grant.toOwnerRef===story.ownerRef
+        &&grant.pathRefs.includes(file.pathRef)&&grant.permissions.includes("write"));
+      const dependency=initial.nativeAuthority.dependencyAttempts.find(dependency=>owner?.kind==="story"&&dependency.storyId===owner.storyRef);
+      if(!owner||owner.kind!=="story"||!story.dependsOn.includes(owner.storyRef)||grants.length!==1||!dependency)
+        throw Error("V3_NATIVE_SHARED_MERGE_GRANT_REQUIRED");
+      const authenticated=await readV3NativeDependencyAuthority(options.sql,options.sql,{runId:input.runId,stepId:"implement",
+        storyId:dependency.storyId,packetHash:packet.packetHash,attemptId:dependency.attemptId},options);
+      if(!same(authenticated,dependency)) throw Error("V3_NATIVE_SHARED_MERGE_DEPENDENCY_CHANGED");
+      const before={pathRef:file.pathRef,path:file.path,presence:file.presence,contentHash:file.contentHash};
+      if(!dependency.fileSignatures.some(signature=>same(signature,before)))
+        throw Error("V3_NATIVE_SHARED_MERGE_DEPENDENCY_INPUT_MISMATCH");
+      git(["merge-base","--is-ancestor",dependency.sourceAfter.sha,input.targetSha]);
+      const targetFiles=captureNativeOriginalFileSignatures({worktree:input.worktree,source:target,files:[{pathRef:file.pathRef,path:file.path}]});
+      if(targetFiles.length!==1||!same(targetFiles[0],before)) throw Error("V3_NATIVE_SHARED_MERGE_TARGET_PREIMAGE_MISMATCH");
+      // Equal semantic input is copied dependency transport, not a write by
+      // this story. It retains the exact dependency/target proof above, but
+      // cannot authorize a shared-conflict substitution or mint a producer.
+      if(same(candidate,before)) continue;
+      const producerAttemptId=await authenticateSharedPathProducer({runId:input.runId,storyId:input.storyId,
+        packetHash:packet.packetHash,source,signature:candidate});
+      const originalBlob=regularBlob(input.targetSha,file.path),candidateBlob=regularBlob(input.sourceSha,file.path);
+      const baseBlob=regularBlob(mergeBases[0]!,file.path);
+      if(originalBlob.mode!==candidateBlob.mode||baseBlob.mode!==originalBlob.mode) throw Error("V3_NATIVE_SHARED_MERGE_MODE_CHANGED");
+      paths.push({path:file.path,pathRef:file.pathRef,mode:originalBlob.mode,targetBlob:originalBlob.blob,
+        sourceBlob:candidateBlob.blob,baseBlob:baseBlob.blob,contentHash:candidate.contentHash,producerAttemptId});
+    }
+    const candidateEntries=[...new Set([...changed,...paths.map(proof=>proof.path)])].sort()
+      .map(file=>({path:file,...regularBlob(input.sourceSha,file)}));
+    if(conflicts.some(file=>!paths.some(proof=>proof.path===file))) throw Error("V3_NATIVE_SHARED_MERGE_UNCOVERED_CONFLICT");
+    const reloaded=currentRuntimeCompletionOwnerCapability()
+      ?await readNativeCurrentModelCompletionSourceAuthority(options.sql,locator)
+      :await readNativeAcceptedModelSourceAuthority(options.sql,locator);
+    if(!same(source,reloaded)||!same(resolveV3GitRevision({repo:input.worktree,requestedRef:"HEAD",expectedSha:observedHeadSha}),observedHead))
+      throw Error("V3_NATIVE_SHARED_MERGE_AUTHORITY_CHANGED");
+    return Object.freeze({runId:input.runId,storyId:input.storyId,attemptId:input.attemptId,
+      source:sourceRevision,target,branch:input.branch,allowedPaths,conflicts,paths,candidateEntries});
+  }
+
+  /** Reconstruct a receipt only at the exact local/remote feature head. This
+   * permits crash replay of our real two-parent result without new metadata.
+   * Any later/ambiguous history or different semantic result remains closed. */
+  async function authenticateSharedMergeReceipt(input:Readonly<{
+    runId:string;storyId:string;attemptId:string;worktree:string;branch:string;sourceSha:string;
+  }>) {
+    const packet=await reader.readExactSealedPacket(input.runId);
+    if(!("implementationSourceMap" in packet)) throw Error("V3_NATIVE_SHARED_MERGE_PACKET_REQUIRED");
+    const locator={runId:input.runId,storyId:input.storyId,attemptId:input.attemptId,packetHash:packet.packetHash};
+    const source=currentRuntimeCompletionOwnerCapability()
+      ?await readNativeCurrentModelCompletionSourceAuthority(options.sql,locator)
+      :await readNativeAcceptedModelSourceAuthority(options.sql,locator);
+    if(source.source_after_sha!==input.sourceSha) throw Error("V3_NATIVE_SHARED_MERGE_SOURCE_MISMATCH");
+    const initial=await preparedService.loadPreparedAttempt({runId:input.runId,storyId:input.storyId,attemptId:source.initial_attempt_id});
+    const env:NodeJS.ProcessEnv={...process.env,GIT_NO_REPLACE_OBJECTS:"1",GIT_OPTIONAL_LOCKS:"0",GIT_TERMINAL_PROMPT:"0"};
+    for(const key of ["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR","GIT_INDEX_FILE","GIT_OBJECT_DIRECTORY","GIT_ALTERNATE_OBJECT_DIRECTORIES","GIT_NAMESPACE"]) delete env[key];
+    const git=(args:string[])=>execFileSync("git",["--no-replace-objects","--literal-pathspecs",...args],{
+      cwd:input.worktree,env,timeout:10_000,maxBuffer:16*1024*1024,encoding:"utf8",stdio:["ignore","pipe","pipe"]});
+    const shared=initial.slice.files.filter(file=>file.role==="shared_writable");
+    if(!shared.length) return undefined;
+    const candidateSignatures=await captureNativeAttemptFileSignatures(options.sql,{runId:input.runId,attemptId:input.attemptId,
+      source:{sha:source.source_after_sha,treeHash:source.source_after_tree_hash},
+      files:shared.map(({pathRef,path})=>({pathRef,path}))});
+    const semanticChanges=shared.filter(file=>{
+      const candidate=candidateSignatures.find(signature=>signature.pathRef===file.pathRef&&signature.path===file.path);
+      if(!candidate) throw Error("V3_NATIVE_SHARED_MERGE_CANDIDATE_SIGNATURE_MISSING");
+      return !same(candidate,{pathRef:file.pathRef,path:file.path,presence:file.presence,contentHash:file.contentHash});
+    });
+    // A pinned-base difference alone may only commit the exact accepted input
+    // copied into this story. Keep unchanged ordinary exact merge/replay when
+    // there is no actual semantic shared edit; no B writer is invented.
+    if(!semanticChanges.length) return undefined;
+    const local=git(["rev-parse",`refs/heads/${input.branch}^{commit}`]).trim();
+    const remote=git(["rev-parse",`refs/remotes/origin/${input.branch}^{commit}`]).trim();
+    const candidates=[...new Set([local,remote])].map(sha=>git(["rev-list","--parents","-n","1",sha]).trim().split(/\s+/))
+      .filter(parents=>parents.length===3&&parents[2]===input.sourceSha);
+    if(!candidates.length) {
+      for(const head of [local,remote]) {
+        let contains=false;
+        try { git(["merge-base","--is-ancestor",input.sourceSha,head]);contains=true; }
+        catch(error) { if(!(error&&typeof error==='object'&&'status' in error&&error.status===1)) throw error; }
+        if(contains) throw Error("V3_NATIVE_SHARED_MERGE_RECEIPT_MISSING");
+      }
+      return undefined; // No prior integration: ordinary exact merge runs first.
+    }
+    if(candidates.length!==1) throw Error("V3_NATIVE_SHARED_MERGE_RECEIPT_AMBIGUOUS");
+    const parents=candidates[0]!,mergeSha=parents[0]!,targetSha=parents[1]!;
+    if(local!==targetSha&&local!==mergeSha) throw Error("V3_NATIVE_SHARED_MERGE_RECEIPT_TARGET_DRIFT");
+    if(remote!==targetSha&&remote!==mergeSha) throw Error("V3_NATIVE_SHARED_MERGE_RECEIPT_REMOTE_DRIFT");
+    const observedHead=git(["rev-parse","HEAD"]).trim();
+    if(observedHead!==local) throw Error("V3_NATIVE_SHARED_MERGE_RECEIPT_TARGET_DRIFT");
+    const proof=await authenticateSharedMergeAtTarget({...input,targetSha,conflicts:[]},observedHead);
+    const entries=(sha:string)=>git(["ls-tree","-r","-z",sha]).split("\0").filter(Boolean).map(entry=>{
+      const match=/^(100644|100755) blob ([a-f0-9]{40}|[a-f0-9]{64})\t([^\0]+)$/.exec(entry);
+      if(!match) throw Error("V3_NATIVE_SHARED_MERGE_RECEIPT_REGULAR_TREE_REQUIRED");
+      return {path:match[3]!,mode:match[1]!,blob:match[2]!};
+    }).sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
+    const expected=new Map(entries(targetSha).map(entry=>[entry.path,entry]));
+    for(const entry of proof.candidateEntries) expected.set(entry.path,entry);
+    const expectedEntries=[...expected.values()].sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
+    if(!same(entries(mergeSha),expectedEntries)) throw Error("V3_NATIVE_SHARED_MERGE_RECEIPT_TREE_MISMATCH");
+    const merge=resolveV3GitRevision({repo:input.worktree,requestedRef:mergeSha,expectedSha:mergeSha});
+    return Object.freeze({merge,target:proof.target,source:proof.source,parents,
+      entries:expectedEntries,localBefore:local,branch:input.branch});
+  }
+
   async function authenticateDownstreamSource(input: Readonly<{runId:string;storyId:string;worktree:string;
     branch:string;source:SourceRevisionV1;sourceOwnerAttemptId?:string}>) {
     const packet=await reader.readExactSealedPacket(input.runId);
@@ -1218,5 +1395,5 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     await reader.index.addRunArtifactRef({ runId: input.runId,
       refKey: compiled.evidencePlanRefKey, artifactHash: published.hash });
   }
-  return Object.freeze({ reserve, reserveRecovery, reserveOperational, reserveEvidenceOnly, reserveDownstream, loadAttemptContext });
+  return Object.freeze({ reserve, reserveRecovery, reserveOperational, reserveEvidenceOnly, reserveDownstream, loadAttemptContext, authenticateSharedMerge, authenticateSharedMergeReceipt });
 }

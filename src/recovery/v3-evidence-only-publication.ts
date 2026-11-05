@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import { createHash } from "node:crypto";
+import { currentRuntimeCompletionOwnerCapability, type RuntimeCompletionOwnerCapability } from "../execution/runtime-completion-owner-context.js";
 import { NativeEvidenceRefreshWitnessV1Schema } from "../execution/v3-preparation-runtime-authority-v1.js";
 import { V3ImplementationAgentOutputV1Schema } from "../execution/v3-implementation-output.js";
 import { RuntimeCompletionPlanV1Schema } from "../execution/schemas/runtime-completion-plan-v1.js";
@@ -789,9 +790,23 @@ async function assertNoModelPublicationForEvidenceOnlyClaimInTransaction(
  * The actual RCR/runtime/claim and frozen continuation identify the immediate
  * candidate; the initial reservation separately supplies immutable Git custody.
  * Used before I/O and again through SQL-only consumers under their existing locks. */
-export async function readNativeAcceptedModelSourceAuthority(
-  query:Pick<Sql,"unsafe">,
-  input:Readonly<{runId:string;storyId:string;attemptId:string;packetHash:string}>,
+type NativeModelSourceLocator = Readonly<{runId:string;storyId:string;attemptId:string;packetHash:string}>;
+
+export async function readNativeAcceptedModelSourceAuthority(query:Pick<Sql,"unsafe">,input:NativeModelSourceLocator) {
+  return readNativeModelSourceAuthority(query,input);
+}
+
+/** A current canonical completion may integrate before acceptance. Only the
+ * actual ALS capability plus its exact durable live owner tuple enables this
+ * branch; historical accepted-source callers retain their original predicate. */
+export async function readNativeCurrentModelCompletionSourceAuthority(query:Pick<Sql,"unsafe">,input:NativeModelSourceLocator) {
+  const capability=currentRuntimeCompletionOwnerCapability();
+  if(!capability) fail("V3_NATIVE_MODEL_COMPLETION_OWNER_REQUIRED","current completion has no actual owner capability");
+  return readNativeModelSourceAuthority(query,input,capability);
+}
+
+async function readNativeModelSourceAuthority(
+  query:Pick<Sql,"unsafe">,input:NativeModelSourceLocator,capability?:RuntimeCompletionOwnerCapability,
 ) {
   const rows=await query.unsafe<Array<{
     attempt_id:string;claim_id:string;generation:number;slice_hash:string;compilation_report_hash:string;
@@ -810,10 +825,15 @@ export async function readNativeAcceptedModelSourceAuthority(
     FROM execution_attempts a
     JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id
       AND q.run_id=a.run_id AND q.workflow_step_id=a.step_id AND q.story_id=a.story_id AND q.output_hash=a.output_hash
-      AND q.state='accepted' AND q.apply_phase='effects_committed' AND q.claim_outcome IN ('completed','failed')
+      AND q.claim_outcome IN ('completed','failed')
+      AND (($5::text IS NULL AND q.state='accepted' AND q.apply_phase='effects_committed')
+        OR ($5::text IS NOT NULL AND q.state='processing' AND q.apply_phase='owner_committed'
+          AND q.request_id=$5 AND q.owner_instance_id=$6 AND q.owner_attempt_count=$7
+          AND q.lease_expires_at>clock_timestamp() AND q.drained_at IS NOT NULL))
     JOIN runtime_sessions s ON s.session_id=q.runtime_session_id AND s.attempt_id=a.attempt_id AND s.claim_id=a.claim_id
       AND s.run_id=a.run_id AND s.workflow_step_id=a.step_id AND s.step_db_id=q.step_db_id
-      AND s.story_id=a.story_id AND s.claim_agent_id=a.agent_id AND s.state='released'
+      AND s.story_id=a.story_id AND s.claim_agent_id=a.agent_id
+      AND (($5::text IS NULL AND s.state='released') OR ($5::text IS NOT NULL AND s.state='drained'))
     JOIN claim_log c ON c.id=a.claim_id AND c.run_id=a.run_id AND c.step_id=a.step_id AND c.story_id=a.story_id
       AND c.agent_id=a.agent_id AND c.outcome=q.claim_outcome
     JOIN v3_story_claim_runtime_bindings_v1 binding ON binding.claim_id=a.claim_id AND binding.runtime_session_id=s.session_id
@@ -842,7 +862,8 @@ export async function readNativeAcceptedModelSourceAuthority(
             AND p.dispatch_id=a.recovery_dispatch_id AND p.revision_id=a.recovery_case_revision_id
             AND d.dispatch_class=a.attempt_class AND r.packet_hash=a.packet_hash
             AND r.source_sha=a.source_before_sha AND r.source_tree_hash=a.source_before_tree_hash))`,
-    [input.attemptId,input.runId,input.storyId,input.packetHash]);
+    [input.attemptId,input.runId,input.storyId,input.packetHash,capability?.requestId??null,
+      capability?.ownerInstanceId??null,capability?.ownerAttemptCount??0]);
   if(rows.length!==1) fail("V3_NATIVE_MODEL_SOURCE_PROVENANCE_INVALID","one exact accepted model candidate owner is required");
   const row=rows[0]!;
   const refs=z.array(z.string()).parse(JSON.parse(row.evidence_refs));
