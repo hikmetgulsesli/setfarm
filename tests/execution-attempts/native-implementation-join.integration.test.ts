@@ -97,11 +97,14 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     }
   });
 
-  async function fixture(suffix: string, twoStories = false, runnableCli = false, lifecycle = false) {
+  async function fixture(suffix: string, twoStories = false, runnableCli = false, lifecycle = false, evidenceServiceUnavailable = false) {
     const source = await nativeJoinSourceFixture(runnableCli, twoStories && lifecycle, lifecycle);
     roots.push(source.root);
     const runId = `run-native-join-${suffix}`;
-    const packet = nativeJoinPacket(runId, twoStories, runnableCli, twoStories && lifecycle);
+    const evidencePreload = evidenceServiceUnavailable ? path.join(source.root, "evidence-service-preload.cjs") : undefined;
+    assert.ok(!evidencePreload || (twoStories && lifecycle && !runnableCli));
+    const packet = nativeJoinPacket(runId, twoStories, runnableCli, twoStories && lifecycle,
+      evidencePreload ? { NODE_OPTIONS: `--require=${evidencePreload}` } : undefined);
     const admission = await seedCanonicalCompilerStoryAdmissionFixture(database, {
       runId, releaseSha: NATIVE_JOIN_PRODUCER.codeSha, packetHash: packet.packetHash,
       productSpec: packet.productSpec, repo: source.repo,
@@ -173,7 +176,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       storyAdmissionProof: admission.storyAdmissionProof,
     };
     return { database, ...source, runId, packet, reader, artifactRoot, store, blocks,
-      readiness, nativeAuthority, input, prepare, admission };
+      readiness, nativeAuthority, input, prepare, admission, evidencePreload };
   }
 
   async function countEffects(value: Awaited<ReturnType<typeof fixture>>) {
@@ -282,6 +285,86 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.deepEqual(replay.attempt, claimed.attempt);
     assert.deepEqual(replay.v3ImplementationHandoff, claimed.v3ImplementationHandoff);
     assert.deepEqual(await countEffects(value), { claims: 1, attempts: 1, bindings: 1, runtimes: 1 });
+
+    // Reuse this still-clean actual caller publication. This exercises the real
+    // SQL operational-failure producer, not an observed physical provider fault.
+    const { loadV3ImplementationAttemptContext } = await import("../../src/execution/v3-implementation-attempt.js");
+    const origin = await loadV3ImplementationAttemptContext({ runId: value.runId, storyId: "US-001",
+      attemptId: claimed.attempt.attemptId });
+    const { createOperationalRetryDirectiveV1, resolveV3ExecutionProfile } =
+      await import("../../src/execution/operational-retry-directive.js");
+    const { publishOperationalRetryDirectiveInTransaction, terminalizeOperationalRetryExhaustionInTransaction } =
+      await import("../../src/execution/operational-retry-transition.js");
+    const { releaseReservedRuntimeSessionInTransaction } = await import("../../src/execution/runtime-session-repository.js");
+    const sessions = createRuntimeSessionRepository(database.sql);
+    const initialRuntime = await sessions.findById(value.input.runtimeIntent.sessionId);
+    assert.equal(initialRuntime?.state, "reserved");
+    assert.equal(initialRuntime?.startedAt, undefined);
+    const diagnostic = "IMPLEMENT_NO_DELTA_STALL: never-started SQL operational transition probe; no physical provider failure claimed";
+    const directive = createOperationalRetryDirectiveV1({ runId: value.runId, stepId: "implement", storyId: "US-001",
+      priorAttempt: { claimId: claimed.claimId, attemptId: origin.attempt.attemptId,
+        generation: origin.attempt.generation, attemptClass: "product_implementation",
+        packetHash: origin.packetHash, sliceHash: origin.sliceHash, sourceBefore: origin.sourceBefore,
+        terminalDisposition: "inconclusive" },
+      failure: { code: "IMPLEMENT_NO_DELTA_STALL", diagnostic }, nextSourceRevision: origin.sourceBefore,
+      allowedPaths: origin.slice.files.filter(file => file.role === "owned" || file.role === "shared_writable").map(file => file.path),
+    });
+    const identity = { claimId: claimed.claimId, attemptId: origin.attempt.attemptId,
+      attemptGeneration: origin.attempt.generation, runId: value.runId, stepId: "implement",
+      stepDbId: value.admission.implementStepDbId, storyId: "US-001", storyDbId: value.input.storyDbId, agentId };
+    const counts = await countEffects(value);
+    await assert.rejects(database.sql.begin(tx => publishOperationalRetryDirectiveInTransaction(tx, {
+      ...identity, stepDbId: "absent-native-operational-step", diagnostic, directive,
+    })), /OPERATIONAL_RETRY_STEP_STATE_CAS_LOST/);
+    assert.deepEqual(await countEffects(value), counts, "failed transition must roll back its real owner mutations");
+    const closed = await database.sql.begin(async tx => {
+      const result = await publishOperationalRetryDirectiveInTransaction(tx, { ...identity, diagnostic, directive });
+      assert.equal(result.status, "closed");
+      await releaseReservedRuntimeSessionInTransaction(tx, { sessionId: value.input.runtimeIntent.sessionId,
+        claimId: claimed.claimId!, ownerInstanceId: value.input.runtimeIntent.ownerInstanceId, diagnostic });
+      return result;
+    });
+    assert.equal(closed.status, "closed");
+    assert.deepEqual(directive.retryBudget, { ordinal: 1, limit: 1 });
+    assert.deepEqual(directive.executionProfile, resolveV3ExecutionProfile("fallback"));
+    const retryIntent = { ...value.input.runtimeIntent, sessionId: "RTS_native-task11-operational-fallback",
+      ownerInstanceId: "native-task11-operational-fallback-owner" };
+    const retry = await claimStep(agentId, value.input.callerGatewayAgent, retryIntent);
+    assert.equal(retry.found, true, JSON.stringify({ retry, state: await publicationDiagnostics(value) }));
+    assert.ok(retry.attempt && retry.claimId && retry.v3ImplementationHandoff);
+    const fallback = await loadV3ImplementationAttemptContext({ runId: value.runId, storyId: "US-001",
+      attemptId: retry.attempt.attemptId });
+    assert.equal(fallback.kind, "native-dispatch-ready");
+    assert.equal(fallback.attempt.attemptClass, "infrastructure_retry");
+    assert.equal(fallback.attempt.generation, origin.attempt.generation + 1);
+    assert.deepEqual(fallback.sourceBefore, origin.sourceBefore);
+    assert.equal(fallback.sliceHash, origin.sliceHash);
+    assert.deepEqual(fallback.slice, origin.slice);
+    assert.equal(fallback.evidencePlanArtifactHash, origin.evidencePlanArtifactHash);
+    assert.deepEqual(fallback.evidencePlan, origin.evidencePlan);
+    assert.deepEqual(fallback.executionProfile, directive.executionProfile);
+    assert.ok(fallback.attempt.evidenceRefs.includes(`setfarm://operational-retry/${directive.directiveHash}`));
+    const stillInitial = await database.sql`SELECT claim_id::text,attempt_id,slice_hash FROM v3_preparation_authority_attempts_v2
+      WHERE authority_hash=${value.nativeAuthority.authorityHash}`;
+    assert.deepEqual(stillInitial.map(row => ({ ...row })), binding.map(row => ({ ...row })));
+    const exhaustedDiagnostic = "OPERATIONAL_RETRY_EXHAUSTED: bounded SQL protocol probe; no provider execution claimed";
+    const exhausted = await database.sql.begin(async tx => {
+      const result = await terminalizeOperationalRetryExhaustionInTransaction(tx, {
+        ...identity, claimId: retry.claimId!, attemptId: fallback.attempt.attemptId,
+        attemptGeneration: fallback.attempt.generation, diagnostic: exhaustedDiagnostic, directive,
+      });
+      await releaseReservedRuntimeSessionInTransaction(tx, { sessionId: retryIntent.sessionId,
+        claimId: retry.claimId!, ownerInstanceId: retryIntent.ownerInstanceId, diagnostic: exhaustedDiagnostic });
+      return result;
+    });
+    assert.equal(exhausted.status, "closed");
+    const terminal = await database.sql`SELECT status FROM stories WHERE id=${value.input.storyDbId}`;
+    assert.equal(terminal[0]?.status, "failed");
+    const afterExhaustion = await countEffects(value);
+    assert.equal((await claimStep(agentId, value.input.callerGatewayAgent,
+      { ...retryIntent, sessionId: "RTS_native-task11-operational-forbidden-third" })).found, false);
+    assert.deepEqual(await countEffects(value), afterExhaustion);
+    assert.equal(afterExhaustion.attempts, 2);
   });
 
   // Break: upgrading genuine prepared authority through the actual default
@@ -514,8 +597,104 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     return { compiled, envelope, accepted, result, candidateSource };
   }
 
+  it("native Task11 real evidence-plane unavailability resolves through one unchanged-source non-model lease", async () => {
+    const value = await fixture("task11-native-evidence-only", true, false, true, true);
+    assert.ok(value.evidencePreload);
+    await assert.rejects(stat(value.evidencePreload), { code: "ENOENT" });
+    // Only the typed HTTP server command receives NODE_OPTIONS. Real build runs
+    // normally; absent fixture-owned preload makes the real server exit before
+    // readiness. No bundle, finding, verdict or accepted row is fabricated.
+    const completed = await completeNeverStartedNativeCandidate(value,
+      NATIVE_JOIN_API_SOURCE + "// candidate for genuine infrastructure evidence retry\n");
+    const { createRecoveryDeliveryRepository } = await import("../../src/recovery/recovery-delivery-repository.js");
+    const deliveries = createRecoveryDeliveryRepository(database.sql);
+    const delivery = await deliveries.findActiveForStory({ runId: value.runId, storyId: "US-001" });
+    assert.ok(delivery, JSON.stringify(completed.result));
+    const dispatch = await deliveries.findDispatch(delivery.dispatchId);
+    assert.ok(dispatch);
+    assert.equal(dispatch.dispatchClass, "evidence_only", "actual canonical inconclusive producer must select non-model recovery");
+    const revision = await deliveries.findRevision(dispatch.revisionId);
+    assert.ok(revision);
+    assert.equal(revision.owner, "infrastructure");
+    assert.equal(revision.expectedDelta.kind, "evidence_refresh");
+    assert.deepEqual(revision.allowedPaths, []);
+    assert.deepEqual(revision.sourceRevision, { sha: completed.candidateSource.source_after_sha,
+      treeHash: completed.candidateSource.source_after_tree_hash });
+    const { createFindingRecoveryRepository } = await import("../../src/recovery/finding-recovery-repository.js");
+    const findings = createFindingRecoveryRepository(database.sql);
+    const failedFindings = await findings.findFindingSet(dispatch.findingSetHash);
+    assert.ok(failedFindings);
+    const observedBundleHashes = new Set(failedFindings.findings.flatMap(finding => finding.observedEvidenceRefs));
+    assert.equal(observedBundleHashes.size, 1, "the real failed completion must retain exactly one canonical inconclusive bundle");
+    for (const hash of observedBundleHashes) {
+      const bundle = await findings.findEvidenceBundle(hash);
+      assert.ok(bundle);
+      assert.equal(bundle.aggregateVerdict, "inconclusive");
+      const buildPredicates = bundle.predicates.filter(predicate => predicate.invariantRef === "INV_COMMAND_BUILD");
+      assert.ok(buildPredicates.length > 0, "a missing build observation cannot qualify evidence-only recovery");
+      assert.ok(buildPredicates.every(predicate => predicate.verdict === "pass"));
+    }
+    const before = await countEffects(value);
+    // Repair only external test infrastructure. Candidate bytes/commit and
+    // immutable native contract remain exactly the producer's pinned source.
+    await writeFile(value.evidencePreload, "// owned evidence infrastructure restored\n", { flag: "wx" });
+    const { createV3EvidenceOnlyRecoveryWorker } = await import("../../src/recovery/v3-evidence-only-worker.js");
+    const { createV3EvidenceOnlyRuntimeDependencies } = await import("../../src/recovery/v3-evidence-only-runtime.js");
+    const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, createV3EvidenceOnlyRuntimeDependencies(database.sql));
+    const lease = await worker.acquireNext({ workflowId: "feature-dev",
+      ownerInstanceId: "native-task11-nonmodel-evidence-owner", leaseMs: 30_000 });
+    assert.ok(lease);
+    assert.equal(lease.mode, "fresh_execution");
+    assert.equal(lease.runId, value.runId);
+    assert.equal(lease.dispatchId, dispatch.dispatchId);
+    assert.equal(lease.revisionId, revision.revisionId);
+    assert.deepEqual(lease.sourceRevision, revision.sourceRevision);
+    assert.equal(lease.contractSliceHash, completed.compiled.sliceHash);
+    assert.equal(lease.priorEvidencePlanArtifactHash, completed.compiled.evidencePlanArtifactHash);
+    assert.notDeepEqual(lease.sourceRevision, completed.compiled.sourceBefore,
+      "real candidate source differs from the immutable original native slice base");
+    const result = await worker.runLease(lease);
+    assert.equal(result.execution, "executed");
+    assert.equal(result.coordinator.status, "resolved");
+    const passed = await findings.findEvidenceBundle(result.evidenceBundleHash);
+    assert.ok(passed);
+    assert.equal(passed.aggregateVerdict, "pass");
+    assert.deepEqual(passed.sourceRevision, revision.sourceRevision);
+    const { loadV3ImplementationAttemptContext } = await import("../../src/execution/v3-implementation-attempt.js");
+    const context = await loadV3ImplementationAttemptContext({ runId: value.runId, storyId: "US-001", attemptId: result.attemptId });
+    assert.equal(context.kind, "native-dispatch-ready");
+    assert.equal(context.attempt.attemptClass, "evidence_only");
+    assert.equal(context.attempt.role, "evidence-orchestrator");
+    assert.equal(context.attempt.generation, completed.compiled.attempt.generation + 1);
+    assert.deepEqual(context.sourceBefore, revision.sourceRevision);
+    assert.deepEqual(context.attempt.sourceAfter, revision.sourceRevision);
+    assert.equal(context.sliceHash, completed.compiled.sliceHash);
+    assert.deepEqual(context.slice, completed.compiled.slice);
+    assert.deepEqual(context.evidencePlan, completed.compiled.evidencePlan);
+    assert.equal(context.evidencePlanArtifactHash, completed.compiled.evidencePlanArtifactHash);
+    assert.equal((await deliveries.findDelivery(dispatch.dispatchId))?.state, "succeeded");
+    const after = await countEffects(value);
+    assert.equal(after.attempts, before.attempts + 1);
+    assert.equal(after.claims, before.claims + 1);
+    assert.equal(after.runtimes, before.runtimes, "evidence-only publication must not allocate a model runtime");
+    assert.equal(after.bindings, before.bindings, "initial V2 binding must not be rebound to evidence-only");
+    assert.equal(await worker.runNext({ workflowId: "feature-dev",
+      ownerInstanceId: "native-task11-nonmodel-evidence-owner" }), undefined);
+    assert.deepEqual(await countEffects(value), after);
+  });
+
   it("native Task11 owned failed candidate creates genuine delivery before the native successor boundary", async () => {
     const value = await fixture("task11-owned-repair", false, true, true);
+    // This probe accepts the repaired story, not the entire product. Seed the
+    // actual downstream workflow shape before publishing any implementation
+    // owner, as in v3-implementation-continuation.integration.test.ts.
+    const superviseStepDbId = `${value.runId}-supervise-step`;
+    await database.sql`INSERT INTO steps (
+      id,run_id,step_id,agent_id,step_index,input_template,expects,status,type,retry_count,max_retries
+    ) VALUES (
+      ${superviseStepDbId},${value.runId},'supervise','feature-dev_supervisor',5,
+      'Review the accepted native implementation.','','waiting','single',0,3
+    )`;
     const completed = await completeNeverStartedNativeCandidate(value, "const brokenProduct = ;\n");
     const { createRecoveryDeliveryRepository } = await import("../../src/recovery/recovery-delivery-repository.js");
     const deliveries = createRecoveryDeliveryRepository(database.sql);
@@ -672,6 +851,14 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.ok(terminal[0]!.nativeAuthority);
     assert.deepEqual(await countEffects(value), readbackEffects,
       "accepted native repair readback must create no claim, attempt, binding or runtime");
+    const workflow = await database.sql`SELECT r.status AS run_status,r.accepted_candidate_hash,
+      i.status AS implement_status,s.status AS supervise_status,s.current_story_id,
+      (SELECT count(*)::integer FROM claim_log c WHERE c.run_id=r.id AND c.step_id='supervise') AS supervise_claims
+      FROM runs r JOIN steps i ON i.run_id=r.id AND i.step_id='implement'
+      JOIN steps s ON s.id=${superviseStepDbId} WHERE r.id=${value.runId}`;
+    assert.equal(workflow.length, 1);
+    assert.deepEqual({ ...workflow[0]! }, { run_status: "running", accepted_candidate_hash: null,
+      implement_status: "done", supervise_status: "pending", current_story_id: null, supervise_claims: 0 });
     // No final-product/supervisor subject or selected physical closure is
     // manufactured by successful SQL/canonical evidence completion.
   });

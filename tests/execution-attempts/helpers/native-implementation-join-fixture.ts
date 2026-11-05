@@ -80,8 +80,9 @@ export function nativeJoinEnvelope(artifactType: string, payload: unknown) {
   });
 }
 
-export function nativeJoinPacket(runId: string, twoStories = false, runnableCli = false, runnableApi = false): SealedRuntimePacketV3 {
+export function nativeJoinPacket(runId: string, twoStories = false, runnableCli = false, runnableApi = false, runtimeServerEnv?: Readonly<Record<string, string>>): SealedRuntimePacketV3 {
   assert.ok(!runnableApi || (twoStories && !runnableCli));
+  assert.ok(!runtimeServerEnv || runnableApi, "external evidence environment belongs only to the real API fixture");
   assert.ok(!(twoStories && runnableCli), "the two-story HTTP and one-story CLI fixtures are separate products");
   const contracts = buildNoDesignProductBuildPacketV3Contracts();
   if (twoStories) {
@@ -103,7 +104,7 @@ export function nativeJoinPacket(runId: string, twoStories = false, runnableCli 
     const runtimeEvidenceContract = RuntimeEvidenceContractV1Schema.parse({
       schema: "setfarm.runtime-evidence-contract.v1", adapter: "http-service", stackPackId: "node-express-api",
       server: { argv: ["node", "dist/index.js"], cwd: ".", timeoutMs: 30_000,
-        ...(runnableApi ? { env: { HOST: "{{HOST}}", PORT: "{{PORT}}" } } : {}) },
+        ...(runnableApi ? { env: { ...runtimeServerEnv, HOST: "{{HOST}}", PORT: "{{PORT}}" } } : {}) },
       ...(runnableApi ? { initial: { method: "GET", path: "/state", headers: {}, expectedStatus: 200,
         timeoutMs: 30_000, capture: { format: "json", statePointer: "/state" } } } : {}),
       readiness: { method: "GET", path: "/health", expectedStatus: 200, timeoutMs: 30_000 },
