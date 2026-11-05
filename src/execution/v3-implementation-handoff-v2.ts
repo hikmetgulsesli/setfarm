@@ -127,14 +127,40 @@ export const V3ImplementationClaimHandoffV2Schema = z.object({
   if (nativeImplementationWritePaths(value).some(path => path.split("/").some(part => part === ".git" || part === ".setfarm"))) fail("implementationSlice", "Native source authority cannot include protected repository controls");
   if (recovery) {
     const reviewFindings = recovery.findingSet.findings.filter(finding => finding.classification === "unstructured_review");
-    if (reviewFindings.length !== value.reviewEvidenceArtifacts.length) fail("reviewEvidenceArtifacts", "Every native review finding needs exactly one immutable artifact");
-    for (const artifact of value.reviewEvidenceArtifacts) {
-      const finding = reviewFindings.find(item => item.observedEvidenceRefs.length === 1 && item.observedEvidenceRefs[0] === artifact.artifactHash);
-      if (artifactHash("setfarm.github-review-thread-evidence.v1", value.artifactProducer, artifact.evidence) !== artifact.artifactHash || !finding
-        || finding.externalRef?.headSha !== artifact.evidence.headSha || artifact.evidence.headSha !== value.sourceBefore.sha
-        || finding.externalRef?.threadId !== artifact.evidence.threadId || finding.sourceLocators.length !== 1
-        || finding.sourceLocators[0]?.path !== artifact.evidence.path || finding.sourceLocators[0]?.contentHash !== artifact.evidence.currentSource.contentHash) {
-        fail("reviewEvidenceArtifacts", "Native review evidence differs from exact current finding/source");
+    const artifacts = value.reviewEvidenceArtifacts;
+    const hashes = artifacts.map(artifact => artifact.artifactHash);
+    const refs = reviewFindings.flatMap(finding => finding.observedEvidenceRefs);
+    if (reviewFindings.length && (value.executionAuthority.role !== "supervisor"
+      || value.executionAuthority.attemptClass !== "supervisor_repair")) {
+      fail("executionAuthority", "Native unstructured review requires supervisor repair authority");
+    }
+    if (artifacts.length !== reviewFindings.length || new Set(hashes).size !== hashes.length
+      || reviewFindings.some(finding => finding.observedEvidenceRefs.length !== 1)
+      || new Set(refs).size !== refs.length) {
+      fail("reviewEvidenceArtifacts", "Native review findings and immutable artifacts must be a bijection");
+    }
+    const byHash = new Map(artifacts.map(artifact => [artifact.artifactHash, artifact]));
+    for (const artifact of artifacts) {
+      if (artifactHash("setfarm.github-review-thread-evidence.v1", value.artifactProducer, artifact.evidence) !== artifact.artifactHash) {
+        fail("reviewEvidenceArtifacts", "Native review artifact envelope hash differs");
+      }
+    }
+    for (const finding of reviewFindings) {
+      const artifact = byHash.get(finding.observedEvidenceRefs[0]!);
+      const external = finding.externalRef;
+      const locator = finding.sourceLocators[0];
+      if (!artifact || !external || finding.sourceLocators.length !== 1 || !locator) {
+        fail("reviewEvidenceArtifacts", "Native review finding must own one exact artifact and locator");
+        continue;
+      }
+      const evidence = artifact.evidence;
+      if (evidence.repository.nodeId !== external.repositoryNodeId
+        || evidence.prNumber !== external.prNumber || evidence.threadId !== external.threadId
+        || evidence.headSha !== external.headSha || evidence.headSha !== value.sourceBefore.sha
+        || evidence.bodyRevisionHash !== external.commentRevisionHash
+        || (external.commentId !== undefined && !evidence.comments.some(comment => comment.commentId === external.commentId))
+        || evidence.path !== locator.path || evidence.currentSource.contentHash !== locator.contentHash) {
+        fail("reviewEvidenceArtifacts", "Native review evidence differs from exact current finding identity");
       }
     }
   }

@@ -16,7 +16,9 @@ import { produceImplementationSourceMapV1 } from "../../src/product-compiler/pro
 import { produceStoryPlanV2 } from "../../src/product-compiler/producers/story-plan-v2.js";
 import { ProductBuildPacketV3Schema } from "../../src/product-compiler/schemas/product-build-packet-v3.js";
 import { ProductCompilationReportV3Schema } from "../../src/product-compiler/schemas/compilation-report-v3.js";
-import { compileLegacyImplementationSliceV2 } from "../../src/product-compiler/slice-compiler-v2-legacy.js";
+import { compileLegacyImplementationSliceV2, verifyLegacyImplementationSliceV2 } from "../../src/product-compiler/slice-compiler-v2-legacy.js";
+import { createGithubReviewSource, GithubReviewThreadEvidenceV1Schema } from "../../src/findings/github-review-source.js";
+import { ingestGithubReviewThreadsV1, type GithubActionableReviewCommentV1 } from "../../src/findings/github-review-ingestion.js";
 import { buildClaimSummary } from "../../src/spawner-prompt.js";
 import { planSubscriptionWorkflowHandoffV1 } from "../../src/execution/subscription-workflow-transport-v1.js";
 import { createV3ImplementationContext, parseV3ImplementationContext, serializeV3ImplementationContext } from "../../src/execution/v3-implementation-handoff.js";
@@ -235,6 +237,198 @@ function recoveryFixture(workdir: string) {
       findingSetHash: findingSet.findingSetHash, recoveryCaseRevisionId: `RREV_${"6".repeat(64)}`, recoveryDispatchId: `RDISP_${"7".repeat(64)}` } };
   return { value, handoff, current, repaired };
 }
+
+// Task11 pure DATA fixtures. The source adapter consumes literal GraphQL/current
+// byte inputs through its real producer. No network, Git, DB, model, accepted
+// candidate, supervisor ownership or physical review observation is simulated.
+async function nativeRawReviewArtifacts(options: {
+  repositoryNodeId?: string; prNumber?: number; headSha?: string;
+  threadPrefix?: string; commentPrefix?: string; body?: string; count?: number;
+} = {}) {
+  const prNumber = options.prNumber ?? 1925;
+  const headSha = options.headSha ?? CANDIDATE_SOURCE.sha;
+  const paths = ["src/index.ts", "src/shared/write.ts", "src/index.ts"];
+  const source = createGithubReviewSource({
+    fetchPage: async () => ({ data: { repository: {
+      id: options.repositoryNodeId ?? "R_native_review_repository",
+      pullRequest: { number: prNumber, state: "OPEN", headRefOid: headSha,
+        reviewThreads: { nodes: paths.slice(0, options.count ?? 2).map((file, index) => ({
+          id: `${options.threadPrefix ?? "PRRT_native"}_${index + 1}`,
+          isResolved: false, isOutdated: false, path: file, line: 1, startLine: null,
+          comments: { nodes: [{ id: `${options.commentPrefix ?? "PRRC_native"}_${index + 1}`,
+            body: options.body ?? `Review the implementation at ${file}.`, author: { login: "reviewer" },
+            createdAt: "2026-11-05T00:00:00.000Z", lastEditedAt: null }],
+            pageInfo: { hasNextPage: false } },
+        })), pageInfo: { hasNextPage: false, endCursor: null } },
+      },
+    } } }),
+    readSource: async input => {
+      assert.equal(input.headSha, headSha);
+      assert.ok(paths.includes(input.path));
+      return Buffer.from(NATIVE_JOIN_SOURCE);
+    },
+  });
+  const read = await source.read({ prUrl: `https://github.com/setrox/generated/pull/${prNumber}`,
+    repositoryPath: "/native-review-data-only" });
+  return read.actionableThreads.map(evidence => {
+    assert.equal(GithubReviewThreadEvidenceV1Schema.safeParse(evidence).success, true);
+    assert.equal(evidence.currentSource.contentHash, createHash("sha256").update(NATIVE_JOIN_SOURCE).digest("hex"));
+    const sealed = envelope("setfarm.github-review-thread-evidence.v1", evidence);
+    return { artifactHash: hashCanonicalJson(sealed), evidence };
+  });
+}
+
+function nativeReviewDataInput(artifacts: Awaited<ReturnType<typeof nativeRawReviewArtifacts>>, options: {
+  metadataArtifacts?: Awaited<ReturnType<typeof nativeRawReviewArtifacts>>;
+  changeMetadata?: (comment: GithubActionableReviewCommentV1, index: number) => GithubActionableReviewCommentV1;
+  omitCommentMembership?: boolean;
+} = {}) {
+  const origin = compiledNativeCliFixture(true);
+  const metadata = options.metadataArtifacts ?? artifacts;
+  let findingSet = ingestGithubReviewThreadsV1({ schema: "setfarm.github-review-finding-set-input.v1",
+    runId: RUN_ID, storyId: "US-001", packetHash: origin.slice.packetHash, sliceHash: origin.sliceHash,
+    sourceRevision: CANDIDATE_SOURCE,
+    reviews: artifacts.map((artifact, index) => {
+      const evidence = metadata[index]!.evidence;
+      const comment: GithubActionableReviewCommentV1 = {
+        repositoryNodeId: evidence.repository.nodeId, prNumber: evidence.prNumber,
+        threadId: evidence.threadId, commentId: evidence.comments[0]!.commentId,
+        headSha: evidence.headSha, bodyRevisionHash: evidence.bodyRevisionHash,
+        currentSource: { path: evidence.path, contentHash: evidence.currentSource.contentHash },
+      };
+      return { evidenceArtifactHash: artifact.artifactHash,
+        comment: options.changeMetadata?.(comment, index) ?? comment };
+    }),
+  });
+  if (options.omitCommentMembership) {
+    findingSet = createFindingSetV1({ runId: findingSet.runId, storyId: findingSet.storyId,
+      packetHash: findingSet.packetHash, sliceHash: findingSet.sliceHash, sourceRevision: findingSet.sourceRevision,
+      findings: findingSet.findings.map(finding => {
+        const { findingId: _id, ...draft } = finding;
+        assert.ok(draft.externalRef);
+        const { commentId: _comment, ...externalRef } = draft.externalRef;
+        return { ...draft, externalRef };
+      }) });
+  }
+  const paths = [...new Set(findingSet.findings.flatMap(finding => finding.sourceLocators.map(locator => locator.path)))].sort();
+  const changes = paths.map(file => {
+    const current = origin.slice.files.find(candidate => candidate.path === file)!;
+    assert.ok(current && current.role !== "shared_readonly");
+    assert.equal(current.contentHash, createHash("sha256").update(NATIVE_JOIN_SOURCE).digest("hex"));
+    return { pathRef: current.pathRef, path: current.path,
+      before: { presence: current.presence, contentHash: current.contentHash } };
+  }).sort((left, right) => left.pathRef < right.pathRef ? -1 : left.pathRef > right.pathRef ? 1 : 0);
+  const recovery = { schema: "setfarm.implementation-recovery-directive.v2", findingSet,
+    sourceRevision: CANDIDATE_SOURCE, expectedSourceDelta: {
+      schema: "setfarm.implementation-source-delta.v2", mode: "generated_repair",
+      expectedDelta: { kind: "source_change", invariantRefs: ["INV_UNSTRUCTURED_REVIEW"], requiredPaths: paths },
+      allowedPaths: paths, changes,
+    } };
+  return { origin, artifacts, paths, compileInput: { ...origin.compilerInput, sourceRevision: CANDIDATE_SOURCE, recovery } };
+}
+
+function compiledNativeReviewData(value: ReturnType<typeof nativeReviewDataInput>) {
+  const compiled = compileLegacyImplementationSliceV2(value.compileInput);
+  assert.equal(compiled.status, "compiled", JSON.stringify(compiled));
+  if (compiled.status !== "compiled") assert.fail("genuine generated-only review DATA must compile before handoff assertions");
+  assert.equal(verifyLegacyImplementationSliceV2({ compilerInput: value.compileInput, slice: compiled.slice }).status, "verified");
+  assert.equal(hashCanonicalJson(compiled.envelope), compiled.sliceHash);
+  const handoff = nativeHandoff({ ...value.origin, ...compiled }, "/native-review-data-only");
+  return { ...compiled, handoff: { ...handoff, sourceBefore: CANDIDATE_SOURCE, attemptGeneration: 2,
+    executionAuthority: { role: "supervisor", attemptClass: "supervisor_repair" },
+    findingSet: value.compileInput.recovery.findingSet, reviewEvidenceArtifacts: value.artifacts,
+    recoveryAttempt: { attemptId: ATTEMPT_ID, claimId: CLAIM_ID, runId: RUN_ID, stepId: "implement", storyId: "US-001",
+      generation: 2, attemptClass: "supervisor_repair", role: "supervisor", packetHash: compiled.slice.packetHash,
+      compilationReportHash: value.origin.compilationReportHash, sliceHash: compiled.sliceHash, sourceBefore: CANDIDATE_SOURCE,
+      findingSetHash: value.compileInput.recovery.findingSet.findingSetHash,
+      recoveryCaseRevisionId: `RREV_${"6".repeat(64)}`, recoveryDispatchId: `RDISP_${"7".repeat(64)}` },
+  } };
+}
+
+describe("native generated unstructured review DATA", () => {
+  it("compiles genuine generated-only multi-review findings with exact current witnesses", async () => {
+    const artifacts = await nativeRawReviewArtifacts();
+    const value = nativeReviewDataInput(artifacts);
+    const compiled = compiledNativeReviewData(value);
+    const context = createV3ImplementationContext({ handoff: compiled.handoff });
+    assert.deepEqual(context.writeAuthority, { mode: "recovery", allowedPaths: value.paths });
+    assert.equal(context.handoff.executionAuthority.role, "supervisor");
+    assert.equal(context.handoff.executionAuthority.attemptClass, "supervisor_repair");
+    assert.deepEqual(context.handoff.nativeAuthority.baseRevision, SOURCE_BEFORE);
+    assert.deepEqual(context.handoff.sourceBefore, CANDIDATE_SOURCE);
+    assert.throws(() => createV3ImplementationContext({ handoff: { ...compiled.handoff,
+      executionAuthority: { role: "developer", attemptClass: "product_implementation" },
+      recoveryAttempt: { ...compiled.handoff.recoveryAttempt, role: "developer", attemptClass: "product_implementation" },
+    } }), /executionAuthority|reviewEvidenceArtifacts/, "unstructured review DATA must retain the supervisor repair role");
+    assert.ok(compiled.slice.recovery!.findingSet.findings.every(finding => finding.origin === "review"
+      && finding.classification === "unstructured_review" && finding.invariantRef === "INV_UNSTRUCTURED_REVIEW"
+      && finding.expectedPredicateRef === undefined));
+    const recovery = value.compileInput.recovery;
+    const exact = { ...recovery, expectedSourceDelta: { schema: "setfarm.implementation-source-delta.v2",
+      changes: recovery.expectedSourceDelta.changes.map(change => ({ ...change,
+        after: { presence: "present", contentHash: createHash("sha256").update("known exact replacement").digest("hex") } })) } };
+    assert.equal(compileLegacyImplementationSliceV2({ ...value.compileInput, recovery: exact }).status, "rejected",
+      "unstructured review must remain illegal in the historical exact branch");
+    for (const delta of [
+      { ...recovery.expectedSourceDelta, changes: recovery.expectedSourceDelta.changes.map(change => ({ ...change,
+        after: { presence: "present", contentHash: createHash("sha256").update("fictional future repair").digest("hex") } })) },
+      { ...recovery.expectedSourceDelta, allowedPaths: [...value.paths, "src/shared/read.ts"].sort() },
+      { ...recovery.expectedSourceDelta, changes: recovery.expectedSourceDelta.changes.map(change => ({ ...change,
+        before: { ...change.before, contentHash: createHash("sha256").update("stale current bytes").digest("hex") } })) },
+    ]) assert.equal(compileLegacyImplementationSliceV2({ ...value.compileInput,
+      recovery: { ...recovery, expectedSourceDelta: delta } }).status, "rejected");
+    const staleFindingSet = createFindingSetV1({ runId: recovery.findingSet.runId, storyId: recovery.findingSet.storyId,
+      packetHash: recovery.findingSet.packetHash, sliceHash: recovery.findingSet.sliceHash,
+      sourceRevision: recovery.findingSet.sourceRevision, findings: recovery.findingSet.findings.map(finding => {
+        const { findingId: _id, ...draft } = finding;
+        return { ...draft, sourceLocators: draft.sourceLocators.map(locator => ({ ...locator,
+          contentHash: createHash("sha256").update("other current source").digest("hex") })) };
+      }) });
+    assert.equal(compileLegacyImplementationSliceV2({ ...value.compileInput,
+      recovery: { ...recovery, findingSet: staleFindingSet } }).status, "rejected",
+    "review locator hashes must equal actual native current contentHash witnesses");
+    const optionalComment = compiledNativeReviewData(nativeReviewDataInput(artifacts, { omitCommentMembership: true }));
+    assert.doesNotThrow(() => createV3ImplementationContext({ handoff: optionalComment.handoff }));
+  });
+
+  it("requires a bijection from generated review findings to immutable thread artifacts", async () => {
+    const artifacts = await nativeRawReviewArtifacts();
+    const { handoff } = compiledNativeReviewData(nativeReviewDataInput(artifacts));
+    assert.doesNotThrow(() => createV3ImplementationContext({ handoff }));
+    const extra = (await nativeRawReviewArtifacts({ count: 3 }))[2]!;
+    for (const supplied of [[artifacts[0]!, artifacts[0]!], artifacts.slice(0, 1), [...artifacts, extra]]) {
+      assert.throws(() => createV3ImplementationContext({ handoff: { ...handoff, reviewEvidenceArtifacts: supplied } }),
+        /reviewEvidenceArtifacts/, "duplicate, missing and unused immutable artifacts must refuse");
+    }
+  });
+
+  it("binds the complete external identity of genuine generated review artifacts", async () => {
+    const artifacts = await nativeRawReviewArtifacts();
+    const baseline = compiledNativeReviewData(nativeReviewDataInput(artifacts));
+    assert.doesNotThrow(() => createV3ImplementationContext({ handoff: baseline.handoff }));
+    const alternate = await nativeRawReviewArtifacts({ repositoryNodeId: "R_other_native_repository", prNumber: 1926,
+      threadPrefix: "PRRT_other_native", commentPrefix: "PRRC_other_native", body: "An independently produced edited conversation." });
+    const other = alternate[0]!.evidence;
+    for (const change of [
+      { repositoryNodeId: other.repository.nodeId }, { prNumber: other.prNumber }, { threadId: other.threadId },
+      { bodyRevisionHash: other.bodyRevisionHash }, { commentId: other.comments[0]!.commentId },
+    ]) {
+      const crossed = compiledNativeReviewData(nativeReviewDataInput(artifacts, {
+        changeMetadata: (comment, index) => index === 0 ? { ...comment, ...change } : comment,
+      }));
+      assert.throws(() => createV3ImplementationContext({ handoff: crossed.handoff }), /reviewEvidenceArtifacts/,
+        `well-formed compiled finding metadata crossed at ${Object.keys(change)[0]} must refuse`);
+    }
+    // The source adapter legitimately seals another head. Keep selected metadata
+    // current so admission reaches the handoff's artifact/head comparison.
+    const otherHead = await nativeRawReviewArtifacts({ headSha: "5".repeat(40) });
+    const crossedHead = compiledNativeReviewData(nativeReviewDataInput(otherHead, { metadataArtifacts: artifacts }));
+    assert.throws(() => createV3ImplementationContext({ handoff: crossedHead.handoff }), /reviewEvidenceArtifacts/);
+    const wrongHash = { ...artifacts[0]!, artifactHash: alternate[0]!.artifactHash };
+    assert.throws(() => createV3ImplementationContext({ handoff: { ...baseline.handoff,
+      reviewEvidenceArtifacts: [wrongHash, artifacts[1]!] } }), /reviewEvidenceArtifacts/);
+  });
+});
 
 describe("native PacketV3 context and owned evidence admission", () => {
   it("keeps native owned/shared writable files exact and refuses readonly or protected output", () => {

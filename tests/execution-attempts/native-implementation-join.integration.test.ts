@@ -217,7 +217,135 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     `;
     const completions = await database.sql`SELECT request_id,workflow_step_id,state,apply_phase
       FROM runtime_completion_requests WHERE run_id=${value.runId} ORDER BY workflow_step_id`;
-    return { callerGatewayAgent: value.input.callerGatewayAgent, runs, stories, steps, runtimes, completions };
+    // Read-only copy of claimStep's current full SQL selector, including its
+    // actual priority/tie ordering. Diagnostics never supply selection authority.
+    const selectedByActualSelector = await database.sql.unsafe(`SELECT s.id, s.step_id, s.run_id, s.step_index, s.input_template, s.type, s.loop_config, s.status as step_status, s.current_story_id, s.retry_count, s.output, r.protocol
+         FROM steps s
+         JOIN runs r ON r.id = s.run_id
+         WHERE s.agent_id = $1
+           AND (
+             s.status = 'pending'
+             OR s.status = 'running'
+           )
+           AND r.status IN ('running', 'resuming')
+           AND NOT ${V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1}
+           AND NOT (
+  s.step_id = 'implement'
+  AND s.type = 'loop'
+  AND COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+  AND (
+    COALESCE(r.context::jsonb ->> 'failure_category', '') = 'PR_REVIEW_COMMENTS_OPEN'
+    OR COALESCE(r.context::jsonb ->> 'previous_failure', '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
+    OR COALESCE(r.context::jsonb ->> 'verify_feedback', '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
+  )
+  AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running'))
+  AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+)
+           AND (
+             $2::text IS NULL
+             OR s.step_id <> 'implement'
+             OR r.assigned_developer IS NULL
+             OR r.assigned_developer = $2
+           )
+           AND NOT (
+             s.step_id = 'verify'
+             AND r.context::jsonb ? 'verify_pending_since'
+             AND r.context::jsonb ? 'verify_pending_pr_url'
+             AND (r.context::jsonb ->> 'verify_pending_since')::timestamptz > NOW() - ($3::int * interval '1 millisecond')
+             AND NOT EXISTS (
+               SELECT 1 FROM stories verify_done_st
+               WHERE verify_done_st.run_id = s.run_id
+                 AND verify_done_st.status = 'done'
+                 AND verify_done_st.pr_url IS NOT NULL
+                 AND verify_done_st.pr_url <> (r.context::jsonb ->> 'verify_pending_pr_url')
+             )
+           )
+           AND NOT (
+             s.step_id = COALESCE((
+               SELECT NULLIF(verify_loop.loop_config::jsonb ->> 'verifyStep', '')
+               FROM steps verify_loop
+               WHERE verify_loop.run_id = s.run_id
+                 AND verify_loop.type = 'loop'
+                 AND verify_loop.step_id = 'implement'
+                 AND COALESCE(verify_loop.loop_config::jsonb, '{}'::jsonb) @> '{"superviseEach":true}'::jsonb
+               LIMIT 1
+             ), 'verify')
+             AND EXISTS (
+               SELECT 1 FROM stories verify_wait_st
+               WHERE verify_wait_st.run_id = s.run_id
+                 AND verify_wait_st.status = 'done'
+                 AND (
+                   COALESCE(r.context::jsonb ->> 'supervised_story_ids', '') = ''
+                   OR POSITION(',' || verify_wait_st.story_id || ',' IN ',' || COALESCE(r.context::jsonb ->> 'supervised_story_ids', '') || ',') = 0
+                 )
+             )
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM steps prev
+	             WHERE prev.run_id = s.run_id
+	               AND prev.step_index < s.step_index
+	               AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
+	               AND NOT (
+	                 prev.type = 'loop'
+	                 AND prev.status = 'running'
+	                 AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+	                 AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
+	                 AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND (active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:[[:space:]]*retry'))
+	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+	               )
+	               AND NOT (
+	                 prev.type = 'loop'
+	                 AND prev.status = 'pending'
+	                 AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+	                 AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
+	                 AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND (active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:[[:space:]]*retry'))
+	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+	               )
+	               AND NOT (
+	                 s.step_id = COALESCE((
+	                   SELECT NULLIF(sup_loop.loop_config::jsonb ->> 'superviseStep', '')
+	                   FROM steps sup_loop
+	                   WHERE sup_loop.run_id = s.run_id
+	                     AND sup_loop.type = 'loop'
+	                     AND sup_loop.step_id = 'implement'
+	                     AND COALESCE(sup_loop.loop_config::jsonb, '{}'::jsonb) @> '{"superviseEach":true}'::jsonb
+	                   LIMIT 1
+	                 ), 'supervise')
+	                 AND EXISTS (
+	                   SELECT 1 FROM stories sup_done_st
+	                   WHERE sup_done_st.run_id = s.run_id
+	                     AND sup_done_st.status = 'done'
+	                 )
+	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND (active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:[[:space:]]*retry'))
+	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+	               )
+	           )
+         ORDER BY
+           CASE
+             WHEN s.status = 'running' THEN 0
+             WHEN $2::text IS NOT NULL AND r.assigned_developer = $2 THEN 0
+             WHEN r.assigned_developer IS NULL THEN 1
+             ELSE 2
+           END,
+           s.step_index ASC, s.status ASC
+         LIMIT 1`,
+      [value.input.claimAgentId, value.input.callerGatewayAgent, 60_000]);
+    const candidateFacts = await database.sql.unsafe(`SELECT s.id,s.run_id,s.step_id,s.agent_id,s.status,
+      s.step_index,s.type,s.loop_config,s.current_story_id,r.status AS run_status,r.assigned_developer,
+      ${V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1} AS predecessor_completion_blocked,
+      (r.assigned_developer IS NULL OR r.assigned_developer=$2) AS gateway_matches,
+      EXISTS(SELECT 1 FROM steps prev WHERE prev.run_id=s.run_id AND prev.step_index<s.step_index
+        AND prev.status NOT IN ('done','failed','skipped','verified')) AS unfinished_predecessor,
+      (SELECT count(*)::integer FROM stories st WHERE st.run_id=s.run_id AND st.status='running') AS running_stories,
+      CASE WHEN s.status='running' THEN 0 WHEN r.assigned_developer=$2 THEN 0
+        WHEN r.assigned_developer IS NULL THEN 1 ELSE 2 END AS selection_priority
+      FROM steps s JOIN runs r ON r.id=s.run_id WHERE s.agent_id=$1
+        AND s.status IN ('pending','running') AND r.status IN ('running','resuming')
+      ORDER BY selection_priority,s.step_index,s.status,s.id`,[value.input.claimAgentId,value.input.callerGatewayAgent]);
+    return { callerGatewayAgent: value.input.callerGatewayAgent, selectorAgentId: value.input.claimAgentId,
+      selectedByActualSelector, candidateFacts, runs, stories, steps, runtimes, completions };
   }
 
   // Break: the actual normal caller still selects the legacy packet reader,
@@ -664,7 +792,22 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(lease.priorEvidencePlanArtifactHash, completed.compiled.evidencePlanArtifactHash);
     assert.notDeepEqual(lease.sourceRevision, completed.compiled.sourceBefore,
       "real candidate source differs from the immutable original native slice base");
-    const result = await worker.runLease(lease);
+    let result: Awaited<ReturnType<typeof worker.runLease>>;
+    try {
+      result = await worker.runLease(lease);
+    } catch (error) {
+      // Emit only bounded direct error fields before the owned runner buffers
+      // the final test diagnostic. Preserve the exact rejection and stack.
+      const fields = (value: unknown) => value instanceof Error
+        ? { name: value.name.slice(0, 120), message: value.message.slice(0, 800),
+          ...("code" in value && typeof value.code === "string" ? { code: value.code.slice(0, 160) } : {}) }
+        : { name: "NonError", message: typeof value === "string" ? value.slice(0, 800) : "non-Error rejection" };
+      const cause = error instanceof Error && "cause" in error ? error.cause : undefined;
+      console.error("[native-evidence-only] runLease failed", JSON.stringify({
+        error: fields(error), ...(cause === undefined ? {} : { cause: fields(cause) }),
+      }));
+      throw error;
+    }
     assert.equal(result.execution, "executed");
     assert.equal(result.coordinator.status, "resolved");
     const passed = await findings.findEvidenceBundle(result.evidenceBundleHash);
@@ -692,6 +835,167 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(await worker.runNext({ workflowId: "feature-dev",
       ownerInstanceId: "native-task11-nonmodel-evidence-owner" }), undefined);
     assert.deepEqual(await countEffects(value), after);
+
+    // Keep the original producer/counter/replay assertions above complete
+    // before any dependent-story owner is allocated.
+    const originalOwners = await database.sql<Array<{
+      disposition: string; claim_outcome: string; request_state: string;
+      apply_phase: string; request_claim_outcome: string; runtime_state: string;
+      source_after_sha: string; source_after_tree_hash: string;
+    }>>`
+      SELECT a.disposition,c.outcome AS claim_outcome,q.state AS request_state,
+        q.apply_phase,q.claim_outcome AS request_claim_outcome,r.state AS runtime_state,
+        a.source_after_sha,a.source_after_tree_hash
+      FROM execution_attempts a
+      JOIN claim_log c ON c.id=a.claim_id AND c.run_id=a.run_id AND c.story_id=a.story_id
+      JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=c.id
+        AND q.run_id=a.run_id AND q.story_id=a.story_id AND q.output_hash=a.output_hash
+      JOIN runtime_sessions r ON r.session_id=q.runtime_session_id AND r.attempt_id=a.attempt_id
+        AND r.claim_id=c.id AND r.run_id=a.run_id AND r.story_id=a.story_id
+      WHERE a.attempt_id=${completed.compiled.attempt.attemptId} AND a.run_id=${value.runId}
+        AND q.request_id=${completed.accepted.requestId}
+    `;
+    assert.ok(completed.accepted.claimOutcome === "completed" || completed.accepted.claimOutcome === "failed",
+      "preserve the original producer's actual accepted claim outcome");
+    assert.deepEqual(originalOwners.map(row => ({ ...row })), [{
+      disposition: "inconclusive", claim_outcome: completed.accepted.claimOutcome, request_state: "accepted",
+      apply_phase: "effects_committed", request_claim_outcome: completed.accepted.claimOutcome, runtime_state: "released",
+      source_after_sha: revision.sourceRevision.sha, source_after_tree_hash: revision.sourceRevision.treeHash,
+    }], "independent verification must preserve original inconclusive evidence and the actual accepted model outcome");
+
+    const verifierOwners = await database.sql<Array<{
+      attempt_class: string; disposition: string; outcome: string; output_hash: string;
+      runtimes: number; completions: number; initial_bindings: number;
+    }>>`
+      SELECT a.attempt_class,a.disposition,c.outcome,a.output_hash,
+        (SELECT count(*)::integer FROM runtime_sessions r
+          WHERE r.attempt_id=a.attempt_id OR r.claim_id=a.claim_id) AS runtimes,
+        (SELECT count(*)::integer FROM runtime_completion_requests q
+          WHERE q.attempt_id=a.attempt_id OR q.claim_id=a.claim_id) AS completions,
+        (SELECT count(*)::integer FROM v3_preparation_authority_attempts_v2 b
+          WHERE b.attempt_id=a.attempt_id OR b.claim_id=a.claim_id) AS initial_bindings
+      FROM execution_attempts a JOIN claim_log c ON c.id=a.claim_id
+        AND c.run_id=a.run_id AND c.story_id=a.story_id AND c.step_id=a.step_id
+      WHERE a.attempt_id=${result.attemptId} AND a.run_id=${value.runId}
+    `;
+    assert.deepEqual(verifierOwners.map(row => ({ ...row })), [{
+      attempt_class: "evidence_only", disposition: "verified", outcome: "completed",
+      output_hash: result.evidenceBundleHash, runtimes: 0, completions: 0, initial_bindings: 0,
+    }], "canonical nonmodel success must retain its bundle hash and have no model RCR/runtime");
+
+    const projected = await database.sql<Array<{
+      story_status: string; claim_generation: number; claimed_by: string | null; claimed_at: string | null;
+      step_status: string; current_story_id: string | null; run_status: string;
+    }>>`
+      SELECT st.status AS story_status,st.claim_generation,st.claimed_by,st.claimed_at,
+        s.status AS step_status,s.current_story_id,r.status AS run_status
+      FROM stories st JOIN runs r ON r.id=st.run_id
+      JOIN steps s ON s.id=${value.admission.implementStepDbId} AND s.run_id=st.run_id
+      WHERE st.id=${value.admission.stories[0]!.id} AND st.run_id=${value.runId} AND st.story_id='US-001'
+    `;
+    assert.equal(projected.length, 1);
+    assert.equal(projected[0]!.story_status, "done",
+      "real nonmodel success must publish story acceptance; resolved case alone leaves the story failed");
+    assert.equal(projected[0]!.claim_generation, completed.envelope.claimGeneration);
+    assert.equal(projected[0]!.claimed_by, null);
+    assert.equal(projected[0]!.claimed_at, null);
+    assert.equal(projected[0]!.current_story_id, null);
+    assert.ok(["pending", "running"].includes(projected[0]!.step_status));
+    assert.equal(projected[0]!.run_status, "running");
+
+    const { createPostgresTerminalDependencyAttemptReader } = await import("../../src/execution/v3-preparation-eligibility.js");
+    const readTerminal = createPostgresTerminalDependencyAttemptReader(database.sql, {
+      artifactRoot: value.artifactRoot, artifactLimits: NATIVE_JOIN_LIMITS,
+    });
+    const locator = { runId: value.runId, stepId: "implement", packetHash: value.packet.packetHash, storyIds: ["US-001"] };
+    const verified = await readTerminal(locator);
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0]!.attemptId, result.attemptId,
+      "dependency selection must identify the genuine verifier, never relabel the inconclusive source owner");
+    assert.equal(verified[0]!.disposition, "verified");
+    assert.equal(verified[0]!.sourceAfterSha, revision.sourceRevision.sha);
+    assert.equal(verified[0]!.sourceAfterTreeHash, revision.sourceRevision.treeHash);
+    const verifiedAuthority = verified[0]!.nativeAuthority;
+    assert.ok(verifiedAuthority);
+    assert.equal(verifiedAuthority.attemptId, result.attemptId);
+    assert.equal(verifiedAuthority.attemptGeneration, context.attempt.generation);
+    assert.equal(verifiedAuthority.attemptClass, "evidence_only");
+    assert.equal(verifiedAuthority.outputHash, result.evidenceBundleHash);
+    assert.equal(verifiedAuthority.sliceHash, completed.compiled.sliceHash);
+    assert.deepEqual(verifiedAuthority.sourceAfter, revision.sourceRevision);
+    assert.deepEqual(await countEffects(value), after, "terminal authority readback must allocate no owner");
+
+    // This is cleanup after successful verification, not proof that evidence
+    // can execute after the earlier failed model completion already removed it.
+    const { removeStoryWorktree } = await import("../../src/installer/worktree-ops.js");
+    removeStoryWorktree(value.repo, value.branch, value.input.claimAgentId);
+    await assert.rejects(stat(value.worktree), { code: "ENOENT" },
+      "production cleanup must really remove the verified source worktree");
+    const git = (args: string[]) => execFileSync("git", args, {
+      cwd: value.repo, encoding: "utf8", timeout: 10_000, stdio: "pipe",
+    }).trim();
+    const retainedTip = git(["rev-parse", "--verify", "--end-of-options", `${value.branch}^{commit}`]);
+    assert.match(retainedTip, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+    assert.equal(git(["merge-base", "--is-ancestor", revision.sourceRevision.sha, retainedTip]), "");
+    assert.equal(git(["rev-parse", `${revision.sourceRevision.sha}^{tree}`]), revision.sourceRevision.treeHash,
+      "cleanup tip must not replace the candidate's exact Git tree");
+    assert.equal(git(["rev-parse", `${value.sourceBefore.sha}^{tree}`]), value.sourceBefore.treeHash);
+    assert.deepEqual(await readTerminal(locator), verified,
+      "nonmodel dependency authority and exact signatures must survive real source-worktree cleanup");
+    const reloaded = await loadV3ImplementationAttemptContext({
+      runId: value.runId, storyId: "US-001", attemptId: result.attemptId,
+    });
+    assert.deepEqual(reloaded, context, "nonmodel context must retain the original slice/plan and independent candidate");
+    assert.deepEqual(await countEffects(value), after);
+
+    const prepared = await createV3NormalImplementationPreclaim({
+      readPacket: runId => value.reader.readExactSealedPacket(runId), blockRepository: value.blocks,
+      readPendingStories: async () => database.sql<Array<{ id: string; run_id: string; story_id: string;
+        story_index: number; status: string; depends_on: string }>>`
+        SELECT id,run_id,story_id,story_index,status,depends_on FROM stories
+        WHERE run_id=${value.runId} AND status='pending' ORDER BY story_index`,
+      readTerminalDependencyAttempts: readTerminal,
+    }).prepare({ runId: value.runId, stepId: "implement", repo: value.repo, requestedBaseRef: value.branch });
+    assert.equal(prepared.status, "ready", JSON.stringify(prepared));
+    if (prepared.status !== "ready" || prepared.packetSchema !== "setfarm.product-build-packet.v3")
+      assert.fail("genuine nonmodel success must enrich the pending second native story");
+    assert.equal(prepared.story.story_id, "US-002");
+    assert.deepEqual(prepared.nativeAuthority.dependencyAttempts, [verifiedAuthority]);
+    assert.equal(prepared.authority.dependencyAttempts[0]?.attemptId, result.attemptId);
+    assert.equal(prepared.authority.dependencyAttempts[0]?.attemptClass, "evidence_only");
+    assert.deepEqual(await countEffects(value), after, "preclaim may publish readiness, never execution owners");
+
+    const { claimStep } = await import("../../src/installer/step-ops.js");
+    const second = await claimStep(value.input.claimAgentId, value.input.callerGatewayAgent, {
+      ...value.input.runtimeIntent, sessionId: `${value.input.runtimeIntent.sessionId}-second`,
+      ownerInstanceId: "native-task11-nonmodel-dependent-owner",
+    });
+    assert.equal(second.found, true, JSON.stringify({ second, state: await publicationDiagnostics(value) }));
+    assert.equal(second.runId, value.runId);
+    assert.equal(second.storyId, "US-002");
+    assert.ok(second.claimId && second.attempt && second.v3ImplementationHandoff && second.runtimeSessionId);
+    const handoff = V3ImplementationClaimHandoffSchema.parse(second.v3ImplementationHandoff);
+    assert.equal(handoff.schema, "setfarm.v3-implementation-claim-handoff.v2");
+    if (handoff.schema !== "setfarm.v3-implementation-claim-handoff.v2") assert.fail("native dependent handoff required");
+    assert.deepEqual(handoff.nativeAuthority.dependencyAttempts, [verifiedAuthority]);
+    assert.equal(handoff.implementationSlice.dependencyOutputs[0]?.outputHash, result.evidenceBundleHash);
+    const secondRuntime = await createRuntimeSessionRepository(database.sql).findById(second.runtimeSessionId);
+    assert.ok(secondRuntime);
+    assert.equal(secondRuntime.claimId, second.claimId);
+    assert.equal(secondRuntime.attemptId, second.attempt.attemptId);
+    assert.equal(secondRuntime.state, "reserved");
+    const secondContext = await loadV3ImplementationAttemptContext({
+      runId: value.runId, storyId: "US-002", attemptId: second.attempt.attemptId,
+    });
+    assert.equal(secondContext.kind, "native-dispatch-ready");
+    if (secondContext.kind !== "native-dispatch-ready") assert.fail("native dependent context required");
+    assert.deepEqual(secondContext.nativeAuthority.dependencyAttempts, [verifiedAuthority]);
+    assert.deepEqual(await countEffects(value), {
+      claims: after.claims + 1, attempts: after.attempts + 1,
+      bindings: after.bindings + 1, runtimes: after.runtimes + 1,
+    });
+    // Stop at authentic reservation. No second-story completion, final subject
+    // or selected physical worker is manufactured to extend this proof.
   });
 
   it("native Task11 owned failed candidate creates genuine delivery before the native successor boundary", async () => {
@@ -937,12 +1241,13 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const secondIntent = { ...value.input.runtimeIntent,
       sessionId: `${value.input.runtimeIntent.sessionId}-second`,
       ownerInstanceId: "native-task11-second-owner" };
+    const selectionBefore = await publicationDiagnostics(value);
     const second = await claimStep(value.input.claimAgentId, value.input.callerGatewayAgent, secondIntent);
     const blocks = await database.sql`SELECT phase,error_code,detail FROM v3_preparation_blocks
       WHERE run_id=${value.runId} ORDER BY opened_at,block_id`;
     const observations = await database.sql`SELECT phase,check_id,summary,detail,evidence FROM run_observations
       WHERE run_id=${value.runId} AND (phase LIKE '%preparation%' OR phase LIKE '%preclaim%')`;
-    assert.equal(second.found, true, JSON.stringify({ second, blocks, observations,
+    assert.equal(second.found, true, JSON.stringify({ second, blocks, observations, selectionBefore,
       state: await publicationDiagnostics(value) }));
     assert.equal(second.storyId, prepared.story.story_id);
     assert.ok(second.claimId && second.attempt && second.v3ImplementationHandoff && second.runtimeSessionId);

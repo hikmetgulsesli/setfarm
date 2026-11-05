@@ -42,6 +42,7 @@ import type { FindingSetV1 } from "../findings/finding-set.js";
 import { createV3EvidenceOnlyPublication, readNativeEvidenceOnlySourceAuthority,
   type V3EvidenceOnlyPublicationLeaseV1 } from "../recovery/v3-evidence-only-publication.js";
 import type { GithubReviewThreadEvidenceV1 } from "../findings/github-review-source.js";
+import { loadV3ReviewEvidenceArtifactsV1 } from "./v3-review-evidence-artifacts.js";
 
 type NativeRecoveryContextV3 = Readonly<{
   revision: RecoveryCaseRevisionV1; dispatch: RecoveryRevisionDispatchV1; findingSet: FindingSetV1;
@@ -430,8 +431,21 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
         || !same(attempt.evidenceRefs.filter(ref => ref.startsWith("setfarm://preparation-authority-v2/")), originRefs)))) {
       throw new Error("V3_NATIVE_RECOVERY_ORIGIN_MISMATCH");
     }
+    if (findingSet.findings.some(finding => finding.classification === "unstructured_review")
+      && (revision.owner !== "supervisor" || dispatch.dispatchClass !== "supervisor_repair" || input.role !== "supervisor")) {
+      throw new Error("V3_NATIVE_RECOVERY_REVIEW_AUTHORITY_MISMATCH");
+    }
+    const packet = await reader.readExactSealedPacket(input.runId);
+    if (!("implementationSourceMap" in packet) || packet.packetHash !== origin.authority.packetHash
+      || packet.refs.compilationReport !== origin.authority.compilationReportHash) {
+      throw new Error("V3_NATIVE_RECOVERY_ORIGIN_MISMATCH");
+    }
+    const reviewEvidenceArtifacts = await loadV3ReviewEvidenceArtifactsV1({
+      readArtifact: hash => readV3NativeIndexedArtifact(reader, hash),
+      producer: packet.producer, findingSet,
+    });
     return { revision, dispatch, findingSet, handoff, delivery, predecessor, origin: origin.authority,
-      reviewEvidenceArtifacts: [] };
+      reviewEvidenceArtifacts };
   }
 
   async function compileRecovery(input: NativeRecoveryReservationV3, authority: Awaited<ReturnType<typeof recoveryInputs>>,
@@ -543,6 +557,7 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
           `setfarm://preparation-authority-v2/${authority.origin.authorityHash}`,
           `setfarm://finding-set/${authority.findingSet.findingSetHash}`,
           `setfarm://recovery-revision/${authority.revision.revisionId}`, `setfarm://recovery-dispatch/${authority.dispatch.dispatchId}`,
+          ...authority.reviewEvidenceArtifacts.map(artifact => `setfarm://artifact/${artifact.artifactHash}`),
           ...authority.predecessor.evidenceRefs.filter(ref => ref.startsWith("setfarm://native-git-custody-v1/"))],
       });
       if (result.status !== "reserved") throw new Error("V3_NATIVE_RESERVATION_CONFLICT");

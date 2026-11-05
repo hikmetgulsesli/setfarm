@@ -1404,7 +1404,8 @@ export const ImplementationSliceV2Schema = z.object({
       || !equalSourceRevision(recovery.sourceRevision, value.sourceRevision)
       || recovery.findingSet.findings.some((finding) => finding.status !== "open")
       || recovery.findingSet.findings.some((finding) =>
-        !finding.expectedPredicateRef || (!value.story.evidenceRefs.includes(finding.expectedPredicateRef)
+        !(generatedRepair && finding.classification === "unstructured_review")
+        && (!finding.expectedPredicateRef || (!value.story.evidenceRefs.includes(finding.expectedPredicateRef)
           && !(generatedRepair && finding.classification === "structured"
             && value.build.commands.some(command =>
               (command.kind === "build" || command.kind === "test" || command.kind === "evidence")
@@ -1412,7 +1413,7 @@ export const ImplementationSliceV2Schema = z.object({
               // identity; command evidence is not a ProductSpec predicate.
               && finding.expectedPredicateRef === `EVID_COMMAND_${command.id}`
               && finding.invariantRef === `INV_COMMAND_${command.kind.toUpperCase()}`
-              && finding.origin === (command.kind === "build" ? "build" : command.kind === "test" ? "test" : "runtime")))))
+              && finding.origin === (command.kind === "build" ? "build" : command.kind === "test" ? "test" : "runtime"))))))
     ) {
       context.addIssue({
         code: "custom",

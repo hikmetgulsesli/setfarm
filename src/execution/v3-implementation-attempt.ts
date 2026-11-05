@@ -32,10 +32,9 @@ import type {
   RecoveryRevisionDispatchV1,
 } from "../recovery/recovery-delivery.js";
 import type { FindingSetV1 } from "../findings/finding-set.js";
-import {
-  GithubReviewThreadEvidenceV1Schema,
-  type GithubReviewThreadEvidenceV1,
-} from "../findings/github-review-source.js";
+import { loadV3ReviewEvidenceArtifactsV1, V3ReviewEvidenceArtifactError,
+  type V3ReviewEvidenceArtifact } from "./v3-review-evidence-artifacts.js";
+export type { V3ReviewEvidenceArtifact } from "./v3-review-evidence-artifacts.js";
 import {
   createV3EvidenceOnlyPublication,
   type V3EvidenceOnlyPreparedPublicationV1,
@@ -69,11 +68,6 @@ import {
   type NativeImplementationContextV3,
 } from "./v3-native-implementation-attempt.js";
 import { readV3PreparationAuthorityByClaimV2 } from "./v3-preparation-authority-v2-repository.js";
-
-export type V3ReviewEvidenceArtifact = Readonly<{
-  artifactHash: string;
-  evidence: GithubReviewThreadEvidenceV1;
-}>;
 
 export type V3ImplementationAttemptInput = Readonly<{
   runId: string;
@@ -742,72 +736,17 @@ async function loadReviewEvidenceArtifacts(input: Readonly<{
   producer: SemanticArtifactProducerV1;
   findingSet: FindingSetV1;
 }>): Promise<readonly V3ReviewEvidenceArtifact[]> {
-  const reviewFindings = input.findingSet.findings.filter(
-    (finding) => finding.classification === "unstructured_review",
-  );
-  const artifacts = new Map<string, V3ReviewEvidenceArtifact>();
-  for (const finding of reviewFindings) {
-    if (finding.observedEvidenceRefs.length !== 1 || !finding.externalRef || finding.sourceLocators.length !== 1) {
-      throw new V3ImplementationAttemptError(
-        "V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID",
-        `Review finding ${finding.findingId} must bind one evidence artifact, external identity, and source locator`,
-      );
+  try {
+    return await loadV3ReviewEvidenceArtifactsV1({
+      readArtifact: hash => input.dependencies.readArtifact(hash),
+      producer: input.producer, findingSet: input.findingSet,
+    });
+  } catch (error) {
+    if (error instanceof V3ReviewEvidenceArtifactError) {
+      throw new V3ImplementationAttemptError(error.code, error.message);
     }
-    const artifactHash = finding.observedEvidenceRefs[0]!;
-    let stored: Awaited<ReturnType<V3CompilerDependencies["readArtifact"]>>;
-    let evidence: GithubReviewThreadEvidenceV1;
-    try {
-      stored = await input.dependencies.readArtifact(artifactHash);
-      if (stored.artifactType !== "setfarm.github-review-thread-evidence.v1") {
-        throw new Error(`unexpected artifact type ${stored.artifactType}`);
-      }
-      evidence = GithubReviewThreadEvidenceV1Schema.parse(stored.payload);
-      const envelope = SemanticArtifactEnvelopeV1Schema.parse({
-        schema: "setfarm.semantic-artifact-envelope.v1",
-        artifactType: stored.artifactType,
-        producer: stored.producer,
-        payload: evidence,
-      });
-      if (
-        canonicalJsonStringify(envelope.producer) !== canonicalJsonStringify(input.producer)
-        || hashCanonicalJson(envelope) !== artifactHash
-      ) {
-        throw new Error("artifact producer or content hash differs from the sealed packet authority");
-      }
-    } catch (error) {
-      throw new V3ImplementationAttemptError(
-        "V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID",
-        `Review evidence ${artifactHash} is not an exact indexed semantic artifact: ${String((error as Error)?.message || error)}`,
-      );
-    }
-    const external = finding.externalRef;
-    const locator = finding.sourceLocators[0]!;
-    const commentIds = new Set(evidence.comments.map((comment) => comment.commentId));
-    if (
-      evidence.repository.nodeId !== external.repositoryNodeId
-      || evidence.prNumber !== external.prNumber
-      || evidence.threadId !== external.threadId
-      || evidence.headSha !== external.headSha
-      || evidence.headSha !== input.findingSet.sourceRevision.sha
-      || evidence.bodyRevisionHash !== external.commentRevisionHash
-      || (external.commentId !== undefined && !commentIds.has(external.commentId))
-      || evidence.path !== locator.path
-      || evidence.currentSource.contentHash !== locator.contentHash
-    ) {
-      throw new V3ImplementationAttemptError(
-        "V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH",
-        `Review evidence ${artifactHash} differs from finding ${finding.findingId} or its exact source revision`,
-      );
-    }
-    artifacts.set(artifactHash, { artifactHash, evidence });
+    throw error;
   }
-  if (artifacts.size !== reviewFindings.length) {
-    throw new V3ImplementationAttemptError(
-      "V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID",
-      "Each unstructured review finding must own a distinct immutable evidence artifact",
-    );
-  }
-  return [...artifacts.values()].sort((left, right) => left.artifactHash.localeCompare(right.artifactHash));
 }
 
 export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDependencies) {
