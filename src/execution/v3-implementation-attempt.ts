@@ -1796,6 +1796,14 @@ export async function reserveV3ImplementationAttempt(
   const options = { sql: getSql(), artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() };
   const packet = await createRuntimeArtifactReader(options).readExactSealedPacket(input.runId);
   if (!("implementationSourceMap" in packet)) return runtimeCompiler().reserve(input);
+  if (input.operationalRetry) {
+    if (!input.claimId || input.role !== "developer" || input.stepId !== "implement" || input.recoveryDelivery
+      || input.evidenceOnlyLease || input.downstreamEvidenceAuthority || input.supervisorRetry || input.findingSetHash)
+      throw Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
+    return createNativeV3ImplementationContextService(options).reserveOperational({claimId:input.claimId,
+      runId:input.runId,stepId:input.stepId,storyId:input.storyId,role:input.role,agentId:input.agentId,
+      branch:input.branch,worktree:input.worktree,operationalRetry:input.operationalRetry});
+  }
   if (input.recoveryDelivery) {
     if (!input.claimId || input.stepId !== "implement" || input.operationalRetry || input.supervisorRetry
       || input.evidenceOnlyLease || input.downstreamEvidenceAuthority) throw new Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
@@ -1821,11 +1829,14 @@ export async function reserveV3ImplementationAttempt(
   });
 }
 
-export function reserveV3EvidenceOnlyImplementationAttempt(input: Readonly<{
+export async function reserveV3EvidenceOnlyImplementationAttempt(input: Readonly<{
   lease: V3EvidenceOnlyPublicationLeaseV1;
   worktree: string;
   branch: string;
 }>): Promise<V3ImplementationAttemptResult> {
+  const options={sql:getSql(),artifactRoot:resolveProductArtifactDir(),artifactLimits:resolveProductArtifactCapacity()};
+  const packet=await createRuntimeArtifactReader(options).readExactSealedPacket(input.lease.runId);
+  if("implementationSourceMap" in packet) return createNativeV3ImplementationContextService(options).reserveEvidenceOnly(input);
   return runtimeCompiler().reserve({
     runId: input.lease.runId,
     stepId: "implement",

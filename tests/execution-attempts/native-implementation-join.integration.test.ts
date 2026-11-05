@@ -330,7 +330,13 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const retryIntent = { ...value.input.runtimeIntent, sessionId: "RTS_native-task11-operational-fallback",
       ownerInstanceId: "native-task11-operational-fallback-owner" };
     const retry = await claimStep(agentId, value.input.callerGatewayAgent, retryIntent);
-    assert.equal(retry.found, true, JSON.stringify({ retry, state: await publicationDiagnostics(value) }));
+    const retryBlocks = await database.sql`SELECT phase,error_code,detail FROM v3_preparation_blocks
+      WHERE run_id=${value.runId} ORDER BY opened_at,block_id`;
+    const retryObservations = await database.sql`SELECT phase,check_id,summary,detail,evidence FROM run_observations
+      WHERE run_id=${value.runId} AND (phase LIKE '%pre%' OR phase LIKE '%reservation%' OR phase LIKE '%retry%')
+      ORDER BY created_at,id`;
+    assert.equal(retry.found, true, JSON.stringify({ retry, state: await publicationDiagnostics(value),
+      preparationBlocks: retryBlocks, reservationObservations: retryObservations }));
     assert.ok(retry.attempt && retry.claimId && retry.v3ImplementationHandoff);
     const fallback = await loadV3ImplementationAttemptContext({ runId: value.runId, storyId: "US-001",
       attemptId: retry.attempt.attemptId });

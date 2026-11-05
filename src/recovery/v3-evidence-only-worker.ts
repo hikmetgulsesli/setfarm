@@ -586,10 +586,10 @@ function expectedEvidenceRefs(plan: EvidencePlanV1 | EvidencePlanV2): string[] {
   ];
 }
 
-function assertAttemptContext(
+async function assertAttemptContext(
   lease: V3EvidenceOnlyLeaseV1,
   raw: V3EvidenceOnlyAttemptContext,
-): V3EvidenceOnlyAttemptContext {
+): Promise<V3EvidenceOnlyAttemptContext> {
   const slice = raw.slice.schema === "setfarm.implementation-slice.v2"
     ? LegacyImplementationSliceV2Schema.parse(raw.slice) : ImplementationSliceV1Schema.parse(raw.slice);
   const plan = slice.schema === "setfarm.implementation-slice.v2"
@@ -597,13 +597,33 @@ function assertAttemptContext(
   const sliceHash = Sha256Schema.parse(raw.sliceHash);
   const planArtifactHash = Sha256Schema.parse(raw.evidencePlanArtifactHash);
   const attempt = raw.attempt;
+  let authenticatedNativeCurrentSource = false;
+  if(slice.schema === "setfarm.implementation-slice.v2") {
+    // This loader independently authenticates durable original source owner,
+    // initial V2 relation, current revision/delivery and immutable CAS artifacts.
+    // A caller's context or a matching hash alone cannot waive source identity.
+    const {loadV3ImplementationAttemptContext}=await import("../execution/v3-implementation-attempt.js");
+    const authenticated=await loadV3ImplementationAttemptContext({runId:lease.runId,storyId:lease.storyId,attemptId:attempt.attemptId});
+    if(authenticated.kind!=="native-dispatch-ready"||!authenticated.evidenceOnly
+      ||authenticated.evidenceOnly.revision.revisionId!==lease.revisionId
+      ||authenticated.evidenceOnly.dispatch.dispatchId!==lease.dispatchId
+      ||authenticated.evidenceOnly.findingSet.findingSetHash!==lease.findingSetHash
+      ||!sameRevision(authenticated.sourceBefore,lease.sourceRevision)
+      ||canonicalJsonStringify(authenticated.attempt)!==canonicalJsonStringify(attempt)
+      ||canonicalJsonStringify(authenticated.slice)!==canonicalJsonStringify(slice)
+      ||canonicalJsonStringify(authenticated.evidencePlan)!==canonicalJsonStringify(plan)
+      ||authenticated.evidencePlanArtifactHash!==planArtifactHash||authenticated.sliceHash!==sliceHash)
+      fail("V3_EVIDENCE_ONLY_SEALED_CONTEXT_MISMATCH","native origin/current-source authority differs from actual owned rows");
+    authenticatedNativeCurrentSource=true;
+  }
   if (!raw.workdir.trim()) fail("V3_EVIDENCE_ONLY_WORKDIR_REQUIRED", "attempt context has no exact worktree");
   if (
     slice.recovery
     || slice.packetHash !== lease.packetHash
     || slice.storyId !== lease.storyId
-    || (slice.schema === "setfarm.implementation-slice.v2" ? slice.sourceRevision.sha : slice.sourceRevision.baseSha) !== lease.sourceRevision.sha
-    || slice.sourceRevision.treeHash !== lease.sourceRevision.treeHash
+    || (!authenticatedNativeCurrentSource && ((slice.schema === "setfarm.implementation-slice.v2"
+      ? slice.sourceRevision.sha : slice.sourceRevision.baseSha) !== lease.sourceRevision.sha
+      || slice.sourceRevision.treeHash !== lease.sourceRevision.treeHash))
     || plan.packetHash !== lease.packetHash
     || plan.storyId !== lease.storyId
     || plan.sliceHash !== sliceHash
@@ -1132,7 +1152,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
     let phase = "attempt_context";
     let terminal = lease.mode === "coordinator_replay";
     try {
-      const context = assertAttemptContext(
+      const context = await assertAttemptContext(
         lease,
         await dependencies.loadOrReserveAttempt({ lease }),
       );

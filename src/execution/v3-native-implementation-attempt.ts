@@ -31,7 +31,7 @@ import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-s
 import type { SemanticArtifactProducerV1 } from "../product-compiler/schemas/common-v1.js";
 import { createV3ImplementationClaimHandoffV2, type V3ImplementationClaimHandoffV2 } from "./v3-implementation-handoff-v2.js";
 import { createV3ImplementationContext } from "./v3-implementation-handoff.js";
-import { resolveV3ExecutionProfile, type ModelExecutionProfileV1 } from "./operational-retry-directive.js";
+import { OperationalRetryDirectiveV1Schema, parseOperationalRetryDirectiveStoryOutput, resolveV3ExecutionProfile, type OperationalRetryDirectiveV1, type ModelExecutionProfileV1 } from "./operational-retry-directive.js";
 import type { ExecutionAttemptV1, SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 
 import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
@@ -39,6 +39,8 @@ import { createFindingRecoveryRepository } from "../recovery/finding-recovery-re
 import { createV3RecoveryClaimAuthority, V3RecoveryClaimHandoffV1Schema } from "../recovery/v3-recovery-claim-authority.js";
 import type { RecoveryCaseRevisionV1, RecoveryRevisionDispatchV1 } from "../recovery/recovery-delivery.js";
 import type { FindingSetV1 } from "../findings/finding-set.js";
+import { createV3EvidenceOnlyPublication, readNativeEvidenceOnlySourceAuthority,
+  type V3EvidenceOnlyPublicationLeaseV1 } from "../recovery/v3-evidence-only-publication.js";
 import type { GithubReviewThreadEvidenceV1 } from "../findings/github-review-source.js";
 
 type NativeRecoveryContextV3 = Readonly<{
@@ -257,7 +259,9 @@ export type NativeImplementationContextV3 = Readonly<Omit<NativePreparedImplemen
   packetEnvelope: V3ImplementationClaimHandoffV2["packetEnvelope"];
   compilationReportEnvelope: V3ImplementationClaimHandoffV2["compilationReportEnvelope"];
   executionProfile: ModelExecutionProfileV1;
-  operationalRetry?: never;
+  operationalRetry?: Readonly<{ directive: OperationalRetryDirectiveV1; artifactHash: string; refKey: string }>;
+  evidenceOnly?: Readonly<{ revision: RecoveryCaseRevisionV1; dispatch: RecoveryRevisionDispatchV1;
+    findingSet: FindingSetV1; sourceOwnerAttemptId: string }>;
   supervisorRetry?: never;
   recovery?: NativeRecoveryContextV3;
 }>;
@@ -274,7 +278,7 @@ export function createNativeV3ImplementationAttemptHandoff(input: Readonly<{
   const attempt = compiled.attempt;
   const executionAuthority = attempt.attemptClass === "supervisor_repair"
     ? { role: "supervisor", attemptClass: "supervisor_repair" }
-    : { role: "developer", attemptClass: "product_implementation" };
+    : { role: "developer", attemptClass: compiled.operationalRetry ? "infrastructure_retry" : "product_implementation" };
   if (attempt.role !== executionAuthority.role || attempt.attemptClass !== executionAuthority.attemptClass) {
     throw new Error("V3_IMPLEMENTATION_HANDOFF_MODEL_AUTHORITY_REQUIRED");
   }
@@ -293,6 +297,8 @@ export function createNativeV3ImplementationAttemptHandoff(input: Readonly<{
     artifactProducer: compiled.artifactProducer, packetEnvelope: compiled.packetEnvelope,
     compilationReportEnvelope: compiled.compilationReportEnvelope, nativeAuthority: compiled.nativeAuthority,
     implementationSlice: compiled.slice, evidencePlan: compiled.evidencePlan,
+    ...(compiled.operationalRetry ? { operationalRetry: compiled.operationalRetry.directive,
+      operationalRetryArtifactHash: compiled.operationalRetry.artifactHash } : {}),
     ...(compiled.recovery ? { findingSet: compiled.recovery.findingSet,
       reviewEvidenceArtifacts: compiled.recovery.reviewEvidenceArtifacts,
       recoveryAttempt: { attemptId: attempt.attemptId, claimId: attempt.claimId, runId: attempt.runId,
@@ -552,6 +558,167 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: reservation.attemptId });
   }
 
+  const operationalInputSchema = ReserveInputSchema.omit({ nativeAuthorityHash: true }).extend({
+    operationalRetry: OperationalRetryDirectiveV1Schema,
+  }).strict();
+
+  async function operationalOrigin(directive: OperationalRetryDirectiveV1, claimId: number) {
+    const prior = await preparedService.loadPreparedAttempt({ runId: directive.runId, storyId: directive.storyId,
+      attemptId: directive.priorAttempt.attemptId });
+    const a = prior.attempt;
+    const paths = prior.slice.files.filter(file => file.role === "owned" || file.role === "shared_writable").map(file => file.path).sort();
+    if (a.claimId !== directive.priorAttempt.claimId || claimId === a.claimId || a.generation !== directive.priorAttempt.generation
+      || a.disposition !== directive.priorAttempt.terminalDisposition || a.packetHash !== directive.priorAttempt.packetHash
+      || a.sliceHash !== directive.priorAttempt.sliceHash || a.stepId !== directive.stepId
+      || !same(a.sourceBefore, directive.priorAttempt.sourceBefore) || !same(a.sourceBefore, directive.nextSourceRevision)
+      || !same(paths, directive.expectedDelta.allowedPaths)) throw Error("V3_NATIVE_OPERATIONAL_ORIGIN_MISMATCH");
+    return prior;
+  }
+
+  async function loadOperationalContext(attempt: ExecutionAttemptV1): Promise<NativeImplementationContextV3> {
+    const hashes = attempt.evidenceRefs.filter(ref => ref.startsWith("setfarm://operational-retry-artifact/"))
+      .map(ref => ref.slice("setfarm://operational-retry-artifact/".length));
+    if (hashes.length !== 1 || !attempt.claimId || attempt.role !== "developer"
+      || attempt.recoveryDispatchId || attempt.recoveryCaseRevisionId) throw Error("V3_NATIVE_OPERATIONAL_ATTEMPT_MISMATCH");
+    const envelope = await readV3NativeIndexedArtifact(reader, hashes[0]!);
+    if (envelope.artifactType !== "setfarm.operational-retry-directive.v1") throw Error("V3_NATIVE_OPERATIONAL_ARTIFACT_MISMATCH");
+    const directive = OperationalRetryDirectiveV1Schema.parse(envelope.payload);
+    const origin = await operationalOrigin(directive, attempt.claimId);
+    const compiled = await compileContext(origin);
+    const originRefs = origin.attempt.evidenceRefs.filter(ref => ref.startsWith("setfarm://preparation-authority-v2/")
+      || ref.startsWith("setfarm://native-git-custody-v1/"));
+    if (attempt.generation !== origin.attempt.generation + 1 || attempt.runId !== directive.runId
+      || attempt.storyId !== directive.storyId || attempt.stepId !== directive.stepId
+      || attempt.packetHash !== compiled.packetHash || attempt.compilationReportHash !== compiled.compilationReportHash
+      || attempt.sliceHash !== origin.sliceHash || !same(attempt.sourceBefore, origin.sourceBefore)
+      || !same(envelope.producer, compiled.artifactProducer)
+      || !attempt.evidenceRefs.includes(`setfarm://operational-retry/${directive.directiveHash}`)
+      || !attempt.evidenceRefs.includes(`setfarm://artifact/${hashes[0]}`)
+      || !same(attempt.evidenceRefs.filter(ref => ref.startsWith("setfarm://preparation-authority-v2/")
+        || ref.startsWith("setfarm://native-git-custody-v1/")).sort(), [...originRefs].sort()))
+      throw Error("V3_NATIVE_OPERATIONAL_ATTEMPT_MISMATCH");
+    return { ...compiled, attempt, executionProfile: directive.executionProfile,
+      operationalRetry: { directive, artifactHash: hashes[0]!, refKey: `OPERATIONAL_RETRY_${directive.directiveHash.slice(0,16).toUpperCase()}` } };
+  }
+
+  async function reserveOperational(raw: unknown): Promise<NativeImplementationContextV3> {
+    const input = operationalInputSchema.parse(raw);
+    const directive = input.operationalRetry;
+    if (input.runId !== directive.runId || input.storyId !== directive.storyId || input.stepId !== directive.stepId)
+      throw Error("V3_NATIVE_OPERATIONAL_ORIGIN_MISMATCH");
+    const origin = await operationalOrigin(directive, input.claimId);
+    const compiled = await compileContext(origin);
+    const envelope = SemanticArtifactEnvelopeV1Schema.parse({ schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.operational-retry-directive.v1", producer: compiled.artifactProducer, payload: directive });
+    const publication = await publisher.put(envelope);
+    await reader.index.addRunArtifactRef({runId:input.runId,
+      refKey:`OPERATIONAL_RETRY_${directive.directiveHash.slice(0,16).toUpperCase()}`,artifactHash:publication.hash});
+    const existing = await options.sql.unsafe<Array<{ attempt_id: string }>>(
+      "SELECT attempt_id FROM execution_attempts WHERE claim_id=$1 AND run_id=$2", [input.claimId,input.runId]);
+    if (!existing.length) {
+      const head = resolveV3GitRevision({ repo: input.worktree, requestedRef: "HEAD", expectedSha: origin.sourceBefore.sha });
+      const status = execFileSync("git", ["status","--porcelain=v1","-z","--untracked-files=all"],
+        { cwd: input.worktree, timeout: 10_000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore","pipe","pipe"] });
+      if (status.byteLength || !same(head, origin.sourceBefore)) throw Error("V3_NATIVE_OPERATIONAL_SOURCE_CHANGED");
+    }
+    const custody = await authenticateNativeGitCustody(options.sql, { runId: input.runId, claimId: input.claimId,
+      worktree: input.worktree, branch: input.branch, sourceBefore: origin.sourceBefore });
+    const reserved = await options.sql.begin(async tx => {
+      await lockAttemptReservationOwnerInTransaction(tx,input);
+      await recheckNativeGitCustodyInTransaction(tx,custody);
+      const rows = await tx.unsafe<Array<{ output: string; prior_outcome: string; generation: number; disposition: string;
+        claim_id: string; authority_hash: string; slice_hash: string; packet_hash: string; compilation_report_hash: string;
+        source_before_sha: string; source_before_tree_hash: string; attempt_class: string; role: string }>>(`
+        SELECT story.output,prior_claim.outcome AS prior_outcome,a.generation,a.disposition,a.claim_id::text,b.authority_hash,a.slice_hash,
+          a.packet_hash,a.compilation_report_hash,a.source_before_sha,a.source_before_tree_hash,a.attempt_class,a.role
+        FROM stories story JOIN claim_log current_claim ON current_claim.id=$1 AND current_claim.run_id=story.run_id
+          AND current_claim.story_id=story.story_id AND current_claim.step_id=$2 AND current_claim.agent_id=$3 AND current_claim.outcome IS NULL
+        JOIN execution_attempts a ON a.attempt_id=$4 AND a.run_id=story.run_id AND a.story_id=story.story_id AND a.step_id=$2
+        JOIN claim_log prior_claim ON prior_claim.id=a.claim_id AND prior_claim.run_id=a.run_id
+        JOIN v3_preparation_authority_attempts_v2 b ON b.attempt_id=a.attempt_id AND b.claim_id=a.claim_id AND b.slice_hash=a.slice_hash
+        WHERE story.run_id=$5 AND story.story_id=$6 AND story.status='running' AND story.claimed_by=$3
+        FOR UPDATE OF story,a`, [input.claimId,input.stepId,input.agentId,origin.attempt.attemptId,input.runId,input.storyId]);
+      const row = rows[0];
+      if (rows.length !== 1 || !row || row.prior_outcome !== "infra_retry" || row.generation !== origin.attempt.generation
+        || row.disposition !== directive.priorAttempt.terminalDisposition || Number(row.claim_id) !== origin.attempt.claimId
+        || row.authority_hash !== origin.nativeAuthority.authorityHash || row.slice_hash !== origin.sliceHash
+        || row.packet_hash !== compiled.packetHash || row.compilation_report_hash !== compiled.compilationReportHash
+        || row.source_before_sha !== origin.sourceBefore.sha || row.source_before_tree_hash !== origin.sourceBefore.treeHash
+        || row.attempt_class !== "product_implementation" || row.role !== "developer"
+        || !same(parseOperationalRetryDirectiveStoryOutput(row.output),directive)) throw Error("V3_NATIVE_OPERATIONAL_LOCKED_AUTHORITY_MISMATCH");
+      const result = await reserveAttemptInTransaction(tx, { claimId: input.claimId, runId: input.runId,
+        stepId: input.stepId, storyId: input.storyId, attemptClass: "infrastructure_retry", packetHash: compiled.packetHash,
+        compilationReportHash: compiled.compilationReportHash, sliceHash: origin.sliceHash, sourceBefore: origin.sourceBefore,
+        role: "developer",agentId: input.agentId,worktree: input.worktree,branch: input.branch,
+        predecessorAttempt: { attemptId: origin.attempt.attemptId,generation: origin.attempt.generation,
+          terminalDisposition: directive.priorAttempt.terminalDisposition },
+        evidenceRefs: [`setfarm://claim-log/${input.claimId}`,`setfarm://artifact/${origin.sliceHash}`,
+          `setfarm://artifact/${compiled.evidencePlanArtifactHash}`,`setfarm://artifact/${publication.hash}`,
+          `setfarm://operational-retry/${directive.directiveHash}`,`setfarm://operational-retry-artifact/${publication.hash}`,
+          ...origin.attempt.evidenceRefs.filter(ref => ref.startsWith("setfarm://preparation-authority-v2/")
+            || ref.startsWith("setfarm://native-git-custody-v1/"))] });
+      if (result.status === "active_conflict") throw Error("V3_NATIVE_RESERVATION_CONFLICT");
+      return result.attempt;
+    });
+    const result = await loadOperationalContext(reserved);
+    await publishContext(input,result);
+    return loadAttemptContext({runId:input.runId,storyId:input.storyId,attemptId:reserved.attemptId});
+  }
+
+  async function nativeEvidenceContext(lease: Parameters<typeof readNativeEvidenceOnlySourceAuthority>[1], attempt?: ExecutionAttemptV1) {
+    const source = await readNativeEvidenceOnlySourceAuthority(options.sql,lease);
+    const origin = await preparedService.loadPreparedAttempt({runId:lease.runId,storyId:lease.storyId,attemptId:source.attempt_id});
+    const compiled = await compileContext(origin);
+    const [revision,dispatch,findingSet] = await Promise.all([recoveryDeliveries.findRevision(lease.revisionId),
+      recoveryDeliveries.findDispatch(lease.dispatchId),recoveryFindings.findFindingSet(lease.findingSetHash)]);
+    if (!revision || !dispatch || !findingSet || dispatch.dispatchClass !== "evidence_only"
+      || !same(findingSet.sourceRevision,lease.sourceRevision) || findingSet.sliceHash !== compiled.sliceHash
+      || findingSet.packetHash !== compiled.packetHash || findingSet.runId !== lease.runId || findingSet.storyId !== lease.storyId
+      || !same(findingSet.findings.map(finding=>finding.findingId).sort(),revision.findingIds)
+      || compiled.slice.recovery || compiled.sliceHash !== lease.contractSliceHash
+      || compiled.evidencePlanArtifactHash !== lease.priorEvidencePlanArtifactHash) throw Error("V3_NATIVE_EVIDENCE_ONLY_CONTEXT_MISMATCH");
+    if (attempt && (attempt.generation !== source.generation + 1 || attempt.attemptClass !== "evidence_only"
+      || attempt.recoveryDispatchId !== dispatch.dispatchId || attempt.recoveryCaseRevisionId !== revision.revisionId
+      || attempt.findingSetHash !== findingSet.findingSetHash || attempt.packetHash !== compiled.packetHash
+      || attempt.sliceHash !== compiled.sliceHash || attempt.compilationReportHash !== compiled.compilationReportHash
+      || attempt.branch !== source.branch || attempt.worktree !== source.worktree || !same(attempt.sourceBefore,lease.sourceRevision)
+      || !attempt.evidenceRefs.includes(`setfarm://preparation-authority-v2/${source.authority_hash}`)))
+      throw Error("V3_NATIVE_EVIDENCE_ONLY_ATTEMPT_MISMATCH");
+    return { compiled, source, revision, dispatch, findingSet };
+  }
+
+  async function reserveEvidenceOnly(input: Readonly<{lease:V3EvidenceOnlyPublicationLeaseV1;worktree:string;branch:string}>) {
+    const {compiled,source}=await nativeEvidenceContext(input.lease);
+    if(input.worktree!==source.worktree||input.branch!==source.branch) throw Error("V3_NATIVE_EVIDENCE_ONLY_SOURCE_MISMATCH");
+    const head=resolveV3GitRevision({repo:input.worktree,requestedRef:"HEAD",expectedSha:input.lease.sourceRevision.sha});
+    if(!same(head,input.lease.sourceRevision)) throw Error("V3_NATIVE_EVIDENCE_ONLY_SOURCE_MISMATCH");
+    const attempt=await createV3EvidenceOnlyPublication(options.sql).reserve(input.lease,{
+      compilationReportHash:compiled.compilationReportHash,sliceHash:compiled.sliceHash,sliceRefKey:compiled.sliceRefKey,
+      evidencePlanArtifactHash:compiled.evidencePlanArtifactHash,evidencePlanRefKey:compiled.evidencePlanRefKey,
+      worktree:input.worktree,branch:input.branch,role:"evidence-orchestrator",agentId:"setfarm-evidence-orchestrator",
+      evidenceRefs:[`setfarm://artifact/${compiled.sliceHash}`,`setfarm://artifact/${compiled.evidencePlanArtifactHash}`,
+        ...compiled.attempt.evidenceRefs.filter(ref=>ref.startsWith("setfarm://preparation-authority-v2/")||ref.startsWith("setfarm://native-git-custody-v1/"))],
+    });
+    return loadAttemptContext({runId:input.lease.runId,storyId:input.lease.storyId,attemptId:attempt.attemptId});
+  }
+
+  async function loadEvidenceOnlyContext(attempt:ExecutionAttemptV1):Promise<NativeImplementationContextV3>{
+    if(!attempt.recoveryDispatchId||!attempt.recoveryCaseRevisionId) throw Error("V3_NATIVE_EVIDENCE_ONLY_ATTEMPT_MISMATCH");
+    const delivery=await recoveryDeliveries.findDelivery(attempt.recoveryDispatchId);
+    const revision=await recoveryDeliveries.findRevision(attempt.recoveryCaseRevisionId);
+    if(!delivery||!revision||delivery.attemptId!==attempt.attemptId||delivery.claimId!==attempt.claimId
+      ||delivery.attemptCount!==1||delivery.executionSliceHash!==attempt.sliceHash
+      ) throw Error("V3_NATIVE_EVIDENCE_ONLY_DELIVERY_MISMATCH");
+    const lease:Parameters<typeof readNativeEvidenceOnlySourceAuthority>[1]={runId:attempt.runId,storyId:attempt.storyId,
+      recoveryCaseId:revision.recoveryCaseId,revisionId:revision.revisionId,
+      dispatchId:delivery.dispatchId,packetHash:revision.packetHash,contractSliceHash:revision.contractSliceHash,
+      findingSetHash:revision.findingSetHash,sourceRevision:revision.sourceRevision,
+      priorEvidencePlanArtifactHash:revision.evidencePlanArtifactHash};
+    const authority=await nativeEvidenceContext(lease,attempt);
+    return {...authority.compiled,attempt,sourceBefore:revision.sourceRevision,
+      evidenceOnly:{revision,dispatch:authority.dispatch,findingSet:authority.findingSet,sourceOwnerAttemptId:authority.source.attempt_id}};
+  }
+
   async function compileContext(prepared: NativePreparedImplementationV3 | NativeRecoveryPreparedV3): Promise<NativeImplementationContextV3> {
     const packet = await reader.readExactSealedPacket(prepared.attempt.runId);
     if (!("implementationSourceMap" in packet) || packet.packetHash !== prepared.nativeAuthority.packetHash
@@ -582,8 +749,9 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     const input = LocatorSchema.parse(raw);
     const attempt = await attempts.findById(input.attemptId);
     if (!attempt || attempt.runId !== input.runId || attempt.storyId !== input.storyId) throw new Error("V3_NATIVE_PREPARED_ORIGIN_MISMATCH");
-    const compiled = await compileContext(attempt.recoveryDispatchId
-      ? await loadRecoveryPrepared(attempt) : await preparedService.loadPreparedAttempt(input));
+    const compiled = attempt.attemptClass === "infrastructure_retry" ? await loadOperationalContext(attempt)
+      : attempt.attemptClass === "evidence_only" ? await loadEvidenceOnlyContext(attempt)
+      : await compileContext(attempt.recoveryDispatchId ? await loadRecoveryPrepared(attempt) : await preparedService.loadPreparedAttempt(input));
     const envelope = await readV3NativeIndexedArtifact(reader, compiled.evidencePlanArtifactHash);
     const refs = await options.sql.unsafe<Array<{ artifact_hash: string }>>(
       "SELECT artifact_hash FROM run_artifact_refs WHERE run_id=$1 AND ref_key=$2",
@@ -602,7 +770,7 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: compiled.attempt.attemptId });
   }
 
-  async function publishContext(input: NativeImplementationReservationV3 | NativeRecoveryReservationV3,
+  async function publishContext(input: Pick<NativeImplementationReservationV3,"runId"|"stepId"|"storyId"|"claimId"|"branch"|"worktree">,
     compiled: NativeImplementationContextV3): Promise<void> {
     const identities = await options.sql.unsafe<Array<{ step_id: string; story_id: string }>>(
       `SELECT s.id AS step_id, st.id AS story_id FROM steps s JOIN stories st ON st.run_id=s.run_id
@@ -618,5 +786,5 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     await reader.index.addRunArtifactRef({ runId: input.runId,
       refKey: compiled.evidencePlanRefKey, artifactHash: published.hash });
   }
-  return Object.freeze({ reserve, reserveRecovery, loadAttemptContext });
+  return Object.freeze({ reserve, reserveRecovery, reserveOperational, reserveEvidenceOnly, loadAttemptContext });
 }

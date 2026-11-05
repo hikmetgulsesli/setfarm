@@ -171,9 +171,9 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
     claim_id: string | null; branch: string | null; worktree: string | null; evidence_refs: string;
     source_before_sha: string; source_before_tree_hash: string;
     source_after_sha: string | null; source_after_tree_hash: string | null; accepted: boolean;
-    recovery_dispatch_id: string | null;
+    recovery_dispatch_id: string | null; attempt_class: string;
   }>>(`SELECT a.claim_id::text,a.branch,a.worktree,a.evidence_refs,
-      a.source_before_sha,a.source_before_tree_hash,a.source_after_sha,a.source_after_tree_hash,a.recovery_dispatch_id,
+      a.source_before_sha,a.source_before_tree_hash,a.source_after_sha,a.source_after_tree_hash,a.recovery_dispatch_id,a.attempt_class,
       EXISTS (SELECT 1 FROM runtime_completion_requests q
         JOIN runtime_sessions s ON s.session_id=q.runtime_session_id AND s.attempt_id=a.attempt_id
           AND s.claim_id=a.claim_id AND s.run_id=a.run_id AND s.story_id=a.story_id
@@ -203,7 +203,7 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
     repositoryFail("V3_NATIVE_GIT_CUSTODY_REFERENCE_INVALID", "attempt evidence references are not a string array");
   }
   let custodyOwner = owner;
-  if (row.recovery_dispatch_id) {
+  if (row.recovery_dispatch_id || row.attempt_class === "infrastructure_retry") {
     const originRefs = refs.filter((ref: string) => ref.startsWith("setfarm://preparation-authority-v2/"));
     if (originRefs.length !== 1) repositoryFail("V3_NATIVE_GIT_CUSTODY_REFERENCE_INVALID", "successor must retain one initial authority");
     const origins = await query.unsafe<Array<{ claim_id: string; branch: string; worktree: string;
@@ -215,12 +215,37 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
        JOIN execution_attempts successor ON successor.run_id=initial.run_id AND successor.step_id=initial.step_id
          AND successor.story_id=initial.story_id AND successor.packet_hash=initial.packet_hash
          AND successor.compilation_report_hash=initial.compilation_report_hash
-       JOIN internal_production_v3_recovery_claim_publications_v1 p ON p.claim_id=successor.claim_id
+       LEFT JOIN internal_production_v3_recovery_claim_publications_v1 p ON p.claim_id=successor.claim_id
          AND p.run_id=successor.run_id AND p.workflow_step_id=successor.step_id AND p.story_id=successor.story_id
          AND p.dispatch_id=successor.recovery_dispatch_id AND p.revision_id=successor.recovery_case_revision_id
        WHERE b.authority_hash=$1 AND successor.attempt_id=$2 AND successor.run_id=$3
          AND initial.attempt_class='product_implementation' AND initial.role='developer'
-         AND initial.recovery_dispatch_id IS NULL AND initial.recovery_case_revision_id IS NULL`,
+         AND initial.recovery_dispatch_id IS NULL AND initial.recovery_case_revision_id IS NULL
+         AND (p.claim_id IS NOT NULL OR (
+           successor.attempt_class='infrastructure_retry' AND successor.role='developer'
+           AND successor.recovery_dispatch_id IS NULL AND successor.recovery_case_revision_id IS NULL
+           AND successor.generation=initial.generation+1 AND successor.slice_hash=initial.slice_hash
+           AND successor.source_before_sha=initial.source_before_sha AND successor.source_before_tree_hash=initial.source_before_tree_hash
+           AND initial.disposition='inconclusive' AND EXISTS(SELECT 1 FROM claim_log prior
+             WHERE prior.id=initial.claim_id AND prior.run_id=initial.run_id AND prior.step_id=initial.step_id
+               AND prior.story_id=initial.story_id AND prior.outcome='infra_retry')
+         ) OR (
+           successor.attempt_class='evidence_only' AND successor.role='evidence-orchestrator'
+           AND successor.generation=initial.generation+1 AND successor.slice_hash=initial.slice_hash
+           AND successor.source_before_sha=initial.source_after_sha AND successor.source_before_tree_hash=initial.source_after_tree_hash
+           AND EXISTS(SELECT 1 FROM recovery_dispatch_deliveries delivery
+             JOIN recovery_revision_dispatches dispatch ON dispatch.dispatch_id=delivery.dispatch_id AND dispatch.revision_id=delivery.revision_id
+             JOIN recovery_case_revisions revision ON revision.revision_id=dispatch.revision_id
+             JOIN recovery_cases c ON c.recovery_case_id=revision.recovery_case_id AND c.current_revision_id=revision.revision_id
+             WHERE delivery.attempt_id=successor.attempt_id AND delivery.claim_id=successor.claim_id
+               AND delivery.run_id=successor.run_id AND delivery.story_id=successor.story_id AND delivery.attempt_count=1
+               AND delivery.execution_slice_hash=successor.slice_hash AND dispatch.dispatch_class='evidence_only'
+               AND dispatch.dispatch_id=successor.recovery_dispatch_id AND revision.revision_id=successor.recovery_case_revision_id
+               AND revision.revision_number=1 AND revision.parent_revision_id IS NULL AND revision.owner='infrastructure'
+               AND revision.packet_hash=successor.packet_hash AND revision.contract_slice_hash=initial.slice_hash
+               AND revision.finding_set_hash=successor.finding_set_hash AND c.prior_attempt_refs::jsonb ? initial.attempt_id
+               AND revision.source_sha=successor.source_before_sha AND revision.source_tree_hash=successor.source_before_tree_hash)
+         ))`,
       [originRefs[0]!.slice("setfarm://preparation-authority-v2/".length), input.attemptId, input.runId]);
     const origin = origins[0];
     if (origins.length !== 1 || !origin?.branch || !origin.worktree

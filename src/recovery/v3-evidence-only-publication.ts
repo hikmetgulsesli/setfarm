@@ -735,8 +735,8 @@ async function assertIndexedArtifacts(
   );
   if (
     rows.length !== 1
-    || rows[0]!.slice_type !== "setfarm.implementation-slice.v1"
-    || rows[0]!.plan_type !== "setfarm.evidence-plan.v1"
+    || !((rows[0]!.slice_type === "setfarm.implementation-slice.v1" && rows[0]!.plan_type === "setfarm.evidence-plan.v1")
+      || (rows[0]!.slice_type === "setfarm.implementation-slice.v2" && rows[0]!.plan_type === "setfarm.evidence-plan.v2"))
     || rows[0]!.slice_ref_hash !== prepared.sliceHash
     || rows[0]!.plan_ref_hash !== prepared.evidencePlanArtifactHash
   ) {
@@ -779,6 +779,57 @@ async function assertNoModelPublicationForEvidenceOnlyClaimInTransaction(
       "evidence-only claim/dispatch identity must have no runtime session or migration-33 publication",
     );
   }
+}
+
+/** Native clean-origin evidence refresh: SQL-only source/contract custody.
+ * The current candidate is the accepted terminal source owner; the slice and
+ * plan remain its immutable original base contracts. No caller-provided proof. */
+export async function readNativeEvidenceOnlySourceAuthority(
+  sql: Pick<Sql, "unsafe">,
+  lease: Pick<V3EvidenceOnlyPublicationLeaseV1, "runId" | "storyId" | "recoveryCaseId" | "revisionId" | "dispatchId"
+    | "packetHash" | "contractSliceHash" | "findingSetHash" | "sourceRevision" | "priorEvidencePlanArtifactHash">,
+) {
+  const rows = await sql.unsafe<Array<{ attempt_id: string; generation: number; authority_hash: string;
+    compilation_report_hash: string; branch: string; worktree: string; evidence_refs: string;
+    evidence_plan_artifact_hash: string }>>(`
+    SELECT a.attempt_id,a.generation,b.authority_hash,a.compilation_report_hash,a.branch,a.worktree,a.evidence_refs,
+      revision.evidence_plan_artifact_hash
+    FROM recovery_cases c JOIN recovery_case_revisions revision ON revision.recovery_case_id=c.recovery_case_id
+      AND revision.revision_id=c.current_revision_id
+    JOIN recovery_revision_dispatches d ON d.revision_id=revision.revision_id AND d.recovery_case_id=c.recovery_case_id
+    JOIN execution_attempts a ON a.run_id=c.run_id AND a.story_id=c.story_id AND c.prior_attempt_refs::jsonb ? a.attempt_id
+    JOIN v3_preparation_authority_attempts_v2 b ON b.attempt_id=a.attempt_id AND b.claim_id=a.claim_id AND b.slice_hash=a.slice_hash
+    JOIN v3_preparation_authorities_v2 origin ON origin.authority_hash=b.authority_hash
+      AND origin.run_id=a.run_id AND origin.story_id=a.story_id AND origin.packet_hash=a.packet_hash
+    JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=a.claim_id AND q.run_id=a.run_id
+      AND q.story_id=a.story_id AND q.workflow_step_id=a.step_id AND q.output_hash=a.output_hash
+    JOIN runtime_sessions runtime ON runtime.session_id=q.runtime_session_id AND runtime.claim_id=a.claim_id
+      AND runtime.attempt_id=a.attempt_id AND runtime.run_id=a.run_id AND runtime.story_id=a.story_id
+      AND runtime.step_db_id=q.step_db_id AND runtime.workflow_step_id=a.step_id
+    JOIN claim_log claim ON claim.id=a.claim_id AND claim.run_id=a.run_id AND claim.step_id=a.step_id
+      AND claim.story_id=a.story_id AND claim.outcome=q.claim_outcome
+    WHERE c.recovery_case_id=$1 AND revision.revision_id=$2 AND d.dispatch_id=$3
+      AND c.run_id=$4 AND c.story_id=$5 AND c.owner='infrastructure' AND revision.owner='infrastructure'
+      AND revision.revision_number=1 AND revision.parent_revision_id IS NULL
+      AND revision.packet_hash=$6 AND d.packet_hash=$6 AND a.packet_hash=$6
+      AND revision.contract_slice_hash=$7 AND d.contract_slice_hash=$7 AND a.slice_hash=$7
+      AND revision.finding_set_hash=$8 AND d.finding_set_hash=$8
+      AND revision.source_sha=$9 AND revision.source_tree_hash=$10
+      AND d.source_sha=$9 AND d.source_tree_hash=$10 AND a.source_after_sha=$9 AND a.source_after_tree_hash=$10
+      AND d.dispatch_class='evidence_only' AND revision.expected_delta->>'kind'='evidence_refresh'
+      AND revision.allowed_paths='[]'::jsonb
+      AND a.step_id='implement' AND a.attempt_class='product_implementation' AND a.role='developer'
+      AND a.recovery_dispatch_id IS NULL AND a.recovery_case_revision_id IS NULL
+      AND a.disposition NOT IN ('claimed','running','superseded')
+      AND q.state='accepted' AND q.apply_phase='effects_committed' AND q.claim_outcome IN ('completed','failed')
+      AND runtime.state='released' AND a.branch IS NOT NULL AND a.worktree IS NOT NULL`,
+    [lease.recoveryCaseId,lease.revisionId,lease.dispatchId,lease.runId,lease.storyId,lease.packetHash,
+      lease.contractSliceHash,lease.findingSetHash,lease.sourceRevision.sha,lease.sourceRevision.treeHash]);
+  if (rows.length !== 1 || !rows[0]!.evidence_plan_artifact_hash
+    || rows[0]!.evidence_plan_artifact_hash !== lease.priorEvidencePlanArtifactHash) {
+    fail("V3_NATIVE_EVIDENCE_ONLY_SOURCE_AUTHORITY_MISMATCH", "clean native evidence must retain its accepted original source owner and exact plan");
+  }
+  return rows[0]!;
 }
 
 export function createV3EvidenceOnlyPublication(sql: Sql) {
@@ -830,6 +881,22 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           fail("V3_EVIDENCE_ONLY_PUBLICATION_OPEN_CLAIM_CONFLICT", "failed story already has an operational claim owner");
         }
         await assertIndexedArtifacts(transaction, lease, prepared);
+        const indexed = await transaction.unsafe<Array<{ artifact_type: string }>>(
+          "SELECT artifact_type FROM semantic_artifacts WHERE artifact_hash=$1", [prepared.sliceHash]);
+        const native = indexed[0]?.artifact_type === "setfarm.implementation-slice.v2"
+          ? await readNativeEvidenceOnlySourceAuthority(transaction, lease) : undefined;
+        if (native) {
+          const refs = z.array(BoundedIdentitySchema).parse(JSON.parse(native.evidence_refs));
+          const origin = `setfarm://preparation-authority-v2/${native.authority_hash}`;
+          const custody = refs.filter(ref => ref.startsWith("setfarm://native-git-custody-v1/"));
+          if (custody.length !== 1 || !prepared.evidenceRefs.includes(custody[0]!)
+            || canonicalJsonStringify(prepared.evidenceRefs.filter(ref => ref.startsWith("setfarm://preparation-authority-v2/"))) !== canonicalJsonStringify([origin])
+            || prepared.compilationReportHash !== native.compilation_report_hash
+            || prepared.worktree !== native.worktree || prepared.branch !== native.branch
+            || prepared.role !== "evidence-orchestrator" || prepared.agentId !== "setfarm-evidence-orchestrator") {
+            fail("V3_NATIVE_EVIDENCE_ONLY_ORIGIN_MISMATCH", "non-model publication must inherit the exact accepted native origin");
+          }
+        }
         const now = await readDatabaseWallClock(
           transaction,
           "V3_EVIDENCE_ONLY_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
@@ -897,6 +964,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         }
         if (
           reserved.attempt.claimId !== claimId
+          || (native !== undefined && reserved.attempt.generation !== native.generation + 1)
           || reserved.attempt.attemptClass !== "evidence_only"
           || reserved.attempt.recoveryDispatchId !== lease.dispatchId
           || reserved.attempt.recoveryCaseRevisionId !== lease.revisionId

@@ -1,4 +1,10 @@
 import type postgres from "postgres";
+import {execFileSync} from "node:child_process";
+import {resolveV3GitRevision} from "../execution/v3-git-revision.js";
+import {captureNativeOriginalFileSignatures} from "../execution/v3-preparation-authority-v2-repository.js";
+import {captureV3ImplementationSourceSnapshotsV2} from "../execution/v3-source-snapshot-v2.js";
+import {canonicalJsonStringify} from "../product-compiler/canonical-json.js";
+import type {NativeImplementationContextV3} from "../execution/v3-native-implementation-attempt.js";
 
 import { getSql } from "../db-pg.js";
 import { runImplementEvidenceIfRequested } from "../installer/implement-evidence-runner.js";
@@ -204,6 +210,7 @@ export function createV3EvidenceOnlyRuntimeDependencies(
   sql: Sql = getSql(),
 ): V3EvidenceOnlyWorkerDependencies {
   const publication = createV3EvidenceOnlyPublication(sql);
+  const nativeSources=new Map<string,NativeImplementationContextV3>();
   return Object.freeze({
     async loadOrReserveAttempt({ lease }) {
       if (lease.mode === "fresh_execution") {
@@ -213,6 +220,7 @@ export function createV3EvidenceOnlyRuntimeDependencies(
           worktree: owner.worktree,
           branch: owner.branch,
         });
+        if(compiled.kind==="native-dispatch-ready") nativeSources.set(owner.worktree,compiled);
         return {
           attempt: compiled.attempt,
           workdir: owner.worktree,
@@ -234,6 +242,7 @@ export function createV3EvidenceOnlyRuntimeDependencies(
       if (!compiled.attempt.worktree) {
         fail("V3_EVIDENCE_ONLY_REPLAY_WORKTREE_MISSING", "terminal evidence-only attempt has no exact source worktree");
       }
+      if(compiled.kind==="native-dispatch-ready") nativeSources.set(compiled.attempt.worktree,compiled);
       return {
         attempt: compiled.attempt,
         workdir: compiled.attempt.worktree,
@@ -244,7 +253,22 @@ export function createV3EvidenceOnlyRuntimeDependencies(
       };
     },
 
-    captureSource: (workdir) => captureShadowSourceRevision(workdir),
+    async captureSource(workdir) {
+      const compiled=nativeSources.get(workdir);
+      if(!compiled) return captureShadowSourceRevision(workdir);
+      const source=resolveV3GitRevision({repo:workdir,requestedRef:"HEAD",expectedSha:compiled.sourceBefore.sha});
+      if(canonicalJsonStringify(source)!==canonicalJsonStringify(compiled.sourceBefore))
+        fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native candidate HEAD/tree changed");
+      execFileSync("git",["--no-replace-objects","diff","--quiet","HEAD","--"],
+        {cwd:workdir,timeout:10_000,maxBuffer:16*1024*1024,stdio:["ignore","pipe","pipe"]});
+      const files=compiled.slice.files.map(file=>({pathRef:file.pathRef,path:file.path}));
+      const pinned=captureNativeOriginalFileSignatures({worktree:workdir,source,files})
+        .map(({path:_path,...snapshot})=>snapshot);
+      const current=captureV3ImplementationSourceSnapshotsV2({worktree:workdir,files}).snapshots;
+      if(canonicalJsonStringify(pinned)!==canonicalJsonStringify(current))
+        fail("V3_EVIDENCE_ONLY_SOURCE_MUTATED","native candidate regular blobs changed");
+      return source;
+    },
 
     async executeEvidence({ lease, context }) {
       const result = await runImplementEvidenceIfRequested({
