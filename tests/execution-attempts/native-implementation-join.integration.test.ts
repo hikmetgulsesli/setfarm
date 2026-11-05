@@ -81,10 +81,19 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       ...(runnableCli ? { productSpec: packet.productSpec, repo: source.worktree, task: NODE_CLI_TASK } : {}),
     });
     if (runnableCli) {
-      await database.sql`UPDATE runs SET context = (context::jsonb || ${JSON.stringify({
+      const rows = await database.sql<Array<{ context: string }>>`SELECT context FROM runs WHERE id = ${runId}`;
+      assert.equal(rows.length, 1);
+      const admittedContext: unknown = JSON.parse(rows[0]!.context);
+      assert.ok(admittedContext && typeof admittedContext === "object" && !Array.isArray(admittedContext));
+      assert.ok(Object.values(admittedContext).every(value => typeof value === "string"));
+      // Keep the parameter text-typed. An explicitly jsonb-typed string is
+      // JSON-encoded by postgres.js and object || string becomes an array.
+      const context = JSON.stringify({
+        ...admittedContext,
         repo: source.worktree, branch: "main", implement_base_commit: source.sourceBefore.sha,
         stack_pack_id: "node-cli", tech_stack: "node",
-      })}::jsonb)::text WHERE id = ${runId}`;
+      });
+      await database.sql`UPDATE runs SET context = ${context} WHERE id = ${runId}`;
       await database.sql`UPDATE steps SET loop_config = '{"over":"stories","mergeStrategy":"direct-merge"}',
         input_template = 'Implement the exact sealed story.' WHERE id = ${admission.implementStepDbId}`;
       const authenticAdmission = await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(database.sql, { runId });
