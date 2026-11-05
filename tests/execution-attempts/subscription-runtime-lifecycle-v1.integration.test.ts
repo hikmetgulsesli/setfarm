@@ -6,11 +6,15 @@ import path from "node:path";
 import { it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { completeSingleStepClaimAndState } from "../../src/execution/claim-attempt-transition.js";
 import { insertAndBindInternalProductionClaimBirthV1, prepareInternalProductionClaimBirthV1 }
   from "../../src/execution/claim-runtime-publication.js";
 import { createRuntimeSessionRepository, releaseDrainedRuntimeSessionInTransaction,
   type ClaimRuntimeSession } from "../../src/execution/runtime-session-repository.js";
 import { requestRunTermination, createRunTerminationRepository } from "../../src/execution/run-termination.js";
+import { createRuntimeCompletionRepository, requestRuntimeCompletion } from "../../src/execution/runtime-completion.js";
+import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
+import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createSubscriptionRuntimeAttachmentV1, type SubscriptionRuntimeBindingV1,
   type SubscriptionRuntimeAuthorityV1 } from "../../src/execution/subscription-runtime-attachment-v1.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
@@ -46,7 +50,7 @@ const ABSENT = {
   stableObservations: 2, evidenceRefs: ["setfarm://tests/subscription-runtime/original-absence"],
 };
 
-async function fixture(database: TestDatabase, stage = false, subscription = true) {
+async function fixture(database: TestDatabase, stage = false, subscription = true, reserved = false) {
   const suffix = randomUUID();
   const runId = `run-subscription-${suffix}`, stepDbId = `step-${suffix}`, storyDbId = `story-${suffix}`;
   const workflowStepId = stage ? "plan" : "implement";
@@ -58,7 +62,7 @@ async function fixture(database: TestDatabase, stage = false, subscription = tru
   const worktree = path.join(directory, "worktree"); mkdirSync(worktree, { mode: 0o700 });
   const sessionId = `RTS_${suffix}`;
   const container = path.join(directory, "attempt-workspaces", "subscription", sessionId);
-  mkdirSync(container, { recursive: true, mode: 0o700 });
+  if (!reserved) mkdirSync(container, { recursive: true, mode: 0o700 });
   const runtimePath = subscription ? path.join(container, "owner") : path.join(directory, "legacy-codex-runtime");
   const transcriptPath = subscription ? path.join(container, "worker-output.log") : path.join(directory, "codex-output.log");
   try {
@@ -93,19 +97,20 @@ async function fixture(database: TestDatabase, stage = false, subscription = tru
     };
     const sessions = createRuntimeSessionRepository(database.sql);
     await sessions.reserve({ sessionId, runId, stepDbId, workflowStepId, claimId, claimAgentId,
-      runtimeAgentId, runtimeKind: "local_process", ownerInstanceId, worktree, runtimePath, transcriptPath,
+      runtimeAgentId, runtimeKind: "local_process", ownerInstanceId, worktree, transcriptPath,
+      ...(!reserved ? { runtimePath } : {}),
       ...(reservation ? { storyId: "US-002", storyDbId, attemptId: reservation.attempt.attemptId } : {}),
     });
     const start = { sessionId, ownerInstanceId, worktree, runtimePath, transcriptPath };
-    await sessions.markStarting(start);
+    if (!reserved) await sessions.markStarting(start);
     return { sessions, envelope, start, runId, claimId, storyDbId, stepDbId, directory,
       auth: { ...start, envelope }, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
   } catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
 }
-async function withFixture(body: (f: Awaited<ReturnType<typeof fixture>>, db: TestDatabase) => Promise<void>, stage = false, subscription = true) {
+async function withFixture(body: (f: Awaited<ReturnType<typeof fixture>>, db: TestDatabase) => Promise<void>, stage = false, subscription = true, reserved = false) {
   const db = await createIsolatedTestDatabase();
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  try { f = await fixture(db, stage, subscription); await body(f, db); }
+  try { f = await fixture(db, stage, subscription, reserved); await body(f, db); }
   finally { f?.cleanup(); await db.cleanup(); }
 }
 function subscriptionStart(f: Awaited<ReturnType<typeof fixture>>) {
@@ -318,6 +323,66 @@ it("authenticates honest nonstory stage with no invented execution attempt or fe
     const rows = await db.sql<Array<{ count: string }>>`SELECT count(*)::text AS count FROM execution_attempts WHERE claim_id=${f.claimId}`;
     assert.equal(rows[0]!.count, "0");
   }, true);
+});
+it("neutral reserved compiler completion drains and accepts through its genuine owner without subscription closure", async () => {
+  await withFixture(async (f, db) => {
+    const reserved = (await f.sessions.findById(f.start.sessionId))!;
+    assert.equal(reserved.state, "reserved");assert.equal(reserved.runtimePath, undefined);
+    assert.equal(reserved.pid, undefined);assert.equal(reserved.startedAt, undefined);
+    assert.deepEqual(reserved.drainEvidence, {});
+    const output = "STATUS: done\nRESULT: exact compiler-owned stage projection";
+    const requested = await requestRuntimeCompletion(db.sql, {
+      envelope: f.envelope, output, requestId: `RCR_${randomUUID()}`,
+    });
+    assert.equal(requested.status, "requested");
+    if (requested.status !== "requested") assert.fail("owned compiler completion request required");
+    assert.equal(requested.request.output, output);
+    const completions = createRuntimeCompletionRepository(db.sql), ownerInstanceId = f.start.ownerInstanceId;
+    const draining = await completions.claim({ requestId: requested.request.requestId, ownerInstanceId });
+    assert.equal(draining!.state, "draining");
+    assert.equal((await f.sessions.findById(f.start.sessionId))!.state, "drain_requested");
+    const drained = await f.sessions.markDrained({ ...f.start, evidence: ABSENT });
+    assert.equal(drained.state, "drained");assert.equal(drained.runtimePath, undefined);
+    for (const key of ["subscriptionStart", "subscriptionClosure"]) assert.equal(Object.hasOwn(drained.drainEvidence, key), false);
+    const processing = await completions.markProcessing({ requestId: requested.request.requestId, ownerInstanceId });
+    assert.ok(processing.leaseExpiresAt);
+    const completed = await runWithRuntimeCompletionOwner({ requestId: processing.requestId, ownerInstanceId,
+      leaseExpiresAt: processing.leaseExpiresAt!, ownerAttemptCount: processing.ownerAttemptCount },
+    () => completeSingleStepClaimAndState(db.sql, { envelope: f.envelope, stepStatus: "done", stepOutput: output,
+      requireRuntimeCompletionOwner: true }));
+    assert.equal(completed.status, "completed");
+    const effects = createRuntimeCompletionEffectRepository(db.sql), result = { advanced: false, runCompleted: false };
+    const effect = await effects.claimNext({ requestId: processing.requestId, ownerInstanceId });
+    assert.ok(effect?.leaseToken);
+    await effects.settle({ requestId: processing.requestId, effectKey: effect.effectKey, ownerInstanceId,
+      leaseToken: effect.leaseToken, resolution: "applied", result, evidence: { source: "neutral-compiler-completion-fixture" } });
+    await completions.markEffectsCommitted({ requestId: processing.requestId, ownerInstanceId,
+      ownerAttemptCount: processing.ownerAttemptCount, result });
+    const accepted = await completions.acceptAndRelease({ requestId: processing.requestId, ownerInstanceId,
+      ownerAttemptCount: processing.ownerAttemptCount, result });
+    assert.equal(accepted.state, "accepted");
+    const released = (await f.sessions.findById(f.start.sessionId))!;
+    assert.equal(released.state, "released");assert.equal(released.runtimePath, undefined);
+    assert.equal(released.pid, undefined);assert.equal(released.startedAt, undefined);
+    assert.deepEqual(released.drainEvidence, drained.drainEvidence);
+    const rows = await db.sql<Array<{ outcome: string; status: string; output: string }>>`
+      SELECT cl.outcome, s.status, s.output FROM claim_log cl JOIN steps s ON s.id=${f.stepDbId} WHERE cl.id=${f.claimId}`;
+    assert.deepEqual(rows.map(row => ({ ...row })), [{ outcome: "completed", status: "done", output }]);
+  }, true, true, true);
+});
+it("neutral reservation pins subscription starting paths even when acquisition then refuses without a journal", async () => {
+  await withFixture(async f => {
+    assert.equal((await f.sessions.findById(f.start.sessionId))!.runtimePath, undefined);
+    const starting = await f.sessions.markStarting(f.start);
+    assert.equal(starting.state, "starting");assert.equal(starting.runtimePath, f.start.runtimePath);
+    assert.equal(starting.transcriptPath, f.start.transcriptPath);assert.equal(starting.worktree, f.start.worktree);
+    assert.equal(starting.pid, undefined);assert.equal(Object.hasOwn(starting.drainEvidence, "subscriptionStart"), false);
+    assert.deepEqual(await f.sessions.markStarting(f.start), starting);
+    await assert.rejects(f.sessions.markStarting({ ...f.start, runtimePath: path.join(f.directory, "foreign") }), /MISMATCH/);
+    await f.sessions.requestDrain({ ...f.start, diagnostic: "selected startup refused after atomic starting publication" });
+    await assert.rejects(f.sessions.markDrained({ ...f.start, evidence: ABSENT }), /SUBSCRIPTION/);
+    assert.equal((await f.sessions.findById(f.start.sessionId))!.state, "drain_requested");
+  }, true, true, true);
 });
 it("missing subscription journal cannot downgrade to legacy absence-only drainage", async () => {
   await withFixture(async f => {

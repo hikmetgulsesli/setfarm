@@ -7927,6 +7927,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const transcriptTs = new Date().toISOString().replace(/[:.]/g, "-");
   const subscriptionPaths=AGENT_RUNTIME==="subscription"?deriveSubscriptionCodingRuntimePathsV1({runtimeRoot:SELECTED_SPAWNER_V1!.paths.root,runtimeSessionId}):undefined;
   const transcriptPath = subscriptionPaths?.transcriptPath??path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + transcriptTs + ".log");
+  // Reserve ownership first; markStarting publishes subscription paths before
+  // worker acquisition, while compiler completions keep the reservation neutral.
   const runtimeIntent: RuntimeClaimIntentV1 = {
     schema: "setfarm.runtime-claim-intent.v1",
     sessionId: runtimeSessionId,
@@ -7935,7 +7937,6 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     ownerInstanceId: SPAWNER_INSTANCE_ID,
     sessionKey,
     transcriptPath,
-    ...(subscriptionPaths?{runtimePath:subscriptionPaths.runtimePath}:{}),
   };
   const outputFileId = agentId + "-spawner-" + spawnId;
   const claimFile = path.join("/tmp", "claim-" + outputFileId + ".json");
