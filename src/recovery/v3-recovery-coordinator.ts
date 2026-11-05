@@ -1,3 +1,4 @@
+import type {PreparedNativeEvidenceMerge} from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -898,6 +899,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     allowedPaths?: string[];
     decisionRef: string;
     now: Date;
+    nativeEvidenceMerge?:PreparedNativeEvidenceMerge;
   }>): Promise<RecoveryCaseV1> {
     for (let cycle = 0; cycle < 4; cycle += 1) {
       const current = await findings.findRecoveryCase(input.recoveryCaseId);
@@ -934,7 +936,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
           evidenceBundleHashes: [input.evidenceBundleHash],
         },
         decisionRef: input.decisionRef,
-      }, { now: input.now });
+      }, { now: input.now, ...(input.nativeEvidenceMerge?{nativeEvidenceMerge:input.nativeEvidenceMerge}:{}) });
       if (transitioned.status === "transitioned") return transitioned.recoveryCase;
     }
     fail("V3_RECOVERY_TERMINAL_CAS_EXHAUSTED", "terminal transition did not converge after replay");
@@ -1227,6 +1229,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     context: ParsedEvidenceContext,
     now: Date,
     query: Pick<Sql, "unsafe">,
+    nativeEvidenceMerge?:PreparedNativeEvidenceMerge,
   ): Promise<V3RecoveryCoordinatorResult> {
     if (context.evidenceBundle.attemptId !== raw.attemptId) {
       fail("V3_RECOVERY_INPUT_ATTEMPT_MISMATCH", "input and evidence bundle name different attempts");
@@ -1280,6 +1283,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
           coordinatorEventHash,
         }),
         now,
+        ...(nativeEvidenceMerge?{nativeEvidenceMerge}:{}),
       });
       const revision = await deliveries.findCurrentRevision(recoveryCase.recoveryCaseId);
       if (!revision) fail("V3_RECOVERY_CURRENT_REVISION_MISSING", "resolved case has no revision");
@@ -1520,7 +1524,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
 
     async coordinate(
       input: unknown,
-      options: Readonly<{ now?: Date }> = {},
+      options: Readonly<{ now?: Date; nativeEvidenceMerge?:PreparedNativeEvidenceMerge }> = {},
     ): Promise<V3RecoveryCoordinatorResult> {
       const raw = V3RecoveryCoordinatorInputSchema.parse(input);
       const requestedTime = new Date(options.now ?? new Date());
@@ -1539,7 +1543,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
         );
         return raw.kind === "initial_evidence"
           ? coordinateInitial(raw, context, now)
-          : coordinateRecovery(raw, context, now, transaction);
+          : coordinateRecovery(raw, context, now, transaction, options.nativeEvidenceMerge);
       }) as Promise<V3RecoveryCoordinatorResult>;
     },
   };

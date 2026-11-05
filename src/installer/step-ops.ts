@@ -13353,6 +13353,47 @@ export async function resumeRuntimeCompletionEffects(
         [input.runId],
       );
       if (parseInt(activeCount?.count || "0", 10) > 0) {
+        const nativePacket=await pgGet<{packet_hash:string}>(`SELECT run.packet_hash FROM runs run
+          JOIN semantic_artifacts packet ON packet.artifact_hash=run.packet_hash
+            AND packet.artifact_type='setfarm.product-build-packet.v3'
+          WHERE run.id=$1 AND run.protocol='v3'`,[input.runId]);
+        if(nativePacket) {
+          const cap=currentRuntimeCompletionOwnerCapability();
+          const plan=input.completionPlan;
+          if(!cap||!input.claimId||!input.runtimeSessionId||!plan||plan.continuation.type!=="story_direct_merge"
+            ||authenticatedSubject?.kind!=="story_member"||!plan.subject?.sourceSha)
+            throw new Error("V3_NATIVE_INCREMENTAL_MERGE_OWNER_REQUIRED");
+          const claimId=input.claimId,runtimeSessionId=input.runtimeSessionId;
+          const assertOwner=async()=>{
+            const owners=await pgQuery<{attempt_id:string}>(`SELECT a.attempt_id FROM runtime_completion_requests q
+              JOIN runtime_sessions runtime ON runtime.session_id=q.runtime_session_id AND runtime.claim_id=q.claim_id
+                AND runtime.attempt_id=q.attempt_id AND runtime.run_id=q.run_id AND runtime.story_id=q.story_id
+              JOIN execution_attempts a ON a.attempt_id=q.attempt_id AND a.claim_id=q.claim_id AND a.run_id=q.run_id
+                AND a.story_id=q.story_id AND a.step_id='implement'
+              JOIN claim_log claim ON claim.id=q.claim_id AND claim.run_id=q.run_id AND claim.story_id=q.story_id
+                AND claim.step_id='implement' AND claim.outcome=q.claim_outcome
+              WHERE q.request_id=$1 AND q.run_id=$2 AND q.step_db_id=$3 AND q.story_id=$4
+                AND q.claim_id=$5 AND q.runtime_session_id=$6 AND q.owner_instance_id=$7 AND q.owner_attempt_count=$8
+                AND q.state='processing' AND q.apply_phase='owner_committed' AND runtime.state='drained'
+                AND q.lease_expires_at>clock_timestamp() AND q.claim_outcome='completed'
+                AND q.completion_plan_hash=$9 AND q.output_hash=$10
+                AND a.packet_hash=$11 AND a.source_after_sha=$12
+                AND a.disposition IN ('produced_delta','already_satisfied','verified')`,
+              [cap.requestId,input.runId,input.stepDbId,story.story_id,claimId,runtimeSessionId,
+                cap.ownerInstanceId,cap.ownerAttemptCount,hashCanonicalJson(plan),
+                crypto.createHash("sha256").update(input.output,"utf8").digest("hex"),nativePacket.packet_hash,plan.subject!.sourceSha]);
+            if(owners.length!==1) throw new Error("V3_NATIVE_INCREMENTAL_MERGE_OWNER_STALE");
+          };
+          await assertOwner();
+          if(!context.repo||!context.branch) throw new Error("V3_NATIVE_INCREMENTAL_MERGE_CONTEXT_MISSING");
+          await runMergeQueue(input.runId,context.repo,context.branch);
+          await assertOwner();
+          const verified=await pgGet<{status:string;merge_status:string}>(
+            "SELECT status,merge_status FROM stories WHERE id=$1 AND run_id=$2 AND story_id=$3",
+            [story.id,input.runId,story.story_id]);
+          if(verified?.status!=="verified"||verified.merge_status!=="merged")
+            throw new Error("V3_NATIVE_INCREMENTAL_MERGE_RECEIPT_MISSING");
+        }
         return { advanced: false, runCompleted: false };
       }
       if (step.status === "done") return advancePipeline(input.runId);

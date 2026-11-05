@@ -1,3 +1,6 @@
+import { authenticateNativeEvidenceContinuationOwner,readNativeEvidenceOnlySuccessAuthority,
+  type NativeEvidenceContinuationOwner } from "../recovery/v3-evidence-only-publication.js";
+import { getSql as nativeEvidenceSql } from "../db-pg.js";
 /**
  * Merge Queue Operations (merge-queue-ops.ts)
  *
@@ -919,7 +922,15 @@ export async function runMergeQueue(
   runId: string,
   repoPath: string,
   featureBranch: string,
+  nativeOwner?:NativeEvidenceContinuationOwner,
 ): Promise<MergeQueueResult> {
+  const native=nativeOwner?await authenticateNativeEvidenceContinuationOwner(nativeEvidenceSql(),nativeOwner):undefined;
+  if(nativeOwner) {
+    const context=await getRunContext(runId);
+    if(nativeOwner.runId!==runId||context.repo!==repoPath||context.branch!==featureBranch
+      ||native?.sourceOwner.completionPlan.continuation.type!=="story_direct_merge")
+      throw new Error("V3_NATIVE_EVIDENCE_MERGE_CONTEXT_MISMATCH");
+  }
   const result: MergeQueueResult = { merged: [], conflicted: [], skipped: [], prUrl: null };
   const wfId = await getWorkflowId(runId);
 
@@ -958,14 +969,17 @@ export async function runMergeQueue(
   );
 
   for (const story of stories) {
-    // Skip stories that aren't done or already merged
-    if (story.status !== "done" && story.status !== "verified") {
+    const pendingNative=!!native&&native.storyDbId===story.id&&nativeOwner?.storyId===story.story_id;
+    if(pendingNative&&story.status!=="failed") throw new Error("V3_NATIVE_EVIDENCE_MERGE_STORY_CHANGED");
+    // Only the fully authenticated terminal verifier can supply this pending source.
+    if(pendingNative) story.source_after_sha=native!.sourceAfter.sha;
+    if (story.status !== "done" && story.status !== "verified" && !pendingNative) {
       result.skipped.push(story.story_id);
       logger.info(`[merge-queue] Skipping ${story.story_id} (status: ${story.status})`, { runId });
       continue;
     }
 
-    if (story.merge_status === "merged") {
+    if (story.merge_status === "merged" && !pendingNative) {
       result.merged.push(story.story_id);
       logger.info(`[merge-queue] Already merged: ${story.story_id}`, { runId });
       continue;
@@ -976,6 +990,7 @@ export async function runMergeQueue(
 
     logger.info(`[merge-queue] Merging ${story.story_id} (${storyBranch} → ${featureBranch})`, { runId });
 
+    if(nativeOwner) await authenticateNativeEvidenceContinuationOwner(nativeEvidenceSql(),nativeOwner);
     const exactMerge = story.source_after_sha
       ? mergeExactSourceIntoFeature({
           repoPath,
@@ -997,11 +1012,26 @@ export async function runMergeQueue(
 
     if (mergeResult.success) {
       result.merged.push(story.story_id);
-      await pgRun(
-        "UPDATE stories SET merge_status = 'merged', status = 'verified', output = $1, updated_at = $2 WHERE id = $3",
-        ["STATUS: verified\nVERIFICATION_SUMMARY: Direct-merged into feature branch and marked verified.", now(), story.id],
-      );
-      emitEvent({
+      if(nativeOwner) await authenticateNativeEvidenceContinuationOwner(nativeEvidenceSql(),nativeOwner);
+      // Pending verifier acceptance/receipt is published by its atomic case
+      // transaction. Keep failed story and original output until that boundary.
+      if(!pendingNative) {
+        let output="STATUS: verified\nVERIFICATION_SUMMARY: Direct-merged into feature branch and marked verified.";
+        const attempts=await nativeEvidenceSql().unsafe<Array<{attempt_id:string;attempt_class:string;packet_hash:string;artifact_type:string}>>(`
+          SELECT a.attempt_id,a.attempt_class,a.packet_hash,p.artifact_type FROM execution_attempts a
+          JOIN semantic_artifacts p ON p.artifact_hash=a.packet_hash WHERE a.run_id=$1 AND a.story_id=$2
+          ORDER BY a.generation DESC,a.updated_at DESC LIMIT 1`,[runId,story.story_id]);
+        if(attempts[0]?.attempt_class==="evidence_only"&&attempts[0].artifact_type==="setfarm.product-build-packet.v3") {
+          const accepted=await readNativeEvidenceOnlySuccessAuthority(nativeEvidenceSql(),{runId,stepId:"implement",
+            storyId:story.story_id,packetHash:attempts[0].packet_hash,attemptId:attempts[0].attempt_id});
+          if(accepted.storyOutput!==accepted.acceptanceOutput||accepted.sourceAfter.sha!==story.source_after_sha)
+            throw new Error("V3_NATIVE_EVIDENCE_MERGE_ACCEPTANCE_MISMATCH");
+          output=accepted.acceptanceOutput;
+        }
+        await pgRun("UPDATE stories SET merge_status='merged',status='verified',output=$1,updated_at=$2 WHERE id=$3",
+          [output,now(),story.id]);
+      }
+      if(!pendingNative) emitEvent({
         ts: now(), event: "story.verified", runId, workflowId: wfId,
         storyId: story.story_id, storyTitle: story.title,
         detail: `Direct-merged into ${featureBranch}`,
@@ -1016,6 +1046,7 @@ export async function runMergeQueue(
       // story as 'failed' so the "fail run if any story failed" guardrail (96dd442) catches
       // it and surfaces the conflict as a run failure instead of burying it in the DB.
       result.conflicted.push(story.story_id);
+      if(pendingNative) throw new Error(`V3_NATIVE_EVIDENCE_MERGE_CONFLICT:${mergeResult.conflicts.join(", ")}`);
       await pgRun(
         "UPDATE stories SET merge_status = 'conflict', status = 'failed', output = COALESCE(output, '') || E'\\n\\nMERGE_CONFLICT: ' || $3, updated_at = $1 WHERE id = $2",
         [now(), story.id, mergeResult.conflicts.join(", ")],
@@ -1029,8 +1060,16 @@ export async function runMergeQueue(
     }
   }
 
-  // Create single PR from feature → main
-  if (result.merged.length > 0) {
+  const nativeRun=await pgGet<{id:string}>(`SELECT run.id FROM runs run JOIN semantic_artifacts packet
+    ON packet.artifact_hash=run.packet_hash AND packet.artifact_type='setfarm.product-build-packet.v3'
+    WHERE run.id=$1 AND run.protocol='v3'`,[runId]);
+  // Direct-merge stories become canonically verified incrementally. Publish
+  // the final feature PR only after all other stories are terminal; the one
+  // authenticated pending verifier is committed by its atomic case transaction.
+  const outstanding=await pgGet<{count:string}>(`SELECT count(*)::text AS count FROM stories
+    WHERE run_id=$1 AND status NOT IN ('done','verified','skipped') AND ($2::text IS NULL OR id<>$2)`,
+    [runId,native?.storyDbId??null]);
+  if (result.merged.length > 0 && (!nativeRun || outstanding?.count==="0")) {
     try {
       // Get task name for PR title
       const runRow = await pgGet<{ task: string }>("SELECT task FROM runs WHERE id = $1", [runId]);

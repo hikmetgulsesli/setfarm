@@ -1,5 +1,7 @@
 import type postgres from "postgres";
-import { readNativeEvidenceOnlySuccessAuthority } from "../recovery/v3-evidence-only-publication.js";
+import { readNativeEvidenceOnlySuccessAuthority, readNativeEvidenceOnlySourceAuthority,
+  readNativeEvidenceOnlyTerminalAuthority, type V3EvidenceOnlyPublicationLeaseV1,
+} from "../recovery/v3-evidence-only-publication.js";
 import { compileEvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -830,4 +832,149 @@ export async function bindV3PreparationAuthorityAttemptV2InTransaction(
     );
   }
   return "duplicate";
+}
+
+
+export type NativeEvidenceWorktreeCustody = Readonly<{
+  runId:string; storyId:string; dispatchId:string; revisionId:string;
+  ownerInstanceId:string; leaseToken:string; worktree:string; repo:string;
+  candidate:SourceRevisionV1; common:Readonly<{path:string;dev:string;ino:string}>;
+  directory:Readonly<{dev:string;ino:string}>; branch:string; retainedCommit:string;
+  created:boolean;
+}>;
+const nativeEvidenceWorktreeCustodies=new WeakMap<object,string>();
+
+async function authenticateNativeEvidenceWorktreeLease(
+  query:NativeGitQuery, lease:V3EvidenceOnlyPublicationLeaseV1,
+) {
+  const owner=await readNativeEvidenceOnlySourceAuthority(query,lease);
+  const rows=await query.unsafe<Array<{claim_id:string;source_before_sha:string;source_before_tree_hash:string;
+    evidence_refs:string;delivery_state:string;attempt_id:string|null}>>(`
+    SELECT original.claim_id::text,original.source_before_sha,original.source_before_tree_hash,
+      original.evidence_refs,delivery.state AS delivery_state,delivery.attempt_id
+    FROM execution_attempts original
+    JOIN recovery_dispatch_deliveries delivery ON delivery.run_id=original.run_id AND delivery.story_id=original.story_id
+    JOIN recovery_cases recovery ON recovery.recovery_case_id=delivery.recovery_case_id
+      AND recovery.current_revision_id=delivery.revision_id AND recovery.status='evidencing'
+    JOIN stories story ON story.run_id=original.run_id AND story.story_id=original.story_id
+      AND story.id=$11 AND story.status='failed' AND story.claimed_by IS NULL AND story.claimed_at IS NULL
+    JOIN steps step ON step.id=$12 AND step.run_id=original.run_id AND step.step_id='implement'
+      AND step.type='loop' AND step.status IN ('pending','running')
+    WHERE original.attempt_id=$1 AND original.run_id=$2 AND original.story_id=$3
+      AND delivery.dispatch_id=$4 AND delivery.revision_id=$5 AND delivery.recovery_case_id=$6
+      AND delivery.owner_instance_id=$7 AND delivery.lease_token=$8
+      AND delivery.lease_expires_at>clock_timestamp()
+      AND original.worktree=$9 AND original.branch=$10
+      AND ((delivery.state='leased' AND delivery.attempt_count=0 AND delivery.attempt_id IS NULL AND delivery.claim_id IS NULL)
+        OR (delivery.state IN ('attempt_reserved','running') AND delivery.attempt_count=1 AND EXISTS (
+          SELECT 1 FROM execution_attempts child JOIN claim_log claim ON claim.id=child.claim_id
+          WHERE child.attempt_id=delivery.attempt_id AND child.claim_id=delivery.claim_id
+            AND child.run_id=original.run_id AND child.story_id=original.story_id
+            AND child.attempt_class='evidence_only' AND child.role='evidence-orchestrator'
+            AND child.recovery_dispatch_id=delivery.dispatch_id AND child.recovery_case_revision_id=delivery.revision_id
+            AND child.source_before_sha=original.source_after_sha AND child.source_before_tree_hash=original.source_after_tree_hash
+            AND child.disposition NOT IN ('claimed','running','superseded') AND claim.outcome='completed')))
+    `,[owner.attempt_id,lease.runId,lease.storyId,lease.dispatchId,lease.revisionId,lease.recoveryCaseId,
+      lease.ownerInstanceId,lease.leaseToken,owner.worktree,owner.branch,lease.storyDbId,lease.stepDbId]);
+  if(rows.length!==1) repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_LEASE_INVALID","exact current native source/delivery/failed story is required");
+  const row=rows[0]!;
+  const canonical=await nativeCanonicalRunRepository(query,{runId:lease.runId,claimId:claimId(row.claim_id),
+    worktree:owner.worktree,branch:owner.branch,
+    sourceBefore:{sha:row.source_before_sha,treeHash:row.source_before_tree_hash}});
+  const refs:unknown=JSON.parse(row.evidence_refs);
+  if(!Array.isArray(refs)||refs.some(ref=>typeof ref!=="string")
+    ||canonicalJsonStringify(refs.filter(ref=>typeof ref==="string"&&ref.startsWith(NATIVE_GIT_CUSTODY_REF_PREFIX)))
+      !==canonicalJsonStringify([canonical.evidenceRef]))
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_CUSTODY_INVALID","actual original reservation witness is required without backfill");
+  if(canonicalJsonStringify(nativeCustodyRevision(canonical.repo,lease.sourceRevision.sha))!==canonicalJsonStringify(lease.sourceRevision))
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_SOURCE_INVALID","current candidate commit/tree is not retained");
+  nativeCustodyGit(canonical.repo,["merge-base","--is-ancestor",lease.sourceRevision.sha,canonical.retainedCommit]);
+  return {owner,canonical,row};
+}
+
+/** Preexecution effect outside SQL transactions. No branch/ref is created or
+ * reset: only the exact stored absent worktree path is restored detached. */
+export async function ensureNativeEvidenceOnlyWorktree(
+  query:NativeGitQuery,lease:V3EvidenceOnlyPublicationLeaseV1,
+):Promise<NativeEvidenceWorktreeCustody> {
+  const authenticated=await authenticateNativeEvidenceWorktreeLease(query,lease);
+  const {owner,canonical}=authenticated;
+  if(!path.isAbsolute(owner.worktree)||/[\r\n\0]/.test(owner.worktree)
+    ||path.resolve(owner.worktree)!==owner.worktree||owner.worktree===canonical.repo
+    ||realpathSync(path.dirname(owner.worktree))!==path.dirname(owner.worktree))
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_PATH_INVALID","original worktree requires an exact canonical existing parent");
+  let exists=true;
+  try {
+    const stat=lstatSync(owner.worktree);
+    if(!stat.isDirectory()||stat.isSymbolicLink()) repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_PATH_INVALID","stored path is not a regular worktree directory");
+  } catch(error) {
+    if(error&&typeof error==="object"&&"code" in error&&error.code==="ENOENT") exists=false;
+    else throw error;
+  }
+  if(!exists) {
+    const registrations=nativeCustodyGit(canonical.repo,["worktree","list","--porcelain","-z"]);
+    if(registrations.includes(`worktree ${owner.worktree}\0`))
+      repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_STALE_REGISTRATION","missing path still has a Git registration; never force/prune another owner");
+    // A second exact lease/custody read immediately precedes the external effect.
+    await authenticateNativeEvidenceWorktreeLease(query,lease);
+    nativeCustodyGit(canonical.repo,["worktree","add","--detach","--",owner.worktree,lease.sourceRevision.sha]);
+  }
+  const currentCommon=nativeGitCommonDirectory(owner.worktree);
+  if(canonicalJsonStringify(currentCommon)!==canonicalJsonStringify(canonical.common)
+    ||nativeCustodyGit(owner.worktree,["rev-parse","--verify","HEAD"])!==lease.sourceRevision.sha)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_SOURCE_INVALID","stored worktree differs from its actual common-dir/candidate");
+  nativeCustodyGit(owner.worktree,["diff","--quiet","HEAD","--"]);
+  const after=await authenticateNativeEvidenceWorktreeLease(query,lease);
+  if(after.canonical.retainedCommit!==canonical.retainedCommit)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_BRANCH_CHANGED","restoration must preserve the retained branch exactly");
+  const directory=lstatSync(owner.worktree,{bigint:true});
+  const snapshot=Object.freeze({runId:lease.runId,storyId:lease.storyId,dispatchId:lease.dispatchId,revisionId:lease.revisionId,
+    ownerInstanceId:lease.ownerInstanceId,leaseToken:lease.leaseToken,worktree:owner.worktree,repo:canonical.repo,
+    candidate:Object.freeze({...lease.sourceRevision}),common:Object.freeze({...canonical.common}),
+    directory:Object.freeze({dev:directory.dev.toString(),ino:directory.ino.toString()}),
+    branch:owner.branch,retainedCommit:canonical.retainedCommit,created:!exists});
+  nativeEvidenceWorktreeCustodies.set(snapshot,canonicalJsonStringify(snapshot));
+  return snapshot;
+}
+
+/** Cleanup is restricted to a directory actually created by this invocation.
+ * A preexisting/recovered detached directory is retained, never silently adopted
+ * for deletion. Same-process cleanup deletes only this code-created workspace. */
+export async function cleanupNativeEvidenceOnlyWorktree(
+  query:NativeGitQuery,lease:V3EvidenceOnlyPublicationLeaseV1,snapshot:NativeEvidenceWorktreeCustody,
+):Promise<boolean> {
+  if(nativeEvidenceWorktreeCustodies.get(snapshot)!==canonicalJsonStringify(snapshot)
+    ||snapshot.runId!==lease.runId||snapshot.storyId!==lease.storyId||snapshot.dispatchId!==lease.dispatchId
+    ||snapshot.revisionId!==lease.revisionId||snapshot.ownerInstanceId!==lease.ownerInstanceId||snapshot.leaseToken!==lease.leaseToken)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_CLEANUP_UNAUTHENTICATED","cleanup requires its exact code-created custody snapshot");
+  if(!snapshot.created) return false;
+  const authenticated=await authenticateNativeEvidenceWorktreeLease(query,lease);
+  if(!authenticated.row.attempt_id) repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_CLEANUP_NOT_TERMINAL","evidence child must be terminal before cleanup");
+  const terminal=await readNativeEvidenceOnlyTerminalAuthority(query,{runId:lease.runId,stepId:"implement",storyId:lease.storyId,
+    packetHash:lease.packetHash,attemptId:authenticated.row.attempt_id});
+  if(terminal.stage!=="pending_acceptance"||terminal.worktree!==snapshot.worktree)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_CLEANUP_NOT_TERMINAL","passing terminal child must retain the real live delivery");
+  const directory=lstatSync(snapshot.worktree,{bigint:true});
+  if(!directory.isDirectory()||directory.isSymbolicLink()||directory.dev.toString()!==snapshot.directory.dev
+    ||directory.ino.toString()!==snapshot.directory.ino
+    ||canonicalJsonStringify(nativeGitCommonDirectory(snapshot.worktree))!==canonicalJsonStringify(snapshot.common)
+    ||nativeCustodyGit(snapshot.worktree,["rev-parse","--verify","HEAD"])!==snapshot.candidate.sha)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_CLEANUP_CHANGED","created worktree identity/source changed");
+  let detached=false;
+  try {nativeCustodyGit(snapshot.worktree,["symbolic-ref","--quiet","HEAD"]);}
+  catch(error) {if(error&&typeof error==="object"&&"status" in error&&error.status===1) detached=true;else throw error;}
+  if(!detached) repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_CLEANUP_ATTACHED","never remove or save an attached branch through this path");
+  nativeCustodyGit(snapshot.worktree,["diff","--quiet","HEAD","--"]);
+  if(authenticated.canonical.retainedCommit!==snapshot.retainedCommit)
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_BRANCH_CHANGED","retained branch changed before detached cleanup");
+  // Force applies only to untracked build/evidence output in the exact directory
+  // created above. Tracked candidate changes already refused. No branch push,
+  // reset, ref deletion, autosave or new retention ref occurs.
+  nativeCustodyGit(snapshot.repo,["worktree","remove","--force","--",snapshot.worktree]);
+  const after=await authenticateNativeEvidenceWorktreeLease(query,lease);
+  if(after.canonical.retainedCommit!==snapshot.retainedCommit
+    ||canonicalJsonStringify(nativeCustodyRevision(snapshot.repo,snapshot.candidate.sha))!==canonicalJsonStringify(snapshot.candidate))
+    repositoryFail("V3_NATIVE_EVIDENCE_WORKTREE_RETENTION_CHANGED","cleanup did not preserve the exact candidate/retained branch");
+  nativeEvidenceWorktreeCustodies.delete(snapshot);
+  return true;
 }

@@ -844,12 +844,13 @@ export async function readNativeEvidenceOnlySourceAuthority(
  * caller's existing transaction for exact DB recheck after immutable CAS/Git
  * authentication. No filesystem work, lease acquisition or row mutation here.
  */
-export async function readNativeEvidenceOnlySuccessAuthority(
+export async function readNativeEvidenceOnlyTerminalAuthority(
   query: Pick<Sql, "unsafe">,
   input: Readonly<{ runId: string; stepId: string; storyId: string; packetHash: string; attemptId: string }>,
 ) {
   const rows = await query.unsafe<Array<{
     attempt_id: string; claim_id: string; generation: number; slice_hash: string; output_hash: string;
+    delivery_state: string; case_status: string; fence_token: string;
     compilation_report_hash: string; branch: string; worktree: string; evidence_refs: string;
     source_sha: string; source_tree_hash: string; recovery_case_id: string; revision_id: string;
     dispatch_id: string; finding_set_hash: string; evidence_plan_artifact_hash: string;
@@ -864,6 +865,7 @@ export async function readNativeEvidenceOnlySuccessAuthority(
     story_db_id: string; story_status: string; story_output: string|null; story_claim_generation: number;
   }>>(`
     SELECT a.attempt_id,a.claim_id::text,a.generation,a.slice_hash,a.output_hash,
+      delivery.state AS delivery_state,rc.status AS case_status,a.fence_token,
       a.compilation_report_hash,a.branch,a.worktree,a.evidence_refs,
       a.source_after_sha AS source_sha,a.source_after_tree_hash AS source_tree_hash,
       rc.recovery_case_id,rev.revision_id,d.dispatch_id,d.finding_set_hash,
@@ -887,7 +889,7 @@ export async function readNativeEvidenceOnlySuccessAuthority(
       AND delivery.claim_id=a.claim_id AND delivery.dispatch_id=a.recovery_dispatch_id
       AND delivery.revision_id=a.recovery_case_revision_id AND delivery.run_id=a.run_id
       AND delivery.story_id=a.story_id AND delivery.execution_slice_hash=a.slice_hash
-      AND delivery.state='succeeded' AND delivery.attempt_count=1
+      AND delivery.state IN ('attempt_reserved','running','succeeded') AND delivery.attempt_count=1
     JOIN recovery_revision_dispatches d ON d.dispatch_id=delivery.dispatch_id
       AND d.revision_id=delivery.revision_id AND d.recovery_case_id=delivery.recovery_case_id
       AND d.dispatch_class='evidence_only'
@@ -907,9 +909,13 @@ export async function readNativeEvidenceOnlySuccessAuthority(
       AND rc.packet_hash=rev.packet_hash AND rc.slice_hash=rev.contract_slice_hash
       AND rc.source_sha=rev.source_sha AND rc.source_tree_hash=rev.source_tree_hash
       AND rc.finding_set_hash=rev.finding_set_hash AND rc.finding_ids=rev.finding_ids
-      AND rc.owner='infrastructure' AND rc.status='resolved'
+      AND rc.owner='infrastructure'
+      AND ((rc.status='resolved' AND delivery.state='succeeded')
+        OR (rc.status='evidencing' AND delivery.state IN ('attempt_reserved','running')
+          AND delivery.terminal_result IS NULL AND delivery.terminal_at IS NULL AND rc.terminal IS NULL))
       AND rc.expected_delta=rev.expected_delta AND rc.allowed_paths=rev.allowed_paths
-      AND rc.evidence_plan=rev.evidence_plan AND rc.prior_attempt_refs::jsonb ? a.attempt_id
+      AND rc.evidence_plan=rev.evidence_plan
+      AND (rc.status='evidencing' OR rc.prior_attempt_refs::jsonb ? a.attempt_id)
     JOIN execution_attempts original ON original.run_id=a.run_id AND original.step_id=a.step_id
       AND original.story_id=a.story_id AND original.packet_hash=a.packet_hash
       AND original.compilation_report_hash=a.compilation_report_hash AND original.slice_hash=a.slice_hash
@@ -978,7 +984,7 @@ export async function readNativeEvidenceOnlySuccessAuthority(
         AND newer.step_id=a.step_id AND newer.story_id=a.story_id AND newer.generation>a.generation)
   `, [input.attemptId,input.runId,input.stepId,input.storyId,input.packetHash]);
   const row=rows[0];
-  if(rows.length!==1||!row) fail("V3_NATIVE_EVIDENCE_SUCCESS_MISSING","one exact resolved native nonmodel success is required");
+  if(rows.length!==1||!row) fail("V3_NATIVE_EVIDENCE_SUCCESS_MISSING","one exact canonical terminal native nonmodel child is required");
   const bundle=EvidenceBundleV2Schema.parse(row.bundle_payload);
   const originalBundle=EvidenceBundleV2Schema.parse(row.original_bundle_payload);
   const originalFindings=FindingSetV1Schema.parse(row.original_finding_payload);
@@ -1016,9 +1022,10 @@ export async function readNativeEvidenceOnlySuccessAuthority(
     ||bundle.sourceRevision.sha!==row.source_sha||bundle.sourceRevision.treeHash!==row.source_tree_hash
     ||!bundle.predicates.length||bundle.predicates.some(predicate=>predicate.required&&predicate.verdict!=="pass")
     ||plan.some(predicate=>!passed.has(predicate))
-    ||!jsonEquals(row.terminal_result,terminalResult)
-    ||!jsonEquals(row.case_terminal,{owner:"infrastructure",outcome:"resolved",reasonCode:"evidence_satisfied",evidenceBundleHashes:[row.output_hash]})
-    ||!z.array(z.string()).parse(row.decision_refs).includes(decisionRef)
+    ||(row.delivery_state==='succeeded' && (
+      !jsonEquals(row.terminal_result,terminalResult)
+      ||!jsonEquals(row.case_terminal,{owner:"infrastructure",outcome:"resolved",reasonCode:"evidence_satisfied",evidenceBundleHashes:[row.output_hash]})
+      ||!z.array(z.string()).parse(row.decision_refs).includes(decisionRef)))
     ||createHash("sha256").update(row.source_owner_output,"utf8").digest("hex")!==row.source_owner_output_hash
     ||custody.length!==1||!refs.includes(custody[0]!)||!originalRefs.includes(authorityRef)
     ||!jsonEquals(refs.filter(ref=>ref.startsWith("setfarm://preparation-authority-v2/")),[authorityRef])
@@ -1047,7 +1054,9 @@ export async function readNativeEvidenceOnlySuccessAuthority(
     aggregateVerdict:"pass",findingSetRef:null,failureClass:null,
     sourceOwnerAttemptId:row.source_owner_attempt_id,agentOutputHash:row.source_owner_output_hash,evidenceRefresh,
   });
+  const stage: "pending_acceptance" | "settled" = row.delivery_state==='succeeded' ? "settled" : "pending_acceptance";
   return Object.freeze({
+    stage, fenceToken: row.fence_token,
     attemptId:row.attempt_id,claimId,generation:row.generation,sliceHash:row.slice_hash,
     outputHash:row.output_hash,compilationReportHash:row.compilation_report_hash,
     sourceAfter:Object.freeze({sha:row.source_sha,treeHash:row.source_tree_hash}),
@@ -1062,6 +1071,19 @@ export async function readNativeEvidenceOnlySuccessAuthority(
 }
 
 
+/** Public accepted-reader contract stays strict. Pending terminal children are
+ * available only to the separate live-delivery continuation authenticator. */
+export async function readNativeEvidenceOnlySuccessAuthority(
+  query: Pick<Sql, "unsafe">,
+  input: Readonly<{runId:string;stepId:string;storyId:string;packetHash:string;attemptId:string}>,
+) {
+  const terminal=await readNativeEvidenceOnlyTerminalAuthority(query,input);
+  if(terminal.stage!=="settled") fail("V3_NATIVE_EVIDENCE_SUCCESS_MISSING","nonmodel delivery/case is not settled");
+  const {stage:_stage,fenceToken:_fenceToken,...success}=terminal;
+  return Object.freeze(success);
+}
+
+
 /**
  * Atomically accept a verified native story in the existing
  * loop or publish its authentic frozen per-story route. Delivery, case, story
@@ -1071,6 +1093,7 @@ export async function readNativeEvidenceOnlySuccessAuthority(
 export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
   transaction: TransactionSql,
   input: Readonly<{runId:string;stepId:string;storyId:string;packetHash:string;attemptId:string}>,
+  preparedMerge?:PreparedNativeEvidenceMerge,
 ): Promise<void> {
   const fence=await lockV3RecoveryRunMutationAuthorityInTransaction(transaction,input);
   const success=await readNativeEvidenceOnlySuccessAuthority(transaction,input);
@@ -1103,7 +1126,7 @@ export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
   const route=success.sourceOwner.completionPlan.continuation;
   const direct=route.type==="story_direct_merge";
   const routed=route.type==="story_route_supervise"||route.type==="story_route_verify";
-  if(direct ? (loop.mergeStrategy!=="direct-merge"||loop.superviseEach===true||loop.verifyEach===true||row.pending_siblings<1)
+  if(direct ? (loop.mergeStrategy!=="direct-merge"||loop.superviseEach===true||loop.verifyEach===true||!preparedMerge)
     : !routed) {
     fail("V3_NATIVE_EVIDENCE_STORY_CONTINUATION_UNQUALIFIED",
       "last-story external merge requires an authentic recoverable continuation owner; no original model success is implied");
@@ -1125,6 +1148,16 @@ export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
       FOR UPDATE OF target`,[route.targetStepDbId,input.runId,route.targetStepId,success.storyDbId]);
     if(targets.length!==1) fail("V3_NATIVE_EVIDENCE_STORY_ROUTE_OWNER_CHANGED","frozen target is missing or has another owner");
   }
+  const lastDirect=direct&&row.pending_siblings===0;
+  if(direct) {
+    if(!preparedMerge) fail("V3_NATIVE_EVIDENCE_MERGE_RECEIPT_REQUIRED","every direct merge position requires its actual canonical producer");
+    await recheckPreparedNativeEvidenceMerge(transaction,preparedMerge,success,fence.observedAt);
+  }
+  if(lastDirect) {
+    const siblings=await transaction.unsafe<Array<{count:number}>>(`SELECT count(*)::integer AS count FROM stories
+      WHERE run_id=$1 AND id<>$2 AND status NOT IN ('done','verified','skipped')`,[input.runId,success.storyDbId]);
+    if(siblings[0]?.count!==0) fail("V3_NATIVE_EVIDENCE_MERGE_SIBLING_CHANGED","another unfinished story appeared before acceptance");
+  } else if(!direct&&preparedMerge) fail("V3_NATIVE_EVIDENCE_MERGE_ROUTE_CHANGED","prepared merge no longer matches the frozen route");
   const owners=await transaction.unsafe<Array<{blocked:boolean}>>(`
     SELECT EXISTS(SELECT 1 FROM claim_log c WHERE c.run_id=$1 AND c.step_id='implement' AND c.outcome IS NULL)
       OR EXISTS(SELECT 1 FROM runtime_sessions r WHERE r.run_id=$1 AND r.workflow_step_id='implement' AND r.state<>'released')
@@ -1138,16 +1171,17 @@ export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
   }
   const output=success.acceptanceOutput;
   const stories=await transaction.unsafe<Array<{id:string}>>(`
-    UPDATE stories SET status='done',output=$4,updated_at=$5
+    UPDATE stories SET status=$7,merge_status=CASE WHEN $7='verified' THEN 'merged' ELSE merge_status END,output=$4,updated_at=$5
     WHERE id=$1 AND run_id=$2 AND story_id=$3 AND status='failed'
       AND claim_generation=$6 AND claimed_by IS NULL AND claimed_at IS NULL RETURNING id
-  `,[success.storyDbId,input.runId,input.storyId,output,fence.observedAt,success.storyClaimGeneration]);
+  `,[success.storyDbId,input.runId,input.storyId,output,fence.observedAt,success.storyClaimGeneration,direct?"verified":"done"]);
   const steps=await transaction.unsafe<Array<{id:string}>>(`
     UPDATE steps SET status=$6,current_story_id=NULL,output=$3,updated_at=$4
     WHERE id=$1 AND run_id=$2 AND step_id='implement' AND type='loop'
       AND status IN ('pending','running') AND (current_story_id IS NULL OR current_story_id=$5)
     RETURNING id
-  `,[row.step_db_id,input.runId,output,fence.observedAt,success.storyDbId,direct?"pending":"running"]);
+  `,[row.step_db_id,input.runId,direct?nativeEvidenceMergeOutput(preparedMerge!.receipt):output,
+    fence.observedAt,success.storyDbId,lastDirect?"done":direct?"pending":"running"]);
   if(stories.length!==1||steps.length!==1) fail("V3_NATIVE_EVIDENCE_STORY_PROJECTION_CAS_LOST","case/story acceptance must commit together");
   const runs=await transaction.unsafe<Array<{context:string}>>("SELECT context FROM runs WHERE id=$1 FOR UPDATE",[input.runId]);
   if(runs.length!==1) fail("V3_NATIVE_EVIDENCE_STORY_ROUTE_CONTEXT_MISSING","actual run context is missing");
@@ -1173,6 +1207,7 @@ export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
         .filter(value=>value&&value!==input.storyId))].sort().join(",");
     }
   }
+  if(lastDirect&&preparedMerge?.receipt.prUrl) context.final_pr=preparedMerge.receipt.prUrl;
   await transaction.unsafe("UPDATE runs SET context=$2,updated_at=$3 WHERE id=$1",[input.runId,JSON.stringify(context),fence.observedAt]);
 }
 
@@ -1711,4 +1746,133 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
       });
     },
   });
+}
+
+
+export type NativeEvidenceContinuationOwner = Readonly<{
+  runId:string;storyId:string;packetHash:string;attemptId:string;claimId:number;generation:number;fenceToken:string;
+  revisionId:string;dispatchId:string;ownerInstanceId:string;leaseToken:string;
+}>;
+export async function authenticateNativeEvidenceContinuationOwner(sql:Sql,input:NativeEvidenceContinuationOwner) {
+  const {createV3RecoveryOwnerLeaseRepository}=await import("./v3-recovery-owner-lease.js");
+  const retained=await createV3RecoveryOwnerLeaseRepository(sql).heartbeatNativeTerminalEvidenceOnly({
+    kind:"evidence_only",runId:input.runId,storyId:input.storyId,claimId:input.claimId,claimAgentId:"setfarm-evidence-orchestrator",
+    revisionId:input.revisionId,dispatchId:input.dispatchId,ownerInstanceId:input.ownerInstanceId,leaseToken:input.leaseToken,
+    attempt:{attemptId:input.attemptId,generation:input.generation,fenceToken:input.fenceToken},
+  });
+  if(retained.status!=="retained") fail("V3_NATIVE_EVIDENCE_CONTINUATION_LEASE_STALE",retained.reason);
+  const terminal=await readNativeEvidenceOnlyTerminalAuthority(sql,{...input,stepId:"implement"});
+  if(terminal.stage!=="pending_acceptance"||terminal.storyStatus!=="failed")
+    fail("V3_NATIVE_EVIDENCE_CONTINUATION_NOT_PENDING","real pending terminal child required");
+  return terminal;
+}
+
+const NativeEvidenceMergeReceiptSchema=z.object({
+  schema:z.literal("setfarm.v3-native-evidence-continuation.v1"),attemptId:z.string().min(1).max(500),
+  generation:z.number().int().positive(),sourceSha:z.string().regex(/^[a-f0-9]{40,64}$/),
+  sourceTreeHash:z.string().regex(/^[a-f0-9]{40,64}$/),evidenceBundleHash:Sha256Schema,planHash:Sha256Schema,
+  merged:z.array(z.string().min(1).max(500)).min(1).max(5000),conflicted:z.array(z.string()).max(0),
+  prUrl:z.string().min(1).max(4000).nullable(),
+}).strict();
+type NativeEvidenceMergeReceipt=z.infer<typeof NativeEvidenceMergeReceiptSchema>;
+export type PreparedNativeEvidenceMerge=Readonly<{
+  owner:NativeEvidenceContinuationOwner;stepDbId:string;repo:string;branch:string;
+  receipt:NativeEvidenceMergeReceipt;
+}>;
+const preparedNativeEvidenceMerges=new WeakMap<object,string>();
+function nativeEvidenceMergeOutput(receipt:NativeEvidenceMergeReceipt):string {
+  return `STATUS: done\nMERGED: ${receipt.merged.join(", ")}\nCONFLICTS: ${receipt.conflicted.join(", ")}\nFINAL_PR: ${receipt.prUrl||"none"}`
+    +`\nNATIVE_EVIDENCE_OWNER: ${canonicalJsonStringify(receipt)}`;
+}
+
+/** All external merge/PR effects occur while the actual delivery is active,
+ * before the acceptance transaction. Crashes replay the same exact candidate
+ * through the existing merge reconciliation; they do not rerun evidence. */
+export async function prepareNativeEvidenceOnlyContinuation(sql:Sql,owner:NativeEvidenceContinuationOwner)
+  :Promise<PreparedNativeEvidenceMerge|undefined> {
+  const terminal=await authenticateNativeEvidenceContinuationOwner(sql,owner);
+  if(terminal.sourceOwner.completionPlan.continuation.type!=="story_direct_merge") return undefined;
+  const rows=await sql.unsafe<Array<{context:string;id:string;active:number;failed:number}>>(`
+    SELECT run.context,step.id,
+      (SELECT count(*)::integer FROM stories s WHERE s.run_id=run.id AND s.id<>$3 AND s.status IN ('pending','running')) AS active,
+      (SELECT count(*)::integer FROM stories s WHERE s.run_id=run.id AND s.id<>$3 AND s.status='failed') AS failed
+    FROM runs run JOIN steps step ON step.run_id=run.id AND step.id=$2 AND step.step_id='implement'
+      AND step.type='loop' AND step.status IN ('pending','running')
+    WHERE run.id=$1 AND run.protocol='v3' AND run.status IN ('running','resuming')`,
+    [owner.runId,terminal.sourceOwner.completionPlan.stepDbId,terminal.storyDbId]);
+  if(rows.length!==1) fail("V3_NATIVE_EVIDENCE_CONTINUATION_STEP_MISSING","authentic original loop is missing");
+  if(rows[0]!.failed!==0) fail("V3_NATIVE_EVIDENCE_CONTINUATION_OTHER_FAILURE","another failed story requires its actual canonical owner");
+  const context=z.record(z.string(),z.string()).parse(JSON.parse(rows[0]!.context));
+  if(!context.repo||!context.branch) fail("V3_NATIVE_EVIDENCE_CONTINUATION_CONTEXT_MISSING","real repo/feature branch required");
+  const {runMergeQueue}=await import("../installer/merge-queue-ops.js");
+  const merged=await runMergeQueue(owner.runId,context.repo,context.branch,owner);
+  await authenticateNativeEvidenceContinuationOwner(sql,owner);
+  if(merged.conflicted.length||!merged.merged.includes(owner.storyId))
+    fail("V3_NATIVE_EVIDENCE_CONTINUATION_MERGE_FAILED","actual direct-merge candidate did not succeed");
+  const receipt=NativeEvidenceMergeReceiptSchema.parse({schema:"setfarm.v3-native-evidence-continuation.v1",
+    attemptId:terminal.attemptId,generation:terminal.generation,sourceSha:terminal.sourceAfter.sha,
+    sourceTreeHash:terminal.sourceAfter.treeHash,evidenceBundleHash:terminal.outputHash,
+    planHash:hashCanonicalJson(terminal.sourceOwner.completionPlan),merged:merged.merged,conflicted:merged.conflicted,prUrl:merged.prUrl});
+  const prepared=Object.freeze({owner:Object.freeze({...owner}),stepDbId:rows[0]!.id,
+    repo:context.repo,branch:context.branch,receipt:Object.freeze({...receipt,merged:Object.freeze([...receipt.merged]),conflicted:Object.freeze([...receipt.conflicted])})});
+  // Store immutable canonical snapshot; no caller-supplied object can mint it.
+  const snapshot:PreparedNativeEvidenceMerge={...prepared,receipt:NativeEvidenceMergeReceiptSchema.parse(prepared.receipt)};
+  Object.freeze(snapshot.receipt.merged);Object.freeze(snapshot.receipt.conflicted);Object.freeze(snapshot.receipt);Object.freeze(snapshot);
+  preparedNativeEvidenceMerges.set(snapshot,canonicalJsonStringify(snapshot));
+  return snapshot;
+}
+
+async function recheckPreparedNativeEvidenceMerge(transaction:TransactionSql,prepared:PreparedNativeEvidenceMerge,
+  success:Awaited<ReturnType<typeof readNativeEvidenceOnlySuccessAuthority>>,observedAt:Date) {
+  if(preparedNativeEvidenceMerges.get(prepared)!==canonicalJsonStringify(prepared)
+    ||prepared.owner.attemptId!==success.attemptId||prepared.owner.claimId!==success.claimId
+    ||prepared.owner.generation!==success.generation||prepared.stepDbId!==success.sourceOwner.completionPlan.stepDbId
+    ||prepared.receipt.sourceSha!==success.sourceAfter.sha||prepared.receipt.sourceTreeHash!==success.sourceAfter.treeHash
+    ||prepared.receipt.evidenceBundleHash!==success.outputHash
+    ||prepared.receipt.planHash!==hashCanonicalJson(success.sourceOwner.completionPlan))
+    fail("V3_NATIVE_EVIDENCE_MERGE_SNAPSHOT_INVALID","actual prepared merge/source owner snapshot is required");
+  const rows=await transaction.unsafe<Array<{dispatch_id:string}>>(`SELECT d.dispatch_id
+    FROM recovery_dispatch_deliveries d JOIN runs run ON run.id=d.run_id
+    WHERE d.dispatch_id=$1 AND d.revision_id=$2 AND d.run_id=$3 AND d.story_id=$4
+      AND d.attempt_id=$5 AND d.claim_id=$6 AND d.owner_instance_id=$7 AND d.lease_token=$8
+      AND d.state='succeeded' AND d.lease_expires_at>$9
+      AND run.context::jsonb->>'repo'=$10 AND run.context::jsonb->>'branch'=$11`,
+    [prepared.owner.dispatchId,prepared.owner.revisionId,prepared.owner.runId,prepared.owner.storyId,
+      prepared.owner.attemptId,prepared.owner.claimId,prepared.owner.ownerInstanceId,prepared.owner.leaseToken,observedAt,prepared.repo,prepared.branch]);
+  if(rows.length!==1) fail("V3_NATIVE_EVIDENCE_MERGE_OWNER_CHANGED","live delivery/repo identity changed before atomic receipt");
+}
+
+/** Same-tuple settled receipt replay: no lease acquisition or evidence execution.
+ * Existing advancePipeline owns the next SQL mutation/termination guards. */
+export async function resumeNativeEvidenceOnlySettledContinuations(sql:Sql,input:Readonly<{workflowId:string;runId?:string}>):Promise<number> {
+  const candidates=await sql.unsafe<Array<{run_id:string;story_id:string;attempt_id:string;packet_hash:string;output:string}>>(`
+    SELECT a.run_id,a.story_id,a.attempt_id,a.packet_hash,step.output FROM execution_attempts a
+    JOIN recovery_dispatch_deliveries d ON d.attempt_id=a.attempt_id AND d.claim_id=a.claim_id AND d.state='succeeded'
+    JOIN recovery_cases c ON c.recovery_case_id=d.recovery_case_id AND c.current_revision_id=d.revision_id AND c.status='resolved'
+    JOIN runs run ON run.id=a.run_id AND run.protocol='v3' AND run.status IN ('running','resuming')
+    JOIN steps step ON step.run_id=a.run_id AND step.step_id='implement' AND step.type='loop' AND step.status='done'
+    WHERE run.workflow_id=$1 AND ($2::text IS NULL OR run.id=$2) AND a.attempt_class='evidence_only' AND a.disposition='verified'
+      AND step.output LIKE '%NATIVE_EVIDENCE_OWNER: %'
+      AND position(('"attemptId":"' || a.attempt_id || '"') in step.output)>0
+      AND EXISTS(SELECT 1 FROM steps next WHERE next.run_id=run.id AND next.step_index>step.step_index AND next.status='waiting')
+      AND NOT EXISTS(SELECT 1 FROM steps active WHERE active.run_id=run.id AND active.status IN ('pending','running'))
+    ORDER BY run.id,a.attempt_id`,[input.workflowId,input.runId??null]);
+  let resumed=0;
+  for(const candidate of candidates) {
+    const success=await readNativeEvidenceOnlySuccessAuthority(sql,{runId:candidate.run_id,stepId:"implement",
+      storyId:candidate.story_id,packetHash:candidate.packet_hash,attemptId:candidate.attempt_id});
+    const parts=candidate.output.split("\nNATIVE_EVIDENCE_OWNER: ");
+    if(parts.length!==2) fail("V3_NATIVE_EVIDENCE_MERGE_RECEIPT_INVALID","one exact stored receipt is required");
+    const receipt=NativeEvidenceMergeReceiptSchema.parse(JSON.parse(parts[1]!));
+    if(success.storyStatus!=="verified"||success.storyOutput!==success.acceptanceOutput
+      ||receipt.attemptId!==success.attemptId||receipt.generation!==success.generation
+      ||receipt.sourceSha!==success.sourceAfter.sha||receipt.sourceTreeHash!==success.sourceAfter.treeHash
+      ||receipt.evidenceBundleHash!==success.outputHash||receipt.planHash!==hashCanonicalJson(success.sourceOwner.completionPlan)
+      ||candidate.output!==nativeEvidenceMergeOutput(receipt)||!receipt.merged.includes(candidate.story_id))
+      fail("V3_NATIVE_EVIDENCE_MERGE_RECEIPT_INVALID","stored continuation does not reproduce the actual terminal owner");
+    const {advancePipeline}=await import("../installer/step-advance.js");
+    await advancePipeline(candidate.run_id);
+    resumed+=1;
+  }
+  return resumed;
 }

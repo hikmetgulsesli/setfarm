@@ -1,3 +1,4 @@
+import { readNativeEvidenceOnlyTerminalAuthority } from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -441,6 +442,71 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
         if (error instanceof StaleRecoveryOwnerFence) {
           return { status: "stale_fence", reason: error.reason };
         }
+        throw error;
+      }
+    },
+
+    /** Retain the REAL active delivery after its evidence child is terminal.
+     * This never extends a terminal attempt, reopens its claim or invents a
+     * lease on a succeeded delivery. The active-attempt heartbeat is unchanged. */
+    async heartbeatNativeTerminalEvidenceOnly(
+      raw: unknown,
+      options: Readonly<{now?:Date;leaseMs?:number}> = {},
+    ): Promise<V3RecoveryOwnerHeartbeatResult> {
+      const input=OwnerHeartbeatBaseSchema.extend({kind:z.literal("evidence_only")}).strict().parse(raw);
+      if(options.now) validTime(options.now);
+      const leaseMs=z.number().int().min(30_000).max(24*60*60*1_000).parse(options.leaseMs??2*60_000);
+      try {
+        const expiresAt=await sql.begin(async transaction=>{
+          await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[
+            v3RecoveryStoryLockIdentity({runId:input.runId,storyId:input.storyId}),
+          ]);
+          await lockRun(transaction,input);
+          // Keep the existing attempt -> delivery -> claim lock order. No
+          // terminal attempt lease participates in this delivery-only renewal.
+          const attempts=await transaction.unsafe<Array<{packet_hash:string}>>(`SELECT packet_hash FROM execution_attempts
+            WHERE attempt_id=$1 AND run_id=$2 AND story_id=$3 AND step_id='implement'
+              AND claim_id=$4 AND agent_id=$5 AND generation=$6 AND fence_token=$7
+              AND recovery_case_revision_id=$8 AND recovery_dispatch_id=$9
+              AND attempt_class='evidence_only' AND role='evidence-orchestrator' AND disposition='verified'
+            FOR UPDATE`,[input.attempt.attemptId,input.runId,input.storyId,input.claimId,input.claimAgentId,
+              input.attempt.generation,input.attempt.fenceToken,input.revisionId,input.dispatchId]);
+          if(attempts.length!==1) stale("V3_RECOVERY_TERMINAL_EVIDENCE_ATTEMPT_STALE");
+          const deliveries=await transaction.unsafe<Array<{lease_expires_at:Date|string}>>(`
+            SELECT lease_expires_at FROM recovery_dispatch_deliveries
+            WHERE dispatch_id=$1 AND revision_id=$2 AND run_id=$3 AND story_id=$4
+              AND attempt_id=$5 AND claim_id=$6 AND attempt_count=1
+              AND owner_instance_id=$7 AND lease_token=$8 AND state IN ('attempt_reserved','running')
+            FOR UPDATE`,[input.dispatchId,input.revisionId,input.runId,input.storyId,input.attempt.attemptId,
+              input.claimId,input.ownerInstanceId,input.leaseToken]);
+          if(deliveries.length!==1) stale("V3_RECOVERY_TERMINAL_EVIDENCE_DELIVERY_STALE");
+          const claims=await transaction.unsafe<Array<{id:string}>>(`SELECT id::text FROM claim_log
+            WHERE id=$1 AND run_id=$2 AND story_id=$3 AND step_id='implement' AND agent_id=$4 AND outcome='completed'
+            FOR UPDATE`,[input.claimId,input.runId,input.storyId,input.claimAgentId]);
+          if(claims.length!==1) stale("V3_RECOVERY_TERMINAL_EVIDENCE_CLAIM_STALE");
+          const terminal=await readNativeEvidenceOnlyTerminalAuthority(transaction,{runId:input.runId,stepId:"implement",
+            storyId:input.storyId,packetHash:attempts[0]!.packet_hash,attemptId:input.attempt.attemptId});
+          if(terminal.stage!=="pending_acceptance"||terminal.storyStatus!=="failed"
+            ||terminal.claimId!==input.claimId||terminal.generation!==input.attempt.generation
+            ||terminal.fenceToken!==input.attempt.fenceToken
+            ||terminal.evidenceRefresh.revisionId!==input.revisionId||terminal.evidenceRefresh.dispatchId!==input.dispatchId)
+            stale("V3_RECOVERY_TERMINAL_EVIDENCE_AUTHORITY_STALE");
+          const observed=await readDatabaseWallClock(transaction,"V3_RECOVERY_OWNER_DB_TIME_UNAVAILABLE");
+          if(millis(deliveries[0]!.lease_expires_at)<=observed.getTime()) stale("V3_RECOVERY_TERMINAL_EVIDENCE_LEASE_EXPIRED");
+          const expiry=new Date(observed.getTime()+leaseMs);
+          const updated=await transaction.unsafe<Array<{dispatch_id:string}>>(`UPDATE recovery_dispatch_deliveries
+            SET lease_expires_at=$9,updated_at=$10
+            WHERE dispatch_id=$1 AND revision_id=$2 AND run_id=$3 AND story_id=$4
+              AND attempt_id=$5 AND claim_id=$6 AND owner_instance_id=$7 AND lease_token=$8
+              AND state IN ('attempt_reserved','running') AND lease_expires_at>$10 RETURNING dispatch_id`,
+            [input.dispatchId,input.revisionId,input.runId,input.storyId,input.attempt.attemptId,input.claimId,
+              input.ownerInstanceId,input.leaseToken,expiry,observed]);
+          if(updated.length!==1) stale("V3_RECOVERY_TERMINAL_EVIDENCE_HEARTBEAT_CAS_LOST");
+          return expiry.toISOString();
+        });
+        return {status:"retained",expiresAt};
+      } catch(error) {
+        if(error instanceof StaleRecoveryOwnerFence) return {status:"stale_fence",reason:error.reason};
         throw error;
       }
     },

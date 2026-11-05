@@ -1,3 +1,4 @@
+import type {PreparedNativeEvidenceMerge} from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
@@ -778,7 +779,7 @@ export function createFindingRecoveryRepository(sql: Sql) {
 
     async transitionRecoveryCase(
       input: unknown,
-      options: Readonly<{ now?: Date }> = {},
+      options: Readonly<{ now?: Date; nativeEvidenceMerge?:PreparedNativeEvidenceMerge }> = {},
     ): Promise<RecoveryTransitionResult> {
       const transition = RecoveryTransitionInputSchema.parse(input);
       const requestedTime = new Date(options.now ?? new Date());
@@ -1029,7 +1030,7 @@ export function createFindingRecoveryRepository(sql: Sql) {
             await projectNativeEvidenceOnlyStorySuccessInTransaction(transaction,{
               runId:current.runId,stepId:"implement",storyId:current.storyId,
               packetHash:native[0].packet_hash,attemptId:native[0].attempt_id,
-            });
+            },options.nativeEvidenceMerge);
           }
         }
         return { status: "transitioned" as const, recoveryCase: mapRecoveryCase(row) };

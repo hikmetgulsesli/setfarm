@@ -1,7 +1,8 @@
 import type postgres from "postgres";
 import {execFileSync} from "node:child_process";
 import {resolveV3GitRevision} from "../execution/v3-git-revision.js";
-import {captureNativeOriginalFileSignatures} from "../execution/v3-preparation-authority-v2-repository.js";
+import {captureNativeOriginalFileSignatures,ensureNativeEvidenceOnlyWorktree,cleanupNativeEvidenceOnlyWorktree,
+  type NativeEvidenceWorktreeCustody} from "../execution/v3-preparation-authority-v2-repository.js";
 import {captureV3ImplementationSourceSnapshotsV2} from "../execution/v3-source-snapshot-v2.js";
 import {canonicalJsonStringify} from "../product-compiler/canonical-json.js";
 import type {NativeImplementationContextV3} from "../execution/v3-native-implementation-attempt.js";
@@ -211,8 +212,15 @@ export function createV3EvidenceOnlyRuntimeDependencies(
 ): V3EvidenceOnlyWorkerDependencies {
   const publication = createV3EvidenceOnlyPublication(sql);
   const nativeSources=new Map<string,NativeImplementationContextV3>();
+  const nativeWorktrees=new Map<string,NativeEvidenceWorktreeCustody>();
   return Object.freeze({
     async loadOrReserveAttempt({ lease }) {
+      const packets=await sql.unsafe<Array<{artifact_type:string}>>(
+        "SELECT artifact_type FROM semantic_artifacts WHERE artifact_hash=$1",[lease.packetHash]);
+      if(packets[0]?.artifact_type==="setfarm.product-build-packet.v3") {
+        const custody=await ensureNativeEvidenceOnlyWorktree(sql,publicationLease(lease));
+        nativeWorktrees.set(lease.dispatchId,custody);
+      }
       if (lease.mode === "fresh_execution") {
         const owner = await resolveExactPriorSourceOwner(sql, lease);
         const compiled = await reserveV3EvidenceOnlyImplementationAttempt({
@@ -291,6 +299,14 @@ export function createV3EvidenceOnlyRuntimeDependencies(
         );
       }
       return result.canonicalEvidence;
+    },
+
+    async cleanupNativeTerminalWorktree({lease}) {
+      const custody=nativeWorktrees.get(lease.dispatchId);
+      if(!custody) return false;
+      const removed=await cleanupNativeEvidenceOnlyWorktree(sql,publicationLease(lease),custody);
+      nativeWorktrees.delete(lease.dispatchId);
+      return removed;
     },
 
     completeClaim: ({ lease, attempt, diagnostic }) => publication.completeClaim({

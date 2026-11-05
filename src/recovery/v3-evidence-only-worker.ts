@@ -42,6 +42,8 @@ import { createFindingRecoveryRepository } from "./finding-recovery-repository.j
 import { createRecoveryDeliveryRepository } from "./recovery-delivery-repository.js";
 import {
   createV3EvidenceOnlyPublication,
+  prepareNativeEvidenceOnlyContinuation,resumeNativeEvidenceOnlySettledContinuations,
+  type PreparedNativeEvidenceMerge,
   type V3EvidenceOnlyPublicationLeaseV1,
 } from "./v3-evidence-only-publication.js";
 import {
@@ -140,6 +142,9 @@ export type V3EvidenceOnlyWorkerDependencies = Readonly<{
     lease: V3EvidenceOnlyLeaseV1;
     context: V3EvidenceOnlyAttemptContext;
   }>): Promise<CanonicalEvidenceResultV1>;
+  /** Optional cleanup adapter for actual code-created native detached worktrees.
+   * No physical cleanup is implied by absent/false return. */
+  cleanupNativeTerminalWorktree?(input:Readonly<{lease:V3EvidenceOnlyLeaseV1}>):Promise<boolean>;
   /** Close only the exact non-model claim bound to the terminal attempt. */
   completeClaim(input: Readonly<{
     lease: V3EvidenceOnlyLeaseV1;
@@ -1011,6 +1016,7 @@ async function coordinateTerminalEvidenceOnlyAttempt(
   coordinator: ReturnType<typeof createV3RecoveryCoordinator>,
   attempt: ExecutionAttemptV1,
   input: V3RecoveryCoordinateInput,
+  nativeEvidenceMerge?:PreparedNativeEvidenceMerge,
 ): Promise<V3RecoveryCoordinatorResult> {
   // Recovery delivery and m33 status transitions consume a completed attempt;
   // they never acquire finding ownership or become an alternate attempt-birth
@@ -1021,7 +1027,7 @@ async function coordinateTerminalEvidenceOnlyAttempt(
       "recovery coordination requires one durably terminal evidence-only attempt",
     );
   }
-  return coordinator.coordinate(input);
+  return coordinator.coordinate(input,nativeEvidenceMerge?{nativeEvidenceMerge}:{});
 }
 
 export function createV3EvidenceOnlyRecoveryWorker(
@@ -1068,9 +1074,9 @@ export function createV3EvidenceOnlyRecoveryWorker(
       fail("V3_EVIDENCE_ONLY_HEARTBEAT_CLAIM_MISSING", "active evidence attempt has no claim fence");
     }
     const retain = async (): Promise<void> => {
-      const retained = await ownerLeases.heartbeat(heartbeatInput, {
-        leaseMs: ownerLeaseMs,
-      });
+      const retained = context.attempt.disposition==="verified"&&context.slice.schema==="setfarm.implementation-slice.v2"
+        ? await ownerLeases.heartbeatNativeTerminalEvidenceOnly(heartbeatInput,{leaseMs:ownerLeaseMs})
+        : await ownerLeases.heartbeat(heartbeatInput,{leaseMs:ownerLeaseMs});
       if (retained.status !== "retained") {
         fail("V3_EVIDENCE_ONLY_OWNER_LEASE_LOST", retained.reason);
       }
@@ -1239,6 +1245,21 @@ export function createV3EvidenceOnlyRecoveryWorker(
       });
       await assertClaimClosed(sql, lease, attempt);
 
+      let nativeEvidenceMerge:PreparedNativeEvidenceMerge|undefined;
+      if(context.slice.schema==="setfarm.implementation-slice.v2"&&bundle.aggregateVerdict==="pass") {
+        if(!attempt.claimId) fail("V3_NATIVE_EVIDENCE_CONTINUATION_CLAIM_MISSING","actual completed nonmodel claim required");
+        phase="native_terminal_continuation_prepare";
+        const owner={runId:lease.runId,storyId:lease.storyId,packetHash:lease.packetHash,
+          attemptId:attempt.attemptId,claimId:attempt.claimId,generation:attempt.generation,fenceToken:attempt.fenceToken,
+          revisionId:lease.revisionId,dispatchId:lease.dispatchId,ownerInstanceId:lease.ownerInstanceId,leaseToken:lease.leaseToken};
+        nativeEvidenceMerge=await withEvidenceOwnerHeartbeat(lease,{...context,attempt},()=>prepareNativeEvidenceOnlyContinuation(sql,owner));
+      }
+      if(context.slice.schema==="setfarm.implementation-slice.v2"&&bundle.aggregateVerdict==="pass"
+        &&dependencies.cleanupNativeTerminalWorktree) {
+        phase="native_terminal_worktree_cleanup";
+        const cleanup=dependencies.cleanupNativeTerminalWorktree;
+        await withEvidenceOwnerHeartbeat(lease,{...context,attempt},()=>cleanup({lease}));
+      }
       phase = "recovery_coordination";
       const bundleHash = computeEvidenceBundleHash(bundle);
       const failureClass = classifyV3EvidenceFailure(bundle);
@@ -1255,7 +1276,11 @@ export function createV3EvidenceOnlyRecoveryWorker(
         evidenceBundle: bundle,
         ...(findingSet ? { findingSet } : {}),
         ...(failureClass ? { failureClass } : {}),
-      });
+      },nativeEvidenceMerge);
+      if(context.slice.schema==="setfarm.implementation-slice.v2"&&bundle.aggregateVerdict==="pass") {
+        phase="native_settled_continuation";
+        await resumeNativeEvidenceOnlySettledContinuations(sql,{workflowId:lease.workflowId,runId:lease.runId});
+      }
       return {
         lease,
         attemptId: attempt.attemptId,
@@ -1283,6 +1308,8 @@ export function createV3EvidenceOnlyRecoveryWorker(
       raw: unknown,
       options: Readonly<{ now?: Date }> = {},
     ): Promise<V3EvidenceOnlyWorkerResult | undefined> {
+      const input=AcquireInputSchema.parse(raw);
+      await resumeNativeEvidenceOnlySettledContinuations(sql,{workflowId:input.workflowId});
       const lease = await acquireNext(raw, options);
       return lease ? runLease(lease, options) : undefined;
     },
