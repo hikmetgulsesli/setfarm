@@ -477,6 +477,57 @@ describe("ProductRuntimeBehaviorContractV1", () => {
     }
   });
 
+  it("explains case-sensitive singleton field names without changing selector or type validation", () => {
+    const baseline = entitySnapshotProductSpec();
+    const compileSnapshot = (record: Record<string, unknown>) => {
+      const productSpec = ProductSpecV2Schema.parse({
+        ...baseline,
+        entities: baseline.entities.map((entity) => ({
+          ...entity,
+          fields: entity.fields.map((field) =>
+            field.id === "FIELD_TASK_TITLE" ? { ...field, name: "Title" } : field),
+        })),
+        states: baseline.states.map((state) => state.id === "STATE_TASK_CATALOG"
+          ? { ...state, initialValue: { selected: record } }
+          : state),
+      });
+      const proposal: ProductRuntimeBehaviorProposalV1 = {
+        ...entitySnapshotProposal(productSpec),
+        entityFieldBindings: [{
+          actionRef: "ACT_CREATE_TASK",
+          deltaOrdinal: 0,
+          snapshot: {
+            stateRef: "STATE_TASK_CATALOG",
+            collectionPath: "/selected",
+            selection: { kind: "singleton" },
+          },
+        }],
+      };
+      return compileProductRuntimeBehaviorContractV1({ productSpec, proposal });
+    };
+
+    const correct = compileSnapshot({ Title: "Stored title" });
+    assert.equal(correct.status, "shadow_compiled",
+      correct.status === "rejected" ? JSON.stringify(correct.diagnostics) : undefined);
+    const wrongCase = compileSnapshot({ title: "Stored title" });
+    const wrongType = compileSnapshot({ Title: 42 });
+    // Establish both unchanged refusals before checking the improved feedback.
+    for (const result of [wrongCase, wrongType]) {
+      assert.equal(result.status, "rejected");
+      if (result.status !== "rejected") throw new Error("Expected singleton field refusal");
+      assert.equal(result.diagnostics.length, 1);
+      const diagnostic = result.diagnostics[0]!;
+      assert.equal(diagnostic.code, "PRODUCT_RUNTIME_BEHAVIOR_V1_ENTITY_SNAPSHOT_INVALID");
+      assert.equal(diagnostic.path, "/proposal/entityFieldBindings/0/snapshot/collectionPath");
+      assert.equal(diagnostic.reference, "FIELD_TASK_TITLE");
+    }
+    for (const result of [wrongCase, wrongType]) {
+      if (result.status !== "rejected") throw new Error("Expected singleton field refusal");
+      assert.equal(result.diagnostics[0]!.message,
+        'Initial singleton snapshot must contain case-sensitive own property "Title" with declared type "string"; collectionPath selects the containing object and does not rename fields');
+    }
+  });
+
   it("binds entity-field reads to one pre-action snapshot and exact selector", () => {
     const productSpec = entitySnapshotProductSpec();
     const proposal = entitySnapshotProposal(productSpec);
