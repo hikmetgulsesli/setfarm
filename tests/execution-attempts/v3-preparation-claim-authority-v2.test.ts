@@ -289,7 +289,7 @@ describe("runtime preparation authority preserves frozen migration contracts", (
       { ...value, dependencyAttempts: [native] },
       { ...value, projectedDependencyIds: ["US-001"] },
       { ...value, projectedDependencyIds: ["US-001", "US-001", "US-002"] },
-      { ...value, runId: "ü".repeat(251) },
+      { ...value, runId: "\u00fc".repeat(251) },
       { ...value, unexpected: true },
       { ...value, dependencyAttempts: [model, { ...native, attemptGeneration: 4 }] },
       { ...value, dependencyAttempts: [model, { ...native, disposition: "produced_delta" }] },
