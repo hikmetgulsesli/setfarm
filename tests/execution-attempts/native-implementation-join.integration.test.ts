@@ -6,6 +6,7 @@ import { createArtifactIndex } from "../../src/product-compiler/artifact-index.j
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
 import { IndexedArtifactPublisher, bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
 import { createRuntimeArtifactReader } from "../../src/product-compiler/runtime-artifact-reader.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
 import { createV3PreparationBlockRepository } from "../../src/execution/v3-preparation-block-repository.js";
 import { createV3PreparationClaimAuthorityV2 } from "../../src/execution/v3-preparation-claim-authority-v2.js";
@@ -77,9 +78,11 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const input = {
       runId, stepDbId: admission.implementStepDbId, workflowStepId: "implement",
       storyDbId: admission.stories[0]!.id, storyId: "US-001", claimAgentId: "feature-dev_developer",
-      callerGatewayAgent: "prism", parallelLimit: 1,
+      // A prior scenario legitimately keeps its owner active. Gateway ownership
+      // is exclusive across active runs, so each scenario needs its own persona.
+      callerGatewayAgent: `native-join-${suffix}`, parallelLimit: 1,
       runtimeIntent: { schema: "setfarm.runtime-claim-intent.v1" as const,
-        sessionId: `RTS_native-join-${suffix}`, runtimeAgentId: "prism", runtimeKind: "openclaw_session" as const,
+        sessionId: `RTS_native-join-${suffix}`, runtimeAgentId: `native-join-${suffix}`, runtimeKind: "openclaw_session" as const,
         ownerInstanceId: "native-join-test", sessionKey: `native-join:${suffix}` },
       preparationAuthority: readiness, nativePreparationAuthority: nativeAuthority,
       nativePreparationArtifacts: { artifactRoot, artifactLimits: NATIVE_JOIN_LIMITS },
@@ -103,11 +106,31 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
 
   async function claim(value: Awaited<ReturnType<typeof fixture>>) {
     const publication = await publishLoopClaimRuntime(value.database.sql, value.input);
-    assert.ok(publication);
+    assert.ok(publication, publication ? undefined : JSON.stringify(await publicationDiagnostics(value)));
     const native = await readV3PreparationAuthorityV2(value.database.sql, value.nativeAuthority.authorityHash);
     assert.deepEqual(native, value.nativeAuthority, "claim publication must persist native authority in its own transaction");
     assert.deepEqual(await countEffects(value), { claims: 1, attempts: 0, bindings: 1, runtimes: 1 });
     return publication;
+  }
+
+  async function publicationDiagnostics(value: Awaited<ReturnType<typeof fixture>>) {
+    const runs = await database.sql`
+      SELECT id,status,assigned_developer FROM runs
+       WHERE id=${value.runId} OR (assigned_developer=${value.input.callerGatewayAgent}
+         AND status IN ('running','resuming','cancelling','failing')) ORDER BY id
+    `;
+    const stories = await database.sql`
+      SELECT id,story_id,status,claim_generation FROM stories WHERE run_id=${value.runId} ORDER BY story_index
+    `;
+    const steps = await database.sql`
+      SELECT id,step_id,status FROM steps WHERE run_id=${value.runId} ORDER BY step_id
+    `;
+    const runtimes = await database.sql`
+      SELECT session_id,workflow_step_id,story_id,state,claim_id FROM runtime_sessions WHERE run_id=${value.runId}
+    `;
+    return { callerGatewayAgent: value.input.callerGatewayAgent,
+      occupiedGatewayBranch: "claim-runtime-publication: other active run assigned to callerGatewayAgent",
+      runs, stories, steps, runtimes };
   }
 
   // Break: keeping the old reader in the native join. The real legacy reader
@@ -139,9 +162,9 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     await assert.rejects(publishLoopClaimRuntime(value.database.sql, crossedReplay));
   });
 
-  for (const mismatch of ["run", "story", "base", "report", "state"] as const) {
-    it(`rolls back claim and runtime for crossed native ${mismatch} authority`, async () => {
-      const value = await fixture(`wrong-${mismatch}`);
+  it("rolls back each crossed native run, story, base, report and state authority", async () => {
+    const value = await fixture("wrong-authorities");
+    for (const mismatch of ["run", "story", "base", "report", "state"] as const) {
       const { schema: _s, authorityVersion: _v, packetSchema: _p, authorityHash: _h, ...payload } = value.nativeAuthority;
       const nativePreparationAuthority = createV3PreparationClaimAuthorityV2({ ...payload,
         ...(mismatch === "run" ? { runId: "other-native-run" } : {}),
@@ -151,11 +174,13 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
         ...(mismatch === "state" ? { stateVersion: payload.stateVersion + 1 } : {}),
       });
       const input = { ...value.input, nativePreparationAuthority };
-      await assert.rejects(publishLoopClaimRuntime(value.database.sql, input));
-      assert.deepEqual(await countEffects(value), { claims: 0, attempts: 0, bindings: 0, runtimes: 0 });
-      assert.equal(await readV3PreparationAuthorityV2(value.database.sql, nativePreparationAuthority.authorityHash), undefined);
-    });
-  }
+      await assert.rejects(publishLoopClaimRuntime(value.database.sql, input), `crossed ${mismatch} must reject`);
+      assert.deepEqual(await countEffects(value), { claims: 0, attempts: 0, bindings: 0, runtimes: 0 },
+        `crossed ${mismatch} must have zero effects`);
+      assert.equal(await readV3PreparationAuthorityV2(value.database.sql, nativePreparationAuthority.authorityHash),
+        undefined, `crossed ${mismatch} must not persist its authority`);
+    }
+  });
 
   it("keeps one exact paired owner under two competing claim publications", async () => {
     const value = await fixture("race");
@@ -163,7 +188,8 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const results = await Promise.allSettled([
       publishLoopClaimRuntime(database.sql, value.input), publishLoopClaimRuntime(database.sql, competing),
     ]);
-    assert.equal(results.filter(result => result.status === "fulfilled" && result.value).length, 1);
+    assert.equal(results.filter(result => result.status === "fulfilled" && result.value).length, 1,
+      JSON.stringify({ results, admission: await publicationDiagnostics(value) }));
     assert.deepEqual(await countEffects(value), { claims: 1, attempts: 0, bindings: 1, runtimes: 1 });
   });
 
@@ -217,6 +243,88 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       stepId: "implement", storyId: "US-001", role: "developer", agentId: "feature-dev_developer",
       branch: "main", worktree: value.worktree };
   }
+
+  it("reserves while exact committed publication replays without a run/claim lock cycle", async () => {
+    const value = await fixture("reserve-replay-lock-order");
+    const publication = await claim(value);
+    const native = await service();
+    const lockIdentity = hashCanonicalJson({ schema: "setfarm.execution-attempt-lock.v1",
+      runId: value.runId, stepId: "implement", storyId: "US-001" });
+    let releaseGate!: () => void;
+    const released = new Promise<void>(resolve => { releaseGate = resolve; });
+    let gateReady!: (pid: number) => void;
+    let gateFailed!: (reason: unknown) => void;
+    const gatePid = new Promise<number>((resolve, reject) => { gateReady = resolve; gateFailed = reject; });
+    const gate = database.sql.begin(async transaction => {
+      const rows = await transaction.unsafe<Array<{ pid: number }>>("SELECT pg_backend_pid() AS pid");
+      await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockIdentity]);
+      gateReady(rows[0]!.pid);
+      await released;
+    });
+    // Install handlers immediately; cleanup below awaits every real operation.
+    void gate.catch(gateFailed);
+    let reservation: ReturnType<typeof native.reserve> | undefined;
+    let replay: ReturnType<typeof publishLoopClaimRuntime> | undefined;
+    const schedule: Array<{ stage: string; pid?: number; query?: string }> = [];
+    try {
+      const blockerPid = await gatePid;
+      reservation = native.reserve(reserveInput(value, publication.claimId));
+      void reservation.catch(() => {});
+      let reservationPid: number | undefined;
+      const reserveDeadline = Date.now() + 10_000;
+      while (reservationPid === undefined) {
+        const waiting = await database.sql.unsafe<Array<{ pid: number; query: string }>>(
+          `SELECT activity.pid,activity.query FROM pg_stat_activity activity
+            WHERE activity.datname=current_database()
+              AND $1::integer=ANY(pg_blocking_pids(activity.pid))
+              AND EXISTS (SELECT 1 FROM pg_locks waiting_lock WHERE waiting_lock.pid=activity.pid
+                AND waiting_lock.locktype='advisory' AND NOT waiting_lock.granted)`, [blockerPid]);
+        assert.ok(waiting.length <= 1, "only the actual native reservation may wait on this fixture's gate");
+        if (waiting[0]) {
+          reservationPid = waiting[0].pid;
+          schedule.push({ stage: "native-reserve-blocked-on-attempt-advisory", ...waiting[0] });
+          break;
+        }
+        assert.ok(Date.now() < reserveDeadline, "native reservation did not reach the observed attempt advisory barrier");
+        await new Promise<void>(resolve => setTimeout(resolve, 10));
+      }
+      let replaySettled = false;
+      replay = publishLoopClaimRuntime(database.sql, value.input);
+      void replay.then(() => { replaySettled = true; }, () => { replaySettled = true; });
+      const replayDeadline = Date.now() + 10_000;
+      while (!replaySettled) {
+        const waiting = await database.sql.unsafe<Array<{ pid: number; query: string }>>(
+          `SELECT pid,query FROM pg_stat_activity WHERE datname=current_database()
+            AND $1::integer=ANY(pg_blocking_pids(pid))`, [reservationPid]);
+        if (waiting[0]) {
+          schedule.push({ stage: "publication-replay-blocked-by-native-reserve", ...waiting[0] });
+          break;
+        }
+        assert.ok(Date.now() < replayDeadline, "publication replay neither settled nor reached the observed native blocker");
+        await new Promise<void>(resolve => setTimeout(resolve, 10));
+      }
+      if (replaySettled) schedule.push({ stage: "publication-replay-settled-before-gate-release" });
+      releaseGate();
+      const results = await Promise.allSettled([reservation, replay]);
+      const diagnostic = JSON.stringify({ schedule, results: results.map(result => result.status === "rejected"
+        ? { status: result.status, message: String(result.reason), detail: result.reason }
+        : { status: result.status }) });
+      assert.equal(results[0]!.status, "fulfilled", `native reserve must survive exact publication replay: ${diagnostic}`);
+      assert.equal(results[1]!.status, "fulfilled", `exact publication replay must survive native reserve: ${diagnostic}`);
+      const prepared = await reservation;
+      assert.deepEqual(await replay, publication);
+      assert.deepEqual(await countEffects(value), { claims: 1, attempts: 1, bindings: 1, runtimes: 1 });
+      const bindings = await database.sql`
+        SELECT attempt_id,claim_id::text,slice_hash FROM v3_preparation_authority_attempts_v2
+         WHERE authority_hash=${value.nativeAuthority.authorityHash}
+      `;
+      assert.deepEqual(bindings.map(row => ({ ...row })), [{ attempt_id: prepared.attempt.attemptId,
+        claim_id: String(publication.claimId), slice_hash: prepared.sliceHash }]);
+    } finally {
+      releaseGate();
+      await Promise.allSettled([gate, ...(reservation ? [reservation] : []), ...(replay ? [replay] : [])]);
+    }
+  });
 
   it("reserves and reloads exact original native authority after edits with no dispatch plan", async () => {
     const value = await fixture("reserve");
