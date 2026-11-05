@@ -624,7 +624,7 @@ async function assertAttemptContext(
   }
   if (!raw.workdir.trim()) fail("V3_EVIDENCE_ONLY_WORKDIR_REQUIRED", "attempt context has no exact worktree");
   if (
-    slice.recovery
+    (slice.recovery && !authenticatedNativeCurrentSource)
     || slice.packetHash !== lease.packetHash
     || slice.storyId !== lease.storyId
     || (!authenticatedNativeCurrentSource && ((slice.schema === "setfarm.implementation-slice.v2"
