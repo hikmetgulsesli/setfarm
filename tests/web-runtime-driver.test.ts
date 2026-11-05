@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import test from "node:test";
 import { renderRuntimeCommand, WebPreviewRuntimeDriver } from "../src/installer/web-runtime-driver.js";
 
@@ -20,6 +22,78 @@ test("web runtime driver can be constructed with default preview command", () =>
   assert.equal(typeof driver.interact, "function");
   assert.equal(typeof driver.captureState, "function");
   assert.equal(typeof driver.stop, "function");
+});
+
+test("web runtime capture preserves non-native data-value and exact identity in its serialized DOM expression", async () => {
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-capture-value-"));
+  try {
+    // Owned narrow DOM fixture, not a full browser/DOM implementation. Only the
+    // page boundary is replaced; captureState serializes and executes real code
+    // in a fresh realm without Node/tsx helpers or a local browser dependency.
+    const specs = [
+      { id: "native", nativeValue: "typed", attributes: { "data-value": "stale" } },
+      { id: "native-empty", nativeValue: "", attributes: { "data-value": "fallback forbidden" } },
+      { id: "display", attributes: { "data-value": "refreshed" } },
+      { id: "empty", attributes: { "data-value": "" } },
+      { id: "whitespace", attributes: { "data-value": " \t A > B & C / \n " } },
+      { id: "missing", attributes: {} },
+      { id: "raw-only", attributes: { value: "raw fallback forbidden" } },
+    ];
+    const surface = { getAttribute: (name: string) => name === "data-surface-id" ? "SURF_STATUS" : null };
+    const elements = specs.map((spec) => {
+      const attributes: Record<string, string> = {
+        ...spec.attributes,
+        "data-observable-refs": `OBS_${spec.id} OBS_SHARED`,
+        "data-setfarm-element-ref": `E_${spec.id}`,
+        "aria-label": `Status ${spec.id}`,
+        role: "status",
+      };
+      return {
+        tagName: "nativeValue" in spec ? "INPUT" : "DIV",
+        textContent: "Ready",
+        innerText: "Ready",
+        ...(Object.hasOwn(spec, "nativeValue") ? { value: spec.nativeValue } : {}),
+        getAttribute: (name: string) => attributes[name] ?? null,
+        hasAttribute: (name: string) => Object.hasOwn(attributes, name),
+        closest: () => surface,
+        getBoundingClientRect: () => ({ width: 120, height: 24 }),
+      };
+    });
+    const document = {
+      title: "Status",
+      body: { innerText: "Ready" },
+      querySelectorAll: () => elements,
+      querySelector: () => ({ outerHTML: '<main id="root">Ready</main>' }),
+      getElementById: () => null,
+    };
+    const page = {
+      waitForLoadState: async () => {},
+      screenshot: async () => {},
+      url: () => "http://127.0.0.1:3000/status",
+      evaluate: async (expression: unknown) => typeof expression === "string"
+        ? vm.runInNewContext(expression, { document, getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }) })
+        : null,
+    };
+    const driver = new WebPreviewRuntimeDriver();
+    Object.defineProperty(driver, "sessionPage", { value: async () => page });
+    const capture = await driver.captureState({
+      kind: "browser", sessionId: "value-fixture", workdir,
+      host: "127.0.0.1", port: 3000, url: "http://127.0.0.1:3000", startedAt: "2026-11-05T00:00:00.000Z",
+    });
+    assert.ok(capture.domSnapshotPath);
+    const dom = JSON.parse(fs.readFileSync(capture.domSnapshotPath, "utf8"));
+    assert.equal(dom.schema, "setfarm.browser-dom-observation.v1");
+    assert.deepEqual(dom.elements.map((element: { value: unknown }) => element.value), [
+      "typed", "", "refreshed", "", " \t A > B & C / \n ", null, null,
+    ]);
+    assert.deepEqual(dom.elements[2], {
+      actionId: null, controlId: null, observableRefs: ["OBS_display", "OBS_SHARED"],
+      surfaceId: null, containingSurfaceId: "SURF_STATUS", role: "status",
+      accessibleName: "Status display", visibleText: "Ready", value: "refreshed", visible: true, enabled: true,
+    });
+  } finally {
+    fs.rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("web runtime driver preserves one page per runtime session for interaction evidence", () => {

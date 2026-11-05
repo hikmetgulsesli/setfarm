@@ -2,18 +2,20 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import { describe, it } from "node:test";
 
 import { createCanonicalEvidenceBundleV2 } from "../../src/evidence/canonical-evidence-runner.js";
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import type { CapturedRuntimeState } from "../../src/installer/runtime-driver.js";
+import { WebPreviewRuntimeDriver } from "../../src/installer/web-runtime-driver.js";
 import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 
 const SOURCE = { sha: "1".repeat(40), treeHash: "2".repeat(40) };
 
 describe("typed observable action outcomes", () => {
-  function fixture(selector: any = { kind: "control", actionRef: "ACT_SAVE_TASK" }) {
+  function fixture(selector: any = { kind: "control", actionRef: "ACT_SAVE_TASK" }, valueOutcome = false) {
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-observable-outcome-"));
     const raw: any = structuredClone(buildMinimalValidContracts().implementationSlice);
     const action = raw.contract.actions[0];
@@ -30,6 +32,23 @@ describe("typed observable action outcomes", () => {
       ],
       evidenceRef: "EVID_SAVE_CONFIRMATION",
     }];
+    if (valueOutcome) {
+      action.observableEffects[0].assertions = [
+        { phase: "before", property: "value", operator: "equals", expected: "pending" },
+        { phase: "after", property: "value", operator: "equals", expected: "refreshed" },
+        { phase: "reload", property: "value", operator: "equals", expected: "refreshed" },
+      ];
+      raw.contract.observableBindings = [{
+        observableRef: "OBS_SAVE_CONFIRMATION", actionRef: "ACT_SAVE_TASK", evidenceRef: "EVID_SAVE_CONFIRMATION",
+        target: {
+          kind: "accessibility", surfaceRef: "SURF_EDITOR", role: "status", name: "Refresh status",
+          identity: { kind: "explicit", attribute: "data-observable-refs", provenance: [{
+            schema: "setfarm.provenance-ref.v1", sourceHash: "a".repeat(64), locator: "stitch/editor.html", confidence: "exact",
+          }] },
+          source: { artifactHash: "a".repeat(64), locator: "stitch/editor.html", selector: '[data-observable-refs~="OBS_SAVE_CONFIRMATION"]' },
+        },
+      }];
+    }
     action.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
     action.success.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
     const observablePredicate = {
@@ -153,6 +172,103 @@ describe("typed observable action outcomes", () => {
       execution: execution(value, afterText, structured),
       startedAt: "2026-07-13T00:00:00.000Z",
       completedAt: "2026-07-13T00:00:09.000Z",
+    });
+  }
+
+  async function capturedValue(
+    value: ReturnType<typeof fixture>,
+    phase: "before" | "after" | "reload",
+    options: { payload?: string; surface?: string; observableRef?: string } = {},
+  ): Promise<CapturedRuntimeState> {
+    const payload = options.payload ?? (phase === "before" ? "pending" : "refreshed");
+    const surface = options.surface ?? "SURF_EDITOR";
+    const observableRef = options.observableRef ?? "OBS_SAVE_CONFIRMATION";
+    // Minimal owned DOM interface; execute captureState's actual serialized
+    // expression rather than synthesizing the value observation under test.
+    const element = (tagName: string, attributes: Record<string, string>, textContent: string) => ({
+      tagName, textContent, innerText: textContent,
+      getAttribute: (name: string) => attributes[name] ?? null,
+      hasAttribute: (name: string) => Object.hasOwn(attributes, name),
+      closest: () => ({ getAttribute: () => surface }),
+      getBoundingClientRect: () => ({ width: 100, height: 24 }),
+    });
+    const elements = [
+      element("BUTTON", { "data-action-id": "save-task-1", "data-control-id": "CTRL_SAVE_TASK" }, phase === "before" ? "Save" : "Saved"),
+      element("DIV", { "data-value": payload, "data-observable-refs": observableRef, role: "status", "aria-label": "Refresh status" }, "Status"),
+    ];
+    const document = {
+      title: "Task Editor", body: { innerText: "Save Status" },
+      querySelectorAll: () => elements,
+      querySelector: () => ({ outerHTML: '<main id="root">Save Status</main>' }),
+      getElementById: () => null,
+    };
+    const driver = new WebPreviewRuntimeDriver();
+    Object.defineProperty(driver, "sessionPage", { value: async () => ({
+      waitForLoadState: async () => {}, screenshot: async () => {},
+      url: () => "http://127.0.0.1:3000/editor",
+      evaluate: async (expression: unknown) => typeof expression === "string"
+        ? vm.runInNewContext(expression, { document, getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }) })
+        : null,
+    }) });
+    const capture = await driver.captureState({
+      kind: "browser", sessionId: `value-${phase}`, workdir: value.workdir,
+      host: "127.0.0.1", port: 3000, url: "http://127.0.0.1:3000", startedAt: "2026-11-05T00:00:00.000Z",
+    });
+    // Existing state/persistence controls remain independent of the DOM value.
+    return { ...capture, stateBridge: {
+      schema: "setfarm.runtime-state-bridge.v1",
+      states: { STATE_EDITOR: { title: phase === "before" ? "Before" : "Task from state" } }, missingStateRefs: [],
+    } };
+  }
+
+  async function runCapturedValues(
+    value: ReturnType<typeof fixture>,
+    overrides: { after?: Parameters<typeof capturedValue>[2]; reload?: Parameters<typeof capturedValue>[2] } = {},
+  ) {
+    const before = await capturedValue(value, "before");
+    const after = await capturedValue(value, "after", overrides.after);
+    const reload = await capturedValue(value, "reload", overrides.reload);
+    const trace = execution(value);
+    trace.initialCapture = before;
+    trace.interactions[0]!.before = before;
+    trace.interactions[0]!.after = before;
+    trace.interactions[1]!.before = before;
+    trace.interactions[1]!.after = after;
+    trace.interactions[2]!.before = after;
+    trace.interactions[2]!.after = reload;
+    return createCanonicalEvidenceBundleV2({
+      runId: "run-observable-1", storyId: value.slice.storyId, workdir: value.workdir,
+      attemptId: "ATT_observable-value-0001", sourceRevision: SOURCE, slice: value.slice, plan: value.plan,
+      execution: trace, startedAt: "2026-07-13T00:00:00.000Z", completedAt: "2026-07-13T00:00:09.000Z",
+    });
+  }
+
+  it("accepts captured non-native value outcomes after action and reload with an exact observable binding", async () => {
+    const value = fixture({ kind: "accessibility", surfaceRef: "SURF_EDITOR", actionRef: "ACT_SAVE_TASK", role: "status", name: "Refresh status" }, true);
+    try {
+      const result = await runCapturedValues(value);
+      assert.equal(result.bundle.predicates.find((predicate) => predicate.predicateRef === "EVID_SAVE_CONFIRMATION")?.verdict, "pass");
+      assert.equal(result.bundle.aggregateVerdict, "pass");
+    } finally {
+      fs.rmSync(value.workdir, { recursive: true, force: true });
+    }
+  });
+
+  for (const [label, overrides, expected] of [
+    ["wrong surface", { after: { surface: "SURF_OTHER" } }, "inconclusive"],
+    ["wrong observable ref", { after: { observableRef: "OBS_OTHER" } }, "inconclusive"],
+    ["wrong action value", { after: { payload: "stale" } }, "fail"],
+    ["wrong reload value", { reload: { payload: "stale" } }, "fail"],
+  ] as const) {
+    it(`refuses captured value evidence with ${label}`, async () => {
+      const value = fixture({ kind: "accessibility", surfaceRef: "SURF_EDITOR", actionRef: "ACT_SAVE_TASK", role: "status", name: "Refresh status" }, true);
+      try {
+        const result = await runCapturedValues(value, overrides);
+        assert.equal(result.bundle.predicates.find((predicate) => predicate.predicateRef === "EVID_SAVE_CONFIRMATION")?.verdict, expected);
+        assert.notEqual(result.bundle.aggregateVerdict, "pass");
+      } finally {
+        fs.rmSync(value.workdir, { recursive: true, force: true });
+      }
     });
   }
 
