@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { rm, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, readFile, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, before, describe, it, mock } from "node:test";
 import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
 import { IndexedArtifactPublisher, bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
@@ -33,6 +34,9 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
   let database: TestDatabase;
   let artifacts: { artifactRoot: string; store: ContentAddressedArtifactStore; publisher: IndexedArtifactPublisher };
   let productionDb: typeof import("../../src/db-pg.js") | undefined;
+  let ownedAgentWorkspace: string;
+  let ownedHostConfigRoot: string;
+  let restoreFixtureHome: (() => void) | undefined;
   const previousEnvironment = {
     SETFARM_PG_URL: process.env.SETFARM_PG_URL,
     SETFARM_DB_PATH: process.env.SETFARM_DB_PATH,
@@ -46,6 +50,21 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     database = await createIsolatedTestDatabase();
     const source = await nativeJoinSourceFixture();
     roots.push(source.root);
+    // Host configuration is test data. Keep the real resolver and every
+    // ownership/cleanup guard; redirect only node:os's home lookup for this
+    // serial suite. Never change HOME or write the actual OpenClaw config.
+    ownedHostConfigRoot = await realpath(source.root);
+    const fixtureHome = path.join(ownedHostConfigRoot, "fixture-home");
+    ownedAgentWorkspace = path.join(fixtureHome, ".openclaw", "agents", "developer");
+    await mkdir(ownedAgentWorkspace, { recursive: true });
+    await writeFile(path.join(fixtureHome, ".openclaw", "openclaw.json"), JSON.stringify({
+      agents: { list: [{ id: "feature-dev_developer", workspace: ownedAgentWorkspace }] },
+    }) + "\n");
+    const fixtureHomeLookup = mock.method(os, "homedir", () => fixtureHome);
+    restoreFixtureHome = () => fixtureHomeLookup.mock.restore();
+    const { getAgentWorkspacePath } = await import("../../src/installer/worktree-ops.js");
+    assert.equal(getAgentWorkspacePath("feature-dev_developer"), ownedAgentWorkspace,
+      "actual agent resolver must select the owned fixture config before any caller runs");
     const artifactRoot = path.join(source.root, "artifacts");
     process.env.SETFARM_DB_PATH = path.join(source.root, "runtime", "setfarm.db");
     process.env.SETFARM_PRODUCT_ARTIFACT_DIR = artifactRoot;
@@ -65,9 +84,13 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     finally {
       try { await database?.cleanup(); }
       finally {
-        for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-        for (const [key, value] of Object.entries(previousEnvironment)) {
-          if (value === undefined) delete process.env[key]; else process.env[key] = value;
+        try {
+          for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+        } finally {
+          restoreFixtureHome?.();
+          for (const [key, value] of Object.entries(previousEnvironment)) {
+            if (value === undefined) delete process.env[key]; else process.env[key] = value;
+          }
         }
       }
     }
@@ -498,11 +521,25 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(beforeSuccessor?.attemptCount, 0,
       "only the actual claimStep router may acquire the next live delivery and publish the successor");
     const { claimStep } = await import("../../src/installer/step-ops.js");
+    const { getAgentWorkspacePath, resolveWorktreeBaseDir, findWorktreeDir } = await import("../../src/installer/worktree-ops.js");
+    assert.equal(getAgentWorkspacePath("feature-dev_developer"), ownedAgentWorkspace);
+    assert.equal(await realpath(resolveWorktreeBaseDir(value.repo, "feature-dev_developer")),
+      path.join(ownedAgentWorkspace, "story-worktrees"), "actual recovery destination must be fixture-owned before claimStep");
     const successor = await claimStep("feature-dev_developer", value.input.callerGatewayAgent, {
       schema: "setfarm.runtime-claim-intent.v1", sessionId: "RTS_native-task11-real-recovery-successor",
       runtimeAgentId: "native-task11-repair-runtime", runtimeKind: "local_process",
       ownerInstanceId: "native-task11-live-repair-owner",
     }, { workflowId: "feature-dev", recoveryDispatchClass: "product_implementation" });
+    const recoveryStories = await database.sql<Array<{ story_branch: string | null }>>`
+      SELECT story_branch FROM stories WHERE run_id=${value.runId} AND story_id='US-001'`;
+    const recoveryBranch = recoveryStories[0]?.story_branch;
+    assert.ok(recoveryBranch, "actual recovery publication must record its branch");
+    const recoveryWorktree = findWorktreeDir(value.repo, recoveryBranch, "feature-dev_developer");
+    assert.equal(recoveryWorktree, path.join(ownedAgentWorkspace, "story-worktrees", recoveryBranch.toLowerCase()));
+    assert.ok(recoveryWorktree);
+    const ownedRelative = path.relative(ownedHostConfigRoot, await realpath(recoveryWorktree));
+    assert.ok(ownedRelative && !path.isAbsolute(ownedRelative) && ownedRelative !== ".."
+      && !ownedRelative.startsWith(`..${path.sep}`), "actual created recovery worktree must remain inside the owned fixture root");
     const preparation = await database.sql`SELECT phase,check_id,summary,detail,evidence
       FROM run_observations WHERE run_id=${value.runId} AND phase='v3-recovery-claim' ORDER BY created_at,id`;
     const publications = await database.sql`SELECT claim_id::text,runtime_session_id,dispatch_id,revision_id,status
