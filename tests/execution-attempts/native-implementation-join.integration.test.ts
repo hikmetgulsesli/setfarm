@@ -484,8 +484,13 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const sessions = createRuntimeSessionRepository(database.sql);
     const context = createV3ImplementationContext({ handoff });
     const { loadV3ImplementationAttemptContext } = await import("../../src/execution/v3-implementation-attempt.js");
-    await writeFile(path.join(envelope.workdir, "src/index.ts"), candidate);
-    assert.deepEqual(await loadV3ImplementationAttemptContext({ runId: value.runId, storyId: "US-001",
+    assert.equal(handoff.storyId, envelope.storyId);
+    assert.equal(compiled.attempt.storyId, handoff.storyId);
+    assert.equal(context.writeAuthority.allowedPaths.length, 1,
+      "this bounded probe requires exactly one authentic writable file");
+    const candidatePath = context.writeAuthority.allowedPaths[0]!;
+    await writeFile(path.join(envelope.workdir, candidatePath), candidate);
+    assert.deepEqual(await loadV3ImplementationAttemptContext({ runId: value.runId, storyId: handoff.storyId,
       attemptId: compiled.attempt.attemptId }), compiled,
       "actual after-edit reload must reproduce immutable original/current recovery authority");
     const proposal = { schema: "setfarm.v3-implementation-agent-proposal.v1",
@@ -493,7 +498,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       attemptId: compiled.attempt.attemptId, packetHash: value.packet.packetHash,
       sliceHash: compiled.sliceHash, sourceBefore: compiled.sourceBefore,
       summary: "Native owned candidate probe; no selected worker was started",
-      changes: [{ path: "src/index.ts", summary: "Scoped product implementation candidate" }] };
+      changes: [{ path: candidatePath, summary: "Scoped product implementation candidate" }] };
     if (compiled.recovery) {
       const { compileV3ImplementationAgentOutputV1 } = await import("../../src/execution/v3-implementation-output.js");
       const effects = await countEffects(value);
@@ -871,6 +876,15 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
 
   it("native Task11 accepted predecessor survives production cleanup for dependent native enrichment", async () => {
     const value = await fixture("task11-owned-dependency", true, false, true);
+    // Existing producer fixture layout, seeded before any implementation owner.
+    // This is the final evidence API boundary, not a claimed physical workflow.
+    const finalStepDbId = `${value.runId}-final-test-step`;
+    await database.sql`INSERT INTO steps (
+      id,run_id,step_id,agent_id,step_index,input_template,expects,status,type,retry_count,max_retries
+    ) VALUES (
+      ${finalStepDbId},${value.runId},'final-test','feature-dev_final-tester',5,
+      'Validate the exact completed native product.','','waiting','single',0,3
+    )`;
     const completed = await completeNeverStartedNativeCandidate(value, NATIVE_JOIN_API_SOURCE + "// scoped task implementation\n");
     const { createPostgresTerminalDependencyAttemptReader } = await import("../../src/execution/v3-preparation-eligibility.js");
     const readTerminal = createPostgresTerminalDependencyAttemptReader(database.sql, {
@@ -915,6 +929,101 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(acceptedContext.evidencePlanArtifactHash, completed.compiled.evidencePlanArtifactHash);
     // Accepted-context reload is a prerequisite for supervisor readback, not a
     // fabricated supervisor claim or proof of selected final-product readonly.
+
+    // Continue from the same genuine accepted predecessor. The actual caller
+    // must select, authenticate, provision and publish US-002; no fixture row
+    // or run base is rewritten to make a dependent claim succeed.
+    const { claimStep } = await import("../../src/installer/step-ops.js");
+    const secondIntent = { ...value.input.runtimeIntent,
+      sessionId: `${value.input.runtimeIntent.sessionId}-second`,
+      ownerInstanceId: "native-task11-second-owner" };
+    const second = await claimStep(value.input.claimAgentId, value.input.callerGatewayAgent, secondIntent);
+    const blocks = await database.sql`SELECT phase,error_code,detail FROM v3_preparation_blocks
+      WHERE run_id=${value.runId} ORDER BY opened_at,block_id`;
+    const observations = await database.sql`SELECT phase,check_id,summary,detail,evidence FROM run_observations
+      WHERE run_id=${value.runId} AND (phase LIKE '%preparation%' OR phase LIKE '%preclaim%')`;
+    assert.equal(second.found, true, JSON.stringify({ second, blocks, observations,
+      state: await publicationDiagnostics(value) }));
+    assert.equal(second.storyId, prepared.story.story_id);
+    assert.ok(second.claimId && second.attempt && second.v3ImplementationHandoff && second.runtimeSessionId);
+    const handoff = V3ImplementationClaimHandoffSchema.parse(second.v3ImplementationHandoff);
+    assert.equal(handoff.schema, "setfarm.v3-implementation-claim-handoff.v2");
+    if (handoff.schema !== "setfarm.v3-implementation-claim-handoff.v2") assert.fail("native second-story handoff required");
+    const ownedRelative = path.relative(ownedHostConfigRoot, await realpath(handoff.workdir));
+    assert.ok(ownedRelative && !ownedRelative.startsWith("..") && !path.isAbsolute(ownedRelative),
+      "actual canonical developer worktree must remain under the owned home fixture");
+    const selectedStory = value.packet.storyPlan.stories.find(story => story.id === handoff.storyId);
+    assert.ok(selectedStory);
+    assert.deepEqual(handoff.implementationSlice.story, selectedStory);
+    assert.ok(selectedStory.actionRefs.length > 0);
+    assert.ok(selectedStory.actionRefs.every(ref => value.packet.productSpec.actions.some(action => action.id === ref)));
+    const agentContext = createV3ImplementationContext({ handoff });
+    assert.deepEqual(agentContext.writeAuthority.allowedPaths, ["src/notes.ts"]);
+    assert.ok(handoff.implementationSlice.files.some(file => file.path === "src/index.ts" && file.role === "shared_readonly"));
+    const secondRuntime = await createRuntimeSessionRepository(database.sql).findById(second.runtimeSessionId);
+    assert.ok(secondRuntime);
+    assert.equal(secondRuntime.attemptId, second.attempt.attemptId);
+    assert.equal(secondRuntime.claimId, second.claimId);
+    const secondContext = await loadV3ImplementationAttemptContext({ runId: value.runId,
+      storyId: handoff.storyId, attemptId: second.attempt.attemptId });
+    const secondEnvelope = ClaimEnvelopeV1Schema.parse({ schema: "setfarm.claim-envelope.v1", protocol: "v3",
+      issuedAt: new Date().toISOString(), runId: value.runId, stepId: second.stepId,
+      workflowStepId: second.workflowStepId, storyId: second.storyId, storyDbId: second.storyDbId,
+      claimId: second.claimId, claimGeneration: second.claimGeneration,
+      claimAgentId: secondRuntime.claimAgentId, runtimeAgentId: secondRuntime.runtimeAgentId,
+      workdir: handoff.workdir, repo: value.repo, attempt: second.attempt });
+    const originalOwned = await readFile(path.join(handoff.workdir, agentContext.writeAuthority.allowedPaths[0]!), "utf8");
+    // Preserve actual API behavior and selected action semantics. Only the real
+    // owned module receives a scoped delta; canonical HTTP evidence decides.
+    const secondCompletion = await completeNeverStartedNativeSession(value, {
+      compiled: secondContext, handoff, envelope: secondEnvelope,
+      sessionId: secondRuntime.sessionId, ownerInstanceId: secondRuntime.ownerInstanceId,
+    }, originalOwned + `// Accepted native component ${handoff.storyId}\n`);
+    assert.equal(secondCompletion.accepted.state, "accepted");
+    const stories = await database.sql<Array<{ story_id: string; status: string }>>`
+      SELECT story_id,status FROM stories WHERE run_id=${value.runId} ORDER BY story_index`;
+    assert.deepEqual(stories.map(story => story.story_id), value.packet.storyPlan.stories.map(story => story.id));
+    assert.ok(stories.every(story => story.status === "done" || story.status === "verified"), JSON.stringify(stories));
+    const finalSteps = await database.sql<Array<{ status: string }>>`SELECT status FROM steps WHERE id=${finalStepDbId}`;
+    assert.equal(finalSteps[0]?.status, "pending", "real implementation continuation must advance the downstream stage");
+
+    // Real parent publication and production child evidence/candidate producers.
+    // This is SQL/API acceptance proof; no final tester/supervisor was started,
+    // no smoke response is fabricated, and the parent remains uncompleted.
+    const { publishSingleClaimRuntime } = await import("../../src/execution/claim-runtime-publication.js");
+    const parent = await publishSingleClaimRuntime(database.sql, { runId: value.runId,
+      stepDbId: finalStepDbId, workflowStepId: "final-test", claimAgentId: "feature-dev_final-tester",
+      runtimeIntent: { ...value.input.runtimeIntent, sessionId: `${value.input.runtimeIntent.sessionId}-final`,
+        ownerInstanceId: "native-task11-final-parent-owner" } });
+    assert.ok(parent, JSON.stringify(await publicationDiagnostics(value)));
+    const current = await database.sql<Array<{ context: string; accepted_candidate_hash: string | null }>>`
+      SELECT context,accepted_candidate_hash FROM runs WHERE id=${value.runId}`;
+    assert.equal(current[0]?.accepted_candidate_hash, null);
+    const finalContext: Record<string, string> = JSON.parse(current[0]!.context);
+    assert.equal(finalContext.repo, value.repo);
+    assert.ok(finalContext.branch);
+    const exactFinal = { sha: git(["rev-parse", "HEAD"]), treeHash: git(["rev-parse", "HEAD^{tree}"]) };
+    const { createPostgresV3DownstreamEvidenceRouter } = await import("../../src/recovery/v3-downstream-evidence-router.js");
+    const route = await createPostgresV3DownstreamEvidenceRouter(database.sql).route({ runId: value.runId,
+      stepDbId: finalStepDbId, workflowStepId: "final-test", phase: "final", parentClaimId: parent.claimId,
+      worktree: finalContext.repo, branch: finalContext.branch, intent: "final_acceptance" });
+    assert.equal(route.status, "accepted_candidate_ready", JSON.stringify(route));
+    if (route.status !== "accepted_candidate_ready") assert.fail("actual complete final evidence matrix required");
+    assert.deepEqual(route.sourceRevision, exactFinal);
+    assert.deepEqual(route.stories.map(story => story.storyId).sort(), stories.map(story => story.story_id).sort());
+    const { createAcceptedCandidateRepository } = await import("../../src/evidence/accepted-candidate-repository.js");
+    const candidates = createAcceptedCandidateRepository({ sql: database.sql,
+      artifactRoot: value.artifactRoot, artifactLimits: NATIVE_JOIN_LIMITS });
+    const candidateInput = { runId: value.runId, sourceRevision: route.sourceRevision,
+      storyEvidence: route.stories.map(story => ({ storyId: story.storyId, attemptId: story.attemptId,
+        evidencePlanArtifactHash: story.evidencePlanArtifactHash, evidenceBundleHash: story.evidenceBundleHash })) };
+    const candidate = await candidates.publish(candidateInput);
+    assert.equal(candidate.created, true);
+    assert.deepEqual(await candidates.findByRun(value.runId), candidate.candidate);
+    assert.deepEqual(await candidates.publish(candidateInput), { created: false, candidate: candidate.candidate });
+    assert.deepEqual({ sha: git(["rev-parse", "HEAD"]), treeHash: git(["rev-parse", "HEAD^{tree}"]) }, exactFinal);
+    const parentRows = await database.sql<Array<{ outcome: string | null }>>`SELECT outcome FROM claim_log WHERE id=${parent.claimId}`;
+    assert.equal(parentRows[0]?.outcome, null, "this probe does not claim final-stage or physical completion");
   });
 
   // Break: keeping the old reader in the native join. The real legacy reader

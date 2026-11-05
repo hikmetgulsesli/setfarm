@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import type postgres from "postgres";
 import { z } from "zod";
@@ -609,7 +610,7 @@ async function assertAttemptContext(
       ||authenticated.evidenceOnly.dispatch.dispatchId!==lease.dispatchId
       ||authenticated.evidenceOnly.findingSet.findingSetHash!==lease.findingSetHash
       ||!sameRevision(authenticated.sourceBefore,lease.sourceRevision)
-      ||canonicalJsonStringify(authenticated.attempt)!==canonicalJsonStringify(attempt)
+      ||!isDeepStrictEqual(authenticated.attempt,attempt)
       ||canonicalJsonStringify(authenticated.slice)!==canonicalJsonStringify(slice)
       ||canonicalJsonStringify(authenticated.evidencePlan)!==canonicalJsonStringify(plan)
       ||authenticated.evidencePlanArtifactHash!==planArtifactHash||authenticated.sliceHash!==sliceHash)
