@@ -1545,6 +1545,8 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(findings.runId, value.runId);
     assert.equal(findings.sliceHash, completed.compiled.sliceHash);
     assert.ok(findings.findings.length > 0);
+    const originalFindingRows = mode === "repair_final" ? await database.sql`
+      SELECT finding_id,status,payload FROM findings WHERE finding_set_hash=${findings.findingSetHash} ORDER BY finding_id` : [];
     const { createV3RecoveryClaimAuthority } = await import("../../src/recovery/v3-recovery-claim-authority.js");
     const recoveryClaims = createV3RecoveryClaimAuthority(database.sql);
     const expiredHandoff = await recoveryClaims.acquireRecoveryClaim({ runId: value.runId, storyId: "US-001",
@@ -1745,11 +1747,29 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       if(route.status!=="accepted_candidate_ready")assert.fail("real repaired final matrix required");
       const {createAcceptedCandidateRepository}=await import("../../src/evidence/accepted-candidate-repository.js");
       const candidates=createAcceptedCandidateRepository({sql:database.sql,artifactRoot:value.artifactRoot,artifactLimits:NATIVE_JOIN_LIMITS});
+      assert.deepEqual(await createFindingRecoveryRepository(database.sql).findFindingSet(findings.findingSetHash),findings,
+        "resolved recovery must preserve the original immutable finding set");
+      assert.ok(originalFindingRows.length>0);
+      assert.ok(originalFindingRows.every(row=>row.status==="open"));
+      assert.equal(resolved.findingSetHash,findings.findingSetHash);
+      assert.ok(dispatch.findingIds.every(id=>resolved.findingIds.includes(id)));
+      assert.ok(resolved.terminal?.evidenceBundleHashes.length);
+      const gateFacts=await database.sql`SELECT
+        (SELECT count(*)::integer FROM execution_attempts WHERE run_id=${value.runId} AND disposition IN ('claimed','running')) AS active_attempts,
+        (SELECT count(*)::integer FROM recovery_cases WHERE run_id=${value.runId} AND status IN ('open','repairing','evidencing')) AS active_recovery,
+        (SELECT count(*)::integer FROM findings f JOIN finding_sets fs ON fs.finding_set_hash=f.finding_set_hash
+          WHERE fs.run_id=${value.runId} AND f.status='open') AS immutable_open_findings`;
+      assert.equal(gateFacts[0]!.active_attempts,0,JSON.stringify(gateFacts));
+      assert.equal(gateFacts[0]!.active_recovery,0,JSON.stringify(gateFacts));
+      assert.ok(gateFacts[0]!.immutable_open_findings>0,JSON.stringify(gateFacts));
       const candidate=await candidates.publish({runId:value.runId,sourceRevision:route.sourceRevision,
         storyEvidence:route.stories.map(story=>({storyId:story.storyId,attemptId:story.attemptId,
           evidencePlanArtifactHash:story.evidencePlanArtifactHash,evidenceBundleHash:story.evidenceBundleHash}))});
       assert.equal(candidate.created,true);
       assert.deepEqual(await candidates.findByRun(value.runId),candidate.candidate);
+      assert.deepEqual(await database.sql`SELECT finding_id,status,payload FROM findings
+        WHERE finding_set_hash=${findings.findingSetHash} ORDER BY finding_id`,originalFindingRows,
+      "candidate publication must not mutate immutable failure history");
     }
     // No final-product/supervisor subject or selected physical closure is
     // manufactured by successful SQL/canonical evidence completion.

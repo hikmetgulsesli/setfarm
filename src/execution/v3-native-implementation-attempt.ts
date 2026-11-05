@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync, lstatSync, openSync, closeSync, fstatSync, ftruncateSync, readSync, writeSync, constants } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -15,7 +16,7 @@ import { createAttemptRepository, lockAttemptReservationOwnerInTransaction, rese
 import { createV3ImplementationAttemptV2Assembler, nativeImplementationSourcePathsV3 } from "./v3-implementation-attempt-v2.js";
 import { createV3ArtifactRefKeyV2 } from "./v3-artifact-ref-key-v2.js";
 import { resolveV3GitRevision } from "./v3-git-revision.js";
-import { captureV3ImplementationSourceSnapshotsV2 } from "./v3-source-snapshot-v2.js";
+import { captureV3ImplementationSourceSnapshotsV2, V3_SOURCE_SNAPSHOT_V2_DEFAULT_LIMITS } from "./v3-source-snapshot-v2.js";
 import {
   authenticateV3NativePreparation, recheckV3NativePreparationInTransaction, bindV3PreparationAuthorityAttemptV2InTransaction,
   captureNativeAttemptFileSignatures, captureNativeOriginalFileSignatures,
@@ -526,7 +527,7 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
       readArtifact: hash => readV3NativeIndexedArtifact(reader, hash),
       producer: packet.producer, findingSet,
     });
-    return { revision, dispatch, findingSet, handoff, delivery, predecessor, origin: origin.authority,
+    return { revision, dispatch, findingSet, handoff, delivery, predecessor, initialAttemptId: initial.attemptId, origin: origin.authority,
       reviewEvidenceArtifacts };
   }
 
@@ -547,6 +548,24 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
       ? await captureNativeAttemptFileSignatures(options.sql, { runId: input.runId, attemptId: attempt.attemptId,
           source: authority.revision.sourceRevision, files })
       : captureNativeOriginalFileSignatures({ worktree: input.worktree, source: authority.revision.sourceRevision, files });
+    // A readonly dependency copy belongs to the semantic input, not the pinned
+    // failed candidate's tree. Reproduce only its already-authenticated initial
+    // input; writable/owned recovery witnesses remain the actual candidate.
+    const initial = await preparedService.loadPreparedAttempt({ runId: input.runId,
+      storyId: input.storyId, attemptId: authority.initialAttemptId });
+    if (!same(initial.nativeAuthority, authority.origin)) throw Error("V3_NATIVE_RECOVERY_ORIGIN_MISMATCH");
+    const readonlyInputs = initial.slice.files.filter(file => file.role === "shared_readonly").flatMap(file => {
+      const dependencies = authority.origin.dependencyAttempts.filter(dependency =>
+        dependency.fileSignatures.some(signature => signature.pathRef === file.pathRef && signature.path === file.path));
+      if (!dependencies.length) return [];
+      const signature = dependencies[0]!.fileSignatures.find(signature => signature.pathRef === file.pathRef && signature.path === file.path);
+      if (dependencies.length !== 1 || !signature || authority.revision.allowedPaths.includes(file.path)
+        || !same(signature, { pathRef: file.pathRef, path: file.path, presence: file.presence, contentHash: file.contentHash }))
+        throw Error("V3_NATIVE_RECOVERY_READONLY_INPUT_MISMATCH");
+      return [{ signature, dependency: dependencies[0]! }];
+    });
+    const semanticCurrent = current.map(snapshot =>
+      readonlyInputs.find(input => input.signature.pathRef === snapshot.pathRef && input.signature.path === snapshot.path)?.signature ?? snapshot);
     const changes = current.filter(file => authority.revision.allowedPaths.includes(file.path))
       .map(({ pathRef, path, presence, contentHash }) => ({ pathRef, path, before: { presence, contentHash } }));
     const recovery = ImplementationRecoveryDirectiveV2Schema.parse({
@@ -560,7 +579,7 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
       designGraph: packet.designGraph, buildTopology: packet.buildTopology, storyPlan: packet.storyPlan,
       designSourceClosure: packet.designSourceClosure, implementationSourceMap: packet.implementationSourceMap,
       storyId: input.storyId, sourceRevision: authority.revision.sourceRevision, producer: packet.producer,
-      currentFiles: current.map(({ path: _path, ...snapshot }) => snapshot), recovery,
+      currentFiles: semanticCurrent.map(({ path: _path, ...snapshot }) => snapshot), recovery,
       dependencyOutputs: authority.origin.dependencyAttempts.map(dependency=>({
         storyId:dependency.storyId,sliceHash:dependency.sliceHash,outputHash:dependency.outputHash,
         sourceAfter:dependency.sourceAfter,fileSignatures:dependency.fileSignatures,
@@ -570,7 +589,134 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     if (compiled.status !== "compiled") throw new Error(`V3_NATIVE_RECOVERY_COMPILATION_REJECTED:${JSON.stringify(compiled.diagnostics)}`);
     const verified = verifyLegacyImplementationSliceV2({ slice: compiled.slice, compilerInput });
     if (verified.status !== "verified" || verified.sliceHash !== compiled.sliceHash) throw new Error("V3_NATIVE_RECOVERY_REPRODUCTION_FAILED");
-    return { ...compiled, current, sliceRefKey: createV3ArtifactRefKeyV2("slice", input.storyId, compiled.sliceHash) };
+    return { ...compiled, current, semanticCurrent, readonlyInputs, sliceRefKey: createV3ArtifactRefKeyV2("slice", input.storyId, compiled.sliceHash) };
+  }
+
+  // Only first reservation provisions worker input. Context/history/replay
+  // reproduction above never mutates the worktree or its index flags.
+  async function provisionRecoveryReadonlyInputs(input: NativeRecoveryReservationV3,
+    assembled: Awaited<ReturnType<typeof compileRecovery>>) {
+    const files = assembled.current.map(({ pathRef, path }) => ({ pathRef, path }));
+    const stripPath = ({ path: _path, ...snapshot }: typeof assembled.current[number]) => snapshot;
+    const observed = captureV3ImplementationSourceSnapshotsV2({ worktree: input.worktree, files }).snapshots;
+    for (const snapshot of observed) {
+      const original = assembled.current.find(file => file.pathRef === snapshot.pathRef);
+      const semantic = assembled.semanticCurrent.find(file => file.pathRef === snapshot.pathRef);
+      if (!original || !semantic || (!same(snapshot, stripPath(original)) && !same(snapshot, stripPath(semantic))))
+        throw Error("V3_NATIVE_RECOVERY_SOURCE_CHANGED");
+    }
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_NO_REPLACE_OBJECTS: "1", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" };
+    for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"]) delete env[key];
+    const git = (args: string[], maxBuffer = 16_384) => execFileSync("git", ["--no-replace-objects", "--literal-pathspecs", ...args], {
+      cwd: input.worktree, env, timeout: 10_000, maxBuffer, stdio: ["ignore", "pipe", "pipe"],
+    });
+    const indexTree = git(["write-tree"]).toString("utf8").trim();
+    if (indexTree !== assembled.slice.sourceRevision.treeHash) throw Error("V3_NATIVE_RECOVERY_SOURCE_CHANGED");
+    const assertStillUnreserved = async () => {
+      // Fresh SQL-only observation, outside any transaction. A duplicate that
+      // already reserved/attached an attempt may only take the read-only path.
+      const rows = await options.sql.unsafe<Array<{ claim_id: string | number }>>(`
+        SELECT p.claim_id FROM internal_production_v3_recovery_claim_publications_v1 p
+        JOIN claim_log c ON c.id=p.claim_id AND c.run_id=p.run_id AND c.step_id=p.workflow_step_id AND c.story_id=p.story_id
+        JOIN runtime_sessions s ON s.session_id=p.runtime_session_id AND s.claim_id=c.id
+          AND s.run_id=p.run_id AND s.workflow_step_id=p.workflow_step_id AND s.story_id=p.story_id
+          AND s.step_db_id=p.step_db_id AND s.story_db_id=p.story_db_id AND s.claim_agent_id=c.agent_id
+        JOIN recovery_dispatch_deliveries d ON d.dispatch_id=p.dispatch_id AND d.revision_id=p.revision_id
+          AND d.run_id=p.run_id AND d.story_id=p.story_id
+        WHERE p.claim_id=$1 AND p.run_id=$2 AND p.story_id=$3 AND p.workflow_step_id=$4
+          AND p.dispatch_id=$5 AND p.revision_id=$6 AND c.agent_id=$7
+          AND s.state='reserved' AND s.attempt_id IS NULL
+          AND d.state='leased' AND d.attempt_id IS NULL AND d.claim_id IS NULL AND d.attempt_count=0
+          AND d.owner_instance_id=$8 AND d.lease_token=$9 AND d.lease_expires_at>clock_timestamp()
+          AND NOT EXISTS (SELECT 1 FROM execution_attempts a WHERE a.claim_id=p.claim_id)
+      `, [input.claimId,input.runId,input.storyId,input.stepId,input.recoveryDelivery.dispatchId,
+        input.recoveryDelivery.revisionId,input.agentId,input.recoveryDelivery.ownerInstanceId,input.recoveryDelivery.leaseToken]);
+      if (rows.length !== 1) throw Error("V3_NATIVE_RECOVERY_READONLY_OWNER_CHANGED");
+    };
+    const root = realpathSync(input.worktree);
+    let totalBytes = 0;
+    for (const { signature, dependency } of assembled.readonlyInputs) {
+      const original = assembled.current.find(file => file.pathRef === signature.pathRef && file.path === signature.path);
+      if (!original) throw Error("V3_NATIVE_RECOVERY_READONLY_INPUT_MISMATCH");
+      if (same(original, signature)) continue;
+      // Existing initial dependency-copy semantics hide only tracked readonly
+      // input. Never insert a readonly blob into this candidate's index.
+      const tracked = git(["ls-files", "-z", "--", signature.path]).toString("utf8");
+      if (tracked !== signature.path + "\0" || signature.presence !== "present" || original.presence !== "present")
+        throw Error("V3_NATIVE_RECOVERY_READONLY_TRACKED_INPUT_REQUIRED");
+      const listed = git(["ls-tree", "-z", dependency.sourceAfter.sha, "--", signature.path]).toString("utf8");
+      const entry = /^(100644|100755) blob ([a-f0-9]{40}|[a-f0-9]{64})\t([^\0]+)\0$/.exec(listed);
+      if (!entry || entry[3] !== signature.path) throw Error("V3_NATIVE_RECOVERY_READONLY_INPUT_MISMATCH");
+      const bytes = git(["cat-file", "blob", entry[2]!], V3_SOURCE_SNAPSHOT_V2_DEFAULT_LIMITS.maxFileBytes + 1);
+      totalBytes += bytes.byteLength;
+      if (bytes.byteLength > V3_SOURCE_SNAPSHOT_V2_DEFAULT_LIMITS.maxFileBytes
+        || totalBytes > V3_SOURCE_SNAPSHOT_V2_DEFAULT_LIMITS.maxTotalBytes
+        || createHash("sha256").update(bytes).digest("hex") !== signature.contentHash)
+        throw Error("V3_NATIVE_RECOVERY_READONLY_INPUT_MISMATCH");
+      if (signature.path.split("/").some(segment => segment === ".git" || segment === ".setfarm"))
+        throw Error("V3_NATIVE_RECOVERY_READONLY_PATH_INVALID");
+      const target = path.join(root, signature.path);
+      let parent = root;
+      const parents = signature.path.split("/").slice(0, -1).map(segment => {
+        parent = path.join(parent, segment);
+        const stat = lstatSync(parent);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw Error("V3_NATIVE_RECOVERY_READONLY_PATH_INVALID");
+        return { path: parent, dev: stat.dev, ino: stat.ino };
+      });
+      const before = lstatSync(target);
+      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1)
+        throw Error("V3_NATIVE_RECOVERY_READONLY_PATH_INVALID");
+      await assertStillUnreserved();
+      // Recheck the path closure immediately before opening for mutation.
+      if (parents.some(parent => { const stat = lstatSync(parent.path); return !stat.isDirectory() || stat.isSymbolicLink()
+        || stat.dev !== parent.dev || stat.ino !== parent.ino; }))
+        throw Error("V3_NATIVE_RECOVERY_READONLY_PATH_INVALID");
+      const fd = openSync(target, constants.O_RDWR | constants.O_NOFOLLOW);
+      try {
+        const opened = fstatSync(fd);
+        if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino)
+          throw Error("V3_NATIVE_RECOVERY_READONLY_PATH_INVALID");
+        if (opened.size > V3_SOURCE_SNAPSHOT_V2_DEFAULT_LIMITS.maxFileBytes)
+          throw Error("V3_NATIVE_RECOVERY_READONLY_INPUT_MISMATCH");
+        const currentBytes = Buffer.alloc(opened.size);
+        let read = 0;
+        while (read < currentBytes.byteLength) {
+          const count = readSync(fd, currentBytes, read, currentBytes.byteLength - read, read);
+          if (!count) throw Error("V3_NATIVE_RECOVERY_READONLY_INPUT_MISMATCH");
+          read += count;
+        }
+        const currentHash = createHash("sha256").update(currentBytes).digest("hex");
+        const readIdentity = fstatSync(fd);
+        if (currentHash !== original.contentHash && currentHash !== signature.contentHash)
+          throw Error("V3_NATIVE_RECOVERY_SOURCE_CHANGED");
+        if (readIdentity.size !== opened.size || readIdentity.mtimeMs !== opened.mtimeMs
+          || readIdentity.ctimeMs !== opened.ctimeMs || readIdentity.dev !== before.dev || readIdentity.ino !== before.ino
+          || readIdentity.nlink !== 1)
+          throw Error("V3_NATIVE_RECOVERY_READONLY_PATH_INVALID");
+        // Positional descriptor IO prevents a pre-write read from shifting the
+        // write offset. Never clobber bytes other than exact base/same recipe.
+        let written = 0;
+        while (written < bytes.byteLength) {
+          const count = writeSync(fd, bytes, written, bytes.byteLength - written, written);
+          if (!count) throw Error("V3_NATIVE_RECOVERY_READONLY_INPUT_MISMATCH");
+          written += count;
+        }
+        ftruncateSync(fd, bytes.byteLength);
+      } finally { closeSync(fd); }
+      const after = lstatSync(target);
+      if (after.dev !== before.dev || after.ino !== before.ino || after.nlink !== 1 || !after.isFile()
+        || parents.some(parent => { const stat = lstatSync(parent.path); return !stat.isDirectory() || stat.isSymbolicLink()
+          || stat.dev !== parent.dev || stat.ino !== parent.ino; }))
+        throw Error("V3_NATIVE_RECOVERY_READONLY_PATH_INVALID");
+      await assertStillUnreserved();
+      git(["update-index", "--assume-unchanged", "--", signature.path]);
+    }
+    const actual = captureV3ImplementationSourceSnapshotsV2({ worktree: input.worktree, files }).snapshots;
+    if (!same(actual, assembled.semanticCurrent.map(stripPath)) || git(["write-tree"]).toString("utf8").trim() !== indexTree
+      || git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], 16 * 1024 * 1024).byteLength
+      || !same(resolveV3GitRevision({ repo: input.worktree, requestedRef: "HEAD",
+        expectedSha: assembled.slice.sourceRevision.sha }), assembled.slice.sourceRevision))
+      throw Error("V3_NATIVE_RECOVERY_READONLY_INPUT_MISMATCH");
   }
 
   async function recoveryAttemptInputs(attempt: ExecutionAttemptV1) {
@@ -623,12 +769,29 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     // A replay reloads immutable pinned source and never requires current edits
     // to equal sourceBefore. The lower reservation still authenticates its lease.
     const assembled = await compileRecovery(input, authority);
-    if (!authority.delivery.attemptId) {
+    const fresh = await recoveryInputs(input);
+    if (fresh.delivery.attemptId) {
+      const existing = await attempts.findById(fresh.delivery.attemptId);
+      if (!existing || existing.claimId !== input.claimId || existing.runId !== input.runId || existing.storyId !== input.storyId
+        || existing.recoveryDispatchId !== input.recoveryDelivery.dispatchId || existing.recoveryCaseRevisionId !== input.recoveryDelivery.revisionId)
+        throw Error("V3_NATIVE_RECOVERY_ATTEMPT_MISMATCH");
+      return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: existing.attemptId });
+    }
+    {
       const head = resolveV3GitRevision({ repo: input.worktree, requestedRef: "HEAD", expectedSha: authority.revision.sourceRevision.sha });
       const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
         cwd: input.worktree, timeout: 10_000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
       });
       if (status.byteLength || !same(head, authority.revision.sourceRevision)) throw new Error("V3_NATIVE_RECOVERY_SOURCE_CHANGED");
+      await provisionRecoveryReadonlyInputs(input, assembled);
+      const after = await authenticateNativeGitCustody(options.sql, {
+        runId: input.runId, claimId: input.claimId, worktree: input.worktree, branch: input.branch,
+        sourceBefore: authority.revision.sourceRevision,
+      });
+      if (!same(after, gitCustody)) throw Error("V3_NATIVE_RECOVERY_SOURCE_CHANGED");
+      const live = await recoveryInputs(input);
+      if (!same(live.handoff, authority.handoff) || !same(live.origin, authority.origin))
+        throw Error("V3_NATIVE_RECOVERY_AUTHORITY_MISMATCH");
     }
     const published = await publisher.put(assembled.envelope);
     if (published.hash !== assembled.sliceHash) throw new Error("V3_NATIVE_SLICE_PUBLICATION_MISMATCH");
@@ -915,7 +1078,10 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
         if(effective.has(signature.pathRef)) throw Error("V3_NATIVE_DOWNSTREAM_EFFECTIVE_WRITER_AMBIGUOUS");
         effective.set(signature.pathRef,{storyId:story.id,sliceHash:terminal.sliceHash,outputHash:terminal.outputHash,signature});
       }
-      const shared=initial.slice.files.filter(file=>file.role!=="owned");
+      // Copied readonly dependency inputs are semantic snapshots, not writes in
+      // this story's pinned-base candidate. Only a sealed writable path can
+      // supersede the authenticated effective producer.
+      const shared=initial.slice.files.filter(file=>file.role==="shared_writable");
       const candidate=await captureNativeAttemptFileSignatures(options.sql,{runId:input.runId,attemptId:owner.attempt_id,
         source:terminal.sourceAfter,files:shared.map(({pathRef,path})=>({pathRef,path}))});
       for(const file of shared){

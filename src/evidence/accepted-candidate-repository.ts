@@ -263,12 +263,40 @@ export function createAcceptedCandidateRepository(input: Readonly<{
           open_findings: number;
           active_recovery: number;
         }>>(
-          `SELECT
+          `WITH RECURSIVE resolved_finding_revisions AS (
+             SELECT revision.* FROM recovery_cases settled
+             JOIN recovery_case_revisions revision ON revision.revision_id=settled.current_revision_id
+               AND revision.recovery_case_id=settled.recovery_case_id AND revision.run_id=settled.run_id
+               AND revision.story_id=settled.story_id AND revision.packet_hash=settled.packet_hash
+             WHERE settled.run_id=$1 AND settled.status='resolved' AND settled.terminal->>'outcome'='resolved'
+               AND jsonb_array_length(settled.terminal->'evidenceBundleHashes')>0
+               AND NOT EXISTS (
+                 SELECT 1 FROM jsonb_array_elements_text(settled.terminal->'evidenceBundleHashes') ref(hash)
+                 LEFT JOIN evidence_bundles evidence ON evidence.evidence_bundle_hash=ref.hash
+                   AND evidence.run_id=settled.run_id AND evidence.story_id=settled.story_id
+                   AND evidence.packet_hash=settled.packet_hash AND evidence.aggregate_verdict='pass'
+                 WHERE evidence.evidence_bundle_hash IS NULL
+               )
+             UNION ALL
+             SELECT parent.* FROM recovery_case_revisions parent
+             JOIN resolved_finding_revisions child ON parent.revision_id=child.parent_revision_id
+               AND parent.recovery_case_id=child.recovery_case_id AND parent.revision_number=child.revision_number-1
+               AND parent.run_id=child.run_id AND parent.story_id=child.story_id AND parent.packet_hash=child.packet_hash
+           )
+           SELECT
              (SELECT COUNT(*)::integer FROM execution_attempts
                WHERE run_id = $1 AND disposition IN ('claimed', 'running')) AS active_attempts,
              (SELECT COUNT(*)::integer FROM findings f
                JOIN finding_sets fs ON fs.finding_set_hash = f.finding_set_hash
-              WHERE fs.run_id = $1 AND f.status = 'open') AS open_findings,
+              WHERE fs.run_id = $1 AND f.status = 'open'
+                AND NOT EXISTS (
+                  SELECT 1 FROM resolved_finding_revisions resolved
+                  WHERE resolved.finding_set_hash=fs.finding_set_hash AND resolved.run_id=fs.run_id
+                    AND resolved.story_id=fs.story_id AND resolved.packet_hash=fs.packet_hash
+                    AND resolved.contract_slice_hash=fs.slice_hash AND resolved.source_sha=fs.source_sha
+                    AND resolved.source_tree_hash=fs.source_tree_hash
+                    AND resolved.finding_ids @> jsonb_build_array(f.finding_id)
+                )) AS open_findings,
              (SELECT COUNT(*)::integer FROM recovery_cases
                WHERE run_id = $1 AND status IN ('open', 'repairing', 'evidencing')) AS active_recovery`,
           [runId],

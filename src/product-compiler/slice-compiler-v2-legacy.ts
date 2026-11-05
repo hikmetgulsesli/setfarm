@@ -673,6 +673,26 @@ function compileOwnership(input: ParsedInput, diagnostics: ImplementationSliceV2
 
     const differsFromTopology = binding.presence !== snapshot.presence
       || binding.knownContentHash !== snapshot.contentHash;
+    const recoveryChange = input.recovery?.expectedSourceDelta.changes
+      .find((change) => change.pathRef === pathRef);
+    const recoveryProof = Boolean(
+      recoveryChange
+      && role !== "shared_readonly"
+      && recoveryChange.path === binding.path
+      && recoveryChange.before.presence === snapshot.presence
+      && recoveryChange.before.contentHash === snapshot.contentHash,
+    );
+    // A generated repair describes an already-known failed candidate. A
+    // sealed shared writer can therefore retain its authenticated predecessor
+    // input while the current writable blob differs. Exact mode stays strict.
+    const generatedSharedRecoveryProof = Boolean(
+      recoveryProof && role === "shared_writable" && input.recovery
+      && "mode" in input.recovery.expectedSourceDelta
+      && input.recovery.expectedSourceDelta.mode === "generated_repair"
+      && input.recovery.expectedSourceDelta.allowedPaths.includes(binding.path)
+      && grants.some(grant => grant.fromOwnerRef === binding.ownerRef && grant.toOwnerRef === story.ownerRef
+        && grant.pathRefs.includes(pathRef) && grant.permissions.includes("write")),
+    );
     let dependencyProof = false;
     if (role !== "owned") {
       const sourceOwner = ownerById.get(binding.ownerRef);
@@ -685,7 +705,7 @@ function compileOwnership(input: ParsedInput, diagnostics: ImplementationSliceV2
           && signature.presence === snapshot.presence
           && signature.contentHash === snapshot.contentHash,
         );
-        if (!dependencyProof) {
+        if (!dependencyProof && !generatedSharedRecoveryProof) {
           diagnostics.push(diagnostic(
             "SLICE_V2_DEPENDENCY_OUTPUT_INVALID",
             `Current shared path ${pathRef} does not equal its exact dependency output signature`,
@@ -694,15 +714,6 @@ function compileOwnership(input: ParsedInput, diagnostics: ImplementationSliceV2
         }
       }
     }
-    const recoveryChange = input.recovery?.expectedSourceDelta.changes
-      .find((change) => change.pathRef === pathRef);
-    const recoveryProof = Boolean(
-      recoveryChange
-      && role !== "shared_readonly"
-      && recoveryChange.path === binding.path
-      && recoveryChange.before.presence === snapshot.presence
-      && recoveryChange.before.contentHash === snapshot.contentHash,
-    );
     if (differsFromTopology && !dependencyProof && !recoveryProof) {
       diagnostics.push(diagnostic(
         "SLICE_V2_FILE_SNAPSHOT_INVALID",

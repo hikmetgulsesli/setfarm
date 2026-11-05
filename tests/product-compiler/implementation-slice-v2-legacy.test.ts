@@ -880,6 +880,7 @@ function twoComponentNoDesignProductSpec(
 
 function dependencyCompilerFixture(
   settingsMode: "user-boolean" | "cli-required-date" = "user-boolean",
+  sharedWrite = false,
 ) {
   const productSpec = twoComponentNoDesignProductSpec(settingsMode);
   const buildTopology = BuildTopologyV1Schema.parse({
@@ -913,7 +914,7 @@ function dependencyCompilerFixture(
       fromOwnerRef: "OWNER_US_001",
       toOwnerRef: "OWNER_US_002",
       pathRefs: ["PATH_APP"],
-      permissions: ["read"],
+      permissions: sharedWrite ? ["read", "write"] : ["read"],
     }],
     entrypoints: [{
       id: "ENTRY_CLI",
@@ -1594,6 +1595,53 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
       const refused = compileImplementationSliceV2({ ...input, recovery: { ...generated, expectedSourceDelta: delta } });
       assert.equal(refused.status, "rejected", "generated mode must reject after fiction, scope expansion and stale before witnesses");
     }
+  });
+
+  it("native Task11 generated shared dependency repair preserves strict input refusals", () => {
+    const value = dependencyCompilerFixture("user-boolean", true);
+    const prior = compileOrThrow(value.input);
+    const input = structuredClone(value.input);
+    const changed = input.currentFiles.find(file => file.pathRef === "PATH_APP");
+    assert.ok(changed);
+    changed.contentHash = sha("accepted-shared-writer-failed-candidate");
+    const exact = recoveryDirective(input, { pathRef: "PATH_APP", currentHash: changed.contentHash,
+      afterHash: sha("declared-exact-next-shared-content"), priorSliceHash: prior.sliceHash });
+    const { after: _after, ...witness } = exact.expectedSourceDelta.changes[0]!;
+    const recovery = { ...exact, expectedSourceDelta: {
+      schema: "setfarm.implementation-source-delta.v2", mode: "generated_repair",
+      expectedDelta: { kind: "source_change", invariantRefs: ["INV_IMPLEMENTATION_BEHAVIOR"], requiredPaths: [witness.path] },
+      allowedPaths: [witness.path], changes: [witness],
+    } };
+    const compiled = compileOrThrow({ ...input, recovery });
+    assert.deepEqual(compiled.slice.dependencyOutputs, prior.slice.dependencyOutputs,
+      "original accepted dependency input must not be replaced with the later failed candidate");
+    assert.equal(compiled.slice.files.find(file => file.pathRef === "PATH_APP")?.contentHash, changed.contentHash);
+    assert.equal(verifyImplementationSliceV2({ slice: compiled.slice, compilerInput: { ...input, recovery } }).status, "verified");
+    assert.ok(rejectionCodes(input).includes("SLICE_V2_DEPENDENCY_OUTPUT_INVALID"), "initial input stays exact");
+    assert.ok(rejectionCodes({ ...input, recovery: exact }).includes("SLICE_V2_DEPENDENCY_OUTPUT_INVALID"),
+      "old exact-patch branch stays unchanged");
+    const stale = structuredClone(recovery);
+    stale.expectedSourceDelta.changes[0]!.before.contentHash = sha("wrong-current-shared-candidate");
+    assert.ok(rejectionCodes({ ...input, recovery: stale }).includes("SLICE_V2_DEPENDENCY_OUTPUT_INVALID"));
+    const outOfScope = structuredClone(recovery);
+    outOfScope.expectedSourceDelta.allowedPaths = [];
+    assert.equal(compileImplementationSliceV2({ ...input, recovery: outOfScope }).status, "rejected");
+    assert.ok(rejectionCodes({ ...input, recovery, dependencyOutputs: [] }).includes("SLICE_V2_DEPENDENCY_OUTPUT_INVALID"),
+      "generated repair cannot drop its original dependency authority");
+    const forgedDependency = structuredClone(input.dependencyOutputs);
+    forgedDependency[0]!.fileSignatures[0]!.path = "src/not-the-dependency-app.ts";
+    assert.ok(rejectionCodes({ ...input, recovery, dependencyOutputs: forgedDependency }).includes("SLICE_V2_DEPENDENCY_OUTPUT_INVALID"),
+      "generated repair cannot relabel an immutable dependency signature path");
+
+    const readonly = dependencyCompilerFixture();
+    const readonlyPrior = compileOrThrow(readonly.input);
+    const readonlyInput = structuredClone(readonly.input);
+    readonlyInput.currentFiles.find(file => file.pathRef === "PATH_APP")!.contentHash = changed.contentHash;
+    const readonlyExact = recoveryDirective(readonlyInput, { pathRef: "PATH_APP", currentHash: changed.contentHash,
+      afterHash: sha("unused-readonly-after"), priorSliceHash: readonlyPrior.sliceHash });
+    const readonlyRecovery = { ...readonlyExact, expectedSourceDelta: recovery.expectedSourceDelta };
+    assert.ok(rejectionCodes({ ...readonlyInput, recovery: readonlyRecovery }).includes("SLICE_V2_DEPENDENCY_OUTPUT_INVALID"),
+      "a read grant cannot authorize current dependency divergence");
   });
 
   it("native Task11 generated repair binds genuine canonical command findings", async () => {
