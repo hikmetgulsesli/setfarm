@@ -17,8 +17,8 @@
  *   node stitch-api.mjs download <url> <outputFile>
  */
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync, renameSync, rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync, renameSync, rmSync, realpathSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
@@ -976,8 +976,28 @@ const commands = {
       }
     } catch { /* no sealed local identity */ }
 
+    // The repository may not exist yet. Resolve its nearest existing parent
+    // so bootstrap and symlink aliases share the same stable namespace.
+    let ancestor = resolve(repoPath);
+    const missingComponents = [];
+    let canonicalRepo;
+    for (;;) {
+      try {
+        canonicalRepo = resolve(realpathSync(ancestor), ...missingComponents);
+        break;
+      } catch (error) {
+        if (error?.code !== 'ENOENT' || dirname(ancestor) === ancestor) throw error;
+        missingComponents.unshift(basename(ancestor));
+        ancestor = dirname(ancestor);
+      }
+    }
+    const scopedTitle = 'sf-' + createHash('sha256')
+      .update('setfarm.stitch-project-identity.v1\0')
+      .update(canonicalRepo)
+      .digest('hex').slice(0, 32);
+
     // Project identity is established outside screen-generation attempts. It
-    // performs one list and, only when absent, one create. Exact-title lookup
+    // performs one list and, only when absent, one create. Exact scoped-title lookup
     // makes an ambiguous create response recoverable on the next invocation.
     // No credential rotation, substring match, provider retry, or screen-state
     // heuristic is allowed at this boundary.
@@ -997,7 +1017,7 @@ const commands = {
       } catch { /* typed failure below if no exact identity can be established */ }
     }
     const exactIds = [...new Set(projects
-      .filter((project) => String(project.title || project.displayName || project.name || '') === name)
+      .filter((project) => String(project.title || project.displayName || project.name || '') === scopedTitle)
       .map((project) => String(project.name || '').replace(/^projects\//, '') || project.projectId || project.id)
       .filter(validProjectId))];
     if (exactIds.length > 1) throw new Error('STITCH_PROJECT_IDENTITY_AMBIGUOUS');
@@ -1007,7 +1027,7 @@ const commands = {
     if (!projectId) {
       const createResult = await rpcOnce('tools/call', {
         name: 'create_project',
-        arguments: { title: name },
+        arguments: { title: scopedTitle },
       });
       assertToolResultOk(createResult, 'create_project');
       for (const item of createResult?.content || []) {
