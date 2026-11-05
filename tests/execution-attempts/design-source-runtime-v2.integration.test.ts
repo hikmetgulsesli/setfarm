@@ -81,7 +81,7 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       const cause = { schema: "setfarm.operational-failure-cause.v1", workflowStepId: "design",
         boundary: "product_compiler.design_source.artifact_download", failureClass: "infrastructure_failure",
         failureCode: "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED" };
-      for (const mode of ["401", "403", "mismatch", "duplicate", "untyped", "unknown-sibling", "semantic-sibling", "valid-sibling"]) {
+      for (const mode of ["401", "403", "mismatch", "duplicate", "untyped", "success-receipt", "local-html", "excluded-sibling", "unknown-sibling", "semantic-sibling", "valid-sibling"]) {
         const repo = await mkdtemp(path.join(tmpdir(), "setfarm-artifact-auth-"));
         repos.push(repo);
         const runId = `run-artifact-auth-${mode}`;
@@ -96,9 +96,11 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         const sourceRefHash = createHash("sha256").update(`https://example.invalid/${screenId}.html`).digest("hex");
         const candidate = { screenId, title: target.expectedScreenTitle, responsePaths: ["$result.screens[0]"],
           htmlAvailable: true, screenshotAvailable: true, htmlSourceRefHash: sourceRefHash,
-          screenshotSourceRefHash: "c".repeat(64), identityConflicts: [],
+          screenshotSourceRefHash: "c".repeat(64),
+          ...(mode === "success-receipt" ? { htmlDownloadedArtifactHash: "e".repeat(64) } : {}), identityConflicts: [],
           disposition: "admitted_renderable_screen", missingEvidence: [] };
-        const receipt = { screenId, title: target.expectedScreenTitle, downloadError: "Download failed: HTTP 401",
+        const receipt = { screenId, title: target.expectedScreenTitle,
+          ...(mode === "success-receipt" ? { htmlFile: `${screenId}.html` } : {}), downloadError: "Download failed: HTTP 401",
           ...(mode === "untyped" ? {} : { artifactDownloadFailure: { artifactKind: "html",
             httpStatus: mode === "403" ? 403 : 401,
             sourceRefHash: mode === "mismatch" ? "d".repeat(64) : sourceRefHash,
@@ -117,12 +119,16 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         ].join(""));
         const validPng = validStitchPng(229);
         const semanticHtml = validStitchHtml("<main>Incomplete semantics</main>");
-        const transport = { schema: "setfarm.stitch-attempt-transport.v1", total: mode.endsWith("sibling") ? 2 : 1,
-          screens: [{ screenId, title: target.expectedScreenTitle }, ...(mode.endsWith("sibling")
+        const transport = { schema: "setfarm.stitch-attempt-transport.v1", total: mode.endsWith("sibling") && mode !== "excluded-sibling" ? 2 : 1,
+          screens: [{ screenId, title: target.expectedScreenTitle }, ...(mode.endsWith("sibling") && mode !== "excluded-sibling"
             ? [{ screenId: mode, title: target.expectedScreenTitle }] : [])], screenSource: "direct",
-          directCandidateTotal: mode.endsWith("sibling") ? 2 : 1, excludedDirectTotal: 0,
+          directCandidateTotal: mode.endsWith("sibling") ? 2 : 1, excludedDirectTotal: mode === "excluded-sibling" ? 1 : 0,
           directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
-          directScreenEvidence: [candidate, ...(mode === "semantic-sibling" ? [{ ...candidate, screenId: "semantic-sibling", ...stitchDownloadReceipts("semantic-sibling", semanticHtml, validPng) }] : []), ...(mode === "unknown-sibling" ? [{ ...candidate, screenId: "unknown-sibling" }] : []),
+          directScreenEvidence: [candidate, ...(mode === "excluded-sibling" ? [{
+            screenId: "excluded-sibling", title: target.expectedScreenTitle, responsePaths: ["$result.screens[1]"],
+            htmlAvailable: false, screenshotAvailable: false, identityConflicts: [],
+            disposition: "excluded_missing_render_evidence", missingEvidence: ["html", "screenshot"],
+          }] : []), ...(mode === "semantic-sibling" ? [{ ...candidate, screenId: "semantic-sibling", ...stitchDownloadReceipts("semantic-sibling", semanticHtml, validPng) }] : []), ...(mode === "unknown-sibling" ? [{ ...candidate, screenId: "unknown-sibling" }] : []),
             ...(mode === "valid-sibling" ? [{ ...candidate, screenId: "valid-sibling", ...stitchDownloadReceipts("valid-sibling", validHtml, validPng) }] : [])],
           downloaded: [receipt, ...(mode === "semantic-sibling" ? [{ screenId: "semantic-sibling", title: target.expectedScreenTitle, htmlFile: "semantic-sibling.html", screenshotFile: "semantic-sibling.png" }] : []), ...(mode === "duplicate" ? [receipt] : []),
             ...(mode === "valid-sibling" ? [{ screenId: "valid-sibling", title: target.expectedScreenTitle, htmlFile: "valid-sibling.html", screenshotFile: "valid-sibling.png" }] : [])] };
@@ -137,7 +143,8 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
           return { disposition: "accepted" as const, response: transport,
             rawEvidence: serializeAttemptTransportV2(transport), artifacts: mode === "valid-sibling"
               ? [{ screenId: "valid-sibling", htmlBytes: validHtml, screenshotBytes: validPng }]
-              : mode === "semantic-sibling" ? [{ screenId: "semantic-sibling", htmlBytes: semanticHtml, screenshotBytes: validPng }] : [] };
+              : mode === "semantic-sibling" ? [{ screenId: "semantic-sibling", htmlBytes: semanticHtml, screenshotBytes: validPng }]
+              : mode === "local-html" ? [{ screenId, htmlBytes: semanticHtml }] : [] };
         } };
         const result = await runDesignSourceAuthorityV2(input, dependencies);
         if (mode === "valid-sibling") {

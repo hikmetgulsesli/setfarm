@@ -624,6 +624,22 @@ function validDownloadedPng(buffer) {
   return false;
 }
 
+// Only actual HTTP responses can create this access-denied receipt. Diagnostics
+// and provider messages cannot promote themselves to typed download evidence.
+class StitchArtifactDownloadAccessDenied extends Error {
+  constructor(status, url, outputPath) {
+    super(`Download failed: HTTP ${status}`);
+    const artifactKind = outputPath.toLowerCase().endsWith('.html') ? 'html'
+      : outputPath.toLowerCase().endsWith('.png') ? 'screenshot' : undefined;
+    if (artifactKind) this.artifactDownloadFailure = Object.freeze({
+      artifactKind,
+      httpStatus: status,
+      sourceRefHash: createHash('sha256').update(String(url)).digest('hex'),
+      code: 'STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED',
+    });
+  }
+}
+
 // Download to a new attempt file, validate it, then atomically publish it.
 async function downloadFile(url, outputPath, attempt = 1) {
   if (attempt === 1) rmSync(outputPath, { force: true });
@@ -637,6 +653,7 @@ async function downloadFile(url, outputPath, attempt = 1) {
       await new Promise(r => setTimeout(r, delay));
       return downloadFile(url, outputPath, attempt + 1);
     }
+    if (res.status === 401 || res.status === 403) throw new StitchArtifactDownloadAccessDenied(res.status, url, outputPath);
     if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
     const buffer = Buffer.from(await res.arrayBuffer());
     if (outputPath.toLowerCase().endsWith('.html') && !validDownloadedHtml(buffer)) {
@@ -1896,6 +1913,9 @@ const commands = {
         }
       } catch (error) {
         receipt.downloadError = redactDiagnosticText(error?.message || error).slice(0, 700);
+        if (error instanceof StitchArtifactDownloadAccessDenied && error.artifactDownloadFailure) {
+          receipt.artifactDownloadFailure = error.artifactDownloadFailure;
+        }
       }
       downloaded.push(receipt);
     }

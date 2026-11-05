@@ -12,6 +12,7 @@ import {
   parseStitchStageProviderRejectionProcessEnvelopeV1,
 } from "../../../product-compiler/stitch-stage-provider-rejection-v1.js";
 import {
+  DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1,
   DESIGN_SOURCE_RENDER_PREFETCH_OPERATIONAL_CAUSE_V1,
   DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
   runDesignSourceAuthorityV2,
@@ -353,7 +354,14 @@ function runnerFailure(result: Exclude<
           DESIGN_SOURCE_RENDER_PREFETCH_OPERATIONAL_CAUSE_V1,
         ) ? {
           operationalFailureCause: DESIGN_SOURCE_RENDER_PREFETCH_OPERATIONAL_CAUSE_V1,
-        } : {}),
+        } : result.status === "infrastructure_failure"
+          && result.failure.reasonCodes.length === 1
+          && result.failure.reasonCodes[0] === "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED"
+          && result.failure.operationalCauseHash === hashCanonicalJson(
+            DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1,
+          ) ? {
+            operationalFailureCause: DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1,
+          } : {}),
   };
 }
 
