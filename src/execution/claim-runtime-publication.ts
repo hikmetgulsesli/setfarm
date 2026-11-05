@@ -1,6 +1,13 @@
+import { V3PreparationClaimAuthorityError, v3PreparationStoryLockIdentity } from "./v3-preparation-claim-authority.js";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import { hasPendingV3SinglePredecessorCompletionInTransactionV1 } from "./v3-predecessor-completion-claim-barrier-v1.js";
 import type postgres from "postgres";
+import { V3PreparationClaimAuthorityV2Schema, type V3PreparationClaimAuthorityV2 } from "./v3-preparation-runtime-authority-v1.js";
+import {
+  authenticateV3NativePreparation, recheckV3NativePreparationInTransaction, publishV3PreparationAuthorityV2InTransaction,
+  bindV3PreparationAuthorityClaimV2InTransaction, readV3PreparationAuthorityByClaimV2,
+  type V3NativePreparationArtifacts,
+} from "./v3-preparation-authority-v2-repository.js";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
@@ -31,11 +38,9 @@ import {
   type RuntimeClaimIntentV1,
 } from "./runtime-session-repository.js";
 import {
-  V3PreparationClaimAuthorityError,
   V3PreparationClaimAuthorityV1Schema,
-  v3PreparationStoryLockIdentity,
   type V3PreparationClaimAuthorityV1,
-} from "./v3-preparation-claim-authority.js";
+} from "./v3-preparation-runtime-authority-v1.js";
 import {
   insertV3StoryClaimRuntimeBindingV1,
   loadAndRevalidateV3StoryClaimRuntimeBindingV1,
@@ -1840,6 +1845,8 @@ export async function publishLoopClaimRuntime(
     runtimeIntent?: RuntimeClaimIntentV1;
     recoveryHandoff?: V3RecoveryClaimHandoffV1;
     preparationAuthority?: V3PreparationClaimAuthorityV1;
+    nativePreparationAuthority?: V3PreparationClaimAuthorityV2;
+    nativePreparationArtifacts?: V3NativePreparationArtifacts;
     supervisorRetryPreparationSource?: AuthenticatedV3SupervisorRetryPreparationSourceV1;
     storyAdmissionProof?: CompilerStoryEnglishAdmissionClaimProofV1;
     now?: Date;
@@ -1866,6 +1873,11 @@ export async function publishLoopClaimRuntime(
   const preparationAuthority = rawInput.preparationAuthority
     ? V3PreparationClaimAuthorityV1Schema.parse(rawInput.preparationAuthority)
     : undefined;
+  const nativePreparationAuthority = rawInput.nativePreparationAuthority
+    ? V3PreparationClaimAuthorityV2Schema.parse(rawInput.nativePreparationAuthority) : undefined;
+  if (nativePreparationAuthority && !preparationAuthority) {
+    throw new Error("V3_NATIVE_PREPARATION_PAIR_REQUIRED");
+  }
   const supervisorRetryPreparationSource = rawInput.supervisorRetryPreparationSource;
   if (supervisorRetryPreparationSource
     && supervisorRetryPreparationSource[AUTHENTICATED_V3_SUPERVISOR_RETRY_PREPARATION_SOURCE] !== true) {
@@ -1912,6 +1924,9 @@ export async function publishLoopClaimRuntime(
       "preparation authority run, step and story must exactly match publication input",
     );
   }
+  const authenticatedNativePreparation = preparationAuthority
+    ? await authenticateV3NativePreparation(sql, { readiness: preparationAuthority,
+        nativeAuthority: nativePreparationAuthority, artifacts: rawInput.nativePreparationArtifacts }) : undefined;
   return sql.begin(async (transaction) => {
     // V3 recovery authorization takes this advisory lock before touching the
     // run row. Publication must use the same order or lease/publication can
@@ -1980,6 +1995,8 @@ export async function publishLoopClaimRuntime(
     if (run.protocol !== "legacy" && !runtimeIntent) {
       throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
     }
+    const nativeAuthority = authenticatedNativePreparation
+      ? await recheckV3NativePreparationInTransaction(transaction, authenticatedNativePreparation) : undefined;
     if (runtimeIntent) {
       const replay = await replayCommittedLoopClaimRuntimeInTransaction(transaction, {
         runId: rawInput.runId,
@@ -1995,7 +2012,13 @@ export async function publishLoopClaimRuntime(
         preparationAuthority,
         storyClaimAuthority,
       });
-      if (replay) return replay;
+      if (replay) {
+        const committedNative = await readV3PreparationAuthorityByClaimV2(transaction, replay.claimId);
+        if (canonicalJsonStringify(committedNative ?? null) !== canonicalJsonStringify(nativeAuthority ?? null)) {
+          throw new Error("V3_NATIVE_PREPARATION_REPLAY_MISMATCH");
+        }
+        return replay;
+      }
     }
     if (await hasPendingV3SinglePredecessorCompletionInTransactionV1(transaction, rawInput)) {
       return undefined;
@@ -2326,6 +2349,12 @@ export async function publishLoopClaimRuntime(
           "V3_PREPARATION_PUBLICATION_CLAIM_CAS_LOST",
           "ready preparation state was consumed by another claimant",
         );
+      }
+      if (nativeAuthority) {
+        await publishV3PreparationAuthorityV2InTransaction(transaction, nativeAuthority);
+        await bindV3PreparationAuthorityClaimV2InTransaction(transaction, {
+          authorityHash: nativeAuthority.authorityHash, claimId,
+        });
       }
     }
     let runtime: ClaimRuntimePublication["runtime"];

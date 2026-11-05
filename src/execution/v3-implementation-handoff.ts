@@ -11,6 +11,7 @@ import {
 } from "../product-compiler/schemas/common-v1.js";
 import { ImplementationSliceV1Schema } from "../product-compiler/schemas/implementation-slice-v1.js";
 import { V3_IMPLEMENTATION_OUTPUT_CONTRACT_V2 } from "./v3-implementation-output.js";
+import { V3ImplementationClaimHandoffV2Schema, nativeImplementationWritePaths } from "./v3-implementation-handoff-v2.js";
 import {
   ModelExecutionProfileV1Schema,
   OperationalRetryDirectiveV1Schema,
@@ -495,6 +496,52 @@ export const V3ImplementationContextV1Schema = z.object({
 
 export type V3ImplementationContextV1 = z.infer<typeof V3ImplementationContextV1Schema>;
 
+export const V3ImplementationContextV2Schema = z.object({
+  ...V3ImplementationContextV1Schema.shape,
+  handoff: V3ImplementationClaimHandoffV2Schema,
+}).strict().superRefine((value, context) => {
+  const handoff = value.handoff;
+  if (value.handoffHash !== hashCanonicalJson(handoff)) context.addIssue({ code: "custom", path: ["handoffHash"], message: "Native context must hash the complete authenticated handoff" });
+  const mode = handoff.operationalRetry ? "operational_retry" : handoff.implementationSlice.recovery ? "recovery" : "initial";
+  if (value.writeAuthority.mode !== mode || hashCanonicalJson(value.writeAuthority.allowedPaths) !== hashCanonicalJson(nativeImplementationWritePaths(handoff))) {
+    context.addIssue({ code: "custom", path: ["writeAuthority"], message: "Native context write authority must equal the exact native file/recovery scope" });
+  }
+});
+
+export type V3ImplementationContextV2 = z.infer<typeof V3ImplementationContextV2Schema>;
+export const V3ImplementationClaimHandoffSchema = z.union([V3ImplementationClaimHandoffV1Schema, V3ImplementationClaimHandoffV2Schema]);
+export type V3ImplementationClaimHandoff = z.infer<typeof V3ImplementationClaimHandoffSchema>;
+export const V3ImplementationContextSchema = z.union([V3ImplementationContextV1Schema, V3ImplementationContextV2Schema]);
+export type V3ImplementationContext = z.infer<typeof V3ImplementationContextSchema>;
+
+export function parseV3ImplementationContext(input: unknown): V3ImplementationContext {
+  const context = V3ImplementationContextSchema.parse(input);
+  assertV3ImplementationContextCapacity(context);
+  return context;
+}
+
+export function serializeV3ImplementationContext(input: V3ImplementationContext): string {
+  return `${JSON.stringify(parseV3ImplementationContext(input), null, 2)}\n`;
+}
+
+export function createV3ImplementationContext(input: Readonly<{ handoff: V3ImplementationClaimHandoff; outputContract?: z.input<typeof V3ImplementationOutputContractV2Schema> }>): V3ImplementationContext {
+  if (input.handoff.schema === "setfarm.v3-implementation-claim-handoff.v1") return createV3ImplementationContextV1({ handoff: input.handoff, outputContract: input.outputContract });
+  const handoff = V3ImplementationClaimHandoffV2Schema.parse(input.handoff);
+  return parseV3ImplementationContext({
+    schema: "setfarm.implementation-context.v3", handoffHash: hashCanonicalJson(handoff), handoff,
+    writeAuthority: { mode: handoff.operationalRetry ? "operational_retry" : handoff.implementationSlice.recovery ? "recovery" : "initial", allowedPaths: nativeImplementationWritePaths(handoff) },
+    rules: [
+      "This complete native PacketV3 context is the sole product/design/build/source/acceptance authority. Read every native witness without downgrading it to a historical slice.",
+      "Work only in handoff.workdir. Modify only writeAuthority.allowedPaths; every shared_readonly file and every repository control is read-only. Never stage, commit, push, install dependencies, delegate or start unmanaged servers.",
+      "Preserve exact native control-slot, surface, observable, input transport, prerequisite, state, persistence and reload contracts. Execute handoff.implementationSlice.build.commands as exact typed argv/cwd values. Setfarm owns evidence execution and verdicts.",
+      "On current source/file signature mismatch return SOURCE_SNAPSHOT_MISMATCH. If the exact contract cannot be satisfied within writeAuthority.allowedPaths, return CONTRACT_SCOPE_CONFLICT. Never broaden authority.",
+      "For recovery satisfy only the authenticated native findingSet and expectedSourceDelta; original nativeAuthority is origin data, never proof of a current recovery lease. For operational retry preserve the exact predecessor/profile/directive authority.",
+      "Return exactly the canonical outputContract proposal and copied identity hashes; do not self-certify command or evidence outcomes.",
+    ],
+    outputContract: input.outputContract ?? V3_IMPLEMENTATION_OUTPUT_CONTRACT_V2,
+  });
+}
+
 export class V3ImplementationContextCapacityError extends Error {
   readonly code = "V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED" as const;
   readonly bytes: number;
@@ -517,9 +564,9 @@ export function serializeV3ImplementationContextV1(
 }
 
 export function assertV3ImplementationContextCapacity(
-  context: V3ImplementationContextV1,
+  context: V3ImplementationContext,
 ): number {
-  const bytes = Buffer.byteLength(serializeV3ImplementationContextV1(context), "utf8");
+  const bytes = Buffer.byteLength(`${JSON.stringify(V3ImplementationContextSchema.parse(context), null, 2)}\n`, "utf8");
   if (bytes > V3_IMPLEMENTATION_CONTEXT_MAX_BYTES) {
     throw new V3ImplementationContextCapacityError(bytes);
   }

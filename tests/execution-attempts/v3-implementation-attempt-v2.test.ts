@@ -28,6 +28,7 @@ import {
   V3SourceSnapshotErrorV2,
 } from "../../src/execution/v3-source-snapshot-v2.js";
 import { resolveV3GitRevision } from "../../src/execution/v3-git-revision.js";
+import { captureNativeOriginalFileSignatures } from "../../src/execution/v3-preparation-authority-v2-repository.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { produceImplementationSourceMapV1 } from "../../src/product-compiler/producers/implementation-source-map-v1.js";
 import { produceStoryPlanV2 } from "../../src/product-compiler/producers/story-plan-v2.js";
@@ -866,6 +867,10 @@ describe("native PacketV3 to SliceV2 attempt assembly", { concurrency: 1 }, () =
       "PATH_APP",
       "PATH_SETTINGS",
     ]);
+    // The original Git witness must retain the whole dependency's owned-file
+    // closure, including helper files not granted to the dependent story.
+    assert.deepEqual(captureNativeOriginalFileSignatures({ worktree: repo, source: value.sourceRevision,
+      files: value.attemptA.fileSignatures.map(({ pathRef, path }) => ({ pathRef, path })) }), value.attemptA.fileSignatures);
 
     const partial = recreateAuthority(value.authority, {
       dependencyAttempts: [{

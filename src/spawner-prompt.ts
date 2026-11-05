@@ -8,9 +8,9 @@ import { implementEvidenceArtifactPaths, readImplementEvidenceConfig } from "./i
 import { getStackModule } from "./installer/stack-modules/registry.js";
 import type { StackPackId } from "./installer/stack-contract/types.js";
 import {
-  createV3ImplementationContextV1,
-  V3ImplementationClaimHandoffV1Schema,
-  type V3ImplementationClaimHandoffV1,
+  createV3ImplementationContext,
+  V3ImplementationClaimHandoffSchema,
+  type V3ImplementationClaimHandoff,
 } from "./execution/v3-implementation-handoff.js";
 import {
   createV3StageClaimHandoffV1,
@@ -1471,7 +1471,7 @@ export function buildClaimSummary(params: {
   repo: string;
   storyId?: string;
   claimEnvelope?: ClaimEnvelopeV1;
-  v3ImplementationHandoff?: V3ImplementationClaimHandoffV1;
+  v3ImplementationHandoff?: V3ImplementationClaimHandoff;
   v3StageRetrySource?: V3StageRetrySourceV1;
   input: unknown;
 }): Record<string, unknown> {
@@ -1479,7 +1479,7 @@ export function buildClaimSummary(params: {
     ? ClaimEnvelopeV1Schema.parse(params.claimEnvelope)
     : undefined;
   const v3Handoff = params.v3ImplementationHandoff
-    ? V3ImplementationClaimHandoffV1Schema.parse(params.v3ImplementationHandoff)
+    ? V3ImplementationClaimHandoffSchema.parse(params.v3ImplementationHandoff)
     : undefined;
   if (v3Handoff) {
     if (!claimEnvelope || claimEnvelope.protocol !== "v3") {
@@ -1511,7 +1511,7 @@ export function buildClaimSummary(params: {
     ) {
       throw new Error("V3_IMPLEMENTATION_HANDOFF_WORKDIR_MISMATCH");
     }
-    const canonicalImplementationContext = createV3ImplementationContextV1({
+    const canonicalImplementationContext = createV3ImplementationContext({
       handoff: v3Handoff,
     });
     const outputContract = canonicalImplementationContext.outputContract;

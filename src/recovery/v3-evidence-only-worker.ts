@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import type postgres from "postgres";
 import { z } from "zod";
@@ -21,6 +22,8 @@ import {
   compileEvidencePlanV1,
   type EvidencePlanV1,
 } from "../evidence/evidence-plan-v1.js";
+import { EvidencePlanV2Schema, compileEvidencePlanV2, type EvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
+import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import { createAttemptRepository } from "../execution/attempt-repository.js";
 import type {
   ExecutionAttemptV1,
@@ -39,6 +42,8 @@ import { createFindingRecoveryRepository } from "./finding-recovery-repository.j
 import { createRecoveryDeliveryRepository } from "./recovery-delivery-repository.js";
 import {
   createV3EvidenceOnlyPublication,
+  prepareNativeEvidenceOnlyContinuation,resumeNativeEvidenceOnlySettledContinuations,
+  type PreparedNativeEvidenceMerge,
   type V3EvidenceOnlyPublicationLeaseV1,
 } from "./v3-evidence-only-publication.js";
 import {
@@ -116,9 +121,9 @@ export type V3EvidenceOnlyLeaseV1 = z.infer<typeof LeaseSchema>;
 export type V3EvidenceOnlyAttemptContext = Readonly<{
   attempt: ExecutionAttemptV1;
   workdir: string;
-  slice: ImplementationSliceV1;
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2;
   sliceHash: string;
-  evidencePlan: EvidencePlanV1;
+  evidencePlan: EvidencePlanV1 | EvidencePlanV2;
   evidencePlanArtifactHash: string;
 }>;
 
@@ -137,6 +142,9 @@ export type V3EvidenceOnlyWorkerDependencies = Readonly<{
     lease: V3EvidenceOnlyLeaseV1;
     context: V3EvidenceOnlyAttemptContext;
   }>): Promise<CanonicalEvidenceResultV1>;
+  /** Optional cleanup adapter for actual code-created native detached worktrees.
+   * No physical cleanup is implied by absent/false return. */
+  cleanupNativeTerminalWorktree?(input:Readonly<{lease:V3EvidenceOnlyLeaseV1}>):Promise<boolean>;
   /** Close only the exact non-model claim bound to the terminal attempt. */
   completeClaim(input: Readonly<{
     lease: V3EvidenceOnlyLeaseV1;
@@ -577,34 +585,60 @@ async function acquireCandidate(
   }) as Promise<V3EvidenceOnlyLeaseV1 | undefined>;
 }
 
-function expectedEvidenceRefs(plan: EvidencePlanV1): string[] {
+function expectedEvidenceRefs(plan: EvidencePlanV1 | EvidencePlanV2): string[] {
   return [
     ...plan.predicateRefs,
     ...plan.commands.map((command) => `EVID_COMMAND_${command.commandRef}`),
   ];
 }
 
-function assertAttemptContext(
+async function assertAttemptContext(
   lease: V3EvidenceOnlyLeaseV1,
   raw: V3EvidenceOnlyAttemptContext,
-): V3EvidenceOnlyAttemptContext {
-  const slice = ImplementationSliceV1Schema.parse(raw.slice);
-  const plan = EvidencePlanV1Schema.parse(raw.evidencePlan);
+): Promise<V3EvidenceOnlyAttemptContext> {
+  const slice = raw.slice.schema === "setfarm.implementation-slice.v2"
+    ? LegacyImplementationSliceV2Schema.parse(raw.slice) : ImplementationSliceV1Schema.parse(raw.slice);
+  const plan = slice.schema === "setfarm.implementation-slice.v2"
+    ? EvidencePlanV2Schema.parse(raw.evidencePlan) : EvidencePlanV1Schema.parse(raw.evidencePlan);
   const sliceHash = Sha256Schema.parse(raw.sliceHash);
   const planArtifactHash = Sha256Schema.parse(raw.evidencePlanArtifactHash);
   const attempt = raw.attempt;
+  let authenticatedNativeCurrentSource = false;
+  if(slice.schema === "setfarm.implementation-slice.v2") {
+    // This loader independently authenticates durable original source owner,
+    // initial V2 relation, current revision/delivery and immutable CAS artifacts.
+    // A caller's context or a matching hash alone cannot waive source identity.
+    const {loadV3ImplementationAttemptContext}=await import("../execution/v3-implementation-attempt.js");
+    const authenticated=await loadV3ImplementationAttemptContext({runId:lease.runId,storyId:lease.storyId,attemptId:attempt.attemptId});
+    if(authenticated.kind!=="native-dispatch-ready"||!authenticated.evidenceOnly
+      ||authenticated.evidenceOnly.revision.revisionId!==lease.revisionId
+      ||authenticated.evidenceOnly.dispatch.dispatchId!==lease.dispatchId
+      ||authenticated.evidenceOnly.findingSet.findingSetHash!==lease.findingSetHash
+      ||!sameRevision(authenticated.sourceBefore,lease.sourceRevision)
+      ||!isDeepStrictEqual(authenticated.attempt,attempt)
+      ||canonicalJsonStringify(authenticated.slice)!==canonicalJsonStringify(slice)
+      ||canonicalJsonStringify(authenticated.evidencePlan)!==canonicalJsonStringify(plan)
+      ||authenticated.evidencePlanArtifactHash!==planArtifactHash||authenticated.sliceHash!==sliceHash)
+      fail("V3_EVIDENCE_ONLY_SEALED_CONTEXT_MISMATCH","native origin/current-source authority differs from actual owned rows");
+    authenticatedNativeCurrentSource=true;
+  }
   if (!raw.workdir.trim()) fail("V3_EVIDENCE_ONLY_WORKDIR_REQUIRED", "attempt context has no exact worktree");
   if (
-    slice.recovery
+    (slice.recovery && !authenticatedNativeCurrentSource)
     || slice.packetHash !== lease.packetHash
     || slice.storyId !== lease.storyId
-    || slice.sourceRevision.baseSha !== lease.sourceRevision.sha
-    || slice.sourceRevision.treeHash !== lease.sourceRevision.treeHash
+    || (!authenticatedNativeCurrentSource && ((slice.schema === "setfarm.implementation-slice.v2"
+      ? slice.sourceRevision.sha : slice.sourceRevision.baseSha) !== lease.sourceRevision.sha
+      || slice.sourceRevision.treeHash !== lease.sourceRevision.treeHash))
     || plan.packetHash !== lease.packetHash
     || plan.storyId !== lease.storyId
     || plan.sliceHash !== sliceHash
+    || (slice.schema === "setfarm.implementation-slice.v2"
+      && hashCanonicalJson({ schema: "setfarm.semantic-artifact-envelope.v1", artifactType: "setfarm.evidence-plan.v2",
+        producer: slice.producer, payload: plan }) !== planArtifactHash)
     || !exactStrings(expectedEvidenceRefs(plan), lease.evidencePlan)
-    || canonicalJsonStringify(plan) !== canonicalJsonStringify(compileEvidencePlanV1({ slice, sliceHash }))
+    || canonicalJsonStringify(plan) !== canonicalJsonStringify(slice.schema === "setfarm.implementation-slice.v2"
+      ? compileEvidencePlanV2({ slice, sliceHash }) : compileEvidencePlanV1({ slice, sliceHash }))
   ) {
     fail(
       "V3_EVIDENCE_ONLY_SEALED_CONTEXT_MISMATCH",
@@ -982,6 +1016,7 @@ async function coordinateTerminalEvidenceOnlyAttempt(
   coordinator: ReturnType<typeof createV3RecoveryCoordinator>,
   attempt: ExecutionAttemptV1,
   input: V3RecoveryCoordinateInput,
+  nativeEvidenceMerge?:PreparedNativeEvidenceMerge,
 ): Promise<V3RecoveryCoordinatorResult> {
   // Recovery delivery and m33 status transitions consume a completed attempt;
   // they never acquire finding ownership or become an alternate attempt-birth
@@ -992,7 +1027,7 @@ async function coordinateTerminalEvidenceOnlyAttempt(
       "recovery coordination requires one durably terminal evidence-only attempt",
     );
   }
-  return coordinator.coordinate(input);
+  return coordinator.coordinate(input,nativeEvidenceMerge?{nativeEvidenceMerge}:{});
 }
 
 export function createV3EvidenceOnlyRecoveryWorker(
@@ -1039,9 +1074,9 @@ export function createV3EvidenceOnlyRecoveryWorker(
       fail("V3_EVIDENCE_ONLY_HEARTBEAT_CLAIM_MISSING", "active evidence attempt has no claim fence");
     }
     const retain = async (): Promise<void> => {
-      const retained = await ownerLeases.heartbeat(heartbeatInput, {
-        leaseMs: ownerLeaseMs,
-      });
+      const retained = context.attempt.disposition==="verified"&&context.slice.schema==="setfarm.implementation-slice.v2"
+        ? await ownerLeases.heartbeatNativeTerminalEvidenceOnly(heartbeatInput,{leaseMs:ownerLeaseMs})
+        : await ownerLeases.heartbeat(heartbeatInput,{leaseMs:ownerLeaseMs});
       if (retained.status !== "retained") {
         fail("V3_EVIDENCE_ONLY_OWNER_LEASE_LOST", retained.reason);
       }
@@ -1124,7 +1159,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
     let phase = "attempt_context";
     let terminal = lease.mode === "coordinator_replay";
     try {
-      const context = assertAttemptContext(
+      const context = await assertAttemptContext(
         lease,
         await dependencies.loadOrReserveAttempt({ lease }),
       );
@@ -1169,7 +1204,8 @@ export function createV3EvidenceOnlyRecoveryWorker(
         bundle = assertCanonicalEvidence({ lease, context, result });
         findingSet = createFindingSetFromEvidenceBundleV2({
           workdir: context.workdir,
-          slice: context.slice,
+          ...(context.slice.schema === "setfarm.implementation-slice.v2"
+            ? { slice: context.slice, sourceRevision: sourceAfter } : { slice: context.slice }),
           sliceHash: context.sliceHash,
           bundle,
         });
@@ -1209,6 +1245,21 @@ export function createV3EvidenceOnlyRecoveryWorker(
       });
       await assertClaimClosed(sql, lease, attempt);
 
+      let nativeEvidenceMerge:PreparedNativeEvidenceMerge|undefined;
+      if(context.slice.schema==="setfarm.implementation-slice.v2"&&bundle.aggregateVerdict==="pass") {
+        if(!attempt.claimId) fail("V3_NATIVE_EVIDENCE_CONTINUATION_CLAIM_MISSING","actual completed nonmodel claim required");
+        phase="native_terminal_continuation_prepare";
+        const owner={runId:lease.runId,storyId:lease.storyId,packetHash:lease.packetHash,
+          attemptId:attempt.attemptId,claimId:attempt.claimId,generation:attempt.generation,fenceToken:attempt.fenceToken,
+          revisionId:lease.revisionId,dispatchId:lease.dispatchId,ownerInstanceId:lease.ownerInstanceId,leaseToken:lease.leaseToken};
+        nativeEvidenceMerge=await withEvidenceOwnerHeartbeat(lease,{...context,attempt},()=>prepareNativeEvidenceOnlyContinuation(sql,owner));
+      }
+      if(context.slice.schema==="setfarm.implementation-slice.v2"&&bundle.aggregateVerdict==="pass"
+        &&dependencies.cleanupNativeTerminalWorktree) {
+        phase="native_terminal_worktree_cleanup";
+        const cleanup=dependencies.cleanupNativeTerminalWorktree;
+        await withEvidenceOwnerHeartbeat(lease,{...context,attempt},()=>cleanup({lease}));
+      }
       phase = "recovery_coordination";
       const bundleHash = computeEvidenceBundleHash(bundle);
       const failureClass = classifyV3EvidenceFailure(bundle);
@@ -1225,7 +1276,11 @@ export function createV3EvidenceOnlyRecoveryWorker(
         evidenceBundle: bundle,
         ...(findingSet ? { findingSet } : {}),
         ...(failureClass ? { failureClass } : {}),
-      });
+      },nativeEvidenceMerge);
+      if(context.slice.schema==="setfarm.implementation-slice.v2"&&bundle.aggregateVerdict==="pass") {
+        phase="native_settled_continuation";
+        await resumeNativeEvidenceOnlySettledContinuations(sql,{workflowId:lease.workflowId,runId:lease.runId});
+      }
       return {
         lease,
         attemptId: attempt.attemptId,
@@ -1253,6 +1308,8 @@ export function createV3EvidenceOnlyRecoveryWorker(
       raw: unknown,
       options: Readonly<{ now?: Date }> = {},
     ): Promise<V3EvidenceOnlyWorkerResult | undefined> {
+      const input=AcquireInputSchema.parse(raw);
+      await resumeNativeEvidenceOnlySettledContinuations(sql,{workflowId:input.workflowId});
       const lease = await acquireNext(raw, options);
       return lease ? runLease(lease, options) : undefined;
     },

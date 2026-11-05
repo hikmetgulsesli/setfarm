@@ -5,6 +5,7 @@ import {
   hashRuntimeEvidenceContractV1,
 } from "../../evidence/runtime-evidence-contract-v1.js";
 import { FindingSetV1Schema } from "../../findings/finding-set.js";
+import { ExpectedDeltaV1Schema } from "../../recovery/recovery-case.js";
 import { SourceRevisionV1Schema } from "../../execution/schemas/execution-attempt-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../canonical-json.js";
 import {
@@ -178,11 +179,58 @@ const RecoverySourceDeltaV2Schema = z.object({
   }
 });
 
+// Generated repairs carry authenticated current-source witnesses and bounded
+// durable grants. They never declare future bytes. Keep the exact branch above
+// unchanged: no mode/default or normalization may alter its historic hashes.
+const GeneratedRecoverySourceDeltaV2Schema = z.object({
+  schema: z.literal("setfarm.implementation-source-delta.v2"),
+  mode: z.literal("generated_repair"),
+  expectedDelta: ExpectedDeltaV1Schema.options[0],
+  allowedPaths: z.array(NormalizedRelativeLocatorSchema).min(1).max(20_000),
+  changes: z.array(z.object({
+    pathRef: PathBindingIdSchema,
+    path: NormalizedRelativeLocatorSchema,
+    before: PresenceAndHashV2Schema,
+  }).strict().superRefine((value, context) => {
+    if (value.before.presence === "absent"
+      && value.before.contentHash !== topologyPathAbsenceHash(value.path)) {
+      context.addIssue({
+        code: "custom",
+        path: ["before", "contentHash"],
+        message: "Absent generated recovery witnesses require the canonical path-specific absence hash",
+      });
+    }
+  })).min(1).max(20_000),
+}).strict().superRefine((value, context) => {
+  requireCanonicalSet(context, ["changes"], value.changes.map(change => change.pathRef), "Generated recovery path refs");
+  if (!hasUniqueStrings(value.changes.map(change => change.path))) {
+    context.addIssue({ code: "custom", path: ["changes"], message: "Generated recovery witness paths must be unique" });
+  }
+  requireCanonicalSet(context, ["allowedPaths"], value.allowedPaths, "Generated recovery allowed paths");
+  requireCanonicalSet(context, ["expectedDelta", "requiredPaths"], value.expectedDelta.requiredPaths, "Generated recovery required paths");
+  requireCanonicalSet(context, ["expectedDelta", "invariantRefs"], value.expectedDelta.invariantRefs, "Generated recovery invariants");
+  if (!sameStrings(value.allowedPaths, sorted(value.changes.map(change => change.path)))) {
+    context.addIssue({
+      code: "custom", path: ["allowedPaths"],
+      message: "Generated recovery grants must equal the exact current witness paths",
+    });
+  }
+  const allowed = new Set(value.allowedPaths);
+  value.expectedDelta.requiredPaths.forEach((path, index) => {
+    if (!allowed.has(path)) {
+      context.addIssue({
+        code: "custom", path: ["expectedDelta", "requiredPaths", index],
+        message: "Generated recovery required paths must be within its exact grants",
+      });
+    }
+  });
+});
+
 export const ImplementationRecoveryDirectiveV2Schema = z.object({
   schema: z.literal("setfarm.implementation-recovery-directive.v2"),
   findingSet: FindingSetV1Schema,
   sourceRevision: SourceRevisionV1Schema,
-  expectedSourceDelta: RecoverySourceDeltaV2Schema,
+  expectedSourceDelta: z.union([RecoverySourceDeltaV2Schema, GeneratedRecoverySourceDeltaV2Schema]),
 }).strict();
 
 export type ImplementationRecoveryDirectiveV2 = z.infer<
@@ -1347,6 +1395,8 @@ export const ImplementationSliceV2Schema = z.object({
 
   if (value.recovery) {
     const recovery = value.recovery;
+    const delta = recovery.expectedSourceDelta;
+    const generatedRepair = "mode" in delta && delta.mode === "generated_repair";
     if (
       recovery.findingSet.packetHash !== value.packetHash
       || recovery.findingSet.storyId !== value.storyId
@@ -1354,13 +1404,31 @@ export const ImplementationSliceV2Schema = z.object({
       || !equalSourceRevision(recovery.sourceRevision, value.sourceRevision)
       || recovery.findingSet.findings.some((finding) => finding.status !== "open")
       || recovery.findingSet.findings.some((finding) =>
-        !finding.expectedPredicateRef || !value.story.evidenceRefs.includes(finding.expectedPredicateRef))
+        !(generatedRepair && finding.classification === "unstructured_review")
+        && (!finding.expectedPredicateRef || (!value.story.evidenceRefs.includes(finding.expectedPredicateRef)
+          && !(generatedRepair && finding.classification === "structured"
+            && value.build.commands.some(command =>
+              (command.kind === "build" || command.kind === "test" || command.kind === "evidence")
+              // Match the canonical evidence producer's exact selected command
+              // identity; command evidence is not a ProductSpec predicate.
+              && finding.expectedPredicateRef === `EVID_COMMAND_${command.id}`
+              && finding.invariantRef === `INV_COMMAND_${command.kind.toUpperCase()}`
+              && finding.origin === (command.kind === "build" ? "build" : command.kind === "test" ? "test" : "runtime"))))))
     ) {
       context.addIssue({
         code: "custom",
         path: ["recovery"],
         message: "Recovery finding set must bind exact packet/story/current source and contain only open findings",
       });
+    }
+    if ("mode" in delta && delta.mode === "generated_repair") {
+      const findingInvariants = sorted([...new Set(recovery.findingSet.findings.map(finding => finding.invariantRef))]);
+      if (!sameStrings(delta.expectedDelta.invariantRefs, findingInvariants)) {
+        context.addIssue({
+          code: "custom", path: ["recovery", "expectedSourceDelta", "expectedDelta", "invariantRefs"],
+          message: "Generated recovery invariants must equal the selected current-source findings",
+        });
+      }
     }
     const fileByRef = new Map(value.files.map((file) => [file.pathRef, file] as const));
     const changeByPath = new Map(recovery.expectedSourceDelta.changes.map((change) => [change.path, change] as const));

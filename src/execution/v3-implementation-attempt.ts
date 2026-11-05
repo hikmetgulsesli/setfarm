@@ -32,10 +32,9 @@ import type {
   RecoveryRevisionDispatchV1,
 } from "../recovery/recovery-delivery.js";
 import type { FindingSetV1 } from "../findings/finding-set.js";
-import {
-  GithubReviewThreadEvidenceV1Schema,
-  type GithubReviewThreadEvidenceV1,
-} from "../findings/github-review-source.js";
+import { loadV3ReviewEvidenceArtifactsV1, V3ReviewEvidenceArtifactError,
+  type V3ReviewEvidenceArtifact } from "./v3-review-evidence-artifacts.js";
+export type { V3ReviewEvidenceArtifact } from "./v3-review-evidence-artifacts.js";
 import {
   createV3EvidenceOnlyPublication,
   type V3EvidenceOnlyPreparedPublicationV1,
@@ -64,10 +63,11 @@ import {
   type V3SupervisorRetryDirectiveV1,
 } from "./v3-supervisor-retry-directive.js";
 
-export type V3ReviewEvidenceArtifact = Readonly<{
-  artifactHash: string;
-  evidence: GithubReviewThreadEvidenceV1;
-}>;
+import {
+  createNativeV3ImplementationContextService, createNativeV3ImplementationAttemptHandoff,
+  type NativeImplementationContextV3,
+} from "./v3-native-implementation-attempt.js";
+import { readV3PreparationAuthorityByClaimV2 } from "./v3-preparation-authority-v2-repository.js";
 
 export type V3ImplementationAttemptInput = Readonly<{
   runId: string;
@@ -93,7 +93,9 @@ export type V3ImplementationAttemptInput = Readonly<{
   downstreamEvidenceAuthority?: V3DownstreamEvidenceAuthorityV1;
 }>;
 
-export type V3ImplementationAttemptResult = Readonly<{
+export type LegacyV3ImplementationAttemptResult = Readonly<{
+  /** Legacy result bytes remain unchanged; only the native variant has kind. */
+  kind?: never;
   attempt: ExecutionAttemptV1;
   artifactProducer: SemanticArtifactProducerV1;
   slice: ImplementationSliceV1;
@@ -124,6 +126,8 @@ export type V3ImplementationAttemptResult = Readonly<{
   }>;
 }>;
 
+export type V3ImplementationAttemptResult = LegacyV3ImplementationAttemptResult | NativeImplementationContextV3;
+
 export function createV3ImplementationAttemptHandoffV1(input: Readonly<{
   stepDbId: string;
   storyDbId: string;
@@ -133,6 +137,9 @@ export function createV3ImplementationAttemptHandoffV1(input: Readonly<{
   compiled: V3ImplementationAttemptResult;
 }>) {
   const compiled = input.compiled;
+  if (compiled.kind === "native-dispatch-ready") {
+    return createNativeV3ImplementationAttemptHandoff({ ...input, compiled });
+  }
   const executionAuthority = compiled.attempt.attemptClass === "supervisor_repair"
     ? { role: "supervisor" as const, attemptClass: "supervisor_repair" as const }
     : compiled.attempt.attemptClass === "infrastructure_retry"
@@ -729,77 +736,22 @@ async function loadReviewEvidenceArtifacts(input: Readonly<{
   producer: SemanticArtifactProducerV1;
   findingSet: FindingSetV1;
 }>): Promise<readonly V3ReviewEvidenceArtifact[]> {
-  const reviewFindings = input.findingSet.findings.filter(
-    (finding) => finding.classification === "unstructured_review",
-  );
-  const artifacts = new Map<string, V3ReviewEvidenceArtifact>();
-  for (const finding of reviewFindings) {
-    if (finding.observedEvidenceRefs.length !== 1 || !finding.externalRef || finding.sourceLocators.length !== 1) {
-      throw new V3ImplementationAttemptError(
-        "V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID",
-        `Review finding ${finding.findingId} must bind one evidence artifact, external identity, and source locator`,
-      );
+  try {
+    return await loadV3ReviewEvidenceArtifactsV1({
+      readArtifact: hash => input.dependencies.readArtifact(hash),
+      producer: input.producer, findingSet: input.findingSet,
+    });
+  } catch (error) {
+    if (error instanceof V3ReviewEvidenceArtifactError) {
+      throw new V3ImplementationAttemptError(error.code, error.message);
     }
-    const artifactHash = finding.observedEvidenceRefs[0]!;
-    let stored: Awaited<ReturnType<V3CompilerDependencies["readArtifact"]>>;
-    let evidence: GithubReviewThreadEvidenceV1;
-    try {
-      stored = await input.dependencies.readArtifact(artifactHash);
-      if (stored.artifactType !== "setfarm.github-review-thread-evidence.v1") {
-        throw new Error(`unexpected artifact type ${stored.artifactType}`);
-      }
-      evidence = GithubReviewThreadEvidenceV1Schema.parse(stored.payload);
-      const envelope = SemanticArtifactEnvelopeV1Schema.parse({
-        schema: "setfarm.semantic-artifact-envelope.v1",
-        artifactType: stored.artifactType,
-        producer: stored.producer,
-        payload: evidence,
-      });
-      if (
-        canonicalJsonStringify(envelope.producer) !== canonicalJsonStringify(input.producer)
-        || hashCanonicalJson(envelope) !== artifactHash
-      ) {
-        throw new Error("artifact producer or content hash differs from the sealed packet authority");
-      }
-    } catch (error) {
-      throw new V3ImplementationAttemptError(
-        "V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID",
-        `Review evidence ${artifactHash} is not an exact indexed semantic artifact: ${String((error as Error)?.message || error)}`,
-      );
-    }
-    const external = finding.externalRef;
-    const locator = finding.sourceLocators[0]!;
-    const commentIds = new Set(evidence.comments.map((comment) => comment.commentId));
-    if (
-      evidence.repository.nodeId !== external.repositoryNodeId
-      || evidence.prNumber !== external.prNumber
-      || evidence.threadId !== external.threadId
-      || evidence.headSha !== external.headSha
-      || evidence.headSha !== input.findingSet.sourceRevision.sha
-      || evidence.bodyRevisionHash !== external.commentRevisionHash
-      || (external.commentId !== undefined && !commentIds.has(external.commentId))
-      || evidence.path !== locator.path
-      || evidence.currentSource.contentHash !== locator.contentHash
-    ) {
-      throw new V3ImplementationAttemptError(
-        "V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH",
-        `Review evidence ${artifactHash} differs from finding ${finding.findingId} or its exact source revision`,
-      );
-    }
-    artifacts.set(artifactHash, { artifactHash, evidence });
+    throw error;
   }
-  if (artifacts.size !== reviewFindings.length) {
-    throw new V3ImplementationAttemptError(
-      "V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID",
-      "Each unstructured review finding must own a distinct immutable evidence artifact",
-    );
-  }
-  return [...artifacts.values()].sort((left, right) => left.artifactHash.localeCompare(right.artifactHash));
 }
 
 export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDependencies) {
   return Object.freeze({
-    async reserve(input: V3ImplementationAttemptInput): Promise<V3ImplementationAttemptResult> {
+    async reserve(input: V3ImplementationAttemptInput): Promise<LegacyV3ImplementationAttemptResult> {
       const recoveryEvidenceOnly = input.evidenceOnlyLease !== undefined;
       const downstreamEvidence = input.downstreamEvidenceAuthority !== undefined;
       const operationalRetry = input.operationalRetry
@@ -1479,7 +1431,7 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
       runId: string;
       storyId: string;
       attemptId: string;
-    }>): Promise<V3ImplementationAttemptResult> {
+    }>): Promise<LegacyV3ImplementationAttemptResult> {
       const [packet, attempt] = await Promise.all([
         dependencies.readPacket(input.runId),
         dependencies.findAttempt(input.attemptId),
@@ -1777,17 +1729,53 @@ function runtimeCompiler() {
   return defaultCompiler;
 }
 
-export function reserveV3ImplementationAttempt(
+export async function reserveV3ImplementationAttempt(
   input: V3ImplementationAttemptInput,
 ): Promise<V3ImplementationAttemptResult> {
-  return runtimeCompiler().reserve(input);
+  const options = { sql: getSql(), artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() };
+  const packet = await createRuntimeArtifactReader(options).readExactSealedPacket(input.runId);
+  if (!("implementationSourceMap" in packet)) return runtimeCompiler().reserve(input);
+  if (input.operationalRetry) {
+    if (!input.claimId || input.role !== "developer" || input.stepId !== "implement" || input.recoveryDelivery
+      || input.evidenceOnlyLease || input.downstreamEvidenceAuthority || input.supervisorRetry || input.findingSetHash)
+      throw Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
+    return createNativeV3ImplementationContextService(options).reserveOperational({claimId:input.claimId,
+      runId:input.runId,stepId:input.stepId,storyId:input.storyId,role:input.role,agentId:input.agentId,
+      branch:input.branch,worktree:input.worktree,operationalRetry:input.operationalRetry});
+  }
+  if (input.recoveryDelivery) {
+    if (!input.claimId || input.stepId !== "implement" || input.operationalRetry || input.supervisorRetry
+      || input.evidenceOnlyLease || input.downstreamEvidenceAuthority) throw new Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
+    return createNativeV3ImplementationContextService(options).reserveRecovery({
+      claimId: input.claimId, runId: input.runId, stepId: input.stepId, storyId: input.storyId,
+      role: input.role, agentId: input.agentId, branch: input.branch, worktree: input.worktree,
+      findingSetHash: input.findingSetHash, recoveryDelivery: input.recoveryDelivery,
+    });
+  }
+  // Task9's V2 relation is initial-only. Never erase a successor discriminator
+  // to coerce it through that relation; its authentic join is a separate path.
+  if (!input.claimId || input.stepId !== "implement" || input.role !== "developer"
+    || input.findingSetHash || input.operationalRetry || input.supervisorRetry || input.recoveryDelivery
+    || input.evidenceOnlyLease || input.downstreamEvidenceAuthority) {
+    throw new Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
+  }
+  const origin = await readV3PreparationAuthorityByClaimV2(options.sql, input.claimId);
+  if (!origin) throw new Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
+  return createNativeV3ImplementationContextService(options).reserve({
+    claimId: input.claimId, nativeAuthorityHash: origin.authorityHash, runId: input.runId,
+    stepId: input.stepId, storyId: input.storyId, role: input.role, agentId: input.agentId,
+    branch: input.branch, worktree: input.worktree,
+  });
 }
 
-export function reserveV3EvidenceOnlyImplementationAttempt(input: Readonly<{
+export async function reserveV3EvidenceOnlyImplementationAttempt(input: Readonly<{
   lease: V3EvidenceOnlyPublicationLeaseV1;
   worktree: string;
   branch: string;
 }>): Promise<V3ImplementationAttemptResult> {
+  const options={sql:getSql(),artifactRoot:resolveProductArtifactDir(),artifactLimits:resolveProductArtifactCapacity()};
+  const packet=await createRuntimeArtifactReader(options).readExactSealedPacket(input.lease.runId);
+  if("implementationSourceMap" in packet) return createNativeV3ImplementationContextService(options).reserveEvidenceOnly(input);
   return runtimeCompiler().reserve({
     runId: input.lease.runId,
     stepId: "implement",
@@ -1806,11 +1794,14 @@ export function reserveV3EvidenceOnlyImplementationAttempt(input: Readonly<{
   });
 }
 
-export function reserveV3DownstreamEvidenceAttempt(input: Readonly<{
+export async function reserveV3DownstreamEvidenceAttempt(input: Readonly<{
   authority: V3DownstreamEvidenceAuthorityV1;
   worktree: string;
   branch: string;
 }>): Promise<V3ImplementationAttemptResult> {
+  const options={sql:getSql(),artifactRoot:resolveProductArtifactDir(),artifactLimits:resolveProductArtifactCapacity()};
+  const packet=await createRuntimeArtifactReader(options).readExactSealedPacket(input.authority.runId);
+  if("implementationSourceMap" in packet) return createNativeV3ImplementationContextService(options).reserveDownstream(input);
   return runtimeCompiler().reserve({
     runId: input.authority.runId,
     stepId: input.authority.workflowStepId,
@@ -1823,10 +1814,13 @@ export function reserveV3DownstreamEvidenceAttempt(input: Readonly<{
   });
 }
 
-export function loadV3ImplementationAttemptContext(input: Readonly<{
+export async function loadV3ImplementationAttemptContext(input: Readonly<{
   runId: string;
   storyId: string;
   attemptId: string;
 }>): Promise<V3ImplementationAttemptResult> {
-  return runtimeCompiler().loadAttemptContext(input);
+  const options = { sql: getSql(), artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() };
+  const packet = await createRuntimeArtifactReader(options).readExactSealedPacket(input.runId);
+  if (!("implementationSourceMap" in packet)) return runtimeCompiler().loadAttemptContext(input);
+  return createNativeV3ImplementationContextService(options).loadAttemptContext(input);
 }

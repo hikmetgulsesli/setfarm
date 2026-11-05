@@ -159,7 +159,7 @@ helper.authenticateP3ProjectedReadinessTestCapabilityV1();
 function commandArguments(): string[] {
   const separator = process.argv.indexOf("--");
   const command = separator >= 0 ? process.argv.slice(separator + 1) : [];
-  // One closed findings selector; the existing six-cell grammar stays unchanged.
+  // Closed code-owned selectors; the existing six-cell grammar stays unchanged.
   const fixedColdPre32Command = [
     "node", "--import", "tsx", "--test", "--test-concurrency=1",
     "--test-name-pattern=^cold pre32 catalog rejects unjournaled relations and orphan routines or triggers without writes$",
@@ -167,6 +167,24 @@ function commandArguments(): string[] {
   ] as const;
   if (command.length === fixedColdPre32Command.length
     && command.every((cell, index) => cell === fixedColdPre32Command[index])) {
+    return command;
+  }
+  const fixedNativeReviewCommand = [
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "--test-name-pattern=native review R[1-7]",
+    "tests/execution-attempts/native-implementation-join.integration.test.ts",
+  ] as const;
+  if (command.length === fixedNativeReviewCommand.length
+    && command.every((cell, index) => cell === fixedNativeReviewCommand[index])) {
+    return command;
+  }
+  const fixedNativeLineageCommand = [
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "--test-name-pattern=native review R[67]",
+    "tests/execution-attempts/native-implementation-join.integration.test.ts",
+  ] as const;
+  if (command.length === fixedNativeLineageCommand.length
+    && command.every((cell, index) => cell === fixedNativeLineageCommand[index])) {
     return command;
   }
   if (

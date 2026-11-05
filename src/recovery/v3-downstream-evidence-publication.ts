@@ -1,3 +1,6 @@
+import { readNativeOperationalSuccessAuthority } from "../execution/v3-native-operational-success-authority.js";
+import path from "node:path";
+import { readNativeEvidenceOnlySuccessAuthority } from "./v3-evidence-only-publication.js";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 import { z } from "zod";
@@ -219,6 +222,142 @@ async function lockStory(
       "run termination owns downstream evidence lifecycle",
     );
   }
+}
+
+const NATIVE_DOWNSTREAM_LINEAGE = "setfarm://native-downstream-lineage-v1/";
+type NativeDownstreamQuery = Pick<Sql, "unsafe"> | Pick<TransactionSql, "unsafe">;
+export type NativeDownstreamSourceOwner = Readonly<{
+  ownerKind: "accepted_model" | "native_evidence_refresh" | "native_operational_retry";
+  attempt_id: string; slice_hash: string; compilation_report_hash: string;
+  source_after_sha: string; source_after_tree_hash: string; output_hash: string;
+  repo: string; run_context: string;
+}>;
+
+/** SQL-only disjoint accepted model / settled native verifier relations. */
+export async function readNativeDownstreamSourceOwner(query: NativeDownstreamQuery, input: Readonly<{
+  runId: string; storyId: string; packetHash: string; sliceHash?: string; sourceOwnerAttemptId?: string;
+}>): Promise<NativeDownstreamSourceOwner> {
+  // Discover only the actual latest implementation attempt. A verifier is
+  // authenticated through its independent canonical success producer, never an RCR.
+  const selected = await query.unsafe<Array<{
+    attempt_id:string;attempt_class:string;slice_hash:string;compilation_report_hash:string;
+    source_after_sha:string;source_after_tree_hash:string;output_hash:string;repo:string;run_context:string;
+  }>>(`SELECT a.attempt_id,a.attempt_class,a.slice_hash,a.compilation_report_hash,
+      a.source_after_sha,a.source_after_tree_hash,a.output_hash,r.context::jsonb->>'repo' AS repo,r.context AS run_context
+    FROM execution_attempts a
+    JOIN runs r ON r.id=a.run_id AND r.protocol='v3' AND r.packet_hash=a.packet_hash
+    JOIN semantic_artifacts packet ON packet.artifact_hash=r.packet_hash
+      AND packet.artifact_type='setfarm.product-build-packet.v3'
+    WHERE a.run_id=$1 AND a.story_id=$2 AND a.packet_hash=$3 AND a.step_id='implement'
+      AND ($4::text IS NULL OR a.slice_hash=$4) AND ($5::text IS NULL OR a.attempt_id=$5)
+      AND NOT EXISTS (SELECT 1 FROM execution_attempts newer WHERE newer.run_id=a.run_id
+        AND newer.step_id='implement' AND newer.story_id=a.story_id AND newer.generation>a.generation)`,
+    [input.runId,input.storyId,input.packetHash,input.sliceHash??null,input.sourceOwnerAttemptId??null]);
+  if(selected.length!==1) fail("V3_NATIVE_DOWNSTREAM_SOURCE_OWNER_REQUIRED","one actual latest implementation source owner is required");
+  const current=selected[0]!;
+  // Match existing native custody's actual authority: the run context locator.
+  // Keep its lexical bytes under SQL locks; canonical Git/FS checks occur outside.
+  const runContext=z.record(z.string(),z.string()).parse(JSON.parse(current.run_context));
+  if(!runContext.repo||runContext.repo!==current.repo||!path.isAbsolute(runContext.repo)
+    ||/[\r\n\0]/.test(runContext.repo)||!runContext.branch)
+    fail("V3_NATIVE_DOWNSTREAM_SOURCE_OWNER_REQUIRED","actual run context has no strict repository/branch locator");
+  if(current.attempt_class==="evidence_only") {
+    const success=await readNativeEvidenceOnlySuccessAuthority(query,{runId:input.runId,stepId:"implement",
+      storyId:input.storyId,packetHash:input.packetHash,attemptId:current.attempt_id});
+    if(!["done","verified"].includes(success.storyStatus)||success.storyOutput!==success.acceptanceOutput
+      ||success.sliceHash!==current.slice_hash||success.compilationReportHash!==current.compilation_report_hash
+      ||success.sourceAfter.sha!==current.source_after_sha||success.sourceAfter.treeHash!==current.source_after_tree_hash
+      ||success.outputHash!==current.output_hash||!current.repo)
+      fail("V3_NATIVE_DOWNSTREAM_SOURCE_OWNER_REQUIRED","settled native verifier lacks its exact accepted story/source/contract");
+    return Object.freeze({ownerKind:"native_evidence_refresh",attempt_id:success.attemptId,
+      slice_hash:success.sliceHash,compilation_report_hash:success.compilationReportHash,
+      source_after_sha:success.sourceAfter.sha,source_after_tree_hash:success.sourceAfter.treeHash,
+      output_hash:success.outputHash,repo:current.repo,run_context:current.run_context});
+  }
+  if(current.attempt_class==="infrastructure_retry") {
+    // Reuse the shared authentic model-success relation. The original failed
+    // model stays provenance; the actual accepted successor supplies output.
+    const success=await readNativeOperationalSuccessAuthority(query,{runId:input.runId,stepId:"implement",
+      storyId:input.storyId,packetHash:input.packetHash,attemptId:current.attempt_id});
+    if(success.sliceHash!==current.slice_hash||success.compilationReportHash!==current.compilation_report_hash
+      ||success.sourceAfter.sha!==current.source_after_sha||success.sourceAfter.treeHash!==current.source_after_tree_hash
+      ||success.outputHash!==current.output_hash||!current.repo)
+      fail("V3_NATIVE_DOWNSTREAM_SOURCE_OWNER_REQUIRED","accepted operational successor differs from actual candidate/contract");
+    return Object.freeze({ownerKind:"native_operational_retry",attempt_id:success.attemptId,
+      slice_hash:success.sliceHash,compilation_report_hash:success.compilationReportHash,
+      source_after_sha:success.sourceAfter.sha,source_after_tree_hash:success.sourceAfter.treeHash,
+      output_hash:success.outputHash,repo:current.repo,run_context:current.run_context});
+  }
+  const rows = await query.unsafe<Array<Omit<NativeDownstreamSourceOwner,"ownerKind">>>(`
+    SELECT a.attempt_id,a.slice_hash,a.compilation_report_hash,a.source_after_sha,a.source_after_tree_hash,
+      a.output_hash,r.context::jsonb->>'repo' AS repo,r.context AS run_context
+    FROM execution_attempts a
+    JOIN runs r ON r.id=a.run_id AND r.protocol='v3' AND r.packet_hash=a.packet_hash
+    JOIN semantic_artifacts packet ON packet.artifact_hash=r.packet_hash AND packet.artifact_type='setfarm.product-build-packet.v3'
+    JOIN stories story ON story.run_id=a.run_id AND story.story_id=a.story_id AND story.status IN ('done','verified')
+    JOIN claim_log c ON c.id=a.claim_id AND c.run_id=a.run_id AND c.step_id='implement'
+      AND c.story_id=a.story_id AND c.agent_id=a.agent_id AND c.outcome='completed'
+    JOIN runtime_completion_requests q ON q.attempt_id=a.attempt_id AND q.claim_id=c.id AND q.run_id=a.run_id
+      AND q.story_id=a.story_id AND q.workflow_step_id='implement' AND q.output_hash=a.output_hash
+      AND q.state='accepted' AND q.apply_phase='effects_committed' AND q.claim_outcome='completed'
+    JOIN runtime_sessions runtime ON runtime.session_id=q.runtime_session_id AND runtime.claim_id=c.id
+      AND runtime.attempt_id=a.attempt_id AND runtime.run_id=a.run_id AND runtime.story_id=a.story_id
+      AND runtime.step_db_id=q.step_db_id AND runtime.workflow_step_id='implement' AND runtime.state='released'
+    WHERE a.run_id=$1 AND a.story_id=$2 AND a.packet_hash=$3 AND a.step_id='implement'
+      AND a.attempt_class IN ('product_implementation','supervisor_repair')
+      AND a.disposition IN ('produced_delta','already_satisfied','verified')
+      AND a.source_after_sha IS NOT NULL AND a.source_after_tree_hash IS NOT NULL
+      AND ($4::text IS NULL OR a.slice_hash=$4) AND ($5::text IS NULL OR a.attempt_id=$5)
+      AND NOT EXISTS (SELECT 1 FROM execution_attempts newer WHERE newer.run_id=a.run_id
+        AND newer.step_id='implement' AND newer.story_id=a.story_id AND newer.generation>a.generation)
+    `, [input.runId,input.storyId,input.packetHash,input.sliceHash ?? null,input.sourceOwnerAttemptId ?? null]);
+  if (rows.length !== 1 || rows[0]!.repo!==current.repo || rows[0]!.run_context!==current.run_context
+    || !rows[0]!.slice_hash || !rows[0]!.output_hash) {
+    fail("V3_NATIVE_DOWNSTREAM_SOURCE_OWNER_REQUIRED", "one genuine current accepted model source owner is required");
+  }
+  return Object.freeze({...rows[0]!,ownerKind:"accepted_model"});
+}
+
+/** URI is DATA. Every identity is rejoined to the actual child, parent and source owner. */
+export async function readNativeDownstreamAttemptAuthority(query: NativeDownstreamQuery, attempt: ExecutionAttemptV1) {
+  const refs = attempt.evidenceRefs.filter(ref => ref.startsWith(NATIVE_DOWNSTREAM_LINEAGE));
+  const match = refs.length === 1 ? /^setfarm:\/\/native-downstream-lineage-v1\/([1-9][0-9]*)\/(ATT_[A-Za-z0-9-]{16,160})$/.exec(refs[0]!) : null;
+  const parentClaimId = match ? Number(match[1]) : 0;
+  if (!match || !Number.isSafeInteger(parentClaimId) || !attempt.claimId || !attempt.packetHash || !attempt.sliceHash
+    || attempt.attemptClass !== "evidence_only" || attempt.role !== "downstream-evidence-orchestrator"
+    || attempt.agentId !== "setfarm-downstream-evidence-orchestrator" || attempt.recoveryDispatchId
+    || attempt.recoveryCaseRevisionId || !["qa-test","final-test"].includes(attempt.stepId)) {
+    fail("V3_NATIVE_DOWNSTREAM_LINEAGE_INVALID", "native downstream child lacks exactly one code-owned lineage tuple");
+  }
+  const rows = await query.unsafe<Array<{ parent_id: string }>>(`
+    SELECT parent.id::text AS parent_id FROM execution_attempts a
+    JOIN claim_log child ON child.id=a.claim_id AND child.run_id=a.run_id AND child.step_id=a.step_id
+      AND child.story_id=a.story_id AND child.agent_id=a.agent_id
+    JOIN claim_log parent ON parent.id=$2 AND parent.run_id=a.run_id AND parent.step_id=a.step_id
+      AND parent.story_id IS NULL AND parent.claimed_at<=child.claimed_at
+      AND (parent.outcome IS NULL OR parent.outcome='completed')
+    JOIN runs r ON r.id=a.run_id AND r.protocol='v3' AND r.packet_hash=a.packet_hash
+    JOIN steps step ON step.run_id=a.run_id AND step.step_id=a.step_id
+    WHERE a.attempt_id=$1 AND a.claim_id=$3 AND a.run_id=$4 AND a.story_id=$5
+      AND a.packet_hash=$6 AND a.slice_hash=$7 AND a.compilation_report_hash=$8
+      AND a.source_before_sha=$9 AND a.source_before_tree_hash=$10
+      AND a.role='downstream-evidence-orchestrator' AND a.agent_id='setfarm-downstream-evidence-orchestrator'
+      AND a.attempt_class='evidence_only' AND a.recovery_dispatch_id IS NULL AND a.recovery_case_revision_id IS NULL
+      AND a.generation=$11 AND a.fence_token=$12 AND a.evidence_refs::jsonb ? $13
+      AND a.worktree=$14 AND a.branch=$15 AND a.disposition=$16
+      AND ((a.disposition IN ('claimed','running') AND child.outcome IS NULL AND parent.outcome IS NULL AND step.status='running')
+        OR (a.disposition NOT IN ('claimed','running') AND child.outcome='completed'
+          AND a.source_after_sha=a.source_before_sha AND a.source_after_tree_hash=a.source_before_tree_hash))
+    `,[attempt.attemptId,parentClaimId,attempt.claimId,attempt.runId,attempt.storyId,attempt.packetHash,
+      attempt.sliceHash,attempt.compilationReportHash,attempt.sourceBefore.sha,attempt.sourceBefore.treeHash,
+      attempt.generation,attempt.fenceToken,refs[0]!,attempt.worktree ?? null,attempt.branch ?? null,attempt.disposition]);
+  if (rows.length !== 1) fail("V3_NATIVE_DOWNSTREAM_LINEAGE_INVALID", "stored URI does not authenticate the actual downstream owner");
+  const sourceOwner = await readNativeDownstreamSourceOwner(query,{runId:attempt.runId,storyId:attempt.storyId,
+    packetHash:attempt.packetHash,sliceHash:attempt.sliceHash,sourceOwnerAttemptId:match[2]!});
+  if (sourceOwner.compilation_report_hash !== attempt.compilationReportHash || sourceOwner.repo !== attempt.worktree) {
+    fail("V3_NATIVE_DOWNSTREAM_LINEAGE_INVALID", "downstream contract/report/repository differs from its actual source owner");
+  }
+  return { parentClaimId,sourceOwner };
 }
 
 async function loadAuthority(
@@ -606,6 +745,20 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
         await lockStory(transaction, authority, prepared.sourceBefore);
         const authorityRow = await loadAuthority(transaction, authority);
         assertAuthority(authorityRow, authority);
+        if(prepared.evidenceRefs.some(ref=>ref.startsWith(NATIVE_DOWNSTREAM_LINEAGE)))
+          fail("V3_NATIVE_DOWNSTREAM_LINEAGE_INVALID","caller cannot supply downstream lineage DATA");
+        const packetKinds=await transaction.unsafe<Array<{artifact_type:string}>>(
+          "SELECT artifact_type FROM semantic_artifacts WHERE artifact_hash=$1",[authority.packetHash]);
+        let nativeLineageRef:string|undefined;
+        if(packetKinds[0]?.artifact_type==="setfarm.product-build-packet.v3"){
+          const owner=await readNativeDownstreamSourceOwner(transaction,{runId:authority.runId,storyId:authority.storyId,
+            packetHash:authority.packetHash,sliceHash:prepared.sliceHash});
+          const context=z.record(z.string(),z.string()).parse(JSON.parse(owner.run_context));
+          if(owner.compilation_report_hash!==prepared.compilationReportHash || owner.repo!==prepared.worktree
+            ||context.repo!==owner.repo ||context.branch!==prepared.branch)
+            fail("V3_NATIVE_DOWNSTREAM_LINEAGE_INVALID","native final source is not the actual run repository/contract");
+          nativeLineageRef=`${NATIVE_DOWNSTREAM_LINEAGE}${authority.parentClaimId}/${owner.attempt_id}`;
+        }
         const prior = await transaction.unsafe<Array<{
           attempt_id: string;
           disposition: string;
@@ -613,9 +766,10 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
           fence_token: string;
           claim_id: string;
           lease_expires_at: Date | string;
+          evidence_refs: string;
         }>>(
           `SELECT attempt_id, disposition, generation, fence_token,
-                  claim_id::text, lease_expires_at
+                  claim_id::text, lease_expires_at, evidence_refs
              FROM execution_attempts
             WHERE run_id = $1
               AND step_id = $2
@@ -641,6 +795,12 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
           ],
         );
         if (prior[0]) {
+          if(nativeLineageRef){
+            const refs=z.array(z.string()).parse(JSON.parse(prior[0].evidence_refs));
+            const lineage=refs.filter(ref=>ref.startsWith(NATIVE_DOWNSTREAM_LINEAGE));
+            if(lineage.length!==1||lineage[0]!==nativeLineageRef)
+              fail("V3_NATIVE_DOWNSTREAM_LINEAGE_INVALID","native replay cannot adopt another parent/source owner");
+          }
           if (authorityRow.story_status === "failed" && ["claimed", "running"].includes(prior[0].disposition)) {
             fail("V3_DOWNSTREAM_EVIDENCE_FAILED_STORY_ACTIVE_ATTEMPT", "failed story replay requires terminal canonical evidence");
           }
@@ -733,7 +893,7 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
         const reservation = ExecutionAttemptReservationV1Schema.parse({
           ...prepared,
           claimId,
-          evidenceRefs: [`setfarm://claim-log/${claimBirth.claimIdText}`, ...prepared.evidenceRefs],
+          evidenceRefs: [`setfarm://claim-log/${claimBirth.claimIdText}`, ...prepared.evidenceRefs, ...(nativeLineageRef?[nativeLineageRef]:[])],
         });
         const reserved = await reserveAttemptInTransaction(transaction, reservation, {
           now,

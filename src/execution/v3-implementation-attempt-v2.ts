@@ -25,7 +25,7 @@ import { createV3ArtifactRefKeyV2 } from "./v3-artifact-ref-key-v2.js";
 import {
   V3PreparationClaimAuthorityV2Schema,
   type V3PreparationClaimAuthorityV2,
-} from "./v3-preparation-claim-authority-v2.js";
+} from "./v3-preparation-runtime-authority-v1.js";
 import {
   captureV3ImplementationSourceSnapshotsV2,
   type V3SourceSnapshotLimitsV2,
@@ -165,7 +165,7 @@ function exactDependencyOutputs(
     }));
 }
 
-function sourcePathsForStory(
+export function nativeImplementationSourcePathsV3(
   packet: SealedRuntimePacketV3,
   storyId: string,
 ): readonly Readonly<{ pathRef: string; path: string }>[] {
@@ -389,7 +389,7 @@ export function createV3ImplementationAttemptV2Assembler(
         );
       }
       assertCleanOrFail(assertCleanWorktree, input.worktree);
-      const sourcePaths = sourcePathsForStory(exactPacket, input.storyId);
+      const sourcePaths = nativeImplementationSourcePathsV3(exactPacket, input.storyId);
       const captured = captureV3ImplementationSourceSnapshotsV2({
         worktree: input.worktree,
         files: sourcePaths,

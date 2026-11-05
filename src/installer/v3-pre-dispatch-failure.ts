@@ -8,7 +8,7 @@ import {
   type V3PreDispatchDispositionV1,
 } from "../execution/v3-pre-dispatch-failure.js";
 import { isV3PreparationProducerFailureCode } from "../execution/v3-preparation-decision.js";
-import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-claim-authority.js";
+import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-runtime-authority-v1.js";
 import type { V3PreparationDependencyStateV1 } from "../execution/v3-preparation-decision.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
 import {

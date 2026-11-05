@@ -1,3 +1,5 @@
+import type { NativeImplementationContextV3 } from "../execution/v3-native-implementation-attempt.js";
+import type {PreparedNativeEvidenceMerge,NativeEvidenceOnlySettlementLease} from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -8,7 +10,10 @@ import {
   type EvidenceBundleV2,
 } from "../evidence/evidence-bundle-v2.js";
 import { EvidencePlanV1Schema, type EvidencePlanV1 } from "../evidence/evidence-plan-v1.js";
+import { EvidencePlanV2Schema, compileEvidencePlanV2, type EvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
+import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import { createAttemptRepository } from "../execution/attempt-repository.js";
+import { readNativeEvidenceOnlySourceAuthority,readNativeEvidenceOnlySettlementLease } from "./v3-evidence-only-publication.js";
 import type { ExecutionAttemptV1 } from "../execution/schemas/execution-attempt-v1.js";
 import { FindingSetV1Schema, type FindingSetV1 } from "../findings/finding-set.js";
 import { createGithubReviewResolutionEvidenceRepository } from "../findings/github-review-resolution-evidence-repository.js";
@@ -36,6 +41,7 @@ import type {
 } from "./recovery-case.js";
 import {
   V3DownstreamEvidenceAuthorityV1Schema,
+  readNativeDownstreamAttemptAuthority,
   type V3DownstreamEvidenceAuthorityV1,
 } from "./v3-downstream-evidence-publication.js";
 import {
@@ -91,9 +97,9 @@ type FailureClassV1 = z.infer<typeof FailureClassV1Schema>;
 type DispatchClass = RecoveryRevisionDispatchV1["dispatchClass"];
 
 type ParsedEvidenceContext = Readonly<{
-  slice: ImplementationSliceV1;
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2;
   sliceHash: string;
-  evidencePlan: EvidencePlanV1;
+  evidencePlan: EvidencePlanV1 | EvidencePlanV2;
   evidencePlanArtifactHash: string;
   evidenceBundle: EvidenceBundleV2;
   findingSet?: FindingSetV1;
@@ -193,10 +199,11 @@ function sameRevision(
 }
 
 function sameSliceRevision(
-  slice: ImplementationSliceV1,
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2,
   source: Readonly<{ sha: string; treeHash: string }>,
 ): boolean {
-  return slice.sourceRevision.baseSha === source.sha && slice.sourceRevision.treeHash === source.treeHash;
+  return (slice.schema === "setfarm.implementation-slice.v2" ? slice.sourceRevision.sha : slice.sourceRevision.baseSha) === source.sha
+    && slice.sourceRevision.treeHash === source.treeHash;
 }
 
 function sameCanonical(left: unknown, right: unknown): boolean {
@@ -298,8 +305,16 @@ export function computeMachineEvidenceFingerprintV1(input: EvidenceBundleV2): st
 }
 
 function parseContext(raw: z.infer<typeof V3RecoveryCoordinatorInputSchema>): ParsedEvidenceContext {
-  const slice = ImplementationSliceV1Schema.parse(raw.slice);
-  const evidencePlan = EvidencePlanV1Schema.parse(raw.evidencePlan);
+  const slice = z.union([ImplementationSliceV1Schema, LegacyImplementationSliceV2Schema]).parse(raw.slice);
+  const evidencePlan = slice.schema === "setfarm.implementation-slice.v2"
+    ? EvidencePlanV2Schema.parse(raw.evidencePlan) : EvidencePlanV1Schema.parse(raw.evidencePlan);
+  if (slice.schema === "setfarm.implementation-slice.v2") {
+    if (!sameCanonical(evidencePlan, compileEvidencePlanV2({ slice, sliceHash: raw.sliceHash }))
+      || hashCanonicalJson({ schema: "setfarm.semantic-artifact-envelope.v1", artifactType: "setfarm.evidence-plan.v2",
+        producer: slice.producer, payload: evidencePlan }) !== raw.evidencePlanArtifactHash) {
+      fail("V3_RECOVERY_CONTEXT_IDENTITY_MISMATCH", "native plan must reproduce its exact native slice and immutable envelope");
+    }
+  }
   const evidenceBundle = EvidenceBundleV2Schema.parse(raw.evidenceBundle);
   const findingSet = raw.findingSet === undefined ? undefined : FindingSetV1Schema.parse(raw.findingSet);
   const bundleHash = computeEvidenceBundleHash(evidenceBundle);
@@ -329,7 +344,10 @@ function validateEvidenceContext(context: ParsedEvidenceContext): void {
   ) {
     fail("V3_RECOVERY_CONTEXT_IDENTITY_MISMATCH", "slice, plan and evidence do not share one packet/story/slice identity");
   }
-  const productPredicateRefs = canonical(slice.requiredEvidence.map((predicate) => predicate.id));
+  const requiredEvidence = slice.schema === "setfarm.implementation-slice.v2"
+    ? slice.contract.product.evidencePredicates.filter(predicate => predicate.required && slice.story.evidenceRefs.includes(predicate.id))
+    : slice.requiredEvidence;
+  const productPredicateRefs = canonical(requiredEvidence.map((predicate) => predicate.id));
   const commandPredicateRefs = evidencePlan.commands.map((command) => `EVID_COMMAND_${command.commandRef}`);
   const requiredPredicates = canonical([...productPredicateRefs, ...commandPredicateRefs]);
   if (!exactStrings(evidencePlan.predicateRefs, productPredicateRefs)) {
@@ -339,7 +357,7 @@ function validateEvidenceContext(context: ParsedEvidenceContext): void {
   if (!exactStrings(bundlePredicateRefs, requiredPredicates)) {
     fail("V3_RECOVERY_EVIDENCE_BUNDLE_INCOMPLETE", "evidence bundle is not the exact slice predicate set");
   }
-  const slicePredicateById = new Map(slice.requiredEvidence.map((predicate) => [predicate.id, predicate]));
+  const slicePredicateById = new Map(requiredEvidence.map((predicate) => [predicate.id, predicate]));
   const commandByPredicate = new Map(evidencePlan.commands.map((command) => [
     `EVID_COMMAND_${command.commandRef}`,
     command,
@@ -418,8 +436,10 @@ function validateFailureFindingSet(context: ParsedEvidenceContext): FindingSetV1
   const writablePaths = canonical(slice.files
     .filter((file) => file.role === "owned" || file.role === "shared_writable")
     .map((file) => file.path));
+  const recoveryPaths = slice.schema === "setfarm.implementation-slice.v2" && slice.recovery
+    ? new Set(slice.recovery.expectedSourceDelta.changes.map(change => change.path)) : undefined;
   const compilerLocatablePaths = writablePaths.length > 0
-    ? writablePaths
+    ? writablePaths.filter(path => !recoveryPaths || recoveryPaths.has(path))
     : canonical(slice.files.filter((file) => file.role !== "dependency").map((file) => file.path));
   for (const finding of findingSet.findings) {
     if (finding.status !== "open" || finding.classification !== "structured" || !finding.expectedPredicateRef) {
@@ -456,15 +476,17 @@ function recoveryEvidenceRefs(context: ParsedEvidenceContext): string[] {
 }
 
 function deriveSourceRecovery(
-  slice: ImplementationSliceV1,
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2,
   findingSet: FindingSetV1,
 ): Readonly<{
   owner: "implement" | "supervisor";
   expectedDelta: Extract<RecoveryCaseDraftV1["expectedDelta"], { kind: "source_change" }>;
   allowedPaths: string[];
 }> | undefined {
+  const recoveryPaths = slice.schema === "setfarm.implementation-slice.v2" && slice.recovery
+    ? new Set(slice.recovery.expectedSourceDelta.changes.map(change => change.path)) : undefined;
   const allowedPaths = canonical(slice.files
-    .filter((file) => file.role === "owned" || file.role === "shared_writable")
+    .filter((file) => (file.role === "owned" || file.role === "shared_writable") && (!recoveryPaths || recoveryPaths.has(file.path)))
     .map((file) => file.path));
   const allowed = new Set(allowedPaths);
   const requiredPaths = canonical(findingSet.findings
@@ -529,18 +551,73 @@ function assertAttemptEvidence(input: Readonly<{
   }
 }
 
-function assertRecoverySlice(input: Readonly<{
+async function assertRecoverySlice(input: Readonly<{
   context: ParsedEvidenceContext;
   revision: RecoveryCaseRevisionV1;
   dispatch: RecoveryRevisionDispatchV1;
   delivery: RecoveryDispatchDeliveryRecord;
-}>): void {
+  attempt: ExecutionAttemptV1;
+  query: Pick<Sql, "unsafe">;
+}>): Promise<void> {
   const { context, revision, dispatch, delivery } = input;
-  const directive = context.slice.recovery;
+  const slice = context.slice;
+  const directive = slice.recovery;
   if (dispatch.dispatchClass === "evidence_only") {
+    if (slice.schema === "setfarm.implementation-slice.v2") {
+      const owner = await readNativeEvidenceOnlySourceAuthority(input.query, {
+        runId: dispatch.runId, storyId: dispatch.storyId, recoveryCaseId: dispatch.recoveryCaseId,
+        revisionId: revision.revisionId, dispatchId: dispatch.dispatchId, packetHash: dispatch.packetHash,
+        contractSliceHash: dispatch.contractSliceHash, findingSetHash: dispatch.findingSetHash,
+        sourceRevision: dispatch.sourceRevision, priorEvidencePlanArtifactHash: context.evidencePlanArtifactHash,
+      });
+      // SQL-only recheck under the existing coordinator decision lock. The
+      // immutable plan/slice envelope hashes were reproduced by parseContext;
+      // the genuine original model owner and terminal nonmodel child must bind
+      // those same contracts to their distinct original/current sources.
+      const rows = await input.query.unsafe<Array<{ attempt_id: string }>>(`
+        SELECT a.attempt_id FROM execution_attempts a
+        JOIN execution_attempts original ON original.attempt_id=$2
+          AND original.run_id=a.run_id AND original.story_id=a.story_id AND original.packet_hash=a.packet_hash
+          AND original.slice_hash=a.slice_hash AND original.compilation_report_hash=a.compilation_report_hash
+        JOIN recovery_dispatch_deliveries d ON d.attempt_id=a.attempt_id AND d.claim_id=a.claim_id
+          AND d.run_id=a.run_id AND d.story_id=a.story_id AND d.dispatch_id=a.recovery_dispatch_id
+          AND d.revision_id=a.recovery_case_revision_id AND d.execution_slice_hash=a.slice_hash
+        JOIN claim_log claim ON claim.id=a.claim_id AND claim.run_id=a.run_id
+          AND claim.step_id=a.step_id AND claim.story_id=a.story_id AND claim.agent_id=a.agent_id
+        JOIN semantic_artifacts slice ON slice.artifact_hash=a.slice_hash AND slice.artifact_type='setfarm.implementation-slice.v2'
+        JOIN semantic_artifacts plan ON plan.artifact_hash=$12 AND plan.artifact_type='setfarm.evidence-plan.v2'
+        WHERE a.attempt_id=$1 AND a.run_id=$3 AND a.story_id=$4 AND a.step_id='implement'
+          AND a.attempt_class='evidence_only' AND a.role='evidence-orchestrator' AND a.agent_id='setfarm-evidence-orchestrator'
+          AND a.packet_hash=$5 AND a.slice_hash=$6 AND a.finding_set_hash=$7
+          AND a.recovery_dispatch_id=$8 AND a.recovery_case_revision_id=$9
+          AND a.source_before_sha=$10 AND a.source_before_tree_hash=$11
+          AND a.source_after_sha=a.source_before_sha AND a.source_after_tree_hash=a.source_before_tree_hash
+          AND original.source_after_sha=a.source_before_sha AND original.source_after_tree_hash=a.source_before_tree_hash
+          AND original.source_before_sha=$13 AND original.source_before_tree_hash=$14
+          AND a.generation=original.generation+1 AND a.generation=$15 AND a.fence_token=$16
+          AND a.output_hash=$17 AND a.disposition=$18 AND claim.outcome='completed'
+          AND d.attempt_count=1 AND d.state IN ('attempt_reserved','running','succeeded','failed')
+          AND d.owner_instance_id IS NOT DISTINCT FROM $19 AND d.lease_token IS NOT DISTINCT FROM $20
+          AND a.evidence_refs::jsonb ? $21 AND a.evidence_refs::jsonb ? $22
+          AND EXISTS (SELECT 1 FROM run_artifact_refs r WHERE r.run_id=a.run_id AND r.artifact_hash=a.slice_hash)
+          AND EXISTS (SELECT 1 FROM run_artifact_refs r WHERE r.run_id=a.run_id AND r.artifact_hash=plan.artifact_hash)
+          AND NOT EXISTS (SELECT 1 FROM runtime_sessions r WHERE r.claim_id=a.claim_id OR r.attempt_id=a.attempt_id)
+          AND NOT EXISTS (SELECT 1 FROM runtime_completion_requests q WHERE q.claim_id=a.claim_id OR q.attempt_id=a.attempt_id)
+        `, [input.attempt.attemptId, owner.attempt_id, dispatch.runId, dispatch.storyId, dispatch.packetHash,
+          context.sliceHash, dispatch.findingSetHash, dispatch.dispatchId, revision.revisionId,
+          dispatch.sourceRevision.sha, dispatch.sourceRevision.treeHash, context.evidencePlanArtifactHash,
+          slice.sourceRevision.sha, slice.sourceRevision.treeHash, input.attempt.generation, input.attempt.fenceToken,
+          context.bundleHash, input.attempt.disposition, delivery.ownerInstanceId ?? null, delivery.leaseToken ?? null,
+          `setfarm://artifact/${context.evidencePlanArtifactHash}`, `setfarm://evidence-bundle/${context.bundleHash}`]);
+      if (rows.length !== 1 || revision.evidencePlanArtifactHash !== context.evidencePlanArtifactHash
+        || dispatch.evidencePlanArtifactHash !== context.evidencePlanArtifactHash
+        || dispatch.contractSliceHash !== context.sliceHash || revision.contractSliceHash !== context.sliceHash) {
+        fail("V3_RECOVERY_EVIDENCE_SLICE_MISMATCH", "native evidence lacks its genuine original-contract/current-source owner chain");
+      }
+    }
     if (
-      directive
-      || !sameSliceRevision(context.slice, dispatch.sourceRevision)
+      (directive && slice.schema !== "setfarm.implementation-slice.v2")
+      || (slice.schema !== "setfarm.implementation-slice.v2" && !sameSliceRevision(context.slice, dispatch.sourceRevision))
       || delivery.executionSliceHash !== context.sliceHash
       || context.slice.packetHash !== dispatch.packetHash
       || context.slice.storyId !== dispatch.storyId
@@ -552,20 +629,41 @@ function assertRecoverySlice(input: Readonly<{
     }
     return;
   }
+  if (slice.schema === "setfarm.implementation-slice.v2") {
+    const recovery = slice.recovery;
+    const delta = recovery?.expectedSourceDelta;
+    if (!recovery || !delta || !("mode" in delta) || delta.mode !== "generated_repair"
+      || recovery.findingSet.findingSetHash !== dispatch.findingSetHash
+      || recovery.findingSet.sliceHash !== dispatch.contractSliceHash
+      || !exactStrings(recovery.findingSet.findings.map(finding => finding.findingId), dispatch.findingIds)
+      || !sameRevision(recovery.sourceRevision, dispatch.sourceRevision)
+      || !sameSliceRevision(slice, dispatch.sourceRevision)
+      || !sameCanonical(delta.expectedDelta, revision.expectedDelta)
+      || !exactStrings(delta.allowedPaths, revision.allowedPaths)
+      || delivery.executionSliceHash !== context.sliceHash) {
+      fail("V3_RECOVERY_SLICE_DISPATCH_MISMATCH", "native execution slice differs from the authenticated durable recovery revision and dispatch");
+    }
+    const writable = new Set(slice.files.filter(file => file.role === "owned" || file.role === "shared_writable").map(file => file.path));
+    if (delta.allowedPaths.some(path => !writable.has(path))) {
+      fail("V3_RECOVERY_PATH_AUTHORITY_INVALID", "native recovery grants a non-writable topology path");
+    }
+    return;
+  }
+  const legacyDirective = slice.recovery;
   if (
-    !directive
-    || directive.recoveryCaseRevisionId !== revision.revisionId
-    || directive.recoveryDispatchId !== dispatch.dispatchId
-    || directive.dispatchClass !== dispatch.dispatchClass
-    || directive.findingSetHash !== dispatch.findingSetHash
-    || directive.contractSliceHash !== dispatch.contractSliceHash
-    || !exactStrings(directive.findingIds, dispatch.findingIds)
+    !legacyDirective
+    || legacyDirective.recoveryCaseRevisionId !== revision.revisionId
+    || legacyDirective.recoveryDispatchId !== dispatch.dispatchId
+    || legacyDirective.dispatchClass !== dispatch.dispatchClass
+    || legacyDirective.findingSetHash !== dispatch.findingSetHash
+    || legacyDirective.contractSliceHash !== dispatch.contractSliceHash
+    || !exactStrings(legacyDirective.findingIds, dispatch.findingIds)
     || !sameSliceRevision(context.slice, dispatch.sourceRevision)
-    || directive.sourceRevision.baseSha !== dispatch.sourceRevision.sha
-    || directive.sourceRevision.treeHash !== dispatch.sourceRevision.treeHash
-    || !sameCanonical(directive.expectedDelta, revision.expectedDelta)
-    || !exactStrings(directive.allowedPaths, revision.allowedPaths)
-    || directive.evidencePlanArtifactHash !== revision.evidencePlanArtifactHash
+    || legacyDirective.sourceRevision.baseSha !== dispatch.sourceRevision.sha
+    || legacyDirective.sourceRevision.treeHash !== dispatch.sourceRevision.treeHash
+    || !sameCanonical(legacyDirective.expectedDelta, revision.expectedDelta)
+    || !exactStrings(legacyDirective.allowedPaths, revision.allowedPaths)
+    || legacyDirective.evidencePlanArtifactHash !== revision.evidencePlanArtifactHash
     || delivery.executionSliceHash !== context.sliceHash
   ) {
     fail("V3_RECOVERY_SLICE_DISPATCH_MISMATCH", "execution slice is not the exact revision-bound recovery directive");
@@ -573,7 +671,7 @@ function assertRecoverySlice(input: Readonly<{
   const writable = canonical(context.slice.files
     .filter((file) => file.role === "owned" || file.role === "shared_writable")
     .map((file) => file.path));
-  if (directive.allowedPaths.some((path) => !writable.includes(path))) {
+  if (legacyDirective.allowedPaths.some((path) => !writable.includes(path))) {
     fail("V3_RECOVERY_PATH_AUTHORITY_INVALID", "recovery directive grants a non-writable topology path");
   }
 }
@@ -643,7 +741,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
   const attempts = createAttemptRepository(sql);
   const reviewResolutions = createGithubReviewResolutionEvidenceRepository(sql);
 
-  async function loadRecoveryIdentity(input: Readonly<{
+  async function loadRecoveryIdentity(query: Pick<Sql, "unsafe">, input: Readonly<{
     recoveryCaseId: string;
     revisionId: string;
     dispatchId: string;
@@ -677,7 +775,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     ) {
       fail("V3_RECOVERY_LEDGER_IDENTITY_MISMATCH", "recovery ledger rows do not form one exact identity chain");
     }
-    assertRecoverySlice({ context: input.context, revision, dispatch, delivery });
+    await assertRecoverySlice({ context: input.context, revision, dispatch, delivery, attempt, query });
     assertAttemptEvidence({ attempt, context: input.context, recovery: dispatch });
     return { recoveryCase, revision, dispatch, delivery, attempt };
   }
@@ -803,6 +901,8 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     allowedPaths?: string[];
     decisionRef: string;
     now: Date;
+    nativeEvidenceMerge?:PreparedNativeEvidenceMerge;
+    nativeEvidenceLease?:NativeEvidenceOnlySettlementLease;
   }>): Promise<RecoveryCaseV1> {
     for (let cycle = 0; cycle < 4; cycle += 1) {
       const current = await findings.findRecoveryCase(input.recoveryCaseId);
@@ -839,7 +939,8 @@ export function createV3RecoveryCoordinator(sql: Sql) {
           evidenceBundleHashes: [input.evidenceBundleHash],
         },
         decisionRef: input.decisionRef,
-      }, { now: input.now });
+      }, { now: input.now, ...(input.nativeEvidenceMerge?{nativeEvidenceMerge:input.nativeEvidenceMerge}:{}),
+        ...(input.nativeEvidenceLease?{nativeEvidenceLease:input.nativeEvidenceLease}:{}) });
       if (transitioned.status === "transitioned") return transitioned.recoveryCase;
     }
     fail("V3_RECOVERY_TERMINAL_CAS_EXHAUSTED", "terminal transition did not converge after replay");
@@ -1046,15 +1147,31 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     raw: z.infer<typeof InitialEvidenceInputSchema>,
     context: ParsedEvidenceContext,
     now: Date,
+    transaction: postgres.TransactionSql,
+    nativeDownstream?: NativeImplementationContextV3,
   ): Promise<V3RecoveryCoordinatorResult> {
-    if (context.slice.recovery) {
+    if (context.slice.recovery && !nativeDownstream) {
       fail("V3_RECOVERY_INITIAL_SLICE_HAS_DIRECTIVE", "initial evidence cannot contain a recovery directive");
     }
     const attemptId = context.evidenceBundle.attemptId;
     if (!attemptId) fail("V3_RECOVERY_EVIDENCE_ATTEMPT_REQUIRED", "initial evidence requires an exact attempt");
     const attempt = await attempts.findById(attemptId);
     if (!attempt) fail("V3_RECOVERY_ATTEMPT_NOT_FOUND", `attempt ${attemptId} does not exist`);
-    if (!sameSliceRevision(context.slice, attempt.sourceBefore)) {
+    if(nativeDownstream) {
+      const authority=nativeDownstream.downstreamEvidence;
+      if(!authority||!raw.downstreamAuthority||context.slice.schema!=="setfarm.implementation-slice.v2")
+        fail("V3_RECOVERY_DOWNSTREAM_AUTHORITY_MISMATCH","native downstream evidence lacks preauthenticated lineage");
+      const lineage=await readNativeDownstreamAttemptAuthority(transaction,attempt);
+      if(lineage.parentClaimId!==raw.downstreamAuthority.parentClaimId
+        ||lineage.parentClaimId!==authority.parentClaimId
+        ||lineage.sourceOwner.attempt_id!==authority.sourceOwnerAttemptId
+        ||attempt.attemptId!==nativeDownstream.attempt.attemptId
+        ||attempt.sliceHash!==nativeDownstream.sliceHash
+        ||attempt.compilationReportHash!==nativeDownstream.compilationReportHash
+        ||!sameRevision(attempt.sourceBefore,nativeDownstream.sourceBefore)
+        ||!sameRevision(attempt.sourceBefore,context.evidenceBundle.sourceRevision))
+        fail("V3_RECOVERY_DOWNSTREAM_AUTHORITY_MISMATCH","current child/source owner differs from preauthenticated native final authority");
+    } else if (!sameSliceRevision(context.slice, attempt.sourceBefore)) {
       fail("V3_RECOVERY_INITIAL_SLICE_SOURCE_MISMATCH", "initial slice does not match the attempt source-before fence");
     }
     if (raw.downstreamAuthority && (
@@ -1131,11 +1248,14 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     raw: z.infer<typeof RecoveryEvidenceInputSchema>,
     context: ParsedEvidenceContext,
     now: Date,
+    query: Pick<Sql, "unsafe">,
+    nativeEvidenceMerge?:PreparedNativeEvidenceMerge,
+    nativeEvidenceLease?:NativeEvidenceOnlySettlementLease,
   ): Promise<V3RecoveryCoordinatorResult> {
     if (context.evidenceBundle.attemptId !== raw.attemptId) {
       fail("V3_RECOVERY_INPUT_ATTEMPT_MISMATCH", "input and evidence bundle name different attempts");
     }
-    const identity = await loadRecoveryIdentity({
+    const identity = await loadRecoveryIdentity(query, {
       recoveryCaseId: raw.recoveryCaseId,
       revisionId: raw.revisionId,
       dispatchId: raw.dispatchId,
@@ -1163,7 +1283,13 @@ export function createV3RecoveryCoordinator(sql: Sql) {
       ...(context.findingSet ? { findingSetHash: context.findingSet.findingSetHash } : {}),
       ...(context.failureClass ? { failureClass: context.failureClass } : {}),
     });
-    await completeDeliveryExactly({ identity, context, coordinatorEventHash, now });
+    // Native verifier success is settled in the existing case transaction
+    // together with story acceptance/frozen route publication. Parsed schema
+    // alone grants nothing: that transaction rejoins the complete durable tuple.
+    if(!(context.slice.schema==="setfarm.implementation-slice.v2"
+      &&identity.attempt.attemptClass==="evidence_only"&&context.evidenceBundle.aggregateVerdict==="pass")) {
+      await completeDeliveryExactly({ identity, context, coordinatorEventHash, now });
+    }
 
     if (context.evidenceBundle.aggregateVerdict === "pass") {
       const recoveryCase = await transitionTerminal({
@@ -1178,6 +1304,8 @@ export function createV3RecoveryCoordinator(sql: Sql) {
           coordinatorEventHash,
         }),
         now,
+        ...(nativeEvidenceMerge?{nativeEvidenceMerge}:{}),
+        ...(nativeEvidenceLease?{nativeEvidenceLease}:{}),
       });
       const revision = await deliveries.findCurrentRevision(recoveryCase.recoveryCaseId);
       if (!revision) fail("V3_RECOVERY_CURRENT_REVISION_MISSING", "resolved case has no revision");
@@ -1418,12 +1546,35 @@ export function createV3RecoveryCoordinator(sql: Sql) {
 
     async coordinate(
       input: unknown,
-      options: Readonly<{ now?: Date }> = {},
+      options: Readonly<{ now?: Date; nativeEvidenceMerge?:PreparedNativeEvidenceMerge }> = {},
     ): Promise<V3RecoveryCoordinatorResult> {
       const raw = V3RecoveryCoordinatorInputSchema.parse(input);
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) fail("V3_RECOVERY_TIME_INVALID", "coordinator time is invalid");
       const context = parseContext(raw);
+      let nativeDownstream:NativeImplementationContextV3|undefined;
+      if(raw.kind==="initial_evidence"&&raw.downstreamAuthority&&context.slice.schema==="setfarm.implementation-slice.v2") {
+        const attemptId=context.evidenceBundle.attemptId;
+        if(!attemptId) fail("V3_RECOVERY_EVIDENCE_ATTEMPT_REQUIRED","native downstream evidence requires its actual child");
+        // Full indexed CAS/original custody/current final Git authentication is
+        // outside the coordinator transaction. Inside, only existing rows rejoin.
+        const {loadV3ImplementationAttemptContext}=await import("../execution/v3-implementation-attempt.js");
+        const compiled=await loadV3ImplementationAttemptContext({runId:context.evidenceBundle.runId,
+          storyId:context.evidenceBundle.storyId,attemptId});
+        if(compiled.kind!=="native-dispatch-ready"||!compiled.downstreamEvidence
+          ||compiled.downstreamEvidence.parentClaimId!==raw.downstreamAuthority.parentClaimId
+          ||compiled.sliceHash!==context.sliceHash||compiled.evidencePlanArtifactHash!==context.evidencePlanArtifactHash
+          ||canonicalJsonStringify(compiled.slice)!==canonicalJsonStringify(context.slice)
+          ||canonicalJsonStringify(compiled.evidencePlan)!==canonicalJsonStringify(context.evidencePlan)
+          ||!sameRevision(compiled.sourceBefore,context.evidenceBundle.sourceRevision))
+          fail("V3_RECOVERY_DOWNSTREAM_AUTHORITY_MISMATCH","native semantic contract and integrated candidate lack authentic downstream ownership");
+        nativeDownstream=compiled;
+      }
+      const nativeEvidenceLease=raw.kind==="recovery_evidence"
+        &&context.slice.schema==="setfarm.implementation-slice.v2"&&context.evidenceBundle.aggregateVerdict==="pass"
+        ?await readNativeEvidenceOnlySettlementLease(sql,{runId:context.evidenceBundle.runId,storyId:context.evidenceBundle.storyId,
+          attemptId:raw.attemptId,revisionId:raw.revisionId,dispatchId:raw.dispatchId,recoveryCaseId:raw.recoveryCaseId})
+        :undefined;
       const ownerKey = `setfarm:v3-recovery:${context.evidenceBundle.runId}:${context.evidenceBundle.storyId}`;
       // One story-level decision owner must finish revision advancement plus
       // authorization/terminalization before a concurrent replay observes it.
@@ -1436,8 +1587,8 @@ export function createV3RecoveryCoordinator(sql: Sql) {
           "V3_RECOVERY_DATABASE_TIME_UNAVAILABLE",
         );
         return raw.kind === "initial_evidence"
-          ? coordinateInitial(raw, context, now)
-          : coordinateRecovery(raw, context, now);
+          ? coordinateInitial(raw, context, now, transaction, nativeDownstream)
+          : coordinateRecovery(raw, context, now, transaction, options.nativeEvidenceMerge,nativeEvidenceLease);
       }) as Promise<V3RecoveryCoordinatorResult>;
     },
   };

@@ -201,9 +201,13 @@ export async function seedCanonicalCompilerStoryAdmissionFixture(
     runId: string;
     releaseSha: string;
     packetHash: string;
+    productSpec?: ReturnType<typeof twoStoryNodeExpressApiProductSpecV2>;
+    repo?: string;
+    task?: string;
   }>,
 ): Promise<CanonicalCompilerStoryAdmissionFixture> {
-  const productSpec = twoStoryNodeExpressApiProductSpecV2();
+  const productSpec = input.productSpec ?? twoStoryNodeExpressApiProductSpecV2();
+  const task = input.task ?? NODE_EXPRESS_API_TASK;
   const productSpecHash = hashCanonicalJson(productSpec);
   const renderedPlan = renderProductSpecV2Compatibility(productSpec);
   const prdMarker = "\nPRD:\n";
@@ -211,8 +215,8 @@ export async function seedCanonicalCompilerStoryAdmissionFixture(
   assert.ok(prdIndex > 0);
   const prd = renderedPlan.slice(prdIndex + prdMarker.length);
   const baseContext: Record<string, string> = {
-    task: NODE_EXPRESS_API_TASK,
-    repo: `/tmp/${input.runId}`,
+    task,
+    repo: input.repo ?? `/tmp/${input.runId}`,
     prd,
     product_semantics_version: "v2",
     product_spec_schema: productSpec.schema,
@@ -237,7 +241,7 @@ export async function seedCanonicalCompilerStoryAdmissionFixture(
       compiler_release_sha, packet_hash, activation_preflight_hash,
       release_admission_hash
     ) VALUES (
-      ${input.runId}, 'feature-dev', ${NODE_EXPRESS_API_TASK}, 'running',
+      ${input.runId}, 'feature-dev', ${task}, 'running',
       ${JSON.stringify(baseContext)}, 'v3', 1, ${input.releaseSha},
       ${input.packetHash}, ${"e".repeat(64)}, ${admissionHash}
     )
@@ -434,7 +438,8 @@ export async function seedCanonicalCompilerStoryAdmissionFixture(
      WHERE run_id = ${input.runId}
      ORDER BY story_index, story_id
   `;
-  assert.equal(storyRows.length, 2);
+  assert.equal(storyRows.length, compilerStoryEnglishAdmissionStateV1(storiesAuthority).rows.length);
+  if (!input.productSpec) assert.equal(storyRows.length, 2);
   return Object.freeze({
     runId: input.runId,
     implementStepDbId,

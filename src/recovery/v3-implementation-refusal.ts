@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { ClaimEnvelopeV1 } from "../execution/schemas/claim-envelope-v1.js";
 import type { SourceRevisionV1 } from "../execution/schemas/execution-attempt-v1.js";
-import type { V3ImplementationContextV1 } from "../execution/v3-implementation-handoff.js";
+import { parseV3ImplementationContext, type V3ImplementationContext } from "../execution/v3-implementation-handoff.js";
 import type { V3ImplementationRefusalOutputV1 } from "../execution/v3-implementation-output.js";
 import { createAttemptRepository } from "../execution/attempt-repository.js";
 import { completeStoryClaimAndBoundAttempt } from "../execution/claim-attempt-transition.js";
@@ -75,7 +75,7 @@ function sourceSnapshot(worktree: string, file: Pick<ImplementationFileV1, "path
 }
 
 export function captureV3RefusalFileSnapshots(
-  context: V3ImplementationContextV1,
+  context: V3ImplementationContext,
 ): V3RefusalFileSnapshot[] {
   return context.handoff.implementationSlice.files
     .map((file) => sourceSnapshot(context.handoff.workdir, file))
@@ -83,13 +83,19 @@ export function captureV3RefusalFileSnapshots(
 }
 
 function mismatchedSliceFiles(
-  context: V3ImplementationContextV1,
+  context: V3ImplementationContext,
   snapshots: readonly V3RefusalFileSnapshot[],
 ): V3RefusalFileSnapshot[] {
   const expected = new Map(context.handoff.implementationSlice.files.map((file) => [file.pathRef, file]));
+  if (context.handoff.schema === "setfarm.v3-implementation-claim-handoff.v2"
+    && (snapshots.length !== expected.size || new Set(snapshots.map(snapshot => snapshot.pathRef)).size !== expected.size
+      || snapshots.some(snapshot => expected.get(snapshot.pathRef)?.path !== snapshot.path))) {
+    throw Error("V3_REFUSAL_NATIVE_FILE_SNAPSHOT_IDENTITY_MISMATCH");
+  }
   return snapshots.filter((snapshot) => {
     const file = expected.get(snapshot.pathRef);
-    return !file || snapshot.presence !== file.presence || snapshot.contentHash !== file.knownContentHash;
+    const expectedHash = file && ("contentHash" in file ? file.contentHash : file.knownContentHash);
+    return !file || snapshot.presence !== file.presence || snapshot.contentHash !== expectedHash;
   });
 }
 
@@ -103,12 +109,13 @@ function refusalLocator(snapshot: V3RefusalFileSnapshot): Readonly<{ path: strin
  * used to select an owner, invariant, predicate, or retry budget.
  */
 export function buildV3ImplementationRefusalDecision(input: Readonly<{
-  context: V3ImplementationContextV1;
+  context: V3ImplementationContext;
   output: V3ImplementationRefusalOutputV1;
   observedSource: SourceRevisionV1;
   fileSnapshots: readonly V3RefusalFileSnapshot[];
 }>): V3ImplementationRefusalDecision {
-  const { context, output, observedSource } = input;
+  const context = parseV3ImplementationContext(input.context);
+  const { output, observedSource } = input;
   const handoff = context.handoff;
   const refusalHash = hashCanonicalJson(output);
   const sourceChanged = !sameSource(observedSource, handoff.sourceBefore);
@@ -233,7 +240,7 @@ export type V3ImplementationRefusalHandled = Readonly<{
 
 export async function handleV3ImplementationRefusal(input: Readonly<{
   envelope: ClaimEnvelopeV1;
-  context: V3ImplementationContextV1;
+  context: V3ImplementationContext;
   output: V3ImplementationRefusalOutputV1;
   rawOutput: string;
 }>): Promise<V3ImplementationRefusalHandled> {
@@ -316,10 +323,10 @@ export async function handleV3ImplementationRefusal(input: Readonly<{
         recoveryCaseId: recoveryCase.recoveryCaseId,
         owner: recoveryCase.owner,
         status: recoveryCase.status,
-        ...(handoff.implementationSlice.recovery
+        ...((handoff.schema === "setfarm.v3-implementation-claim-handoff.v2" ? handoff.recoveryAttempt : handoff.implementationSlice.recovery)
           ? {
-              priorRecoveryDispatchId: handoff.implementationSlice.recovery.recoveryDispatchId,
-              priorRecoveryRevisionId: handoff.implementationSlice.recovery.recoveryCaseRevisionId,
+              priorRecoveryDispatchId: handoff.schema === "setfarm.v3-implementation-claim-handoff.v2" ? handoff.recoveryAttempt!.recoveryDispatchId : handoff.implementationSlice.recovery!.recoveryDispatchId,
+              priorRecoveryRevisionId: handoff.schema === "setfarm.v3-implementation-claim-handoff.v2" ? handoff.recoveryAttempt!.recoveryCaseRevisionId : handoff.implementationSlice.recovery!.recoveryCaseRevisionId,
             }
           : {}),
       },

@@ -15,13 +15,14 @@ import {
   V3ImplementationAttemptError,
   type V3ImplementationAttemptResult,
 } from "../execution/v3-implementation-attempt.js";
+import { captureNativeDownstreamCurrentSource } from "../execution/v3-native-implementation-attempt.js";
 import { captureShadowSourceRevision } from "../execution/shadow-attempt-recorder.js";
 import {
   SourceRevisionV1Schema,
   type ExecutionAttemptV1,
   type SourceRevisionV1,
 } from "../execution/schemas/execution-attempt-v1.js";
-import { createRuntimeArtifactReader, type SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
+import { createRuntimeArtifactReader, type ExactSealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import { resolveProductArtifactCapacity, resolveProductArtifactDir } from "../runtime-config.js";
 import { createFindingRecoveryRepository } from "./finding-recovery-repository.js";
@@ -284,7 +285,7 @@ function terminalVerdict(bundle: EvidenceBundleV2): "pass" | "fail" | "inconclus
 }
 
 export type V3DownstreamEvidenceRouterDependencies = Readonly<{
-  readPacket(runId: string): Promise<SealedRuntimePacket>;
+  readPacket(runId: string): Promise<ExactSealedRuntimePacket>;
   readStories(input: Readonly<{ runId: string; storyIds: readonly string[] }>): Promise<readonly StoryIdentity[]>;
   reserveAttempt(input: Readonly<{
     authority: V3DownstreamEvidenceAuthorityV1;
@@ -308,11 +309,11 @@ export type V3DownstreamEvidenceRouterDependencies = Readonly<{
     findingSet?: FindingSetV1;
   }>): Promise<ExecutionAttemptV1>;
   executeEvidence(input: Readonly<{
-    packet: SealedRuntimePacket;
+    packet: ExactSealedRuntimePacket;
     context: V3ImplementationAttemptResult;
     worktree: string;
   }>): Promise<EvidenceBundleV2>;
-  captureSource(worktree: string): Promise<SourceRevisionV1>;
+  captureSource(worktree: string, packet?: ExactSealedRuntimePacket): Promise<SourceRevisionV1>;
   findEvidenceBundle(hash: string): Promise<EvidenceBundleV2 | undefined>;
   findFindingSet(hash: string): Promise<FindingSetV1 | undefined>;
   coordinate(input: unknown): Promise<V3RecoveryCoordinatorResult>;
@@ -397,7 +398,7 @@ export function createV3DownstreamEvidenceRouter(
         );
       }
 
-      const finalSource = await dependencies.captureSource(input.worktree);
+      const finalSource = await dependencies.captureSource(input.worktree, packet);
       const stagedStories: StagedStoryEvidence[] = [];
       const stories: V3DownstreamStoryEvidenceResult[] = [];
       for (const storyId of storyIds) {
@@ -452,13 +453,14 @@ export function createV3DownstreamEvidenceRouter(
         } else {
           attempt = await dependencies.markRunning({ authority, attempt });
           bundle = await dependencies.executeEvidence({ packet, context, worktree: input.worktree });
-          const sourceAfter = await dependencies.captureSource(input.worktree);
+          const sourceAfter = await dependencies.captureSource(input.worktree, packet);
           if (!sameRevision(sourceAfter, finalSource)) {
             fail("V3_DOWNSTREAM_EVIDENCE_SOURCE_MUTATED", "downstream evidence execution changed integrated product source");
           }
           findingSet = createFindingSetFromEvidenceBundleV2({
             workdir: input.worktree,
-            slice: context.slice,
+            ...(context.slice.schema === "setfarm.implementation-slice.v2"
+              ? { slice: context.slice, sourceRevision: sourceAfter } : { slice: context.slice }),
             sliceHash: context.sliceHash,
             bundle,
           });
@@ -493,7 +495,7 @@ export function createV3DownstreamEvidenceRouter(
         });
       }
 
-      const postEvidenceSource = await dependencies.captureSource(input.worktree);
+      const postEvidenceSource = await dependencies.captureSource(input.worktree, packet);
       if (!sameRevision(postEvidenceSource, finalSource)) {
         fail("V3_DOWNSTREAM_EVIDENCE_FINAL_SOURCE_DRIFT", "integrated source changed across the story evidence matrix");
       }
@@ -626,7 +628,7 @@ export function createPostgresV3DownstreamEvidenceRouter(sql: Sql = getSql()) {
   const findings = createFindingRecoveryRepository(sql);
   const coordinator = createV3RecoveryCoordinator(sql);
   return createV3DownstreamEvidenceRouter({
-    readPacket: (runId) => reader.readSealedPacket(runId),
+    readPacket: (runId) => reader.readExactSealedPacket(runId),
     readStories: (input) => readExactStories(sql, input),
     reserveAttempt: (input) => reserveV3DownstreamEvidenceAttempt(input),
     loadAttemptContext: (input) => loadV3ImplementationAttemptContext(input),
@@ -650,7 +652,8 @@ export function createPostgresV3DownstreamEvidenceRouter(sql: Sql = getSql()) {
       }
       return result.canonicalEvidence.bundle;
     },
-    captureSource: (worktree) => captureShadowSourceRevision(worktree),
+    captureSource: async (worktree,packet) => packet && "implementationSourceMap" in packet
+      ? captureNativeDownstreamCurrentSource(worktree,packet) : captureShadowSourceRevision(worktree),
     findEvidenceBundle: (hash) => findings.findEvidenceBundle(hash),
     findFindingSet: (hash) => findings.findFindingSet(hash),
     coordinate: (input) => coordinator.coordinate(input),

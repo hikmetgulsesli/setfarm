@@ -112,7 +112,8 @@ import {
   loadAndRevalidateV3StoryClaimRuntimeBindingV1,
   type V3StoryClaimRuntimeSubjectV1,
 } from "../execution/v3-story-claim-runtime-binding-v1.js";
-import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-claim-authority.js";
+import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-runtime-authority-v1.js";
+import type { V3PreparationClaimAuthorityV2 } from "../execution/v3-preparation-runtime-authority-v1.js";
 import { createV3PreparationBlockRepository } from "../execution/v3-preparation-block-repository.js";
 import {
   createPostgresTerminalDependencyAttemptReader,
@@ -161,9 +162,9 @@ import { createFindingRecoveryRepository } from "../recovery/finding-recovery-re
 import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
 import type { V3RecoveryClaimHandoffV1 } from "../recovery/v3-recovery-claim-authority.js";
 import {
-  createV3ImplementationContextV1,
-  type V3ImplementationContextV1,
-  type V3ImplementationClaimHandoffV1,
+  createV3ImplementationContext,
+  type V3ImplementationContext,
+  type V3ImplementationClaimHandoff,
 } from "../execution/v3-implementation-handoff.js";
 import { parseOperationalRetryDirectiveStoryOutput } from "../execution/operational-retry-directive.js";
 import {
@@ -1097,9 +1098,33 @@ export function commitStoryWorktreeScopeIfNeeded(
   declaredScopeFiles: string[] = [],
   commitType = "feat",
   strictDeclaredScope = false,
+  sourceContract?: "setfarm.implementation-slice.v2",
 ): { committed: boolean; sha: string; stagedFiles: string[]; error: string } {
   if (!workdir || !fs.existsSync(workdir)) {
     return { committed: false, sha: "", stagedFiles: [], error: "PLATFORM_STORY_COMMIT_MISSING_WORKDIR" };
+  }
+
+  if(sourceContract === "setfarm.implementation-slice.v2") {
+    if(!strictDeclaredScope||declaredScopeFiles.length===0)
+      return {committed:false,sha:"",stagedFiles:[],error:"PLATFORM_NATIVE_COMMIT_EXACT_SCOPE_REQUIRED"};
+    try {
+      // The authenticated native completion already supplies exact writable
+      // paths. Unhide only their tracked subset before reading status; newly
+      // allowed files remain untracked for the ordinary strict status/add path.
+      const allowed=new Set(declaredScopeFiles.map(normalizeScopeFile));
+      const listed=String(execPlatformGit(["--literal-pathspecs","ls-files","-z","--",...allowed],{
+        cwd:workdir,encoding:"utf8",timeout:10_000,stdio:["pipe","pipe","pipe"],
+      })).split("\0").filter(Boolean);
+      if(listed.some(file=>!allowed.has(file))) throw Error("native tracked scope differs from exact declared paths");
+      const tracked=[...new Set(listed)];
+      if(tracked.length) for(const flag of ["--no-assume-unchanged","--no-skip-worktree"]) {
+        execPlatformGit(["update-index",flag,"--",...tracked],{
+          cwd:workdir,timeout:10_000,stdio:["pipe","pipe","pipe"],
+        });
+      }
+    } catch(error) {
+      return {committed:false,sha:"",stagedFiles:[],error:`PLATFORM_NATIVE_COMMIT_INDEX_VISIBILITY_FAILED: ${formatCommandError(error)}`};
+    }
   }
 
   let status = "";
@@ -4284,7 +4309,7 @@ interface ClaimResult {
   recoveryDispatchId?: string;
   recoveryRevisionId?: string;
   recoveryLeaseToken?: string;
-  v3ImplementationHandoff?: V3ImplementationClaimHandoffV1;
+  v3ImplementationHandoff?: V3ImplementationClaimHandoff;
   v3StageRetrySource?: V3StageRetrySourceV1;
   compilerCompletionOutput?: string;
   resolvedInput?: string;
@@ -5176,6 +5201,7 @@ async function publishLoopClaimAndRuntime(
   preparationAuthority?: V3PreparationClaimAuthorityV1,
   storyAdmissionProof?: CompilerStoryEnglishAdmissionClaimProofV1,
   supervisorRetryPreparationSource?: AuthenticatedV3SupervisorRetryPreparationSourceV1,
+  nativePreparationAuthority?: V3PreparationClaimAuthorityV2,
 ): Promise<Readonly<{
   claimId: number;
   claimGeneration: number;
@@ -5199,6 +5225,8 @@ async function publishLoopClaimAndRuntime(
     preparationAuthority,
     storyAdmissionProof,
     supervisorRetryPreparationSource,
+    ...(nativePreparationAuthority ? { nativePreparationAuthority,
+      nativePreparationArtifacts: { artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() } } : {}),
   });
 }
 
@@ -5322,7 +5350,20 @@ async function claimV3RecoveryWork(
   }
   let observedSource: Awaited<ReturnType<typeof captureShadowSourceRevision>>;
   try {
-    observedSource = await captureShadowSourceRevision(storyWorkdir);
+    const recoveryPacket = await createRuntimeArtifactReader({ sql: getSql(),
+      artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity(),
+    }).readExactSealedPacket(step.run_id);
+    if (recoveryPacket.packetHash !== handoff.directive.packetHash) throw new Error("V3_RECOVERY_PACKET_MISMATCH");
+    if ("implementationSourceMap" in recoveryPacket) {
+      resolveV3GitRevision({ repo: storyWorkdir, requestedRef: "HEAD", expectedSha: baseRef });
+      const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+        cwd: storyWorkdir, timeout: 10_000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (status.byteLength) throw new Error("V3_NATIVE_RECOVERY_SOURCE_CHANGED");
+      observedSource = captureV3GitCommitRevision({ repo: storyWorkdir, commitSha: baseRef });
+    } else {
+      observedSource = await captureShadowSourceRevision(storyWorkdir);
+    }
   } catch (error) {
     removeStoryWorktree(repo, storyBranch, agentId);
     await recordRecoveryPreparationFailure(
@@ -7599,6 +7640,7 @@ export async function claimStep(
           const prunedContextLoop = pruneContextForStep(context, step.step_id);
           let resolvedInput = await resolveLoopClaimInput(step, prunedContextLoop, context);
           let attempt: ClaimAttemptFenceV1 | undefined;
+          let v3ImplementationHandoff: V3ImplementationClaimHandoff | undefined;
           if ((idempotentProtocol?.protocol || "legacy") !== "legacy") {
             const fence = await ensureCompilerClaimFence(getSql(), {
               claimId,
@@ -7621,6 +7663,13 @@ export async function claimStep(
                 attemptId: attempt.attemptId,
               });
               applyV3ImplementationSliceContext(context, compiled);
+              if (!compiled.attempt.branch || !compiled.attempt.worktree) {
+                throw new Error("V3_IMPLEMENTATION_ATTEMPT_WORKSPACE_IDENTITY_REQUIRED");
+              }
+              v3ImplementationHandoff = createV3ImplementationAttemptHandoffV1({
+                stepDbId: step.id, storyDbId: runningStory.id, claimId,
+                branch: compiled.attempt.branch, workdir: compiled.attempt.worktree, compiled,
+              });
               resolvedInput = await resolveLoopClaimInput(
                 step,
                 pruneContextForStep(context, step.step_id),
@@ -7652,6 +7701,7 @@ export async function claimStep(
               runtimeOwnerInstanceId: existingClaim.owner_instance_id!,
             } : {}),
             ...(attempt ? { attempt } : {}),
+            ...(v3ImplementationHandoff ? { v3ImplementationHandoff } : {}),
             resolvedInput,
           };
         }
@@ -7788,6 +7838,7 @@ export async function claimStep(
       let pendingStories: any[] = [];
       let nextStory: any | undefined;
       let v3PreparationAuthority: V3PreparationClaimAuthorityV1 | undefined;
+      let v3NativePreparationAuthority: V3PreparationClaimAuthorityV2 | undefined;
       let v3PreparedBaseRevision: V3PreparationClaimAuthorityV1["baseRevision"] | undefined;
       let v3SupervisorRetryPreparationSource: Awaited<ReturnType<
         typeof loadAuthenticatedV3SupervisorRetryPreparationSourceV1
@@ -7817,7 +7868,7 @@ export async function claimStep(
         );
         const blockRepository = createV3PreparationBlockRepository(sql);
         const preclaim = createV3NormalImplementationPreclaim({
-          readPacket: (runId) => artifactReader.readSealedPacket(runId),
+          readPacket: (runId) => artifactReader.readExactSealedPacket(runId),
           readPendingStories: createPostgresV3PendingStoryReader(sql),
           readTerminalDependencyAttempts: createPostgresTerminalDependencyAttemptReader(sql),
           blockRepository,
@@ -7912,6 +7963,7 @@ export async function claimStep(
           nextStory = exactStory;
           pendingStories = [exactStory];
           v3PreparationAuthority = prepared.authority;
+          v3NativePreparationAuthority = prepared.nativeAuthority;
           v3PreparedBaseRevision = prepared.baseRevision;
           if (!isPrEach && !v3SupervisorRetryPreparationSource
             && context["implement_base_commit"] !== prepared.baseRevision.sha) {
@@ -8032,11 +8084,52 @@ export async function claimStep(
               ? `V3_RECOVERY_BUDGET_EXHAUSTED: story ${failedStory.story_id || failedStory.id} reached canonical blocked state`
               : `V3_RECOVERY_OWNER_MISSING: failed story ${failedStory.story_id || failedStory.id} has no active delivery or mandatory completion effect (case=${recovery?.recovery_status || "missing"})`;
           }
+          if (failedRunProtocol?.protocol === "v3") {
+            const requested = await pgBegin(async (transaction) => {
+              const { lockV3RecoveryRunMutationAuthorityInTransaction } = await import("../recovery/v3-recovery-run-mutation-authority.js");
+              const fence = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+                runId: step.run_id, storyId: failedStory.story_id,
+              });
+              // The discovery read may predate atomic nonmodel acceptance.
+              // Recheck the same story and all current owners while holding
+              // the existing run/termination mutation fence, then publish the
+              // actual termination intent in this same transaction.
+              const failed = await transaction.unsafe<Array<{ id: string }>>(`
+                SELECT story.id FROM stories story JOIN steps loop ON loop.run_id=story.run_id
+                WHERE story.id=$1 AND story.run_id=$2 AND story.story_id=$3 AND story.status='failed'
+                  AND loop.id=$4 AND loop.step_id='implement' AND loop.type='loop'
+                  AND loop.status IN ('pending','running')
+                  AND NOT EXISTS (SELECT 1 FROM stories running WHERE running.run_id=story.run_id AND running.status='running')
+                  AND NOT EXISTS (SELECT 1 FROM runtime_completion_requests q WHERE q.run_id=story.run_id AND q.story_db_id=story.id
+                    AND (q.state IN ('requested','draining','processing') OR EXISTS (
+                      SELECT 1 FROM runtime_completion_effects effect WHERE effect.request_id=q.request_id
+                        AND effect.mandatory AND effect.state NOT IN ('applied','reconciled'))))
+                  AND NOT EXISTS (SELECT 1 FROM recovery_dispatch_deliveries delivery
+                    WHERE delivery.run_id=story.run_id AND delivery.story_id=story.story_id
+                      AND delivery.state IN ('authorized','leased','attempt_reserved','running'))
+                FOR UPDATE OF story,loop`, [failedStory.id,step.run_id,failedStory.story_id,step.id]);
+              if(failed.length!==1) return false;
+              const updated = await transaction.unsafe<Array<{id:string}>>(`UPDATE steps
+                SET status='failed',current_story_id=NULL,output=$3,updated_at=$4
+                WHERE id=$1 AND run_id=$2 AND status IN ('pending','running') RETURNING id`,
+                [step.id,step.run_id,failureDiagnostic,fence.observedAt]);
+              if(updated.length!==1) throw new Error("V3_FAILED_STORY_TERMINATION_CAS_LOST");
+              await requestRunTerminationInTransaction(transaction,{
+                runId:step.run_id,targetStatus:"failed",requestedBy:"setfarm.installer.fail-run",
+                diagnostic:failureDiagnostic,evidence:{source:"installer.repo.failRun",terminalFailure:true},
+              });
+              return true;
+            });
+            if (!requested) return { found: false };
+          } else {
+            await pgRun(
+              "UPDATE steps SET status = 'failed', current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending', 'running')",
+              [failureDiagnostic, now(), step.id],
+            );
+          }
           logger.error(failureDiagnostic, { runId: step.run_id, stepId: step.step_id });
-          await pgRun(
-            "UPDATE steps SET status = 'failed', current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending', 'running')",
-            [failureDiagnostic, now(), step.id],
-          );
+          // Preserve the canonical wake-up, self-heal and contract-refresh work;
+          // the v3 branch already published this identical intent atomically.
           await failRun(step.run_id, true, failureDiagnostic);
           const failedWfId = await getWorkflowId(step.run_id);
           emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: failedWfId, stepId: step.step_id, detail: failureDiagnostic });
@@ -8256,6 +8349,7 @@ export async function claimStep(
         v3PreparationAuthority,
         storyAdmissionProof,
         v3SupervisorRetryPreparationSource,
+        v3NativePreparationAuthority,
       );
       if (!publication) {
         logger.info(`[claim] Story publication lost a concurrency or termination race`, { runId: step.run_id, stepId: step.step_id });
@@ -8547,7 +8641,7 @@ export async function claimStep(
       }
 
       let nativeV3Attempt: ClaimAttemptFenceV1 | undefined;
-      let nativeV3ImplementationHandoff: V3ImplementationClaimHandoffV1 | undefined;
+      let nativeV3ImplementationHandoff: V3ImplementationClaimHandoff | undefined;
       if (runProtocol?.protocol === "v3") {
         let pendingOperationalRetry: ReturnType<typeof parseOperationalRetryDirectiveStoryOutput>;
         try {
@@ -8569,7 +8663,7 @@ export async function claimStep(
             stepId: step.step_id,
             storyId: nextStory.story_id,
             claimId: legacyClaimId,
-            role: agentId,
+            role: v3NativePreparationAuthority ? "developer" : agentId,
             agentId,
             branch: String(context["story_branch"] || storyBranch),
             worktree: storyWorkdir,
@@ -8885,7 +8979,8 @@ async function runOwnedSuperviseStageEvidenceV1(input:Readonly<{
   for(const contract of contracts.contexts){
     await authenticate();await recheckWorktree();
     const result=await runImplementEvidenceIfRequested({runId:envelope.runId,storyId:contract.slice.storyId,workdir:envelope.workdir,
-      stackPackId:contract.slice.runtimeEvidence?.stackPackId,
+      stackPackId:contract.slice.schema==="setfarm.implementation-slice.v2"
+        ?contract.slice.build.runtimeEvidenceContract?.stackPackId:contract.slice.runtimeEvidence?.stackPackId,
       v3:{slice:contract.slice,sliceHash:contract.sliceHash,sourceRevision:candidateSource,stageClaim:{workflowStepId:"supervise",
         claimId:envelope.claimId,runtimeSessionId:input.runtimeSessionId,requestId:cap.requestId,ownerAttemptCount:cap.ownerAttemptCount,
         outputHash,envelope,boundSubject:input.boundSubject,sourceBefore}},
@@ -9008,7 +9103,7 @@ export async function completeStep(
     throw new Error("V3_STORIES_RUNTIME_COMPLETION_OWNER_REQUIRED");
   }
   let nativeV3AgentOutput: V3ImplementationAgentOutputV1 | undefined;
-  let nativeV3AgentContext: V3ImplementationContextV1 | undefined;
+  let nativeV3AgentContext: V3ImplementationContext | undefined;
   let nativeV3AttemptContext: V3ImplementationAttemptResult | undefined;
   let nativeV3PlanAuthority: V3PlanOutputAuthorityV1 | V3PlanOutputAuthorityV2 | undefined;
   let preparedV3StoriesCompletion: PreparedV3StoriesCompletionV1 | undefined;
@@ -9083,7 +9178,7 @@ export async function completeStep(
       workdir: compiled.attempt.worktree,
       compiled,
     });
-    nativeV3AgentContext = createV3ImplementationContextV1({ handoff });
+    nativeV3AgentContext = createV3ImplementationContext({ handoff });
     nativeV3AgentOutput = parseV3ImplementationAgentOutputV1(output, nativeV3AgentContext);
     if (nativeV3AgentOutput.disposition === "refused") {
       await handleV3ImplementationRefusal({
@@ -11205,10 +11300,12 @@ ${prd}`;
             if (!v3CompletionContext || !completionAuthority?.envelope.attempt) {
               throw new Error("V3_COMPLETION_CONTEXT_REQUIRED_BEFORE_EVIDENCE");
             }
-            const declaredWritablePaths = v3CompletionContext.slice.recovery?.allowedPaths
-              ?? v3CompletionContext.slice.files
-                .filter((file) => file.role === "owned" || file.role === "shared_writable")
-                .map((file) => file.path);
+            const completionSlice = v3CompletionContext.slice;
+            const declaredWritablePaths = completionSlice.schema === "setfarm.implementation-slice.v2"
+              ? (completionSlice.recovery?.expectedSourceDelta.changes.map(change => change.path)
+                ?? completionSlice.files.filter(file => file.role === "owned" || file.role === "shared_writable").map(file => file.path))
+              : (completionSlice.recovery?.allowedPaths
+                ?? completionSlice.files.filter(file => file.role === "owned" || file.role === "shared_writable").map(file => file.path));
             const candidateCommit = commitStoryWorktreeScopeIfNeeded(
               wd,
               storyRow.story_id,
@@ -11216,11 +11313,18 @@ ${prd}`;
               [...declaredWritablePaths],
               v3CompletionContext.recovery ? "fix" : "feat",
               true,
+              completionSlice.schema === "setfarm.implementation-slice.v2" ? completionSlice.schema : undefined,
             );
             if (candidateCommit.error) {
               throw new Error(`V3_CANDIDATE_COMMIT_REJECTED:${candidateCommit.error}`);
             }
-            v3CandidateSource = await captureShadowSourceRevision(wd);
+            if (completionSlice.schema === "setfarm.implementation-slice.v2") {
+              const candidateSha = candidateCommit.committed ? candidateCommit.sha : v3CompletionContext.sourceBefore.sha;
+              resolveV3GitRevision({ repo: wd, requestedRef: "HEAD", expectedSha: candidateSha });
+              v3CandidateSource = captureV3GitCommitRevision({ repo: wd, commitSha: candidateSha });
+            } else {
+              v3CandidateSource = await captureShadowSourceRevision(wd);
+            }
             if (candidateCommit.committed && candidateCommit.sha !== v3CandidateSource.sha) {
               throw new Error("V3_CANDIDATE_COMMIT_SOURCE_IDENTITY_MISMATCH");
             }
@@ -11265,7 +11369,9 @@ ${prd}`;
             workdir: wd,
             stackPackId: isNativeV3Completion
               ? (v3CompletionContext?.evidencePlan.runtime?.stackPackId
-                ?? v3CompletionContext?.slice.runtimeEvidence?.stackPackId
+                ?? (v3CompletionContext?.slice.schema === "setfarm.implementation-slice.v2"
+                  ? v3CompletionContext.slice.build.runtimeEvidenceContract?.stackPackId
+                  : v3CompletionContext?.slice.runtimeEvidence?.stackPackId)
                 ?? "")
               : (context["stack_pack_id"] || context["detected_stack"] || ""),
             ...(isNativeV3Completion && v3CompletionContext && v3CandidateSource
@@ -11308,7 +11414,7 @@ ${prd}`;
             }
             v3EvidenceBundle = canonicalEvidence.bundle;
             const evidenceRef = `setfarm://evidence-bundle/${canonicalEvidence.bundleHash}`;
-            v3EvidenceRefs = [evidenceRef];
+            v3EvidenceRefs = [evidenceRef, `setfarm://artifact/${v3CompletionContext.evidencePlanArtifactHash}`];
             context["canonical_evidence_bundle_hash"] = canonicalEvidence.bundleHash;
             context["canonical_evidence_id"] = canonicalEvidence.bundle.evidenceId;
             context["canonical_evidence_verdict"] = canonicalEvidence.bundle.aggregateVerdict;
@@ -11316,7 +11422,9 @@ ${prd}`;
               v3FailureClass = classifyV3EvidenceFailure(canonicalEvidence.bundle);
               v3FindingSet = createFindingSetFromEvidenceBundleV2({
                 workdir: wd,
-                slice: v3CompletionContext.slice,
+                ...(v3CompletionContext.slice.schema === "setfarm.implementation-slice.v2"
+                  ? { slice: v3CompletionContext.slice, sourceRevision: v3CandidateSource }
+                  : { slice: v3CompletionContext.slice }),
                 sliceHash: v3CompletionContext.sliceHash,
                 bundle: canonicalEvidence.bundle,
               });
@@ -13270,6 +13378,47 @@ export async function resumeRuntimeCompletionEffects(
         [input.runId],
       );
       if (parseInt(activeCount?.count || "0", 10) > 0) {
+        const nativePacket=await pgGet<{packet_hash:string}>(`SELECT run.packet_hash FROM runs run
+          JOIN semantic_artifacts packet ON packet.artifact_hash=run.packet_hash
+            AND packet.artifact_type='setfarm.product-build-packet.v3'
+          WHERE run.id=$1 AND run.protocol='v3'`,[input.runId]);
+        if(nativePacket) {
+          const cap=currentRuntimeCompletionOwnerCapability();
+          const plan=input.completionPlan;
+          if(!cap||!input.claimId||!input.runtimeSessionId||!plan||plan.continuation.type!=="story_direct_merge"
+            ||authenticatedSubject?.kind!=="story_member"||!plan.subject?.sourceSha)
+            throw new Error("V3_NATIVE_INCREMENTAL_MERGE_OWNER_REQUIRED");
+          const claimId=input.claimId,runtimeSessionId=input.runtimeSessionId;
+          const assertOwner=async()=>{
+            const owners=await pgQuery<{attempt_id:string}>(`SELECT a.attempt_id FROM runtime_completion_requests q
+              JOIN runtime_sessions runtime ON runtime.session_id=q.runtime_session_id AND runtime.claim_id=q.claim_id
+                AND runtime.attempt_id=q.attempt_id AND runtime.run_id=q.run_id AND runtime.story_id=q.story_id
+              JOIN execution_attempts a ON a.attempt_id=q.attempt_id AND a.claim_id=q.claim_id AND a.run_id=q.run_id
+                AND a.story_id=q.story_id AND a.step_id='implement'
+              JOIN claim_log claim ON claim.id=q.claim_id AND claim.run_id=q.run_id AND claim.story_id=q.story_id
+                AND claim.step_id='implement' AND claim.outcome=q.claim_outcome
+              WHERE q.request_id=$1 AND q.run_id=$2 AND q.step_db_id=$3 AND q.story_id=$4
+                AND q.claim_id=$5 AND q.runtime_session_id=$6 AND q.owner_instance_id=$7 AND q.owner_attempt_count=$8
+                AND q.state='processing' AND q.apply_phase='owner_committed' AND runtime.state='drained'
+                AND q.lease_expires_at>clock_timestamp() AND q.claim_outcome='completed'
+                AND q.completion_plan_hash=$9 AND q.output_hash=$10
+                AND a.packet_hash=$11 AND a.source_after_sha=$12
+                AND a.disposition IN ('produced_delta','already_satisfied','verified')`,
+              [cap.requestId,input.runId,input.stepDbId,story.story_id,claimId,runtimeSessionId,
+                cap.ownerInstanceId,cap.ownerAttemptCount,hashCanonicalJson(plan),
+                crypto.createHash("sha256").update(input.output,"utf8").digest("hex"),nativePacket.packet_hash,plan.subject!.sourceSha]);
+            if(owners.length!==1) throw new Error("V3_NATIVE_INCREMENTAL_MERGE_OWNER_STALE");
+          };
+          await assertOwner();
+          if(!context.repo||!context.branch) throw new Error("V3_NATIVE_INCREMENTAL_MERGE_CONTEXT_MISSING");
+          await runMergeQueue(input.runId,context.repo,context.branch);
+          await assertOwner();
+          const verified=await pgGet<{status:string;merge_status:string}>(
+            "SELECT status,merge_status FROM stories WHERE id=$1 AND run_id=$2 AND story_id=$3",
+            [story.id,input.runId,story.story_id]);
+          if(verified?.status!=="verified"||verified.merge_status!=="merged")
+            throw new Error("V3_NATIVE_INCREMENTAL_MERGE_RECEIPT_MISSING");
+        }
         return { advanced: false, runCompleted: false };
       }
       if (step.status === "done") return advancePipeline(input.runId);
