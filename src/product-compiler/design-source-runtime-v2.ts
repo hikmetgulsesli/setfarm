@@ -110,6 +110,22 @@ export const DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1 = Object.freez
   failureCode: "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED",
 } satisfies OperationalFailureCauseV1);
 
+export const DESIGN_SOURCE_MCP_ARTIFACT_OPERATIONAL_CAUSE_V1 = Object.freeze({
+  ...DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1,
+  failureCode: "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED",
+} satisfies OperationalFailureCauseV1);
+
+const McpArtifactFailureReceiptSchema = z.object({
+  screenId: z.string().min(1).max(500),
+  htmlFile: z.unknown().optional(),
+  screenshotFile: z.unknown().optional(),
+  artifactDownloadFailure: z.object({
+    artifactKind: z.enum(["html", "screenshot"]),
+    sourceRefHash: z.string().regex(/^[a-f0-9]{64}$/),
+    code: z.literal("STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED"),
+  }).strict(),
+}).passthrough();
+
 const ArtifactAccessDeniedReceiptSchema = z.object({
   screenId: z.string().min(1).max(500),
   htmlFile: z.unknown().optional(),
@@ -581,9 +597,10 @@ async function materializeAcceptedAuthority(input: Readonly<{
         })),
       }));
     // Selection remains authoritative: this branch cannot override a valid
-    // sibling. Every relevant admitted candidate must have exact access evidence;
-    // any unknown, semantic, ambiguous or successful HTML sibling stays semantic.
-    const allHtmlAuthBlocked = unresolved.length > 0 && unresolved.every((target) => {
+    // sibling. Every relevant candidate must have exact matching transport proof;
+    // unknown, semantic, excluded or successful failed-kind evidence stays semantic.
+    let hasMcpBlocker = false;
+    const allArtifactBlocked = unresolved.length > 0 && unresolved.every((target) => {
       const candidates = selection.candidateSelection.candidates.filter((candidate) =>
         candidate.stageId === target.stageId
         && candidate.targetRefs.includes(target.targetRef)
@@ -603,8 +620,23 @@ async function materializeAcceptedAuthority(input: Readonly<{
           && !Array.isArray(receipt)
           && (receipt as Record<string, unknown>).screenId === candidate.screenId);
         if (receipts.length !== 1) return false;
+        const direct = directResponseEvidence.batches.find((batch) => batch.stageId === target.stageId)?.candidates.find((item) => item.screenId === candidate.screenId);
+        const mcpReceipt = McpArtifactFailureReceiptSchema.safeParse(receipts[0]);
+        if (mcpReceipt.success) {
+          const kind = mcpReceipt.data.artifactDownloadFailure.artifactKind;
+          const ref = direct?.[`${kind}SourceRef`];
+          const proven = Boolean(ref)
+            && mcpReceipt.data[`${kind}File`] === undefined
+            && mcpReceipt.data.artifactDownloadFailure.sourceRefHash === candidate[`${kind}SourceRefHash`]
+            && candidate[`${kind}DownloadedArtifactHash`] === null
+            && candidate[`${kind}ArtifactValidity`] === "missing"
+            && artifactsById.get(candidate.screenId)?.[`${kind}Bytes`] === undefined;
+          if (proven) hasMcpBlocker = true;
+          return proven;
+        }
         const receipt = ArtifactAccessDeniedReceiptSchema.safeParse(receipts[0]);
         return receipt.success
+          && direct?.htmlSourceRef === undefined
           && receipt.data.htmlFile === undefined
           && receipt.data.artifactDownloadFailure.sourceRefHash === candidate.htmlSourceRefHash
           && candidate.htmlDownloadedArtifactHash === null
@@ -612,8 +644,8 @@ async function materializeAcceptedAuthority(input: Readonly<{
           && artifactsById.get(candidate.screenId)?.htmlBytes === undefined;
       });
     });
-    if (allHtmlAuthBlocked) {
-      const cause = DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1;
+    if (allArtifactBlocked) {
+      const cause = hasMcpBlocker ? DESIGN_SOURCE_MCP_ARTIFACT_OPERATIONAL_CAUSE_V1 : DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1;
       const evidence = {
         cause,
         phase: "artifact_download",
@@ -1080,8 +1112,8 @@ export async function runDesignSourceAuthorityV2(
     },
     planRetry: async ({ stagePrompts, failure, failureEvidence }) => {
       if (failure.reasonCodes.length === 1
-        && failure.reasonCodes[0] === DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1.failureCode
-        && failure.operationalCauseHash === hashCanonicalJson(DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1)) {
+        && [DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1, DESIGN_SOURCE_MCP_ARTIFACT_OPERATIONAL_CAUSE_V1].some((cause) =>
+          failure.reasonCodes[0] === cause.failureCode && failure.operationalCauseHash === hashCanonicalJson(cause))) {
         return null;
       }
       const failedStageIds = retryStages(failureEvidence);

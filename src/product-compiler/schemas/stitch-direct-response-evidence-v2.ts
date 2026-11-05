@@ -1,8 +1,14 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { Sha256Schema, hasUniqueStrings } from "./common-v1.js";
 import { GenerationTargetIdSchema } from "./design-generation-targets-v1.js";
 import { StitchDirectResponseEvidenceV1Schema } from "./stitch-direct-response-evidence-v1.js";
+
+const McpFileSourceRefSchema = z.object({
+  kind: z.literal("mcp_file"),
+  name: z.string().max(1_020).regex(/^projects\/[A-Za-z0-9][A-Za-z0-9._-]{0,499}\/files\/[A-Za-z0-9][A-Za-z0-9._-]{0,499}$/),
+}).strict();
 
 export const StitchDirectScreenEvidenceV2Schema = z
   .object({
@@ -17,6 +23,8 @@ export const StitchDirectScreenEvidenceV2Schema = z
     height: z.string().min(1).max(100).optional(),
     htmlAvailable: z.boolean(),
     screenshotAvailable: z.boolean(),
+    htmlSourceRef: McpFileSourceRefSchema.optional(),
+    screenshotSourceRef: McpFileSourceRefSchema.optional(),
     htmlSourceRefHash: Sha256Schema.optional(),
     screenshotSourceRefHash: Sha256Schema.optional(),
     htmlDownloadedArtifactHash: Sha256Schema.optional(),
@@ -43,6 +51,14 @@ export const StitchDirectScreenEvidenceV2Schema = z
   })
   .strict()
   .superRefine((value, context) => {
+    for (const kind of ["html", "screenshot"] as const) {
+      const ref = value[`${kind}SourceRef`];
+      if (!ref) continue;
+      const expected = createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify({ kind: "mcp_file", name: ref.name })).digest("hex");
+      if (!value[`${kind}Available`] || value[`${kind}SourceRefHash`] !== expected) {
+        context.addIssue({ code: "custom", path: [`${kind}SourceRefHash`], message: "MCP file provenance must match the available source hash" });
+      }
+    }
     const expectedMissing = [
       ...(!value.htmlAvailable ? ["html" as const] : []),
       ...(!value.screenshotAvailable ? ["screenshot" as const] : []),
@@ -110,6 +126,11 @@ export const StitchDirectResponseEvidenceV2Schema = z
   .superRefine((value, context) => {
     if (!hasUniqueStrings(value.batches.map((batch) => batch.stageId))) {
       context.addIssue({ code: "custom", path: ["batches"], message: "Direct response evidence stage IDs must be unique" });
+    }
+    for (const batch of value.batches) for (const candidate of batch.candidates) {
+      for (const ref of [candidate.htmlSourceRef, candidate.screenshotSourceRef]) {
+        if (ref && ref.name.split("/")[1] !== value.projectId) context.addIssue({ code: "custom", path: ["batches"], message: "MCP file resource must belong to the direct response project" });
+      }
     }
     const screenIds = value.batches.flatMap((batch) => batch.candidates.map((candidate) => candidate.screenId));
     if (!hasUniqueStrings(screenIds)) {

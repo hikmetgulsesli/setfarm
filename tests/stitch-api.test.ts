@@ -763,7 +763,7 @@ globalThis.fetch = async (url, options) => {
     const name = request.params.arguments.name;
     if (JSON.stringify(Object.keys(request.params.arguments)) !== JSON.stringify(["name"])) throw new Error("EXTRA_FILE_ARGUMENT");
     if (name !== "projects/123/files/status-html" && name !== "projects/123/files/status-png") throw new Error("WRONG_FILE_NAME");
-    if (fixture.mode === "mcp-error") result = { isError: true, content: [{ type: "text", text: "file unavailable token=do-not-publish" }] };
+    if (fixture.mode === "mcp-error" || (fixture.mode === "mcp-screenshot-error" && name.endsWith("-png"))) result = { isError: true, content: [{ type: "text", text: "file unavailable token=do-not-publish" }] };
     else if (fixture.mode === "mcp-network") throw new TypeError("download interrupted token=do-not-publish");
     else {
       const payload = name.endsWith("-html") ? { html: Buffer.from(fixture.html, "base64").toString("utf8") } : { image: fixture.mode === "mcp-base64" ? fixture.png + "\\n" : fixture.png, imageMetadata: { mimeType: "png" } };
@@ -780,6 +780,11 @@ globalThis.fetch = async (url, options) => {
     screen.htmlCode.name = "projects/123/files/status-html";
     screen.screenshot.name = "projects/123/files/status-png";
     if (fixture.mode === "mcp-name-only") { delete screen.htmlCode.downloadUrl; delete screen.screenshot.downloadUrl; }
+  }
+  if (fixture.mode === "injected-ref" && request.params?.name === "generate_screen_from_text") {
+    const screen = result.structuredContent.screens[0];
+    screen.htmlSourceRef = { kind: "mcp_file", name: "projects/123/files/injected-html" };
+    screen.screenshotSourceRef = { kind: "mcp_file", name: "projects/123/files/injected-png" };
   }
   return Response.json({ jsonrpc: "2.0", id: request.id, result });
 };
@@ -914,6 +919,15 @@ describe("Stitch MCP named File transport", () => {
       assert.doesNotMatch(result.stdout + result.stderr, /do-not-publish|offline-dummy-only|httpStatus/);
     });
   }
+  it("preserves successful HTML when the named screenshot transport fails", () => {
+    const result = runGenerationCommandOffline("generate-all-screens-attempt", undefined, "mcp-screenshot-error");
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.deepEqual(result.requests.map(request => request.params?.name ?? request.method), ["initialize", "generate_screen_from_text", "download_file", "download_file"]);
+    const receipt = JSON.parse(result.stdout).downloaded[0];
+    assert.equal(receipt.htmlFile, "status.html");
+    assert.deepEqual(receipt.artifactDownloadFailure, { artifactKind: "screenshot", sourceRefHash: mcpFileSourceHash("projects/123/files/status-png"), code: "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED" });
+    assert.deepEqual(result.artifacts, ["status.html"]);
+  });
   it("rejects noncanonical image base64 as content without a transport claim", () => {
     const result = runGenerationCommandOffline("generate-all-screens-attempt", undefined, "mcp-base64");
     assert.equal(result.exitCode, 0, result.stderr);
@@ -1011,8 +1025,33 @@ describe("Stitch get-screen current MCP contract", () => {
     const result = runGetScreenOffline(true);
     assert.equal(result.exitCode, 1, result.stderr);
     assert.equal(result.requests.filter(request => request.params?.name === "get_screen").length, 1);
-    assert.match(result.stderr, /INVALID_ARGUMENT|request refused/);
+    assert.match(result.stderr, /get_screen rejected before an accepted result/);
     assert.notEqual(result.stdout.trim(), "null");
     assert.doesNotMatch(result.stdout + result.stderr, /offline-dummy-only/);
+  });
+});
+
+
+describe("Stitch reserved origin ref injection", () => {
+  it("derives both source identities solely from actual File fields", () => {
+    const screen = { name: "projects/123/screens/status", title: "Status Page",
+      htmlCode: { downloadUrl: "https://example.invalid/status.html" }, screenshot: { downloadUrl: "https://example.invalid/status.png" },
+      htmlSourceRef: { kind: "mcp_file", name: "projects/123/files/injected-html" }, screenshotSourceRef: { kind: "mcp_file", name: "projects/123/files/injected-png" } };
+    const result = partitionDirectScreenCandidates(collectScreenCandidatesFromResult({ structuredContent: { screens: [screen] } }));
+    for (const kind of ["html", "screenshot"] as const) {
+      assert.equal(result.evidence[0][`${kind}SourceRef`], undefined);
+      assert.equal(result.evidence[0][`${kind}SourceRefHash`], createHash("sha256").update(`https://example.invalid/status.${kind === "html" ? "html" : "png"}`).digest("hex"));
+    }
+  });
+  it("keeps actual CLI legacy retrieval for injected HTML and screenshot refs", () => {
+    const result = runGenerationCommandOffline("generate-all-screens-attempt", undefined, "injected-ref");
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.deepEqual(result.requests.map(request => request.params?.name ?? request.method), ["initialize", "generate_screen_from_text"]);
+    assert.deepEqual(result.artifacts, ["status.html", "status.png"]);
+    const evidence = JSON.parse(result.stdout).directScreenEvidence[0];
+    assert.equal(evidence.htmlSourceRef, undefined);
+    assert.equal(evidence.screenshotSourceRef, undefined);
+    assert.equal(evidence.htmlSourceRefHash, createHash("sha256").update("https://example.invalid/status.html").digest("hex"));
+    assert.equal(evidence.screenshotSourceRefHash, createHash("sha256").update("https://example.invalid/status.png").digest("hex"));
   });
 });

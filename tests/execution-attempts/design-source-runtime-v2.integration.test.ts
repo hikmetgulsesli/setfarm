@@ -199,7 +199,7 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       const cause = { schema: "setfarm.operational-failure-cause.v1", workflowStepId: "design",
         boundary: "product_compiler.design_source.artifact_download", failureClass: "infrastructure_failure",
         failureCode: "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED" };
-      for (const mode of ["mcp", "mismatch", "duplicate", "untyped", "success-receipt", "local-html", "excluded-sibling", "unknown-sibling", "semantic-sibling", "valid-sibling"]) {
+      for (const mode of ["mcp", "screenshot", "mixed-sibling", "wrong-transport", "mismatch", "duplicate", "untyped", "success-receipt", "local-html", "excluded-sibling", "unknown-sibling", "semantic-sibling", "valid-sibling"]) {
         const repo = await mkdtemp(path.join(tmpdir(), "setfarm-artifact-auth-"));
         repos.push(repo);
         const runId = `run-artifact-auth-${mode}`;
@@ -213,16 +213,19 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         const screenId = "auth-blocked";
         const htmlSourceRef = { kind: "mcp_file", name: "projects/artifact-auth-project/files/blocked-html" };
         const sourceRefHash = createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify(htmlSourceRef)).digest("hex");
+        const screenshotSourceRef = { kind: "mcp_file", name: "projects/artifact-auth-project/files/blocked-png" };
+        const screenshotSourceRefHash = createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify(screenshotSourceRef)).digest("hex");
         const candidate = { screenId, title: target.expectedScreenTitle, responsePaths: ["$result.screens[0]"],
           htmlAvailable: true, screenshotAvailable: true, htmlSourceRef, htmlSourceRefHash: sourceRefHash,
-          screenshotSourceRefHash: "c".repeat(64),
-          ...(mode === "success-receipt" ? { htmlDownloadedArtifactHash: "e".repeat(64) } : {}), identityConflicts: [],
+          screenshotSourceRef, screenshotSourceRefHash,
+          ...(mode === "success-receipt" || mode === "screenshot" ? { htmlDownloadedArtifactHash: mode === "screenshot" ? createHash("sha256").update(validStitchHtml("<main>Incomplete semantics</main>")).digest("hex") : "e".repeat(64) } : {}), identityConflicts: [],
           disposition: "admitted_renderable_screen", missingEvidence: [] };
         const receipt = { screenId, title: target.expectedScreenTitle,
-          ...(mode === "success-receipt" ? { htmlFile: `${screenId}.html` } : {}), downloadError: "MCP file retrieval failed",
-          ...(mode === "untyped" ? {} : { artifactDownloadFailure: { artifactKind: "html",
-            sourceRefHash: mode === "mismatch" ? "d".repeat(64) : sourceRefHash,
-            code: "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED" } }) };
+          ...(mode === "success-receipt" || mode === "screenshot" ? { htmlFile: `${screenId}.html` } : {}), downloadError: "MCP file retrieval failed",
+          ...(mode === "untyped" ? {} : { artifactDownloadFailure: { artifactKind: mode === "screenshot" ? "screenshot" : "html",
+            sourceRefHash: mode === "mismatch" ? "d".repeat(64) : mode === "screenshot" ? screenshotSourceRefHash : sourceRefHash,
+            code: mode === "wrong-transport" ? "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED" : "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED",
+            ...(mode === "wrong-transport" ? { httpStatus: 401 } : {}) } }) };
         const placement = target.requiredControlPlacements[0]!;
         const statusObservable = target.requiredObservableSelectors.find((observable) => observable.selector.kind === "accessibility")!;
         assert.equal(statusObservable.selector.kind, "accessibility");
@@ -237,18 +240,20 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         ].join(""));
         const validPng = validStitchPng(229);
         const semanticHtml = validStitchHtml("<main>Incomplete semantics</main>");
+        const { htmlSourceRef: omittedHtmlRef, screenshotSourceRef: omittedPngRef, ...legacyCandidate } = candidate;
+        const mixedHash = createHash("sha256").update("https://example.invalid/mixed.html").digest("hex");
         const transport = { schema: "setfarm.stitch-attempt-transport.v1", total: mode.endsWith("sibling") && mode !== "excluded-sibling" ? 2 : 1,
           screens: [{ screenId, title: target.expectedScreenTitle }, ...(mode.endsWith("sibling") && mode !== "excluded-sibling"
             ? [{ screenId: mode, title: target.expectedScreenTitle }] : [])], screenSource: "direct",
           directCandidateTotal: mode.endsWith("sibling") ? 2 : 1, excludedDirectTotal: mode === "excluded-sibling" ? 1 : 0,
           directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
-          directScreenEvidence: [candidate, ...(mode === "excluded-sibling" ? [{
+          directScreenEvidence: [candidate, ...(mode === "mixed-sibling" ? [{ ...legacyCandidate, screenId: "mixed-sibling", htmlSourceRefHash: mixedHash, screenshotSourceRefHash: "c".repeat(64) }] : []), ...(mode === "excluded-sibling" ? [{
             screenId: "excluded-sibling", title: target.expectedScreenTitle, responsePaths: ["$result.screens[1]"],
             htmlAvailable: false, screenshotAvailable: false, identityConflicts: [],
             disposition: "excluded_missing_render_evidence", missingEvidence: ["html", "screenshot"],
-          }] : []), ...(mode === "semantic-sibling" ? [{ ...candidate, htmlSourceRef: undefined, screenId: "semantic-sibling", ...stitchDownloadReceipts("semantic-sibling", semanticHtml, validPng) }] : []), ...(mode === "unknown-sibling" ? [{ ...candidate, screenId: "unknown-sibling" }] : []),
-            ...(mode === "valid-sibling" ? [{ ...candidate, htmlSourceRef: undefined, screenId: "valid-sibling", ...stitchDownloadReceipts("valid-sibling", validHtml, validPng) }] : [])],
-          downloaded: [receipt, ...(mode === "semantic-sibling" ? [{ screenId: "semantic-sibling", title: target.expectedScreenTitle, htmlFile: "semantic-sibling.html", screenshotFile: "semantic-sibling.png" }] : []), ...(mode === "duplicate" ? [receipt] : []),
+          }] : []), ...(mode === "semantic-sibling" ? [{ ...legacyCandidate, screenId: "semantic-sibling", ...stitchDownloadReceipts("semantic-sibling", semanticHtml, validPng) }] : []), ...(mode === "unknown-sibling" ? [{ ...candidate, screenId: "unknown-sibling" }] : []),
+            ...(mode === "valid-sibling" ? [{ ...legacyCandidate, screenId: "valid-sibling", ...stitchDownloadReceipts("valid-sibling", validHtml, validPng) }] : [])],
+          downloaded: [receipt, ...(mode === "mixed-sibling" ? [{ screenId: "mixed-sibling", title: target.expectedScreenTitle, downloadError: "Download failed: HTTP 401", artifactDownloadFailure: { artifactKind: "html", httpStatus: 401, sourceRefHash: mixedHash, code: "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED" } }] : []), ...(mode === "semantic-sibling" ? [{ screenId: "semantic-sibling", title: target.expectedScreenTitle, htmlFile: "semantic-sibling.html", screenshotFile: "semantic-sibling.png" }] : []), ...(mode === "duplicate" ? [receipt] : []),
             ...(mode === "valid-sibling" ? [{ screenId: "valid-sibling", title: target.expectedScreenTitle, htmlFile: "valid-sibling.html", screenshotFile: "valid-sibling.png" }] : [])] };
         const repository = new ProductCompilationAttemptRepository(database.sql);
         let dispatches = 0;
@@ -262,7 +267,7 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
             rawEvidence: serializeAttemptTransportV2(transport), artifacts: mode === "valid-sibling"
               ? [{ screenId: "valid-sibling", htmlBytes: validHtml, screenshotBytes: validPng }]
               : mode === "semantic-sibling" ? [{ screenId: "semantic-sibling", htmlBytes: semanticHtml, screenshotBytes: validPng }]
-              : mode === "local-html" ? [{ screenId, htmlBytes: semanticHtml }] : [] };
+              : mode === "local-html" || mode === "screenshot" ? [{ screenId, htmlBytes: semanticHtml }] : [] };
         } };
         const result = await runDesignSourceAuthorityV2(input, dependencies);
         if (mode === "valid-sibling") {
@@ -271,7 +276,7 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
           await readFile(path.join(repo, "stitch/DESIGN_MANIFEST.json"));
           continue;
         }
-        const proven = mode === "mcp";
+        const proven = mode === "mcp" || mode === "screenshot" || mode === "mixed-sibling";
         assert.equal(result.runner.status, proven ? "infrastructure_failure" : "rejected", JSON.stringify(result.runner));
         if (result.runner.status === "accepted") throw new Error("Missing HTML cannot project authority");
         assert.equal(dispatches, proven ? 1 : 2);
