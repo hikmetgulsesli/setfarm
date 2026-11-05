@@ -621,7 +621,7 @@ test("atomic PLAN completion persists exact build and behavior authority", async
         const contract = prepareV3DesignContractV2(row.canonical_prd);
         const target = contract.generationTargets.targets[0]!;
         const screenId = "preclaim-offline-render";
-        const htmlSourceRef = { kind: "mcp_file", name: "projects/artifact-access-project/files/preclaim-html" };
+        const htmlSourceRef = { kind: "mcp_file", name: "projects/mcp-artifact-project/files/preclaim-html" };
         const sourceRefHash = createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify(htmlSourceRef)).digest("hex");
         const transport = {
           schema: "setfarm.stitch-attempt-transport.v1", total: 1,
@@ -645,7 +645,7 @@ test("atomic PLAN completion persists exact build and behavior authority", async
           deviceType: "DESKTOP" as const, englishAdmissionAuthority: ledgerAuthority,
         };
         const dependencies = {
-          ensureProject: async () => "artifact-access-project",
+          ensureProject: async () => "mcp-artifact-project",
           generateStage: async () => {
             dispatches += 1;
             return { disposition: "accepted" as const, response: transport,
