@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -264,7 +265,6 @@ describe("stitch-api partial list recovery", () => {
     assert.match(command, /setfarm\.stitch-project-identity\.v1/);
     assert.match(command, /await initializeOnce\(\)/);
     assert.match(command, /rpcOnce\('tools\/call'/);
-    assert.match(command, /String\(project\.title \|\| project\.displayName \|\| project\.name \|\| ''\) === name/);
     assert.match(command, /STITCH_PROJECT_IDENTITY_AMBIGUOUS/);
     assert.doesNotMatch(command, /htmlCount|trackedCount|rotateKey|callTool\(|includes\(name/);
   });
@@ -529,6 +529,185 @@ describe("stitch-api direct response identity", () => {
   });
 });
 
+
+// Keep real command dispatch/RPC construction; only the external fetch boundary
+// is replaced. Persist remote state to exercise recovery across CLI processes.
+function withProjectIdentityFixture(check: (fixture: {
+  root: string;
+  invoke(repo: string, name?: string): { status: number | null; stdout: string; stderr: string };
+  requests(): any[];
+  projects(value: { name: string; title: string }[]): void;
+  ambiguousCreate(): void;
+}) => void) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-identity-"));
+  const statePath = path.join(root, "remote.json");
+  const capturePath = path.join(root, "requests.jsonl");
+  const preloadPath = path.join(root, "transport.mjs");
+  fs.writeFileSync(statePath, JSON.stringify({ projects: [], next: 1, ambiguous: false }));
+  fs.writeFileSync(capturePath, "");
+  fs.writeFileSync(preloadPath, `
+import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+const statePath = ${JSON.stringify(statePath)};
+const capturePath = ${JSON.stringify(capturePath)};
+globalThis.fetch = async (url, options) => {
+  if (String(url) !== "https://stitch.googleapis.com/mcp" || !options?.body) throw new Error("Unexpected external request");
+  const request = JSON.parse(options.body);
+  appendFileSync(capturePath, JSON.stringify(request) + "\\n");
+  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  let result;
+  if (request.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "offline", version: "1" } };
+  else if (request.method === "tools/call" && request.params.name === "list_projects") result = { content: [{ type: "text", text: JSON.stringify({ projects: state.projects }) }] };
+  else if (request.method === "tools/call" && request.params.name === "create_project") {
+    const project = { name: "projects/owned-" + state.next++, title: request.params.arguments.title };
+    state.projects.push(project);
+    const ambiguous = state.ambiguous;
+    state.ambiguous = false;
+    writeFileSync(statePath, JSON.stringify(state));
+    if (ambiguous) throw new TypeError("fetch failed after dispatch");
+    result = { content: [{ type: "text", text: JSON.stringify(project) }] };
+  } else throw new Error("Unexpected RPC: " + JSON.stringify(request));
+  return Response.json({ jsonrpc: "2.0", id: request.id, result });
+};
+`);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !key.startsWith("STITCH_") && key !== "NODE_OPTIONS"));
+  try {
+    check({
+      root,
+      invoke(repo, name = "Shared Human Name") {
+        const result = spawnSync(process.execPath, ["--import", preloadPath,
+          path.resolve("scripts/stitch-api.mjs"), "ensure-project-identity", name, repo], {
+          cwd: root, env: { ...env, STITCH_API_KEY: "offline-dummy-only" }, encoding: "utf8", timeout: 15_000,
+        });
+        assert.equal(result.error, undefined);
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+      },
+      requests: () => fs.readFileSync(capturePath, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)),
+      projects(projects) {
+        const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+        fs.writeFileSync(statePath, JSON.stringify({ ...state, projects }));
+      },
+      ambiguousCreate() {
+        const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+        fs.writeFileSync(statePath, JSON.stringify({ ...state, ambiguous: true }));
+      },
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+function identityToolCalls(requests: any[], name: string) {
+  return requests.filter(request => request.method === "tools/call" && request.params.name === name);
+}
+
+function scopedIdentityTitle(canonicalRepo: string) {
+  return "sf-" + createHash("sha256").update("setfarm.stitch-project-identity.v1\0").update(canonicalRepo).digest("hex").slice(0, 32);
+}
+
+describe("stitch-api repository-scoped project identity", () => {
+  it("preserves a valid legacy local binding and strict output with zero RPC", () => {
+    withProjectIdentityFixture(f => {
+      const repo = path.join(f.root, "repo");
+      fs.mkdirSync(repo);
+      const bytes = JSON.stringify({ projectId: "legacy-123", name: "Old Name", updatedAt: "historical" });
+      fs.writeFileSync(path.join(repo, ".stitch"), bytes);
+      const result = f.invoke(repo);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { schema: "setfarm.stitch-project-identity.v1", projectId: "legacy-123", name: "Shared Human Name", source: "stitch-file" });
+      assert.equal(fs.readFileSync(path.join(repo, ".stitch"), "utf8"), bytes);
+      assert.deepEqual(f.requests(), []);
+    });
+  });
+
+  it("ignores old human-title projects and creates exactly one scoped identity", () => {
+    withProjectIdentityFixture(f => {
+      const repo = path.join(f.root, "repo");
+      f.projects([{ name: "projects/old-global", title: "Shared Human Name" }]);
+      const result = f.invoke(repo);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { schema: "setfarm.stitch-project-identity.v1", projectId: "owned-1", name: "Shared Human Name", source: "created" });
+      assert.equal(identityToolCalls(f.requests(), "list_projects").length, 1);
+      assert.deepEqual(identityToolCalls(f.requests(), "create_project").map(r => r.params.arguments), [{ title: scopedIdentityTitle(path.join(fs.realpathSync(f.root), "repo")) }]);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(repo, ".stitch"), "utf8")), { schema: "setfarm.stitch-project-identity.v1", projectId: "owned-1", name: "Shared Human Name" });
+    });
+  });
+
+  it("isolates different unbound repository roots with the same human name", () => {
+    withProjectIdentityFixture(f => {
+      const first = f.invoke(path.join(f.root, "first"));
+      const second = f.invoke(path.join(f.root, "second"));
+      assert.equal(first.status, 0, first.stderr);
+      assert.equal(second.status, 0, second.stderr);
+      assert.notEqual(JSON.parse(first.stdout).projectId, JSON.parse(second.stdout).projectId);
+      const titles = identityToolCalls(f.requests(), "create_project").map(r => r.params.arguments.title);
+      assert.equal(titles.length, 2);
+      assert.notEqual(titles[0], titles[1]);
+    });
+  });
+
+  it("recovers the same namespace before and after nested creation and through a symlink alias", () => {
+    withProjectIdentityFixture(f => {
+      const repo = path.join(f.root, "missing", "nested", "repo");
+      const first = f.invoke(repo);
+      assert.equal(first.status, 0, first.stderr);
+      fs.unlinkSync(path.join(repo, ".stitch"));
+      const second = f.invoke(repo);
+      assert.equal(second.status, 0, second.stderr);
+      fs.unlinkSync(path.join(repo, ".stitch"));
+      const alias = path.join(f.root, "alias");
+      fs.symlinkSync(path.join(f.root, "missing"), alias, "dir");
+      const third = f.invoke(path.join(alias, "nested", "repo"));
+      assert.equal(third.status, 0, third.stderr);
+      assert.equal(JSON.parse(first.stdout).projectId, JSON.parse(second.stdout).projectId);
+      assert.equal(JSON.parse(first.stdout).projectId, JSON.parse(third.stdout).projectId);
+      assert.equal(JSON.parse(second.stdout).source, "exact-title");
+      assert.equal(JSON.parse(third.stdout).source, "exact-title");
+      assert.deepEqual(identityToolCalls(f.requests(), "create_project").map(r => r.params.arguments.title), [scopedIdentityTitle(fs.realpathSync(repo))]);
+    });
+  });
+
+  it("recovers an ambiguous create on the next invocation without another create", () => {
+    withProjectIdentityFixture(f => {
+      const repo = path.join(f.root, "repo");
+      f.ambiguousCreate();
+      const first = f.invoke(repo);
+      assert.notEqual(first.status, 0);
+      assert.equal(fs.existsSync(path.join(repo, ".stitch")), false);
+      const second = f.invoke(repo);
+      assert.equal(second.status, 0, second.stderr);
+      assert.equal(JSON.parse(second.stdout).source, "exact-title");
+      assert.equal(JSON.parse(second.stdout).projectId, "owned-1");
+      assert.deepEqual(identityToolCalls(f.requests(), "create_project").map(r => r.params.arguments.title), [scopedIdentityTitle(fs.realpathSync(repo))]);
+      assert.equal(identityToolCalls(f.requests(), "list_projects").length, 2);
+    });
+  });
+
+  it("refuses multiple distinct remote IDs with the exact scoped title", () => {
+    withProjectIdentityFixture(f => {
+      const repo = path.join(f.root, "repo");
+      const title = scopedIdentityTitle(path.join(fs.realpathSync(f.root), "repo"));
+      f.projects([{ name: "projects/one", title }, { name: "projects/two", title }]);
+      const result = f.invoke(repo);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /STITCH_PROJECT_IDENTITY_AMBIGUOUS/);
+      assert.equal(identityToolCalls(f.requests(), "create_project").length, 0);
+      assert.equal(fs.existsSync(path.join(repo, ".stitch")), false);
+    });
+  });
+
+  it("keeps the provider title fixed ASCII length despite a long Unicode human name", () => {
+    withProjectIdentityFixture(f => {
+      const name = "Üretim 🚀 日本語 ".repeat(100);
+      const repo = path.join(f.root, "repo");
+      const result = f.invoke(repo, name);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).name, name);
+      const title = identityToolCalls(f.requests(), "create_project")[0]?.params.arguments.title;
+      assert.match(title, /^sf-[0-9a-f]{32}$/);
+      assert.equal(Buffer.byteLength(title, "utf8"), 35);
+    });
+  });
+});
+
 // These cases catch obsolete outgoing model IDs, silent override rewriting, and
 // hidden replay at the external boundary, while keeping request construction real.
 function runGenerationCommandOffline(command: string, model?: string, mode = "accept") {
@@ -552,6 +731,7 @@ const fixture = ${JSON.stringify(fixture)};
 const supported = new Set(["MODEL_ID_UNSPECIFIED", "GEMINI_3_8_FLASH", "GEMINI_3_5_FLASH_LITE"]);
 globalThis.fetch = async (url, options) => {
   if (String(url) === "https://example.invalid/status.html") {
+    if (fixture.mode === "auth401" || fixture.mode === "auth403") return new Response("private body token=do-not-publish", { status: Number(fixture.mode.slice(4)) });
     return new Response(Buffer.from(fixture.html, "base64"));
   }
   if (String(url) === "https://example.invalid/status.png") {
@@ -626,6 +806,25 @@ describe("stitch-api live model request compatibility", () => {
         }
       });
     }
+  }
+
+  for (const status of [401, 403]) {
+    it(`preserves typed HTML HTTP ${status} denial after accepted generation without replay`, () => {
+      const result = runGenerationCommandOffline("generate-all-screens-attempt", undefined, `auth${status}`);
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.deepEqual(result.requests.map((request) => request.params?.name ?? request.method),
+        ["initialize", "generate_screen_from_text"]);
+      const transport = JSON.parse(result.stdout);
+      assert.equal(transport.directScreenEvidence[0].disposition, "admitted_renderable_screen");
+      assert.deepEqual(transport.downloaded[0].artifactDownloadFailure, {
+        artifactKind: "html", httpStatus: status,
+        sourceRefHash: createHash("sha256").update("https://example.invalid/status.html").digest("hex"),
+        code: "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED",
+      });
+      assert.equal(transport.downloaded[0].htmlFile, undefined);
+      assert.deepEqual(result.artifacts, []);
+      assert.doesNotMatch(JSON.stringify(transport.downloaded), /https:|private body|do-not-publish|offline-dummy-only/);
+    });
   }
 
   for (const mode of ["reject", "ambiguous"]) {

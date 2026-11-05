@@ -102,6 +102,25 @@ export const DESIGN_SOURCE_RENDER_PREFETCH_OPERATIONAL_CAUSE_V1 = Object.freeze(
   failureCode: "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
 } satisfies OperationalFailureCauseV1);
 
+export const DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1 = Object.freeze({
+  schema: "setfarm.operational-failure-cause.v1",
+  workflowStepId: "design",
+  boundary: "product_compiler.design_source.artifact_download",
+  failureClass: "infrastructure_failure",
+  failureCode: "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED",
+} satisfies OperationalFailureCauseV1);
+
+const ArtifactAccessDeniedReceiptSchema = z.object({
+  screenId: z.string().min(1).max(500),
+  htmlFile: z.unknown().optional(),
+  artifactDownloadFailure: z.object({
+    artifactKind: z.literal("html"),
+    httpStatus: z.union([z.literal(401), z.literal(403)]),
+    sourceRefHash: z.string().regex(/^[a-f0-9]{64}$/),
+    code: z.literal("STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED"),
+  }).strict(),
+}).passthrough();
+
 const AttemptTransportSchema = z.object({
   schema: z.literal("setfarm.stitch-attempt-transport.v1"),
   total: z.number().int().nonnegative().max(1_000),
@@ -561,6 +580,64 @@ async function materializeAcceptedAuthority(input: Readonly<{
           rejectionCodes: evaluation.rejectionCodes,
         })),
       }));
+    // Selection remains authoritative: this branch cannot override a valid
+    // sibling. Every relevant admitted candidate must have exact access evidence;
+    // any unknown, semantic, ambiguous or successful HTML sibling stays semantic.
+    const allHtmlAuthBlocked = unresolved.length > 0 && unresolved.every((target) => {
+      const candidates = selection.candidateSelection.candidates.filter((candidate) =>
+        candidate.stageId === target.stageId
+        && candidate.targetRefs.includes(target.targetRef)
+        && target.evaluations.some((evaluation) => evaluation.screenId === candidate.screenId));
+      return target.evaluations.length > 0
+        && candidates.length === target.evaluations.length
+        && target.evaluations.every((evaluation) => candidates.filter((candidate) =>
+          candidate.screenId === evaluation.screenId).length === 1)
+        && candidates.every((candidate) => {
+        if (candidate.renderDisposition !== "admitted_renderable_screen") return false;
+        const stages = input.stageResults.filter((stage) => stage.stageId === target.stageId);
+        if (stages.length !== 1) return false;
+        const response = AttemptTransportSchema.safeParse(stages[0]!.response);
+        if (!response.success) return false;
+        const receipts = response.data.downloaded.filter((receipt) =>
+          receipt !== null && typeof receipt === "object"
+          && !Array.isArray(receipt)
+          && (receipt as Record<string, unknown>).screenId === candidate.screenId);
+        if (receipts.length !== 1) return false;
+        const receipt = ArtifactAccessDeniedReceiptSchema.safeParse(receipts[0]);
+        return receipt.success
+          && receipt.data.htmlFile === undefined
+          && receipt.data.artifactDownloadFailure.sourceRefHash === candidate.htmlSourceRefHash
+          && candidate.htmlDownloadedArtifactHash === null
+          && candidate.htmlArtifactValidity === "missing"
+          && artifactsById.get(candidate.screenId)?.htmlBytes === undefined;
+      });
+    });
+    if (allHtmlAuthBlocked) {
+      const cause = DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1;
+      const evidence = {
+        cause,
+        phase: "artifact_download",
+        candidateSelectionArtifact: selectionRef,
+        failedStageIds: uniqueSorted(unresolved.map((item) => item.stageId)),
+        failedTargetRefs: uniqueSorted(unresolved.map((item) => item.targetRef)),
+        unresolvedTargets: unresolved,
+        retrySemanticEvidence,
+      };
+      throw new DesignSourceMaterializationFailureV2({
+        disposition: "infrastructure_failure",
+        failure: {
+          failureFingerprint: hashCanonicalJson({
+            schema: "setfarm.design-source-failure-fingerprint.v1",
+            requestHash: input.attempt.requestHash,
+            reasonCodes: [cause.failureCode],
+            evidenceHash: hashCanonicalJson(evidence),
+          }),
+          operationalCauseHash: hashCanonicalJson(cause),
+          reasonCodes: [cause.failureCode],
+          evidence,
+        },
+      });
+    }
     throw typedMaterializationFailure({
       attempt: input.attempt,
       reasonCodes: selection.rejectionCodes,
@@ -1002,6 +1079,11 @@ export async function runDesignSourceAuthorityV2(
       return result.artifactSet;
     },
     planRetry: async ({ stagePrompts, failure, failureEvidence }) => {
+      if (failure.reasonCodes.length === 1
+        && failure.reasonCodes[0] === DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1.failureCode
+        && failure.operationalCauseHash === hashCanonicalJson(DESIGN_SOURCE_ARTIFACT_DOWNLOAD_OPERATIONAL_CAUSE_V1)) {
+        return null;
+      }
       const failedStageIds = retryStages(failureEvidence);
       if (failedStageIds.length === 0) return null;
       const failed = new Set(failedStageIds);

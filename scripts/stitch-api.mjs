@@ -17,8 +17,8 @@
  *   node stitch-api.mjs download <url> <outputFile>
  */
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync, renameSync, rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync, renameSync, rmSync, realpathSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
@@ -624,6 +624,22 @@ function validDownloadedPng(buffer) {
   return false;
 }
 
+// Only actual HTTP responses can create this access-denied receipt. Diagnostics
+// and provider messages cannot promote themselves to typed download evidence.
+class StitchArtifactDownloadAccessDenied extends Error {
+  constructor(status, url, outputPath) {
+    super(`Download failed: HTTP ${status}`);
+    const artifactKind = outputPath.toLowerCase().endsWith('.html') ? 'html'
+      : outputPath.toLowerCase().endsWith('.png') ? 'screenshot' : undefined;
+    if (artifactKind) this.artifactDownloadFailure = Object.freeze({
+      artifactKind,
+      httpStatus: status,
+      sourceRefHash: createHash('sha256').update(String(url)).digest('hex'),
+      code: 'STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED',
+    });
+  }
+}
+
 // Download to a new attempt file, validate it, then atomically publish it.
 async function downloadFile(url, outputPath, attempt = 1) {
   if (attempt === 1) rmSync(outputPath, { force: true });
@@ -637,6 +653,7 @@ async function downloadFile(url, outputPath, attempt = 1) {
       await new Promise(r => setTimeout(r, delay));
       return downloadFile(url, outputPath, attempt + 1);
     }
+    if (res.status === 401 || res.status === 403) throw new StitchArtifactDownloadAccessDenied(res.status, url, outputPath);
     if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
     const buffer = Buffer.from(await res.arrayBuffer());
     if (outputPath.toLowerCase().endsWith('.html') && !validDownloadedHtml(buffer)) {
@@ -959,8 +976,28 @@ const commands = {
       }
     } catch { /* no sealed local identity */ }
 
+    // The repository may not exist yet. Resolve its nearest existing parent
+    // so bootstrap and symlink aliases share the same stable namespace.
+    let ancestor = resolve(repoPath);
+    const missingComponents = [];
+    let canonicalRepo;
+    for (;;) {
+      try {
+        canonicalRepo = resolve(realpathSync(ancestor), ...missingComponents);
+        break;
+      } catch (error) {
+        if (error?.code !== 'ENOENT' || dirname(ancestor) === ancestor) throw error;
+        missingComponents.unshift(basename(ancestor));
+        ancestor = dirname(ancestor);
+      }
+    }
+    const scopedTitle = 'sf-' + createHash('sha256')
+      .update('setfarm.stitch-project-identity.v1\0')
+      .update(canonicalRepo)
+      .digest('hex').slice(0, 32);
+
     // Project identity is established outside screen-generation attempts. It
-    // performs one list and, only when absent, one create. Exact-title lookup
+    // performs one list and, only when absent, one create. Exact scoped-title lookup
     // makes an ambiguous create response recoverable on the next invocation.
     // No credential rotation, substring match, provider retry, or screen-state
     // heuristic is allowed at this boundary.
@@ -980,7 +1017,7 @@ const commands = {
       } catch { /* typed failure below if no exact identity can be established */ }
     }
     const exactIds = [...new Set(projects
-      .filter((project) => String(project.title || project.displayName || project.name || '') === name)
+      .filter((project) => String(project.title || project.displayName || project.name || '') === scopedTitle)
       .map((project) => String(project.name || '').replace(/^projects\//, '') || project.projectId || project.id)
       .filter(validProjectId))];
     if (exactIds.length > 1) throw new Error('STITCH_PROJECT_IDENTITY_AMBIGUOUS');
@@ -990,7 +1027,7 @@ const commands = {
     if (!projectId) {
       const createResult = await rpcOnce('tools/call', {
         name: 'create_project',
-        arguments: { title: name },
+        arguments: { title: scopedTitle },
       });
       assertToolResultOk(createResult, 'create_project');
       for (const item of createResult?.content || []) {
@@ -1896,6 +1933,9 @@ const commands = {
         }
       } catch (error) {
         receipt.downloadError = redactDiagnosticText(error?.message || error).slice(0, 700);
+        if (error instanceof StitchArtifactDownloadAccessDenied && error.artifactDownloadFailure) {
+          receipt.artifactDownloadFailure = error.artifactDownloadFailure;
+        }
       }
       downloaded.push(receipt);
     }
