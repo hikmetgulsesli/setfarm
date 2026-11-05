@@ -324,7 +324,7 @@ export class WebPreviewRuntimeDriver implements RuntimeDriver {
           role: implicitRole(element),
           accessibleName: accessibleName(element),
           visibleText: (html.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 4_000),
-          value: "value" in input ? input.value : null,
+          value: "value" in input ? input.value : element.getAttribute("data-value"),
           visible: style.display !== "none"
             && style.visibility !== "hidden"
             && style.opacity !== "0"
