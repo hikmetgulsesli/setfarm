@@ -118,7 +118,11 @@ function fixture(){
     deriveSubscriptionCodingRuntimePathsV1,getSql:()=>({fixtureOnly:true}),assertSpawnerOperationalEntryV1:async()=>{},
     startSelectedSubscriptionCodingRuntimeV1:async(actual:any)=>{events.push("acquire-pair");assert.equal(events[0],"mark-starting");assert.deepEqual(actual.envelope,claimEnvelope);return runtime;},
     createRuntimeSessionRepository:()=>({
-      markStarting:async()=>{events.push("mark-starting");return{sessionId:runtimeSessionId,ownerInstanceId,state:"starting",stateVersion:1};},
+      markStarting:async(actual:any)=>{events.push("mark-starting");
+        assert.equal(actual.sessionId,runtimeSessionId);assert.equal(actual.ownerInstanceId,ownerInstanceId);
+        assert.equal(actual.runtimePath,paths.runtimePath);assert.equal(actual.transcriptPath,paths.transcriptPath);
+        assert.equal(actual.worktree,claimEnvelope.workdir);
+        return{sessionId:runtimeSessionId,ownerInstanceId,state:"starting",stateVersion:1};},
       markRunning:async(actual:any)=>{events.push("mark-running");const retained=activeProcesses.get(input.key);
         assert.equal(retained?.subscriptionRuntime,runtime,"actual pair retained before markRunning await");
         assert.deepEqual(retained?.claimEnvelope,claimEnvelope,"full original envelope retained, including issuedAt/input");
@@ -153,6 +157,53 @@ it("markRunning failure closes retained pair and never opens its worker gate",as
   f.ports.createRuntimeSessionRepository=()=>repo;
   await assert.rejects(evaluate("spawner.ts","startSelectedSubscriptionClaimV1",f.ports)(f.input),/publication|REFUSED/);
   assert.ok(f.events.includes("close-pair"));assert.equal(f.events.includes("gate"),false);assert.equal(f.published(),0);
+});
+it("selected subscription cannot acquire before canonical starting paths are durably published",async()=>{
+  const f=fixture(),repo=f.ports.createRuntimeSessionRepository(),published=deferred<any>();
+  const original=repo.markStarting;
+  repo.markStarting=async(actual:any)=>{const row=await original(actual);await published.promise;return row;};
+  f.ports.createRuntimeSessionRepository=()=>repo;
+  const starting=evaluate("spawner.ts","startSelectedSubscriptionClaimV1",f.ports)(f.input);
+  await new Promise(setImmediate);
+  assert.deepEqual(f.events,["mark-starting"]);
+  assert.equal(f.activeProcesses.size,0);
+  published.resolve(undefined);await starting;
+  assert.deepEqual(f.events.slice(0,4),["mark-starting","acquire-pair","mark-running","gate"]);
+});
+it("selected acquisition refusal after markStarting quarantines the canonical runtime without opening a gate",async()=>{
+  const f=fixture();class StartupError extends Error{}
+  f.ports.SubscriptionCodingRuntimeStartupErrorV1=StartupError;
+  f.ports.startSelectedSubscriptionCodingRuntimeV1=async()=>{f.events.push("acquire-refused");throw Error("COMPONENT_STARTUP_REFUSED");};
+  await assert.rejects(evaluate("spawner.ts","startSelectedSubscriptionClaimV1",f.ports)(f.input),/COMPONENT_STARTUP_REFUSED/);
+  assert.deepEqual(f.events,["mark-starting","acquire-refused","quarantine"]);
+  assert.equal(f.activeProcesses.size,0);assert.equal(f.published(),0);
+});
+it("actual subscription compiler completion reserves neutral ownership without acquiring a worker",async()=>{
+  const f=fixture(),envelope={...f.input.claimEnvelope,workflowStepId:"design",claimAgentId:"feature-dev_designer",runtimeAgentId:"designer"};
+  const compilerOutput="STATUS: done\nDESIGN_SOURCE: accepted_mcp_artifacts\nRESULT: exact compiler-owned design projection";
+  const claim={found:true,stepId:envelope.stepId,workflowStepId:"design",runId:envelope.runId,protocol:"v3",claimId:41,
+    claimAgentId:envelope.claimAgentId,runtimeSessionId:f.input.runtimeSessionId,runtimeOwnerInstanceId:f.ownerInstanceId,
+    resolvedInput:envelope.input,compilerCompletionOutput:compilerOutput};
+  let intent:any,claimCalls=0,acquisitions=0,legacy=0;
+  const publications:any[]=[],cleanup:any[]=[];
+  Object.assign(f.ports,{hasTrackedClaimRuntime:()=>false,shouldDeferBackgroundWorkflow:async()=>false,trackedRuntimeCount:()=>0,MAX_CONCURRENT:2,
+    pendingClaimInvocations:new Map(),newRuntimeSessionId:()=>f.input.runtimeSessionId,buildSessionKey:()=>f.input.sessionKey,agentSessionJsonlPath:()=>"/unused/session.jsonl",
+    TRANSCRIPT_ROOT:"/legacy/transcripts",recoveryDispatchClassForRole:()=>undefined,assertSubscriptionWorkflowRoleV1,
+    claimStep:async(_claimAgent:string,_runtimeAgent:string,runtimeIntent:any)=>{claimCalls++;intent=runtimeIntent;return claim;},
+    runtimeClaimEnvelope:()=>envelope,safeAgentCwdFromClaimInput:()=>envelope.workdir,
+    publishRuntimeCompletionProposal:async(step:string,output:string,actual:any)=>{publications.push({step,output,envelope:actual});return{managed:true};},
+    startSelectedSubscriptionClaimV1:async()=>{acquisitions++;},startSelectedSubscriptionCodingRuntimeV1:async()=>{acquisitions++;},
+    fs:{unlinkSync(){legacy++;},mkdirSync(){legacy++;},writeFileSync(){legacy++;}},spawn:()=>{legacy++;},
+    releaseUntransferredPostClaimOwnership:async(...args:any[])=>{cleanup.push(args);},
+  });
+  await evaluate("spawner.ts","spawnAgentNow",f.ports)("designer","feature-dev","designer");
+  assert.equal(claimCalls,1);assert.equal(acquisitions,0);assert.equal(legacy,0);
+  assert.deepEqual(publications,[{step:envelope.stepId,output:compilerOutput,envelope}]);
+  assert.equal(intent.sessionId,f.input.runtimeSessionId);assert.equal(intent.ownerInstanceId,f.ownerInstanceId);
+  assert.equal(intent.runtimeAgentId,"designer");assert.equal(intent.runtimeKind,"local_process");
+  assert.equal(intent.transcriptPath,f.paths.transcriptPath);
+  assert.equal(Object.hasOwn(intent,"runtimePath"),false,"compiler-owned reservation must not classify as a started subscription worker");
+  assert.equal(cleanup.length,1);assert.equal(f.ports.pendingClaimInvocations.size,0);
 });
 it("actual spawnAgentNow routes selected subscription to owned helper before legacy tmp files or spawn",async()=>{
   const f=fixture();let routed=0,legacy=0;
