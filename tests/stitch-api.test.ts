@@ -696,7 +696,7 @@ describe("stitch-api repository-scoped project identity", () => {
 
   it("keeps the provider title fixed ASCII length despite a long Unicode human name", () => {
     withProjectIdentityFixture(f => {
-      const name = "Üretim 🚀 日本語 ".repeat(100);
+      const name = "\u00dcretim \u{1f680} \u65e5\u672c\u8a9e ".repeat(100);
       const repo = path.join(f.root, "repo");
       const result = f.invoke(repo, name);
       assert.equal(result.status, 0, result.stderr);
