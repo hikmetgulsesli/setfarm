@@ -16,7 +16,7 @@ import type { SubscriptionCodingWriteGrantV1 } from "./subscription-coding-worke
 import { observeProcessIdentity } from "./process-identity.js";
 import { createRuntimeSessionRepository, type RecoveryRuntimeLeaseFence } from "./runtime-session-repository.js";
 import { ClaimEnvelopeV1Schema, type ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
-import { V3ImplementationContextV1Schema } from "./v3-implementation-handoff.js";
+import { parseV3ImplementationContext } from "./v3-implementation-handoff.js";
 import { V3StageClaimHandoffV1Schema } from "./v3-stage-execution-context.js";
 import { deriveSubscriptionCodingRuntimePathsV1, projectSubscriptionCodingRuntimeBindingV1,
   sameSubscriptionRuntimeDataV1, subscriptionRuntimeRefusedV1, type SubscriptionCodingCanonicalAuthorityV1 } from "./subscription-coding-runtime-binding-v1.js";
@@ -126,7 +126,7 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
   if (!selected || !process.getuid) subscriptionRuntimeRefusedV1();
   const envelope = ClaimEnvelopeV1Schema.parse(input.envelope);
   const authority: SubscriptionCodingCanonicalAuthorityV1 = input.authority.schema === "setfarm.implementation-context.v3"
-    ? V3ImplementationContextV1Schema.parse(input.authority) : V3StageClaimHandoffV1Schema.parse(input.authority);
+    ? parseV3ImplementationContext(input.authority) : V3StageClaimHandoffV1Schema.parse(input.authority);
   const handoffPlan=planSubscriptionWorkflowHandoffV1({claim:envelope,authority});
   let prompt=renderSubscriptionWorkflowPromptV1({claim:envelope,authority,handoffRef:handoffPlan.handoffRef});
   const profile = readSelectedFreshExecutionProfileV1(authority.schema === "setfarm.implementation-context.v3"

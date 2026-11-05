@@ -2,10 +2,13 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { SourceRevisionV1 } from "../execution/schemas/execution-attempt-v1.js";
+import { SourceRevisionV1Schema, type SourceRevisionV1 } from "../execution/schemas/execution-attempt-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import type { ImplementationSliceV1 } from "../product-compiler/schemas/implementation-slice-v1.js";
 import { ImplementationSliceV1Schema } from "../product-compiler/schemas/implementation-slice-v1.js";
+import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
+import { EvidencePredicateV2Schema, type EvidencePredicateV2 } from "../product-compiler/schemas/product-spec-v2.js";
+import { EvidencePredicateV1Schema } from "../product-compiler/schemas/product-spec-v1.js";
 import type {
   EvidencePredicateV1,
   ObservableActionEffectV1,
@@ -22,7 +25,10 @@ import {
   type EvidenceObservationDraftV2,
 } from "./evidence-bundle-v2.js";
 import { compileEvidencePlanV1, EvidencePlanV1Schema, type EvidencePlanV1 } from "./evidence-plan-v1.js";
+import { compileEvidencePlanV2, EvidencePlanV2Schema, type EvidencePlanV2 } from "./evidence-plan-v2.js";
 import type { z } from "zod";
+import { parseStitchSemanticDomV1 } from "../product-compiler/stitch-semantic-dom-v1.js";
+import { encodeActionInputValueV2 } from "../product-compiler/schemas/action-input-transport-v2.js";
 
 import {ClaimEnvelopeV1Schema,type ClaimEnvelopeV1} from "../execution/schemas/claim-envelope-v1.js";
 import type {V3StoryClaimRuntimeSubjectV1} from "../execution/v3-story-claim-runtime-binding-v1.js";
@@ -64,10 +70,11 @@ export type CanonicalEvidenceResultV1 = Readonly<{
 type Artifact = z.infer<typeof EvidenceArtifactRefV2Schema>;
 type Predicate = ImplementationSliceV1["requiredEvidence"][number];
 type SemanticVerdict = "pass" | "fail" | "inconclusive";
+type ActionStateSemantics = Pick<ProductActionV1, "preconditions" | "stateDeltas" | "persistenceEffects" | "input" | "success">;
 
 export type ProducedPredicateSemanticInputV1 = Readonly<{
   predicate: EvidencePredicateV1;
-  action: ProductActionV1;
+  action: ActionStateSemantics;
   persistencePolicies: readonly PersistencePolicyV1[];
   inputValues: Readonly<Record<string, unknown>>;
   stateBefore: Readonly<Record<string, unknown>>;
@@ -126,7 +133,7 @@ function capturedStates(
 
 function actionStatePayload(
   capture: CapturedRuntimeState | undefined,
-  action: ProductActionV1,
+  action: ActionStateSemantics,
   slice: ImplementationSliceV1,
 ): unknown {
   const refs = [...new Set([
@@ -174,7 +181,7 @@ function assertionVerdict(
   return "inconclusive";
 }
 
-function invariantRef(kind: Predicate["kind"]): string {
+function invariantRef(kind: Predicate["kind"] | EvidencePredicateV2["kind"]): string {
   return `INV_${kind.toUpperCase()}`;
 }
 
@@ -193,7 +200,7 @@ function resolveActionInput(
 }
 
 function resolvedActionInputs(
-  action: ProductActionV1,
+  action: ActionStateSemantics,
   flow: EvidencePlanV1["flows"][number],
   before: CapturedRuntimeState | undefined,
   slice: ImplementationSliceV1,
@@ -235,7 +242,7 @@ function exactStringSet(left: readonly string[], right: readonly string[]): bool
 }
 
 function evaluateActionPreconditions(
-  action: ProductActionV1,
+  action: ActionStateSemantics,
   stateBefore: Readonly<Record<string, unknown>>,
 ): SemanticVerdict {
   for (const condition of action.preconditions) {
@@ -279,7 +286,7 @@ function semanticValueSource(input: Readonly<{
 }
 
 function evaluateActionStateDeltas(input: Readonly<{
-  action: ProductActionV1;
+  action: ActionStateSemantics;
   deltas?: ProductActionV1["stateDeltas"];
   inputValues: Readonly<Record<string, unknown>>;
   stateBefore: Readonly<Record<string, unknown>>;
@@ -344,7 +351,7 @@ function evaluateActionStateDeltas(input: Readonly<{
 }
 
 function exactDeltaTargetsPersisted(input: Readonly<{
-  action: ProductActionV1;
+  action: ActionStateSemantics;
   deltas: ProductActionV1["stateDeltas"];
   inputValues: Readonly<Record<string, unknown>>;
   stateAfterAction: Readonly<Record<string, unknown>>;
@@ -373,7 +380,7 @@ function exactDeltaTargetsPersisted(input: Readonly<{
 }
 
 function persistenceEffectDeltas(
-  action: ProductActionV1,
+  action: ActionStateSemantics,
   effect: ProductActionV1["persistenceEffects"][number],
 ): ProductActionV1["stateDeltas"] | undefined {
   const deltas = effect.statePaths.map((statePath) => action.stateDeltas.find((delta) =>
@@ -760,21 +767,257 @@ function predicateVerdict(input: Readonly<{
   return "inconclusive";
 }
 
+function nativeInvocationValue(slice: LegacyImplementationSliceV2, actionRef: string, capture: CapturedRuntimeState | undefined): unknown {
+  const action = slice.contract.product.actions.find(candidate => candidate.id === actionRef);
+  if (!action || (action.invocationInterface.kind !== "cli_command" && action.invocationInterface.kind !== "http_request")) return undefined;
+  const result = capture?.stateBridge?.result;
+  return result === undefined ? undefined : jsonPointer(result, action.invocationInterface.result.valuePointer);
+}
+
+function nativeDom(capture: CapturedRuntimeState | undefined) {
+  const file = capture?.domSnapshotPath;
+  if (!file) return undefined;
+  const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!isRecord(parsed) || parsed.schema !== "setfarm.browser-dom-observation.v1" || typeof parsed.rootHtml !== "string") return undefined;
+  const observations = capturedDomElements(capture);
+  return observations ? { observations, elements: parseStitchSemanticDomV1(parsed.rootHtml) } : undefined;
+}
+
+function nativePhysicalControl(capture: CapturedRuntimeState | undefined, flow: EvidencePlanV2["flows"][number]): boolean | undefined {
+  const source = flow.controlSource, dom = nativeDom(capture);
+  if (!source || !dom) return undefined;
+  const elements = dom.elements.filter(element => element.attributes.get("data-action-id") === source.generatedLocalId);
+  const observations = dom.observations.filter(element => sourceSelectors(element).includes(source.generatedSelector));
+  if (elements.length !== 1 || observations.length !== 1) return false;
+  const element = elements[0]!, observation = observations[0]!;
+  return element.duplicateAttributes.length === 0 && element.attributes.get("data-setfarm-element-ref") === source.sourceElementRef
+    && element.attributes.get("data-action") === source.actionRef && element.attributes.get("data-control-slot") === source.controlSlotRef
+    && element.activeSurfaceRef === source.placement.surfaceRef && element.tagName === source.tagName
+    && observation.containingSurfaceId === source.placement.surfaceRef && observation.visible && observation.enabled;
+}
+
+function nativeStates(capture: CapturedRuntimeState | undefined, slice: LegacyImplementationSliceV2): Readonly<Record<string, unknown>> {
+  const bridge = capture?.stateBridge;
+  if (!isRecord(bridge)) return {};
+  if (slice.build.runtimeEvidenceContract?.adapter === "browser-service") {
+    return bridge.schema === "setfarm.runtime-state-bridge.v1" && isRecord(bridge.states) ? bridge.states : {};
+  }
+  if (slice.contract.product.states.length === 1 && Object.hasOwn(bridge, "state")) return { [slice.contract.product.states[0]!.id]: bridge.state };
+  return {};
+}
+
+function nativeRenderedValue(input: Readonly<{ capture: CapturedRuntimeState | undefined; effect: EvidencePlanV2["flows"][number]["observableEffects"][number];
+  flow: EvidencePlanV2["flows"][number]; property: ObservableActionEffectV1["assertions"][number]["property"] }>): unknown {
+  const dom = nativeDom(input.capture), selector = input.effect.selector;
+  if (!dom || selector.kind === "invocation_output") return undefined;
+  const sources = input.flow.observableSources?.filter(source => source.observableRef === input.effect.id && source.evidenceRef === input.effect.evidenceRef) ?? [];
+  const bindings = input.flow.observableBindings.filter(binding => binding.observableRef === input.effect.id && binding.evidenceRef === input.effect.evidenceRef);
+  if (sources.length !== 1 || bindings.length !== 1) return undefined;
+  const source = sources[0]!;
+  const elements = dom.elements.filter(element => element.attributes.get("data-setfarm-element-ref") === source.sourceElementRef
+    && (element.attributes.get("data-observable-refs") ?? "").split(/\s+/).includes(input.effect.id));
+  const observations = dom.observations.filter(element => (element.observableRefs ?? []).includes(input.effect.id));
+  if (elements.length !== 1 || observations.length !== 1) return undefined;
+  const element = elements[0]!, observation = observations[0]!;
+  if (element.duplicateAttributes.length) return undefined;
+  if (selector.kind === "control") {
+    if (element.attributes.get("data-control-slot") !== selector.controlSlotRef) return undefined;
+    const expected = input.flow.observableBindings.find(binding => binding.observableRef === input.effect.id);
+    if (expected?.selector.kind !== "control" || expected.selector.controlSlotRef !== selector.controlSlotRef) return undefined;
+  } else if (selector.kind === "surface") {
+    if (element.attributes.get("data-surface-id") !== selector.surfaceRef || observation.surfaceId !== selector.surfaceRef) return undefined;
+  } else if (element.activeSurfaceRef !== selector.surfaceRef || (observation.containingSurfaceId ?? observation.surfaceId) !== selector.surfaceRef
+    || observation.role !== selector.role || observation.accessibleName !== selector.name) return undefined;
+  if (input.property === "route") return pathname(input.capture?.url);
+  if (input.property === "visible_text") return observation.visibleText;
+  if (input.property === "value") return observation.value;
+  if (input.property === "visibility") return observation.visible;
+  return observation.enabled;
+}
+
+function nativeObservableVerdict(input: Readonly<{ slice: LegacyImplementationSliceV2; flow: EvidencePlanV2["flows"][number];
+  effect: EvidencePlanV2["flows"][number]["observableEffects"][number]; actionTrace: CanonicalInteractionTraceV1; reloadTrace?: CanonicalInteractionTraceV1 }>): SemanticVerdict {
+  const read = (capture: CapturedRuntimeState | undefined, property: ObservableActionEffectV1["assertions"][number]["property"]) => {
+    const selector = input.effect.selector;
+    if (selector.kind === "invocation_output") {
+      const value = nativeInvocationValue(input.slice, input.flow.actionRef, capture);
+      return value === undefined ? undefined : jsonPointer(value, selector.pointer);
+    }
+    return nativeRenderedValue({ capture, property, effect: input.effect, flow: input.flow });
+  };
+  let inconclusive = false;
+  for (const assertion of input.effect.assertions) {
+    const capture = assertion.phase === "before" ? input.actionTrace.before : assertion.phase === "after" ? input.actionTrace.after : input.reloadTrace?.after;
+    const actual = read(capture, assertion.property);
+    if (actual === undefined) { inconclusive = true; continue; }
+    let verdict: SemanticVerdict;
+    if (assertion.operator === "changed") {
+      const before = read(input.actionTrace.before, assertion.property);
+      verdict = before === undefined ? "inconclusive" : deepEqual(before, actual) ? "fail" : "pass";
+    } else if (assertion.operator === "contains") verdict = typeof actual === "string" && typeof assertion.expected === "string" ? actual.includes(assertion.expected) ? "pass" : "fail" : "inconclusive";
+    else if (assertion.operator === "matches") {
+      try { verdict = typeof actual === "string" && typeof assertion.expected === "string" ? new RegExp(assertion.expected).test(actual) ? "pass" : "fail" : "inconclusive"; }
+      catch { verdict = "inconclusive"; }
+    } else verdict = deepEqual(actual, assertion.expected) ? "pass" : "fail";
+    if (verdict === "fail") return "fail";
+    if (verdict === "inconclusive") inconclusive = true;
+  }
+  return inconclusive ? "inconclusive" : "pass";
+}
+
+function nativeInputVerdict(slice: LegacyImplementationSliceV2, flow: EvidencePlanV2["flows"][number], traces: readonly CanonicalInteractionTraceV1[]): SemanticVerdict {
+  for (const source of flow.inputSources ?? []) {
+    const transports = slice.actionInputTransports.filter(transport => transport.actionInputRef === source.actionInputRef);
+    if (transports.length !== 1) return "inconclusive";
+    const transport = transports[0]!;
+    const interaction = flow.interactions.find(candidate => candidate.id === `input:${flow.flowId}:${source.inputField}`);
+    const trace = traces.find(candidate => candidate.request.id === interaction?.id);
+    if (!interaction || !trace || trace.result.status !== "pass" || interaction.value !== encodeActionInputValueV2(transport, flow.scenario.targetInputValues[source.inputField])) return "fail";
+    const dom = nativeDom(trace.before);
+    if (!dom) return "inconclusive";
+    const elements = dom.elements.filter(element => element.attributes.get("data-action-id") === source.generatedControlId);
+    if (elements.length !== 1) return "fail";
+    const element = elements[0]!;
+    if (element.attributes.get("data-setfarm-element-ref") !== source.sourceElementRef
+      || !(element.attributes.get("data-action-input") ?? "").split(/\s+/).includes(source.actionInputRef)
+      || !transport.domRequirements.some(requirement => requirement.tagName === element.tagName
+        && requirement.inputType === (element.tagName === "input" ? element.attributes.get("type") ?? "text" : null)
+        && requirement.evidenceAction === interaction.action)) return "fail";
+  }
+  return "pass";
+}
+
+function nativePersistenceVerdict(input: Readonly<{ slice: LegacyImplementationSliceV2; action: ActionStateSemantics; predicate: EvidencePredicateV2;
+  flow: EvidencePlanV2["flows"][number]; actionTrace: CanonicalInteractionTraceV1; reloadTrace?: CanonicalInteractionTraceV1 }>): SemanticVerdict {
+  // Native V2 predicates identify the exact policy in subjectRef; they do not
+  // contain V1's assertion.expected metadata. Read the genuine native action
+  // effects/policy and reuse the existing state/delta engines directly.
+  const policy = input.slice.contract.product.persistencePolicies.find(policy => policy.id === input.predicate.subjectRef);
+  const effects = input.action.persistenceEffects.filter(effect => effect.policyRef === input.predicate.subjectRef && effect.operation !== "read");
+  if (!policy || !effects.length) return "inconclusive";
+  const before = nativeStates(input.actionTrace.before, input.slice), after = nativeStates(input.actionTrace.after, input.slice);
+  for (const effect of effects) {
+    const deltas = persistenceEffectDeltas(input.action, effect);
+    if (!deltas) return "inconclusive";
+    const changed = evaluateActionStateDeltas({ action: input.action, deltas, inputValues: input.flow.scenario.targetInputValues, stateBefore: before, stateAfter: after });
+    if (changed !== "pass") return changed;
+    if (policy.durability === "none" || policy.durability === "session") continue;
+    if ((policy.durability === "restart" || policy.durability === "durable") && input.slice.build.runtimeEvidenceContract?.adapter === "browser-service") return "inconclusive";
+    if (!input.reloadTrace || input.reloadTrace.result.status !== "pass") return "fail";
+    const reloaded = nativeStates(input.reloadTrace.after, input.slice);
+    const reloadDelta = evaluateActionStateDeltas({ action: input.action, deltas, inputValues: input.flow.scenario.targetInputValues, stateBefore: before, stateAfter: reloaded });
+    if (reloadDelta !== "pass") return reloadDelta;
+    const retained = exactDeltaTargetsPersisted({ action: input.action, deltas, inputValues: input.flow.scenario.targetInputValues, stateAfterAction: after, stateAfterReload: reloaded });
+    if (retained !== "pass") return retained;
+  }
+  return "pass";
+}
+
+function nativePredicateVerdict(input: Readonly<{
+  slice: LegacyImplementationSliceV2; plan: EvidencePlanV2; predicate: EvidencePredicateV2;
+  flow?: EvidencePlanV2["flows"][number]; actionTrace?: CanonicalInteractionTraceV1; reloadTrace?: CanonicalInteractionTraceV1; runtimeError?: string;
+  traces: readonly CanonicalInteractionTraceV1[];
+}>): SemanticVerdict {
+  const { slice, plan, predicate, flow, actionTrace, reloadTrace } = input;
+  if (input.runtimeError || !flow || !actionTrace) return "inconclusive";
+  const declared = flow.interactions.find(interaction => interaction.id === flow.actionInteractionId);
+  if (!declared || !deepEqual(declared, actionTrace.request)) return "fail";
+  if (actionTrace.result.status !== "pass") return "fail";
+  for (const interaction of flow.interactions) {
+    const trace = input.traces.find(candidate => candidate.request.id === interaction.id);
+    if (!trace) return "inconclusive";
+    if (!deepEqual(trace.request, interaction) || trace.result.status !== "pass") return "fail";
+  }
+  const action = slice.contract.product.actions.find(candidate => candidate.id === flow.actionRef);
+  if (!action) return "inconclusive";
+  const stateBefore = nativeStates(actionTrace.before, slice);
+  const preconditions = evaluateActionPreconditions(action, stateBefore);
+  if (preconditions !== "pass") return preconditions;
+  const inputs = nativeInputVerdict(slice, flow, input.traces);
+  if (inputs !== "pass") return inputs;
+  if (predicate.kind === "control_visible" || predicate.kind === "control_action") {
+    const physical = nativePhysicalControl(actionTrace.before, flow);
+    return physical === undefined ? "inconclusive" : physical ? "pass" : "fail";
+  }
+  if (predicate.kind === "persistence_round_trip") return nativePersistenceVerdict({ slice, action, predicate, flow, actionTrace, ...(reloadTrace ? { reloadTrace } : {}) });
+  if (predicate.kind === "state_transition") return evaluateProducedPredicateSemanticsV1({
+    predicate: EvidencePredicateV1Schema.parse(predicate), action, persistencePolicies: slice.contract.product.persistencePolicies,
+    inputValues: flow.scenario.targetInputValues, stateBefore, stateAfterAction: nativeStates(actionTrace.after, slice),
+    ...(reloadTrace ? { stateAfterReload: nativeStates(reloadTrace.after, slice), reloadPassed: reloadTrace.result.status === "pass" } : {}),
+    actionPassed: true, ...(plan.runtime ? { runtimeAdapter: plan.runtime.adapter } : {}),
+  });
+  if (predicate.kind === "navigation") {
+    const before = pathname(actionTrace.before.url), after = pathname(actionTrace.after.url);
+    if (!before || !after) return "inconclusive";
+    if (action.navigation.kind === "stay") return before === after ? "pass" : "fail";
+    if (action.navigation.kind === "route") return slice.contract.product.routes.find(route => action.navigation.kind === "route" && route.id === action.navigation.routeRef)?.path === after ? "pass" : "fail";
+    if (action.navigation.kind === "external") {
+      try { return new URL(actionTrace.after.url!).origin === new URL(action.navigation.url).origin ? "pass" : "fail"; } catch { return "inconclusive"; }
+    }
+    return "inconclusive";
+  }
+  if (predicate.kind === "runtime") return "pass";
+  if (predicate.kind === "action_invocation") {
+    if (plan.runtime?.adapter === "browser-service") {
+      const beforeBridge = actionTrace.before.stateBridge, afterBridge = actionTrace.after.stateBridge;
+      if (!beforeBridge || !afterBridge || beforeBridge.schema !== "setfarm.runtime-state-bridge.v1" || afterBridge.schema !== "setfarm.runtime-state-bridge.v1"
+        || beforeBridge.globalName !== plan.runtime.capture.globalName || afterBridge.globalName !== plan.runtime.capture.globalName
+        || !Array.isArray(beforeBridge.missingStateRefs) || beforeBridge.missingStateRefs.length
+        || !Array.isArray(afterBridge.missingStateRefs) || afterBridge.missingStateRefs.length) return "inconclusive";
+      if (action.invocationInterface.kind === "rendered_control") {
+        const physical = nativePhysicalControl(actionTrace.before, flow);
+        if (physical !== true || !flow.controlSource || flow.controlSource.actionRef !== action.id
+          || declared.target !== flow.controlSource.generatedSelector
+          || (flow.controlSource.handlerBinding.event === "click" ? declared.action !== "click" : !["fill", "select", "set_checked"].includes(declared.action))) return physical === undefined ? "inconclusive" : "fail";
+      } else if (action.invocationInterface.kind === "route_entry") {
+        if (declared.action !== "invoke" || declared.target !== action.id || declared.value !== "action") return "fail";
+      } else return "fail";
+      if (action.stateDeltas.length) return evaluateActionStateDeltas({ action, inputValues: flow.scenario.targetInputValues, stateBefore,
+        stateAfter: nativeStates(actionTrace.after, slice) });
+      const outcomes = flow.observableEffects.map(effect => nativeObservableVerdict({ slice, flow, effect, actionTrace, ...(reloadTrace ? { reloadTrace } : {}) }));
+      return outcomes.some(verdict => verdict === "fail") ? "fail" : outcomes.length && outcomes.every(verdict => verdict === "pass") ? "pass" : "inconclusive";
+    }
+    if (nativeInvocationValue(slice, flow.actionRef, actionTrace.after) === undefined) return "fail";
+    const snapshotPath = actionTrace.after.runtimeSnapshotPath;
+    if (!snapshotPath) return "inconclusive";
+    const snapshot: unknown = JSON.parse(fs.readFileSync(snapshotPath, "utf8"));
+    if (!isRecord(snapshot) || snapshot.captureOk !== true || typeof snapshot.raw !== "string") return "fail";
+    const runtime = plan.runtime;
+    if (!runtime) return "inconclusive";
+    const binding = runtime.actions.find(candidate => candidate.actionRef === flow.actionRef);
+    if (!binding || snapshot.adapter !== runtime.adapter || !deepEqual(snapshot.parsed, actionTrace.after.stateBridge?.result)) return "fail";
+    if (runtime.adapter === "cli-process" && "command" in binding.action && action.invocationInterface.kind === "cli_command") {
+      return deepEqual(snapshot.argv, binding.action.command.argv) && typeof snapshot.exitCode === "number"
+        && action.invocationInterface.result.successExitCodes.includes(snapshot.exitCode) ? "pass" : "fail";
+    }
+    if (runtime.adapter === "http-service" && "method" in binding.action && action.invocationInterface.kind === "http_request") {
+      return typeof snapshot.status === "number" && action.invocationInterface.result.successStatusCodes.includes(snapshot.status) ? "pass" : "fail";
+    }
+    return "fail";
+  }
+  if (predicate.kind === "observable_outcome") {
+    const effect = flow.observableEffects.find(candidate => candidate.id === predicate.subjectRef && candidate.evidenceRef === predicate.id);
+    return effect ? nativeObservableVerdict({ slice, flow, effect, actionTrace, ...(reloadTrace ? { reloadTrace } : {}) }) : "inconclusive";
+  }
+  return "inconclusive";
+}
+
 export function createCanonicalEvidenceBundleV2(input: Readonly<{
   runId: string;
   storyId: string;
   workdir: string;
   sourceRevision: SourceRevisionV1;
-  slice: ImplementationSliceV1;
-  plan: EvidencePlanV1;
+  slice: ImplementationSliceV1 | LegacyImplementationSliceV2;
+  plan: EvidencePlanV1 | EvidencePlanV2;
   execution: CanonicalEvidenceExecutionV1;
   startedAt: string;
   completedAt: string;
   runnerVersion?: string;
 }&({attemptId:string;stageClaim?:never}|{stageClaim:SuperviseStageEvidenceIdentityV1;attemptId?:never})>): CanonicalEvidenceResultV1 {
-  const slice = ImplementationSliceV1Schema.parse(input.slice);
-  const plan = EvidencePlanV1Schema.parse(input.plan);
-  const expectedPlan = compileEvidencePlanV1({ slice, sliceHash: plan.sliceHash });
+  const slice = input.slice.schema === "setfarm.implementation-slice.v2" ? LegacyImplementationSliceV2Schema.parse(input.slice) : ImplementationSliceV1Schema.parse(input.slice);
+  const plan = input.plan.schema === "setfarm.evidence-plan.v2" ? EvidencePlanV2Schema.parse(input.plan) : EvidencePlanV1Schema.parse(input.plan);
+  if ((slice.schema === "setfarm.implementation-slice.v2") !== (plan.schema === "setfarm.evidence-plan.v2")) throw Error("CANONICAL_EVIDENCE_NATIVE_DOMAIN_MISMATCH");
+  const expectedPlan = slice.schema === "setfarm.implementation-slice.v2" ? compileEvidencePlanV2({ slice, sliceHash: plan.sliceHash }) : compileEvidencePlanV1({ slice, sliceHash: plan.sliceHash });
   if (
     slice.storyId !== input.storyId
     || plan.storyId !== input.storyId
@@ -782,6 +1025,24 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
     || canonicalJsonStringify(plan) !== canonicalJsonStringify(expectedPlan)
   ) {
     throw new Error("CANONICAL_EVIDENCE_SLICE_PLAN_IDENTITY_MISMATCH");
+  }
+  if (slice.schema === "setfarm.implementation-slice.v2" && plan.schema === "setfarm.evidence-plan.v2") {
+    SourceRevisionV1Schema.parse(input.sourceRevision);
+    const declared = new Map(plan.flows.flatMap(flow => flow.interactions.map(interaction => [interaction.id, interaction] as const)));
+    const seen = new Set<string>();
+    const start = Date.parse(input.startedAt), end = Date.parse(input.completedAt);
+    const time = (stamp: string) => { const value = Date.parse(stamp); if (!Number.isFinite(value) || value < start || value > end) throw Error("CANONICAL_EVIDENCE_NATIVE_TIME_FENCE_MISMATCH"); };
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) throw Error("CANONICAL_EVIDENCE_NATIVE_TIME_FENCE_MISMATCH");
+    for (const trace of input.execution.interactions) {
+      const id = trace.request.id;
+      if (!id || seen.has(id) || !deepEqual(declared.get(id), trace.request) || trace.result.id !== id || trace.result.action !== trace.request.action) throw Error("CANONICAL_EVIDENCE_NATIVE_TRACE_IDENTITY_MISMATCH");
+      seen.add(id); time(trace.result.startedAt); time(trace.result.completedAt); time(trace.before.capturedAt); time(trace.after.capturedAt);
+    }
+    const commandRefs = new Set<string>();
+    for (const command of input.execution.commands) {
+      if (commandRefs.has(command.commandRef) || !plan.commands.some(declared => declared.commandRef === command.commandRef)) throw Error("CANONICAL_EVIDENCE_NATIVE_COMMAND_IDENTITY_MISMATCH");
+      commandRefs.add(command.commandRef); time(command.startedAt); time(command.completedAt);
+    }
   }
 
   const stage=input.stageClaim;
@@ -827,6 +1088,11 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
     if (!artifacts.has(hash)) artifacts.set(hash, { hash, mediaType, locator });
     return hash;
   };
+  if (slice.schema === "setfarm.implementation-slice.v2") addBytes(path.relative(root, path.join(evidenceRoot, "NATIVE_CONTRACT_BINDING.json")), canonicalJsonStringify({
+    schema: "setfarm.native-evidence-contract-binding.v2", producer: slice.producer, packetHash: slice.packetHash,
+    sliceHash: plan.sliceHash, planHash: plan.planHash, sourceBefore: slice.sourceRevision, sourceAfter: input.sourceRevision,
+    ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+  }) + "\n", "application/json");
   const captureHash = (capture: CapturedRuntimeState | undefined, key: string): string => {
     const screenshotHash = addExisting(capture?.screenshotPath, "image/png");
     const domHash = addExisting(capture?.domSnapshotPath, "application/json");
@@ -938,7 +1204,26 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
     ...stage,sourceAfter:input.sourceRevision,sliceHash:plan.sliceHash,planHash:plan.planHash,
   })+"\n","application/json");
   const candidateObservations = [...commandObservations, ...flowObservations];
-  const productPredicates = slice.requiredEvidence.map((predicate) => {
+  const requiredPredicates = slice.schema === "setfarm.implementation-slice.v2"
+    ? slice.contract.product.evidencePredicates.filter(predicate => predicate.required && slice.story.evidenceRefs.includes(predicate.id))
+    : slice.requiredEvidence;
+  const productPredicates = requiredPredicates.map((predicate) => {
+    const nativeEvaluations = slice.schema === "setfarm.implementation-slice.v2" && plan.schema === "setfarm.evidence-plan.v2"
+      ? plan.flows.filter(candidate => candidate.predicateRefs.includes(predicate.id)).map(nativeFlow => {
+          const actionTrace = input.execution.interactions.find(trace => trace.request.id === nativeFlow.actionInteractionId);
+          const reloadTrace = nativeFlow.reloadInteractionId ? input.execution.interactions.find(trace => trace.request.id === nativeFlow.reloadInteractionId) : undefined;
+          return { flow: nativeFlow, verdict: nativePredicateVerdict({ slice, plan, predicate: EvidencePredicateV2Schema.parse(predicate),
+            traces: input.execution.interactions, flow: nativeFlow, ...(actionTrace ? { actionTrace } : {}), ...(reloadTrace ? { reloadTrace } : {}),
+            ...(input.execution.runtimeError ? { runtimeError: input.execution.runtimeError } : {}) }) };
+        })
+      : undefined;
+    const nonPassing = nativeEvaluations?.filter(evaluation => evaluation.verdict !== "pass") ?? [];
+    const identityFlows = (nonPassing.length ? nonPassing : nativeEvaluations ?? []).map(evaluation => evaluation.flow);
+    const actionRefs = [...new Set(identityFlows.map(flow => flow.actionRef))];
+    const physicalRefs = identityFlows.map(flow => flow.controlRef);
+    const controlRefs = [...new Set(physicalRefs.filter((ref): ref is string => ref !== undefined))];
+    const nativeVerdict: SemanticVerdict = nativeEvaluations?.some(evaluation => evaluation.verdict === "fail") ? "fail"
+      : nativeEvaluations?.length && nativeEvaluations.every(evaluation => evaluation.verdict === "pass") ? "pass" : "inconclusive";
     const flow = plan.flows.find((candidate) => candidate.predicateRefs.includes(predicate.id));
     const actionTrace = flow
       ? input.execution.interactions.find((trace) => trace.request.id === flow.actionInteractionId)
@@ -957,6 +1242,8 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
       : undefined;
     const refs = commandRef && commandRefs.has(commandRef)
       ? [commandRefs.get(commandRef)!]
+      : nativeEvaluations
+        ? [...new Set(nativeEvaluations.flatMap(evaluation => observationRefsByFlow.get(evaluation.flow.flowId) ?? []))]
       : flow
         ? observationRefsByFlow.get(flow.flowId) ?? []
         : [];
@@ -964,16 +1251,18 @@ export function createCanonicalEvidenceBundleV2(input: Readonly<{
     return {
       invariantRef: invariantRef(predicate.kind),
       predicateRef: predicate.id,
-      ...(flow ? { actionRef: flow.actionRef } : {}),
-      ...(flow?.controlRef ? { controlRef: flow.controlRef } : {}),
+      ...(nativeEvaluations ? {
+        ...(actionRefs.length === 1 ? { actionRef: actionRefs[0]! } : {}),
+        ...(controlRefs.length === 1 && physicalRefs.every(ref => ref !== undefined) ? { controlRef: controlRefs[0]! } : {}),
+      } : { ...(flow ? { actionRef: flow.actionRef } : {}), ...(flow?.controlRef ? { controlRef: flow.controlRef } : {}) }),
       required: predicate.required,
-      verdict: predicateVerdict({
-        predicate,
-        ...(flow ? { flow } : {}),
+      verdict: nativeEvaluations ? nativeVerdict : predicateVerdict({
+        predicate: EvidencePredicateV1Schema.parse(predicate),
+        flow: EvidencePlanV1Schema.parse(plan).flows.find(candidate => candidate.predicateRefs.includes(predicate.id)),
         ...(actionTrace ? { actionTrace } : {}),
         ...(reloadTrace ? { reloadTrace } : {}),
         ...(command ? { command } : {}),
-        slice,
+        slice: ImplementationSliceV1Schema.parse(slice),
         ...(plan.runtime ? { runtimeAdapter: plan.runtime.adapter } : {}),
         ...(input.execution.runtimeError ? { runtimeError: input.execution.runtimeError } : {}),
       }),

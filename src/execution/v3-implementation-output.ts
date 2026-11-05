@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import type { V3ImplementationContextV1 } from "./v3-implementation-handoff.js";
+import type { V3ImplementationContext } from "./v3-implementation-handoff.js";
+import { parseV3ImplementationContext } from "./v3-implementation-handoff.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   GitObjectHashSchema,
@@ -340,8 +341,9 @@ export function compileV3ImplementationTransportProposalV1(
 
 export function compileV3ImplementationAgentOutputV1(
   raw: string,
-  context: V3ImplementationContextV1,
+  inputContext: V3ImplementationContext,
 ): V3ImplementationOutputCompilationV1 {
+  const context = parseV3ImplementationContext(inputContext);
   const compilation = compileV3ImplementationTransportProposalV1(raw);
   const output = compilation.output;
   const handoff = context.handoff;
@@ -381,7 +383,7 @@ export function compileV3ImplementationAgentOutputV1(
 /** Compatibility parser for existing completion consumers. */
 export function parseV3ImplementationAgentOutputV1(
   raw: string,
-  context: V3ImplementationContextV1,
+  context: V3ImplementationContext,
 ): V3ImplementationAgentOutputV1 {
   return compileV3ImplementationAgentOutputV1(raw, context).output;
 }

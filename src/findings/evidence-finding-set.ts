@@ -6,6 +6,9 @@ import { computeEvidenceBundleHash, EvidenceBundleV2Schema, type EvidenceBundleV
 import { createFindingSetV1, type FindingSetV1, type FindingV1 } from "./finding-set.js";
 import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../product-compiler/schemas/implementation-slice-v1.js";
 import { topologyPathAbsenceHash } from "../product-compiler/schemas/build-topology-v1.js";
+import { LegacyImplementationSliceV2Schema, type LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
+import { compileEvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
+import { SourceRevisionV1Schema, type SourceRevisionV1 } from "../execution/schemas/execution-attempt-v1.js";
 
 function contentHash(workdir: string, relative: string): string {
   const root = path.resolve(workdir);
@@ -38,11 +41,10 @@ function findingOrigin(predicate: EvidenceBundleV2["predicates"][number]): Findi
  */
 export function createFindingSetFromEvidenceBundleV2(input: Readonly<{
   workdir: string;
-  slice: ImplementationSliceV1;
   sliceHash: string;
   bundle: EvidenceBundleV2;
-}>): FindingSetV1 | undefined {
-  const slice = ImplementationSliceV1Schema.parse(input.slice);
+} & ({ slice: ImplementationSliceV1; sourceRevision?: never } | { slice: LegacyImplementationSliceV2; sourceRevision: SourceRevisionV1 })>): FindingSetV1 | undefined {
+  const slice = input.slice.schema === "setfarm.implementation-slice.v2" ? LegacyImplementationSliceV2Schema.parse(input.slice) : ImplementationSliceV1Schema.parse(input.slice);
   const bundle = EvidenceBundleV2Schema.parse(input.bundle);
   if (
     bundle.storyId !== slice.storyId
@@ -51,15 +53,26 @@ export function createFindingSetFromEvidenceBundleV2(input: Readonly<{
   ) {
     throw new Error("EVIDENCE_FINDING_CONTRACT_IDENTITY_MISMATCH");
   }
+  if (slice.schema === "setfarm.implementation-slice.v2") {
+    const source = SourceRevisionV1Schema.parse(input.sourceRevision);
+    const plan = compileEvidencePlanV2({ slice, sliceHash: input.sliceHash });
+    const expectedRefs = [...plan.predicateRefs, ...plan.commands.map(command => `EVID_COMMAND_${command.commandRef}`)].sort();
+    const actualRefs = bundle.predicates.map(predicate => predicate.predicateRef).sort();
+    if (source.sha !== bundle.sourceRevision.sha || source.treeHash !== bundle.sourceRevision.treeHash
+      || expectedRefs.length !== actualRefs.length || expectedRefs.some((ref, index) => ref !== actualRefs[index])
+      || bundle.predicates.some(predicate => !predicate.required)) throw Error("EVIDENCE_FINDING_CONTRACT_IDENTITY_MISMATCH");
+  }
   const nonPassing = bundle.predicates.filter((predicate) => predicate.required && predicate.verdict !== "pass");
   if (nonPassing.length === 0) return undefined;
 
+  const recoveryPaths = slice.schema === "setfarm.implementation-slice.v2" && slice.recovery
+    ? new Set(slice.recovery.expectedSourceDelta.changes.map(change => change.path)) : undefined;
   const writable = slice.files
-    .filter((file) => file.role === "owned" || file.role === "shared_writable")
+    .filter((file) => (file.role === "owned" || file.role === "shared_writable") && (!recoveryPaths || recoveryPaths.has(file.path)))
     .sort((left, right) => left.path.localeCompare(right.path));
   const locatable = writable.length > 0
     ? writable
-    : slice.files.filter((file) => file.role !== "dependency").sort((left, right) => left.path.localeCompare(right.path));
+    : slice.schema === "setfarm.implementation-slice.v2" ? [] : slice.files.filter((file) => file.role !== "dependency").sort((left, right) => left.path.localeCompare(right.path));
   if (locatable.length === 0) throw new Error("EVIDENCE_FINDING_SOURCE_AUTHORITY_MISSING");
   if (locatable.length > 1_000) throw new Error("EVIDENCE_FINDING_SOURCE_AUTHORITY_TOO_BROAD");
   const sourceLocators = locatable.map((file) => ({

@@ -3,6 +3,7 @@ import {constants,closeSync,fstatSync,lstatSync,mkdirSync,openSync,realpathSync,
 import path from "node:path";
 import {hashCanonicalJson} from "../product-compiler/canonical-json.js";
 import {ClaimEnvelopeV1Schema,type ClaimEnvelopeV1} from "./schemas/claim-envelope-v1.js";
+import {parseV3ImplementationContext} from "./v3-implementation-handoff.js";
 import {V3StageClaimHandoffV1Schema} from "./v3-stage-execution-context.js";
 import type {SubscriptionCodingCanonicalAuthorityV1} from "./subscription-coding-runtime-binding-v1.js";
 import {compileV3ImplementationAgentOutputV1} from "./v3-implementation-output.js";
@@ -17,7 +18,7 @@ export function assertSubscriptionWorkflowRoleV1(input:Readonly<{workflow:string
   if(input.workflow!=="feature-dev"||!ROLES.has(input.role))throw Error("SUBSCRIPTION_WORKFLOW_ROLE_UNSUPPORTED");
 }
 function checked(input:Input):Input{
-  const claim=ClaimEnvelopeV1Schema.parse(input.claim),a=input.authority;
+  const claim=ClaimEnvelopeV1Schema.parse(input.claim),a=input.authority.schema==="setfarm.implementation-context.v3"?parseV3ImplementationContext(input.authority):input.authority;
   if(claim.protocol!=="v3"||!claim.workdir||!path.isAbsolute(claim.workdir)||path.normalize(claim.workdir)!==claim.workdir)refuse();
   if(a.schema==="setfarm.implementation-context.v3"){
     const h=a.handoff;

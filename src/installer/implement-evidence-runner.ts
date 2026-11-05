@@ -3,6 +3,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
 import type { ImplementationSliceV1 } from "../product-compiler/schemas/implementation-slice-v1.js";
+import type { LegacyImplementationSliceV2 } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
+import { compileEvidencePlanV2, flattenEvidencePlanInteractionsV2, type EvidencePlanV2 } from "../evidence/evidence-plan-v2.js";
 import type { SourceRevisionV1 } from "../execution/schemas/execution-attempt-v1.js";
 import {
   createCanonicalEvidenceBundleV2,
@@ -35,7 +37,7 @@ export interface ImplementEvidenceRunResult {
   failureOwner?: StackFailureOwner;
   failureAction?: StackFailureAction;
   failureCategory?: string;
-  evidencePlan?: EvidencePlanV1;
+  evidencePlan?: EvidencePlanV1 | EvidencePlanV2;
   canonicalEvidence?: CanonicalEvidenceResultV1;
 }
 
@@ -52,6 +54,10 @@ export interface ImplementEvidenceObservation {
 }
 
 export type ImplementEvidenceObserver = (observation: ImplementEvidenceObservation) => void | Promise<void>;
+
+function exactPlanInteractions(plan: EvidencePlanV1 | EvidencePlanV2) {
+  return plan.schema === "setfarm.evidence-plan.v2" ? flattenEvidencePlanInteractionsV2(plan) : flattenEvidencePlanInteractions(plan);
+}
 
 function readJson(filePath: string): any | null {
   try {
@@ -255,7 +261,7 @@ function writeV3EvidenceArtifacts(input: {
   workdir: string;
   storyId: string;
   paths: Record<string, string>;
-  plan: EvidencePlanV1;
+  plan: EvidencePlanV1 | EvidencePlanV2;
 }): string[] {
   const now = new Date().toISOString();
   const planPath = path.join(input.workdir, ".setfarm", "evidence-v2", input.storyId, "EVIDENCE_PLAN.json");
@@ -295,7 +301,7 @@ function writeV3EvidenceArtifacts(input: {
     schema: "setfarm.implement-verification-request.v1",
     storyId: input.storyId,
     status: "ready_for_orchestrator_verification",
-    interactionRequests: flattenEvidencePlanInteractions(input.plan).map((interaction) => ({
+    interactionRequests: exactPlanInteractions(input.plan).map((interaction) => ({
       ...interaction,
       actionRef: actionByInteraction.get(interaction.id),
     })),
@@ -439,7 +445,7 @@ export async function runImplementEvidenceIfRequested(input: {
   workdir: string;
   stackPackId?: StackPackId | string | null;
   v3?: Readonly<{
-    slice: ImplementationSliceV1;
+    slice: ImplementationSliceV1 | LegacyImplementationSliceV2;
     sliceHash: string;
     sourceRevision: SourceRevisionV1;
   }&({attemptId:string;stageClaim?:never}|{stageClaim:SuperviseStageEvidenceIdentityV1;attemptId?:never})>;
@@ -456,7 +462,9 @@ export async function runImplementEvidenceIfRequested(input: {
 
   const paths = implementEvidenceArtifactPaths(input.workdir, input.storyId);
   const evidencePlan = input.v3
-    ? compileEvidencePlanV1({ slice: input.v3.slice, sliceHash: input.v3.sliceHash })
+    ? input.v3.slice.schema === "setfarm.implementation-slice.v2"
+      ? compileEvidencePlanV2({ slice: input.v3.slice, sliceHash: input.v3.sliceHash })
+      : compileEvidencePlanV1({ slice: input.v3.slice, sliceHash: input.v3.sliceHash })
     : undefined;
   if (evidencePlan) {
     const written = writeV3EvidenceArtifacts({
@@ -495,7 +503,7 @@ export async function runImplementEvidenceIfRequested(input: {
 
   const request = readJson(paths.request);
   const interactions = evidencePlan
-    ? flattenEvidencePlanInteractions(evidencePlan)
+    ? exactPlanInteractions(evidencePlan)
     : normalizeInteractionRequests(request?.interactionRequests);
   await observe({
     checkId: "implement.runtime.build",

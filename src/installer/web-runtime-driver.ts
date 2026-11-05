@@ -210,6 +210,9 @@ export class WebPreviewRuntimeDriver implements RuntimeDriver {
       else if (action.action === "fill" && action.target) await page.locator(action.target).first().fill(action.value || "", { timeout: action.timeoutMs || 10000 });
       else if (action.action === "press" && action.target) await page.locator(action.target).first().press(action.value || "Enter", { timeout: action.timeoutMs || 10000 });
       else if (action.action === "select" && action.target && action.value !== undefined) await page.locator(action.target).first().selectOption(action.value, { timeout: action.timeoutMs || 10000 });
+      else if (action.action === "set_checked" && action.target && (action.value === "true" || action.value === "false")) {
+        await page.locator(action.target).first().setChecked(action.value === "true", { timeout: action.timeoutMs || 10000 });
+      }
       else if (action.action === "navigate" && action.value) {
         const destination = action.value.startsWith("__SETFARM_RUNTIME_URL__")
           ? `${session.url}${action.value.slice("__SETFARM_RUNTIME_URL__".length)}`

@@ -3,7 +3,7 @@ import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/c
 import { ClaimEnvelopeV1Schema, type ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
 import type { ProcessIdentityV1 } from "./schemas/process-identity-v1.js";
 import type { ModelExecutionProfileV1 } from "./operational-retry-directive.js";
-import type { V3ImplementationContextV1 } from "./v3-implementation-handoff.js";
+import type { V3ImplementationContext } from "./v3-implementation-handoff.js";
 import { V3StageClaimHandoffV1Schema, type V3StageClaimHandoffV1 } from "./v3-stage-execution-context.js";
 import { isSubscriptionRuntimeCanonicalPathV1, parseSubscriptionRuntimeAuthorityV1,
   parseSubscriptionRuntimeBindingV1, type SubscriptionRuntimeAuthorityV1,
@@ -22,7 +22,7 @@ export function deriveSubscriptionCodingRuntimePathsV1(input: Readonly<{ runtime
   const container = `${input.runtimeRoot}/attempt-workspaces/subscription/${input.runtimeSessionId}`;
   return Object.freeze({ container, runtimePath: `${container}/owner`, root: `${container}/worker`, transcriptPath: `${container}/worker-output.log` });
 }
-export type SubscriptionCodingCanonicalAuthorityV1 = V3ImplementationContextV1 | V3StageClaimHandoffV1;
+export type SubscriptionCodingCanonicalAuthorityV1 = V3ImplementationContext | V3StageClaimHandoffV1;
 export function projectSubscriptionCodingRuntimeBindingV1(input: Readonly<{
   envelope: ClaimEnvelopeV1; authority: SubscriptionCodingCanonicalAuthorityV1;
   runtimeSessionId: string; ownerInstanceId: string; selectedProfile: ModelExecutionProfileV1; platformSourceSha: string;

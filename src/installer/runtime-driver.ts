@@ -1,5 +1,5 @@
 export type RuntimeKind = "browser" | "emulator" | "simulator" | "process" | "none";
-export type InteractionAction = "click" | "fill" | "press" | "select" | "wait" | "navigate" | "snapshot" | "invoke" | "reset";
+export type InteractionAction = "click" | "fill" | "press" | "select" | "set_checked" | "wait" | "navigate" | "snapshot" | "invoke" | "reset";
 
 export interface StoryRuntimeContext {
   runId: string;
