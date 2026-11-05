@@ -6,6 +6,7 @@ import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import ts from "typescript";
+import { isSubscriptionRuntimePathV1 } from "../src/execution/subscription-coding-runtime-binding-v1.js";
 
 const sourceFile = new URL("../src/spawner.ts", import.meta.url);
 assert.ok(statSync(sourceFile).size < 2 * 1024 * 1024);
@@ -57,14 +58,14 @@ function component(genuineRecovery = false) {
   const runtimes = new Map<string, any>([[oldSessionId, {
     sessionId: oldSessionId, claimId: 2, runId: "run-original", stepDbId: "step-db", workflowStepId: "design",
     claimAgentId: claimAgent, runtimeAgentId: runtimeAgent, ownerInstanceId: owner,
-    state: "reserved", stateVersion: 1, runtimeKind: "local_process", heartbeatAt: "2020-01-01T00:00:00Z",
+    state: "reserved", stateVersion: 1, runtimeKind: "local_process", heartbeatAt: "2020-01-01T00:00:00Z", drainEvidence: {},
   }]]);
   const durableEffects = { requested: [] as number[], drained: [] as number[], retried: [] as number[], released: [] as number[], notifications: 0 };
   if (genuineRecovery) state.rows[0]!.pending_runtime_session_id = oldSessionId;
   let query = "";
   const child = Object.assign(new EventEmitter(), { pid: 4242, exitCode: null, signalCode: null, stdin: { write() {}, end() {} } });
   const ports = {
-    path, console: { log() {}, warn() {} }, pendingClaimInvocations,
+    path, console: { log() {}, warn() {} }, pendingClaimInvocations, isSubscriptionRuntimePathV1,
     activeProcesses, drainingProcesses, claimingSpawns: new Set(), queuedSpawns: new Set(),
     task6aV2RetainedPostClaimRuntimes: new Map(), task6aV2UnboundPostClaimRefusals: 0,
     SPAWNER_INSTANCE_ID: owner, AGENT_RUNTIME: "codex", OPENCLAW_AGENT_LOCAL: false,
