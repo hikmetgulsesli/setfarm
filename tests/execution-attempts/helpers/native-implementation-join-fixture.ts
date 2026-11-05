@@ -26,6 +26,19 @@ export const NATIVE_JOIN_LIMITS = Object.freeze({
 });
 export const NATIVE_JOIN_SOURCE = "export const nativeImplementation = true;\n";
 
+// Task11's opt-in application is real executable source, not a declared-success
+// marker. The existing Task9 fixture/default packet bytes remain unchanged.
+export const NATIVE_JOIN_CLI_SOURCE = [
+  "const fs = require('node:fs');",
+  "const argv = process.argv.slice(2);",
+  "if (argv[0] === 'inspect') { process.stdout.write(JSON.stringify({state:[]})); process.exit(0); }",
+  "if (argv[0] !== 'add' || argv[1] !== '--title' || !argv[2]) process.exit(2);",
+  "const title = argv[2];",
+  "fs.writeFileSync('invoked-title.json', JSON.stringify({title}));",
+  "process.stdout.write(JSON.stringify({task:{title},state:[title]}));",
+  "",
+].join("\n");
+
 export function nativeJoinRuntimeEvidence(actionRef: string) {
   const runtimeEvidenceContract = RuntimeEvidenceContractV1Schema.parse({
     schema: "setfarm.runtime-evidence-contract.v1", adapter: "cli-process", stackPackId: "node-cli",
@@ -43,7 +56,8 @@ export function nativeJoinEnvelope(artifactType: string, payload: unknown) {
   });
 }
 
-export function nativeJoinPacket(runId: string, twoStories = false): SealedRuntimePacketV3 {
+export function nativeJoinPacket(runId: string, twoStories = false, runnableCli = false): SealedRuntimePacketV3 {
+  assert.ok(!(twoStories && runnableCli), "the two-story HTTP and one-story CLI fixtures are separate products");
   const contracts = buildNoDesignProductBuildPacketV3Contracts();
   if (twoStories) {
     contracts.productSpecV2 = twoStoryNodeExpressApiProductSpecV2();
@@ -78,6 +92,20 @@ export function nativeJoinPacket(runId: string, twoStories = false): SealedRunti
   } else {
     Object.assign(contracts.buildTopologyV1, nativeJoinRuntimeEvidence(contracts.productSpecV2.actions[0]!.id));
   }
+  if (runnableCli) {
+    const runtimeEvidenceContract = RuntimeEvidenceContractV1Schema.parse({
+      adapter: "cli-process", schema: "setfarm.runtime-evidence-contract.v1", stackPackId: "node-cli",
+      initial: { command: { argv: ["node", "dist/index.js", "inspect"], cwd: ".", timeoutMs: 30_000 },
+        expectedExitCode: 0, capture: { format: "json", statePointer: "/state" } },
+      actions: [{ actionRef: "ACT_ADD_TASK", inputValues: { title: "Ship Setfarm" }, action: {
+        command: { argv: ["node", "dist/index.js", "add", "--title", "Ship Setfarm"], cwd: ".", timeoutMs: 30_000 },
+        expectedExitCode: 0, capture: { format: "json", statePointer: "/state" },
+      } }],
+    });
+    Object.assign(contracts.buildTopologyV1, {
+      runtimeEvidenceContract, runtimeEvidenceContractHash: hashRuntimeEvidenceContractV1(runtimeEvidenceContract),
+    });
+  }
   const runtimeData = produceRuntimeDataContractV1({
     productSpec: contracts.productSpecV2, commands: contracts.buildTopologyV1.commands,
   });
@@ -87,7 +115,7 @@ export function nativeJoinPacket(runId: string, twoStories = false): SealedRunti
     runtimeDataContract: runtimeData.contract, runtimeDataContractHash: runtimeData.contractHash,
   });
   contracts.buildTopologyV1.pathBindings[0]!.knownContentHash = createHash("sha256")
-    .update(NATIVE_JOIN_SOURCE).digest("hex");
+    .update(runnableCli ? NATIVE_JOIN_CLI_SOURCE : NATIVE_JOIN_SOURCE).digest("hex");
   const produced = produceStoryPlanV2({ productSpec: contracts.productSpecV2, buildTopology: contracts.buildTopologyV1 });
   assert.equal(produced.status, "produced", JSON.stringify(produced));
   if (produced.status !== "produced") throw Error("native story fixture rejected");
@@ -132,16 +160,30 @@ export function nativeJoinPacket(runId: string, twoStories = false): SealedRunti
     refs: { ...refs, packet: packetHash, compilationReport: hash(compilationReport.schema, compilationReport) } };
 }
 
-export async function nativeJoinSourceFixture() {
+export async function nativeJoinSourceFixture(runnableCli = false) {
   const root = await mkdtemp(path.join(tmpdir(), "setfarm-native-implementation-join-"));
   const worktree = path.join(root, "worktree");
   await mkdir(path.join(worktree, "src"), { recursive: true });
-  await writeFile(path.join(worktree, "src/index.ts"), NATIVE_JOIN_SOURCE);
+  await writeFile(path.join(worktree, "src/index.ts"), runnableCli ? NATIVE_JOIN_CLI_SOURCE : NATIVE_JOIN_SOURCE);
+  if (runnableCli) {
+    await writeFile(path.join(worktree, "package.json"), JSON.stringify({
+      name: "native-task11-owned-cli", private: true,
+      scripts: { build: "node build.cjs && node --check dist/index.js" },
+    }, null, 2) + "\n");
+    await writeFile(path.join(worktree, "build.cjs"), [
+      "const fs = require('node:fs');",
+      "fs.mkdirSync('dist', {recursive:true});",
+      "fs.copyFileSync('src/index.ts', 'dist/index.js');",
+      "",
+    ].join("\n"));
+    await writeFile(path.join(worktree, ".gitignore"), ".worktrees/\nnode_modules/\ndist/\ninvoked-title.json\n");
+  }
   const git = (args: string[]) => execFileSync("git", args, {
     cwd: worktree, encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"],
   });
   git(["init", "-q", "-b", "main"]);
-  git(["-c", "user.name=Setfarm Test", "-c", "user.email=setfarm-test@example.invalid", "add", "src"]);
+  git(["-c", "user.name=Setfarm Test", "-c", "user.email=setfarm-test@example.invalid", "add",
+    ...(runnableCli ? ["src", "package.json", "build.cjs", ".gitignore"] : ["src"])]);
   git(["-c", "user.name=Setfarm Test", "-c", "user.email=setfarm-test@example.invalid", "commit", "-qm", "native base"]);
   return { root, worktree, sourceBefore: resolveV3GitRevision({ repo: worktree, requestedRef: "HEAD" }) };
 }

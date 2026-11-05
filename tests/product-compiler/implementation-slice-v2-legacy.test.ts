@@ -1534,4 +1534,58 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
       left.pathRef.localeCompare(right.pathRef));
     assert.equal(rejectionCodes(unrelatedDelta).includes("SLICE_V2_CONTRACT_INVALID"), true);
   });
+
+  // Catches the exact-patch-only schema requiring fictional future byte hashes
+  // for a genuine bounded generated repair. Existing exact mode stays intact.
+  it("native Task11 compiles generated repair from current witnesses without future bytes", async () => {
+    const value = await stitchCompilerFixture();
+    const prior = compileOrThrow(value.input);
+    const currentHash = sha("task11-current-failed-shared-write");
+    const recoveryInput = structuredClone(value.input);
+    recoveryInput.sourceRevision = { sha: "7".repeat(40), treeHash: "8".repeat(40) };
+    const currentFile = recoveryInput.currentFiles.find(file => file.pathRef === "PATH_SHARED_WRITE");
+    assert.ok(currentFile);
+    currentFile.contentHash = currentHash;
+    const exact = recoveryDirective(recoveryInput, {
+      pathRef: "PATH_SHARED_WRITE", currentHash,
+      afterHash: sha("task11-explicit-exact-patch-target"), priorSliceHash: prior.sliceHash,
+    });
+    const exactResult = compileOrThrow({ ...recoveryInput, recovery: exact });
+    assert.deepEqual(exactResult.slice.recovery, exact, "old exact declaration must preserve all bytes and after identity");
+    assert.equal(exactResult.sliceHash, hashCanonicalJson(exactResult.envelope));
+    assert.equal(Object.hasOwn(exactResult.slice.recovery!.expectedSourceDelta, "mode"), false);
+
+    const { after: _knownExactPatchTarget, ...currentWitness } = exact.expectedSourceDelta.changes[0]!;
+    const generated = {
+      ...exact,
+      expectedSourceDelta: {
+        schema: "setfarm.implementation-source-delta.v2",
+        mode: "generated_repair",
+        expectedDelta: { kind: "source_change", invariantRefs: ["INV_IMPLEMENTATION_BEHAVIOR"],
+          requiredPaths: [currentWitness.path] },
+        allowedPaths: [currentWitness.path],
+        changes: [currentWitness],
+      },
+    };
+    const input = { ...recoveryInput, recovery: generated };
+    const result = compileImplementationSliceV2(input);
+    assert.equal(result.status, "compiled", JSON.stringify(result));
+    if (result.status !== "compiled") assert.fail("generated current-source authority must not require a future after hash");
+    assert.deepEqual(result.slice.recovery, generated);
+    assert.equal(result.slice.authority.recoveryHash, hashCanonicalJson(generated));
+    const independentlyVerified = verifyImplementationSliceV2({ slice: result.slice, compilerInput: input });
+    assert.equal(independentlyVerified.status, "verified", JSON.stringify(independentlyVerified));
+
+    for (const delta of [
+      { ...generated.expectedSourceDelta, changes: [{ ...currentWitness, after: exact.expectedSourceDelta.changes[0]!.after }] },
+      { ...generated.expectedSourceDelta, allowedPaths: [currentWitness.path, "src/not-authorized.ts"] },
+      { ...generated.expectedSourceDelta, expectedDelta: { ...generated.expectedSourceDelta.expectedDelta,
+        requiredPaths: ["src/not-authorized.ts"] } },
+      { ...generated.expectedSourceDelta, changes: [{ ...currentWitness,
+        before: { ...currentWitness.before, contentHash: sha("crossed-current-source") } }] },
+    ]) {
+      const refused = compileImplementationSliceV2({ ...input, recovery: { ...generated, expectedSourceDelta: delta } });
+      assert.equal(refused.status, "rejected", "generated mode must reject after fiction, scope expansion and stale before witnesses");
+    }
+  });
 });

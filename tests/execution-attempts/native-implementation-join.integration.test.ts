@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { rm, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -13,9 +14,15 @@ import { createV3PreparationClaimAuthorityV2 } from "../../src/execution/v3-prep
 import { createV3PreparationClaimAuthorityV1 } from "../../src/execution/v3-preparation-claim-authority.js";
 import { readV3PreparationAuthorityV2 } from "../../src/execution/v3-preparation-authority-v2-repository.js";
 import { createV3NormalImplementationPreclaim } from "../../src/execution/v3-normal-implementation-preclaim.js";
+import { createV3ImplementationContext, V3ImplementationClaimHandoffSchema } from "../../src/execution/v3-implementation-handoff.js";
+import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
+import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
+import { createV3ImplementationAttemptV2Assembler } from "../../src/execution/v3-implementation-attempt-v2.js";
+import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1, createCompilerStoryEnglishAdmissionClaimProofV1 } from "../../src/execution/compiler-story-english-admission-ledger-v1.js";
 import { seedCanonicalCompilerStoryAdmissionFixture } from "./helpers/compiler-story-english-admission-fixture.js";
 import { nativeJoinEnvelope, nativeJoinPacket, nativeJoinSourceFixture,
-  NATIVE_JOIN_LIMITS, NATIVE_JOIN_PRODUCER } from "./helpers/native-implementation-join-fixture.js";
+  NATIVE_JOIN_CLI_SOURCE, NATIVE_JOIN_LIMITS, NATIVE_JOIN_PRODUCER } from "./helpers/native-implementation-join-fixture.js";
+import { NODE_CLI_TASK } from "../product-compiler/fixtures/no-design-product-semantics-v2.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 // Every SQL operation below runs in the existing P3-owned isolated database.
@@ -23,12 +30,28 @@ import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.j
 describe("inactive native implementation preparation join", { concurrency: 1 }, () => {
   let database: TestDatabase;
   let artifacts: { artifactRoot: string; store: ContentAddressedArtifactStore; publisher: IndexedArtifactPublisher };
+  let productionDb: typeof import("../../src/db-pg.js") | undefined;
+  const previousEnvironment = {
+    SETFARM_PG_URL: process.env.SETFARM_PG_URL,
+    SETFARM_DB_PATH: process.env.SETFARM_DB_PATH,
+    SETFARM_PRODUCT_ARTIFACT_DIR: process.env.SETFARM_PRODUCT_ARTIFACT_DIR,
+    SETFARM_ARTIFACT_MAX_PAYLOAD_BYTES: process.env.SETFARM_ARTIFACT_MAX_PAYLOAD_BYTES,
+    SETFARM_ARTIFACT_ROOT_QUOTA_BYTES: process.env.SETFARM_ARTIFACT_ROOT_QUOTA_BYTES,
+    SETFARM_ARTIFACT_MIN_FREE_BYTES: process.env.SETFARM_ARTIFACT_MIN_FREE_BYTES,
+  };
   const roots: string[] = [];
   before(async () => {
     database = await createIsolatedTestDatabase();
     const source = await nativeJoinSourceFixture();
     roots.push(source.root);
     const artifactRoot = path.join(source.root, "artifacts");
+    process.env.SETFARM_DB_PATH = path.join(source.root, "runtime", "setfarm.db");
+    process.env.SETFARM_PRODUCT_ARTIFACT_DIR = artifactRoot;
+    process.env.SETFARM_ARTIFACT_MAX_PAYLOAD_BYTES = String(NATIVE_JOIN_LIMITS.maxPayloadBytes);
+    process.env.SETFARM_ARTIFACT_ROOT_QUOTA_BYTES = String(NATIVE_JOIN_LIMITS.rootQuotaBytes);
+    process.env.SETFARM_ARTIFACT_MIN_FREE_BYTES = String(NATIVE_JOIN_LIMITS.minFreeBytes);
+    productionDb = await import("../../src/db-pg.js");
+    productionDb.pgConfigureIsolatedTestDatabase(database.url);
     const store = new ContentAddressedArtifactStore(artifactRoot, { limits: NATIVE_JOIN_LIMITS });
     const index = createArtifactIndex(database.sql);
     await bootstrapArtifactIndex({ index, store,
@@ -36,18 +59,40 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     artifacts = { artifactRoot, store, publisher: new IndexedArtifactPublisher({ index, store, ownerInstanceId: "native-join-test" }) };
   });
   after(async () => {
-    await database?.cleanup();
-    for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+    try { await productionDb?.pgClose(); }
+    finally {
+      try { await database?.cleanup(); }
+      finally {
+        for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+        for (const [key, value] of Object.entries(previousEnvironment)) {
+          if (value === undefined) delete process.env[key]; else process.env[key] = value;
+        }
+      }
+    }
   });
 
-  async function fixture(suffix: string, twoStories = false) {
-    const source = await nativeJoinSourceFixture();
+  async function fixture(suffix: string, twoStories = false, runnableCli = false) {
+    const source = await nativeJoinSourceFixture(runnableCli);
     roots.push(source.root);
     const runId = `run-native-join-${suffix}`;
-    const packet = nativeJoinPacket(runId, twoStories);
+    const packet = nativeJoinPacket(runId, twoStories, runnableCli);
     const admission = await seedCanonicalCompilerStoryAdmissionFixture(database, {
       runId, releaseSha: NATIVE_JOIN_PRODUCER.codeSha, packetHash: packet.packetHash,
+      ...(runnableCli ? { productSpec: packet.productSpec, repo: source.worktree, task: NODE_CLI_TASK } : {}),
     });
+    if (runnableCli) {
+      await database.sql`UPDATE runs SET context = (context::jsonb || ${JSON.stringify({
+        repo: source.worktree, branch: "main", implement_base_commit: source.sourceBefore.sha,
+        stack_pack_id: "node-cli", tech_stack: "node",
+      })}::jsonb)::text WHERE id = ${runId}`;
+      await database.sql`UPDATE steps SET loop_config = '{"over":"stories","mergeStrategy":"direct-merge"}',
+        input_template = 'Implement the exact sealed story.' WHERE id = ${admission.implementStepDbId}`;
+      const authenticAdmission = await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(database.sql, { runId });
+      assert.deepEqual(createCompilerStoryEnglishAdmissionClaimProofV1(authenticAdmission), admission.storyAdmissionProof,
+        "the actual task/product/repo must still reproduce its genuine admission before testing the caller");
+      assert.equal(admission.stories.length, packet.storyPlan.stories.length);
+      assert.deepEqual(admission.stories.map(story => story.storyId), packet.storyPlan.stories.map(story => story.id));
+    }
     const { artifactRoot, store, publisher } = artifacts;
     const index = createArtifactIndex(database.sql);
     const artifactRefs: Record<string, string> = {};
@@ -132,6 +177,125 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       occupiedGatewayBranch: "claim-runtime-publication: other active run assigned to callerGatewayAgent",
       runs, stories, steps, runtimes };
   }
+
+  // Break: the actual normal caller still selects the legacy packet reader,
+  // drops ready.nativeAuthority and passes agentId as the execution role. This
+  // invokes real claimStep; no prebuilt dispatch/handoff or SQL result is mocked.
+  it("native Task11 actual claimStep publishes the native ready authority and complete model context", async () => {
+    const value = await fixture("task11-caller", false, true);
+    const agentId = `feature-dev_native-task11-${path.basename(value.root)}`;
+    await database.sql`UPDATE steps SET agent_id = ${agentId} WHERE id = ${value.admission.implementStepDbId}`;
+    const { getAgentWorkspacePath } = await import("../../src/installer/worktree-ops.js");
+    assert.equal(getAgentWorkspacePath(agentId), null, "fixture agent must use only its owned repo/.worktrees path");
+    const independentlyPrepared = await createV3ImplementationAttemptV2Assembler({
+      readPacket: runId => value.reader.readExactSealedPacket(runId),
+    }).assemble({ runId: value.runId, stepId: "implement", storyId: "US-001",
+      worktree: value.worktree, preparationAuthority: value.nativeAuthority });
+    assert.equal(independentlyPrepared.slice.schema, "setfarm.implementation-slice.v2");
+    assert.equal(independentlyPrepared.slice.files[0]!.contentHash,
+      createHash("sha256").update(NATIVE_JOIN_CLI_SOURCE).digest("hex"));
+    assert.deepEqual(await countEffects(value), { claims: 0, attempts: 0, bindings: 0, runtimes: 0 });
+
+    const { claimStep } = await import("../../src/installer/step-ops.js");
+    const claimed = await claimStep(agentId, value.input.callerGatewayAgent, value.input.runtimeIntent);
+    const blocks = await database.sql`SELECT phase,error_code,detail FROM v3_preparation_blocks WHERE run_id=${value.runId}`;
+    assert.equal(claimed.found, true, JSON.stringify({ claim: claimed, blocks, effects: await countEffects(value),
+      admission: await publicationDiagnostics(value) }));
+    assert.equal(claimed.runId, value.runId);
+    assert.equal(claimed.storyId, "US-001");
+    assert.equal(claimed.claimAgentId, agentId);
+    assert.equal(claimed.runtimeSessionId, value.input.runtimeIntent.sessionId);
+    assert.ok(claimed.attempt && claimed.claimId && claimed.v3ImplementationHandoff);
+    const handoff = V3ImplementationClaimHandoffSchema.parse(claimed.v3ImplementationHandoff);
+    assert.equal(handoff.schema, "setfarm.v3-implementation-claim-handoff.v2");
+    if (handoff.schema !== "setfarm.v3-implementation-claim-handoff.v2") assert.fail("actual caller must deliver strict native handoff");
+    assert.deepEqual(handoff.executionAuthority, { role: "developer", attemptClass: "product_implementation" });
+    assert.deepEqual(handoff.nativeAuthority, value.nativeAuthority);
+    assert.equal(handoff.sliceHash, independentlyPrepared.sliceHash);
+    assert.deepEqual(handoff.packetEnvelope, nativeJoinEnvelope(value.packet.packet.schema, value.packet.packet));
+    assert.deepEqual(handoff.compilationReportEnvelope, nativeJoinEnvelope(value.packet.compilationReport.schema, value.packet.compilationReport));
+    const context = createV3ImplementationContext({ handoff });
+    assert.equal(context.schema, "setfarm.implementation-context.v3");
+    assert.deepEqual(context.writeAuthority, { mode: "initial", allowedPaths: ["src/index.ts"] });
+    const owner = await database.sql`SELECT role,agent_id FROM execution_attempts WHERE attempt_id=${claimed.attempt.attemptId}`;
+    assert.deepEqual(owner.map(row => ({ ...row })), [{ role: "developer", agent_id: agentId }]);
+    const binding = await database.sql`SELECT claim_id::text,attempt_id,slice_hash FROM v3_preparation_authority_attempts_v2
+      WHERE authority_hash=${value.nativeAuthority.authorityHash}`;
+    assert.deepEqual(binding.map(row => ({ ...row })), [{ claim_id: String(claimed.claimId),
+      attempt_id: claimed.attempt.attemptId, slice_hash: handoff.sliceHash }]);
+    const publishedPlan = await value.store.get(handoff.evidencePlanArtifactHash);
+    assert.deepEqual(publishedPlan.envelope, nativeJoinEnvelope("setfarm.evidence-plan.v2", handoff.evidencePlan));
+    assert.deepEqual(await countEffects(value), { claims: 1, attempts: 1, bindings: 1, runtimes: 1 });
+  });
+
+  // Break: upgrading genuine prepared authority through the actual default
+  // facade still calls readSealedPacket/compileEvidencePlanV1; completion also
+  // reconstructs V1. The fixture supplies no plan or context to the facade.
+  it("native Task11 default reserve and completion reload genuine native context after source edits", async () => {
+    const value = await fixture("task11-context", false, true);
+    const publication = await claim(value);
+    const native = await service();
+    const initial = await native.reserve(reserveInput(value, publication.claimId));
+    assert.equal(initial.kind, "native-prepared");
+    assert.equal("evidencePlan" in initial, false);
+    assert.equal("handoff" in initial, false);
+    const { reserveV3ImplementationAttempt, loadV3ImplementationAttemptContext,
+      createV3ImplementationAttemptHandoffV1 } = await import("../../src/execution/v3-implementation-attempt.js");
+    const compiled = await reserveV3ImplementationAttempt({ runId: value.runId, stepId: "implement", storyId: "US-001",
+      claimId: publication.claimId, role: "developer", agentId: value.input.claimAgentId, branch: "main", worktree: value.worktree });
+    assert.equal(compiled.attempt.attemptId, initial.attempt.attemptId, "preparation upgrade must reuse its genuine initial owner");
+    assert.equal(compiled.sliceHash, initial.sliceHash);
+    assert.equal(compiled.evidencePlan.schema, "setfarm.evidence-plan.v2");
+    assert.deepEqual(compiled.evidencePlan.commands.map(command => ({ kind: command.kind, argv: command.argv })),
+      [{ kind: "build", argv: ["npm", "run", "build"] }]);
+    assert.deepEqual(compiled.sourceBefore, value.sourceBefore);
+    const planRef = await database.sql`SELECT artifact_hash FROM run_artifact_refs WHERE run_id=${value.runId}
+      AND ref_key=${compiled.evidencePlanRefKey}`;
+    assert.deepEqual(planRef.map(row => row.artifact_hash), [compiled.evidencePlanArtifactHash]);
+    const storedPlan = await value.store.get(compiled.evidencePlanArtifactHash);
+    assert.deepEqual(storedPlan.envelope, nativeJoinEnvelope("setfarm.evidence-plan.v2", compiled.evidencePlan));
+    await createRuntimeSessionRepository(database.sql).bindAttempt({ sessionId: value.input.runtimeIntent.sessionId,
+      attemptId: initial.attempt.attemptId, ownerInstanceId: value.input.runtimeIntent.ownerInstanceId });
+    const handoff = V3ImplementationClaimHandoffSchema.parse(createV3ImplementationAttemptHandoffV1({
+      stepDbId: value.admission.implementStepDbId, storyDbId: value.input.storyDbId, claimId: publication.claimId,
+      branch: "main", workdir: value.worktree, compiled,
+    }));
+    assert.equal(handoff.schema, "setfarm.v3-implementation-claim-handoff.v2");
+    const context = createV3ImplementationContext({ handoff });
+    await writeFile(path.join(value.worktree, "src/index.ts"), NATIVE_JOIN_CLI_SOURCE + "// scoped implementation candidate\n");
+    const locator = { runId: value.runId, storyId: "US-001", attemptId: initial.attempt.attemptId };
+    assert.deepEqual(await loadV3ImplementationAttemptContext(locator), compiled,
+      "readback must reproduce immutable original native witnesses after allowed worker edits");
+    const envelope = ClaimEnvelopeV1Schema.parse({ schema: "setfarm.claim-envelope.v1", protocol: "v3",
+      issuedAt: new Date().toISOString(), runId: value.runId, stepId: value.admission.implementStepDbId,
+      workflowStepId: "implement", storyId: "US-001", storyDbId: value.input.storyDbId,
+      claimId: publication.claimId, claimGeneration: publication.claimGeneration,
+      claimAgentId: value.input.claimAgentId, runtimeAgentId: value.input.runtimeIntent.runtimeAgentId,
+      workdir: value.worktree, repo: value.worktree, attempt: { attemptId: initial.attempt.attemptId,
+        generation: initial.attempt.generation, fenceToken: initial.attempt.fenceToken } });
+    const rawProposal = JSON.stringify({ schema: "setfarm.v3-implementation-agent-proposal.v1", disposition: "ready_for_evidence",
+      handoffHash: context.handoffHash, attemptId: initial.attempt.attemptId, packetHash: value.packet.packetHash,
+      sliceHash: initial.sliceHash, sourceBefore: value.sourceBefore, summary: "Scoped native source candidate",
+      changes: [{ path: "src/index.ts", summary: "Implement the exact CLI contract" }] });
+    const { compileV3ImplementationCompletionProposal } = await import("../../src/execution/v3-implementation-completion.js");
+    const completion = await compileV3ImplementationCompletionProposal({ sql: database.sql, envelope, rawProposal });
+    const output = JSON.parse(completion.output);
+    assert.equal(output.attemptId, initial.attempt.attemptId);
+    assert.equal(output.sliceHash, initial.sliceHash);
+    assert.equal(output.handoffHash, context.handoffHash);
+    assert.equal(output.disposition, "ready_for_evidence");
+    assert.deepEqual(output.sourceBefore, value.sourceBefore);
+    assert.equal(completion.submissionEvidence.canonicalOutputHash,
+      createHash("sha256").update(completion.output).digest("hex"));
+    assert.equal(completion.sourceProposal, rawProposal);
+    await assert.rejects(compileV3ImplementationCompletionProposal({ sql: database.sql,
+      envelope: { ...envelope, attempt: { ...envelope.attempt!, generation: initial.attempt.generation + 1 } }, rawProposal }),
+    /CLAIM_AUTHORITY/);
+    const requests = await database.sql`SELECT request_id FROM runtime_completion_requests
+      WHERE run_id=${value.runId} AND step_db_id=${value.admission.implementStepDbId}`;
+    assert.equal(requests.length, 0, "compiler qualification alone must not manufacture accepted completion rows");
+    assert.deepEqual(await countEffects(value), { claims: 1, attempts: 1, bindings: 1, runtimes: 1 });
+  });
 
   // Break: keeping the old reader in the native join. The real legacy reader
   // remains a rejection control; the exact-reader preclaim must carry V2.
