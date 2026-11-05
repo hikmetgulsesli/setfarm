@@ -191,6 +191,11 @@ export function nativeJoinPacket(runId: string, twoStories = false, runnableCli 
     refs: { ...refs, packet: packetHash, compilationReport: hash(compilationReport.schema, compilationReport) } };
 }
 
+/** Runtime IDs are derived from test labels; labels/agent/run identities stay unchanged. */
+export function nativeJoinRuntimeSessionId(suffix: string): string {
+  return `RTS_native-join-${suffix.replaceAll("_", "-")}`;
+}
+
 export async function nativeJoinSourceFixture(runnableCli = false, runnableApi = false, linkedStory = false) {
   assert.ok(!(runnableCli && runnableApi));
   const runnable = runnableCli || runnableApi;
@@ -202,13 +207,19 @@ export async function nativeJoinSourceFixture(runnableCli = false, runnableApi =
   if (runnable) {
     await writeFile(path.join(worktree, "package.json"), JSON.stringify({
       name: runnableApi ? "native-task11-owned-api" : "native-task11-owned-cli", private: true,
-      scripts: { build: "node build.cjs && node --check dist/index.js" },
+      scripts: { build: runnableApi
+        ? "node build.cjs && node --check dist/index.js && node --check dist/notes.js"
+        : "node build.cjs && node --check dist/index.js" },
     }, null, 2) + "\n");
     await writeFile(path.join(worktree, "build.cjs"), [
       "const fs = require('node:fs');",
       "fs.mkdirSync('dist', {recursive:true});",
       "fs.copyFileSync('src/index.ts', 'dist/index.js');",
-      ...(runnableApi ? ["fs.copyFileSync('src/notes.ts', 'dist/notes.js');"] : []),
+      ...(runnableApi ? [
+        "fs.copyFileSync('src/notes.ts', 'dist/notes.js');",
+        "const { Script } = require('node:vm');",
+        "for (const file of ['dist/index.js', 'dist/notes.js']) new Script(fs.readFileSync(file, 'utf8'), {filename:file});",
+      ] : []),
       "",
     ].join("\n"));
     await writeFile(path.join(worktree, ".gitignore"), ".worktrees/\nnode_modules/\ndist/\ninvoked-title.json\n");

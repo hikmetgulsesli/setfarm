@@ -21,7 +21,7 @@ const PG='/opt/homebrew/opt/postgresql@17/bin/';
 export function planPrivatePostgresTestsV1({root,port,mode}={}){
   if(typeof root!=='string'||!/^\/tmp\/setfarm-task6a-pg\.[A-Za-z0-9]+$/.test(root)
     ||!Number.isInteger(port)||port<1024||port>65535||port===5432
-    ||!['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap','subscription-runtime','runtime-sessions','native-implementation-join','native-recovery-coordinator','native-evidence-only-worker'].includes(mode))throw Error('PRIVATE_TEST_CLUSTER_PLAN_INVALID');
+    ||!['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap','subscription-runtime','runtime-sessions','native-implementation-join','native-implementation-review','native-recovery-coordinator','native-evidence-only-worker'].includes(mode))throw Error('PRIVATE_TEST_CLUSTER_PLAN_INVALID');
   return Object.freeze({
     initdb:Object.freeze([
       '-D',root+'/data','--username=postgres','--auth-host=scram-sha-256',
@@ -35,6 +35,11 @@ export function planPrivatePostgresTestsV1({root,port,mode}={}){
     ]),
     test:Object.freeze(mode==='manual-orphan-bootstrap'?[
       '--import','tsx','scripts/run-isolated-postgres-tests.ts','--',...MANUAL_ORPHAN_VECTOR_V1,
+    ]:mode==='native-implementation-review'?[
+      '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+      '--import','tsx','--test','--test-concurrency=1',
+      '--test-name-pattern=native review R[1-7]',
+      'tests/execution-attempts/native-implementation-join.integration.test.ts',
     ]:mode==='native-implementation-join'?[
       '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
       '--import','tsx','--test','--test-concurrency=1',
@@ -1263,7 +1268,7 @@ async function main(){
       journal?.control('terminal-unavailable',{channel,reason});
     })]));
   const args=process.argv.slice(2);
-  if(args.length!==1||!['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap','subscription-runtime','runtime-sessions','native-implementation-join','native-recovery-coordinator','native-evidence-only-worker'].includes(args[0])){
+  if(args.length!==1||!['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap','subscription-runtime','runtime-sessions','native-implementation-join','native-implementation-review','native-recovery-coordinator','native-evidence-only-worker'].includes(args[0])){
     mirrors.stderr.write(Buffer.from('PRIVATE_TEST_CLUSTER_MODE_INVALID\n'));process.exitCode=1;return;
   }
   if(args[0]==='manual-orphan-bootstrap'){

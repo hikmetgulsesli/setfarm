@@ -24,7 +24,7 @@ import { V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1 } from "../../src/execu
 import { createV3ImplementationAttemptV2Assembler } from "../../src/execution/v3-implementation-attempt-v2.js";
 import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1, createCompilerStoryEnglishAdmissionClaimProofV1 } from "../../src/execution/compiler-story-english-admission-ledger-v1.js";
 import { seedCanonicalCompilerStoryAdmissionFixture } from "./helpers/compiler-story-english-admission-fixture.js";
-import { nativeJoinEnvelope, nativeJoinPacket, nativeJoinSourceFixture,
+import { nativeJoinEnvelope, nativeJoinPacket, nativeJoinSourceFixture, nativeJoinRuntimeSessionId,
   NATIVE_JOIN_CLI_SOURCE, NATIVE_JOIN_API_SOURCE, NATIVE_JOIN_LIMITS, NATIVE_JOIN_PRODUCER } from "./helpers/native-implementation-join-fixture.js";
 import { NODE_CLI_TASK, NODE_EXPRESS_API_TASK } from "../product-compiler/fixtures/no-design-product-semantics-v2.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
@@ -167,7 +167,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       // is exclusive across active runs, so each scenario needs its own persona.
       callerGatewayAgent: `native-join-${suffix}`, parallelLimit: 1,
       runtimeIntent: { schema: "setfarm.runtime-claim-intent.v1" as const,
-        sessionId: `RTS_native-join-${suffix}`, runtimeAgentId: `native-join-${suffix}`,
+        sessionId: nativeJoinRuntimeSessionId(suffix), runtimeAgentId: `native-join-${suffix}`,
         ...(lifecycle ? { runtimeKind: "local_process" as const }
           : { runtimeKind: "openclaw_session" as const, sessionKey: `native-join:${suffix}` }),
         ownerInstanceId: "native-join-test" },
@@ -1338,7 +1338,10 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const dependencies=createV3EvidenceOnlyRuntimeDependencies(database.sql);
     const worker=createV3EvidenceOnlyRecoveryWorker(database.sql,dependencies);
     const lease=await worker.acquireNext({workflowId:"feature-dev",ownerInstanceId:`${value.runId}-verifier`});assert.ok(lease);
-    assert.equal(lease.dispatchId,delivery.dispatchId);
+    assert.equal(lease.dispatchId,delivery.dispatchId,JSON.stringify({
+      expected:{runId:value.runId,storyId:"US-001",dispatchId:delivery.dispatchId},
+      acquired:{runId:lease.runId,storyId:lease.storyId,dispatchId:lease.dispatchId,mode:lease.mode},
+    }));
     const context=await dependencies.loadOrReserveAttempt({lease});
     const publicationLease={mode:"fresh_execution" as const,runId:lease.runId,stepDbId:lease.stepDbId,storyDbId:lease.storyDbId,
       storyId:lease.storyId,recoveryCaseId:lease.recoveryCaseId,revisionId:lease.revisionId,dispatchId:lease.dispatchId,
