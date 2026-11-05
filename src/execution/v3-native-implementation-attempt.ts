@@ -1,9 +1,10 @@
 import type postgres from "postgres";
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
+import { createRuntimeArtifactReader, type SealedRuntimePacketV3 } from "../product-compiler/runtime-artifact-reader.js";
 import { IndexedArtifactPublisher } from "../product-compiler/indexed-artifact-publisher.js";
 import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "../product-compiler/artifact-store-authority.js";
 import { resolveArtifactStorePublicationAuthorityMode } from "../runtime-config.js";
@@ -41,6 +42,9 @@ import type { RecoveryCaseRevisionV1, RecoveryRevisionDispatchV1 } from "../reco
 import type { FindingSetV1 } from "../findings/finding-set.js";
 import { createV3EvidenceOnlyPublication, readNativeEvidenceOnlySourceAuthority,
   type V3EvidenceOnlyPublicationLeaseV1 } from "../recovery/v3-evidence-only-publication.js";
+import { createV3DownstreamEvidencePublication, V3DownstreamEvidenceAuthorityV1Schema,
+  readNativeDownstreamSourceOwner, readNativeDownstreamAttemptAuthority,
+  type V3DownstreamEvidenceAuthorityV1 } from "../recovery/v3-downstream-evidence-publication.js";
 import type { GithubReviewThreadEvidenceV1 } from "../findings/github-review-source.js";
 import { loadV3ReviewEvidenceArtifactsV1 } from "./v3-review-evidence-artifacts.js";
 
@@ -82,6 +86,23 @@ const LocatorSchema = z.object({ runId: z.string().min(1).max(500), storyId: Sto
 
 function same(left: unknown, right: unknown): boolean {
   return canonicalJsonStringify(left) === canonicalJsonStringify(right);
+}
+
+/** Current final source includes regular worktree bytes, not only an unchanged HEAD ref. */
+export function captureNativeDownstreamCurrentSource(worktree:string,packet:SealedRuntimePacketV3):SourceRevisionV1 {
+  const source=resolveV3GitRevision({repo:worktree,requestedRef:"HEAD"});
+  const env:NodeJS.ProcessEnv={...process.env,GIT_NO_REPLACE_OBJECTS:"1",GIT_OPTIONAL_LOCKS:"0",GIT_TERMINAL_PROMPT:"0"};
+  for(const key of ["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR","GIT_INDEX_FILE","GIT_OBJECT_DIRECTORY","GIT_ALTERNATE_OBJECT_DIRECTORIES","GIT_NAMESPACE"]) delete env[key];
+  execFileSync("git",["--no-replace-objects","--literal-pathspecs","diff","--quiet","HEAD","--"],{
+    cwd:worktree,env,timeout:10_000,maxBuffer:16_384,stdio:["ignore","pipe","pipe"]});
+  const files=[...new Map(packet.storyPlan.stories.flatMap(story=>nativeImplementationSourcePathsV3(packet,story.id))
+    .map(file=>[file.pathRef,file] as const)).values()].sort((a,b)=>a.pathRef<b.pathRef?-1:a.pathRef>b.pathRef?1:0);
+  const committed=captureNativeOriginalFileSignatures({worktree,source,files});
+  const current=captureV3ImplementationSourceSnapshotsV2({worktree,files});
+  if(!same(current.snapshots,committed.map(({path:_path,...snapshot})=>snapshot))
+    ||!same(resolveV3GitRevision({repo:worktree,requestedRef:"HEAD",expectedSha:source.sha}),source))
+    throw Error("V3_NATIVE_DOWNSTREAM_SOURCE_MISMATCH");
+  return source;
 }
 
 /** Inactive prepared-attempt API. It deliberately has no evidence plan, context,
@@ -289,6 +310,7 @@ export type NativeImplementationContextV3 = Readonly<Omit<NativePreparedImplemen
   operationalRetry?: Readonly<{ directive: OperationalRetryDirectiveV1; artifactHash: string; refKey: string }>;
   evidenceOnly?: Readonly<{ revision: RecoveryCaseRevisionV1; dispatch: RecoveryRevisionDispatchV1;
     findingSet: FindingSetV1; sourceOwnerAttemptId: string }>;
+  downstreamEvidence?: Readonly<{parentClaimId:number;sourceOwnerAttemptId:string}>;
   supervisorRetry?: never;
   recovery?: NativeRecoveryContextV3;
 }>;
@@ -762,6 +784,78 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
       evidenceOnly:{revision,dispatch:authority.dispatch,findingSet:authority.findingSet,sourceOwnerAttemptId:authority.source.attempt_id}};
   }
 
+  async function authenticateDownstreamSource(input: Readonly<{runId:string;storyId:string;worktree:string;
+    branch:string;source:SourceRevisionV1;sourceOwnerAttemptId?:string}>) {
+    const packet=await reader.readExactSealedPacket(input.runId);
+    if(!("implementationSourceMap" in packet)) throw Error("V3_NATIVE_DOWNSTREAM_PACKET_REQUIRED");
+    const sourceOwner=await readNativeDownstreamSourceOwner(options.sql,{runId:input.runId,storyId:input.storyId,
+      packetHash:packet.packetHash,sourceOwnerAttemptId:input.sourceOwnerAttemptId});
+    const runContext=z.record(z.string(),z.string()).parse(JSON.parse(sourceOwner.run_context));
+    if(sourceOwner.repo!==input.worktree || realpathSync(sourceOwner.repo)!==realpathSync(input.worktree)
+      ||runContext.repo!==sourceOwner.repo ||runContext.branch!==input.branch)
+      throw Error("V3_NATIVE_DOWNSTREAM_REPOSITORY_MISMATCH");
+    const gitEnv:NodeJS.ProcessEnv={...process.env,GIT_NO_REPLACE_OBJECTS:"1",GIT_OPTIONAL_LOCKS:"0",GIT_TERMINAL_PROMPT:"0"};
+    for(const key of ["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR","GIT_INDEX_FILE","GIT_OBJECT_DIRECTORY","GIT_ALTERNATE_OBJECT_DIRECTORIES","GIT_NAMESPACE"]) delete gitEnv[key];
+    const git=(args:string[])=>execFileSync("git",["--no-replace-objects","--literal-pathspecs",...args],{
+      cwd:input.worktree,env:gitEnv,timeout:10_000,maxBuffer:16_384,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+    if(git(["rev-parse","--abbrev-ref","HEAD"])!==input.branch
+      ||!same(resolveV3GitRevision({repo:input.worktree,requestedRef:"HEAD",expectedSha:input.source.sha}),input.source))
+      throw Error("V3_NATIVE_DOWNSTREAM_SOURCE_MISMATCH");
+    git(["diff","--quiet","HEAD","--"]);
+    // Authenticate every sealed source owner, not only this story's convenient
+    // file subset. Shared-writable supersession is not silently inferred here.
+    for(const story of packet.storyPlan.stories){
+      const owner=await readNativeDownstreamSourceOwner(options.sql,{runId:input.runId,storyId:story.id,packetHash:packet.packetHash});
+      const terminal=await readV3NativeDependencyAuthority(options.sql,options.sql,{runId:input.runId,stepId:"implement",
+        packetHash:packet.packetHash,storyId:story.id,attemptId:owner.attempt_id},options);
+      git(["merge-base","--is-ancestor",terminal.sourceAfter.sha,input.source.sha]);
+      const files=terminal.fileSignatures.map(({pathRef,path})=>({pathRef,path}));
+      const finalFiles=captureNativeOriginalFileSignatures({worktree:input.worktree,source:input.source,files});
+      if(!same(finalFiles,terminal.fileSignatures)) throw Error("V3_NATIVE_DOWNSTREAM_EFFECTIVE_WRITER_REQUIRED");
+      const current=captureV3ImplementationSourceSnapshotsV2({worktree:input.worktree,files});
+      if(!same(current.snapshots,finalFiles.map(({path:_path,...snapshot})=>snapshot)))
+        throw Error("V3_NATIVE_DOWNSTREAM_SOURCE_MISMATCH");
+    }
+    const compiled=await loadAttemptContext({runId:input.runId,storyId:input.storyId,attemptId:sourceOwner.attempt_id});
+    if(compiled.sliceHash!==sourceOwner.slice_hash||compiled.compilationReportHash!==sourceOwner.compilation_report_hash)
+      throw Error("V3_NATIVE_DOWNSTREAM_CONTRACT_MISMATCH");
+    if(!same(resolveV3GitRevision({repo:input.worktree,requestedRef:"HEAD",expectedSha:input.source.sha}),input.source))
+      throw Error("V3_NATIVE_DOWNSTREAM_SOURCE_MISMATCH");
+    return {compiled,sourceOwner};
+  }
+
+  async function reserveDownstream(input:Readonly<{authority:V3DownstreamEvidenceAuthorityV1;worktree:string;branch:string}>) {
+    const authority=V3DownstreamEvidenceAuthorityV1Schema.parse(input.authority);
+    const source=resolveV3GitRevision({repo:input.worktree,requestedRef:"HEAD"});
+    const {compiled}=await authenticateDownstreamSource({runId:authority.runId,storyId:authority.storyId,
+      worktree:input.worktree,branch:input.branch,source});
+    if(compiled.packetHash!==authority.packetHash) throw Error("V3_NATIVE_DOWNSTREAM_PACKET_REQUIRED");
+    const reservation=await createV3DownstreamEvidencePublication(options.sql).reserve(authority,{
+      runId:authority.runId,stepId:authority.workflowStepId,storyId:authority.storyId,attemptClass:"evidence_only",
+      packetHash:compiled.packetHash,compilationReportHash:compiled.compilationReportHash,sliceHash:compiled.sliceHash,
+      sourceBefore:source,worktree:input.worktree,branch:input.branch,
+      role:"downstream-evidence-orchestrator",agentId:"setfarm-downstream-evidence-orchestrator",
+      evidenceRefs:[`setfarm://artifact/${compiled.packetHash}`,`setfarm://artifact/${compiled.compilationReportHash}`,
+        `setfarm://artifact/${compiled.sliceHash}`,`setfarm://artifact/${compiled.evidencePlanArtifactHash}`],
+    });
+    return loadAttemptContext({runId:authority.runId,storyId:authority.storyId,attemptId:reservation.attempt.attemptId});
+  }
+
+  async function loadDownstreamContext(attempt:ExecutionAttemptV1):Promise<NativeImplementationContextV3>{
+    const lineage=await readNativeDownstreamAttemptAuthority(options.sql,attempt);
+    if(!attempt.worktree||!attempt.branch) throw Error("V3_NATIVE_DOWNSTREAM_SOURCE_MISMATCH");
+    const {compiled}=await authenticateDownstreamSource({runId:attempt.runId,storyId:attempt.storyId,
+      worktree:attempt.worktree,branch:attempt.branch,source:attempt.sourceBefore,sourceOwnerAttemptId:lineage.sourceOwner.attempt_id});
+    if(attempt.sliceHash!==compiled.sliceHash||attempt.compilationReportHash!==compiled.compilationReportHash
+      ||!attempt.evidenceRefs.includes(`setfarm://artifact/${compiled.evidencePlanArtifactHash}`))
+      throw Error("V3_NATIVE_DOWNSTREAM_CONTRACT_MISMATCH");
+    // Original model/recovery metadata remains authenticated provenance; its
+    // execution grant must not become a grant for this distinct downstream child.
+    const {evidenceOnly:_evidenceOnly,operationalRetry:_operationalRetry,recovery:_recovery,...semanticContext}=compiled;
+    return {...semanticContext,attempt,sourceBefore:attempt.sourceBefore,downstreamEvidence:{
+      parentClaimId:lineage.parentClaimId,sourceOwnerAttemptId:lineage.sourceOwner.attempt_id}};
+  }
+
   async function compileContext(prepared: NativePreparedImplementationV3 | NativeRecoveryPreparedV3): Promise<NativeImplementationContextV3> {
     const packet = await reader.readExactSealedPacket(prepared.attempt.runId);
     if (!("implementationSourceMap" in packet) || packet.packetHash !== prepared.nativeAuthority.packetHash
@@ -793,7 +887,8 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     const attempt = await attempts.findById(input.attemptId);
     if (!attempt || attempt.runId !== input.runId || attempt.storyId !== input.storyId) throw new Error("V3_NATIVE_PREPARED_ORIGIN_MISMATCH");
     const compiled = attempt.attemptClass === "infrastructure_retry" ? await loadOperationalContext(attempt)
-      : attempt.attemptClass === "evidence_only" ? await loadEvidenceOnlyContext(attempt)
+      : attempt.attemptClass === "evidence_only" ? (attempt.role === "downstream-evidence-orchestrator"
+        ? await loadDownstreamContext(attempt) : await loadEvidenceOnlyContext(attempt))
       : await compileContext(attempt.recoveryDispatchId ? await loadRecoveryPrepared(attempt) : await preparedService.loadPreparedAttempt(input));
     const envelope = await readV3NativeIndexedArtifact(reader, compiled.evidencePlanArtifactHash);
     const refs = await options.sql.unsafe<Array<{ artifact_hash: string }>>(
@@ -829,5 +924,5 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     await reader.index.addRunArtifactRef({ runId: input.runId,
       refKey: compiled.evidencePlanRefKey, artifactHash: published.hash });
   }
-  return Object.freeze({ reserve, reserveRecovery, reserveOperational, reserveEvidenceOnly, loadAttemptContext });
+  return Object.freeze({ reserve, reserveRecovery, reserveOperational, reserveEvidenceOnly, reserveDownstream, loadAttemptContext });
 }

@@ -669,7 +669,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.deepEqual((await database.sql`SELECT claim_id::text,attempt_id,slice_hash
       FROM v3_preparation_authority_attempts_v2 WHERE authority_hash=${initialHandoff.nativeAuthority.authorityHash}`)
       .map(row => ({ ...row })), initialBindings.map(row => ({ ...row })));
-    assert.deepEqual(await countEffects(value), { claims: 2, attempts: 2, bindings: 1, runtimes: 2 });
+    assert.deepEqual(await countEffects(value), { claims: 2, attempts: 2, bindings: 2, runtimes: 2 });
     const workflow = await database.sql`SELECT r.status AS run_status,r.accepted_candidate_hash,
       story.status AS story_status,i.status AS implement_status,s.status AS supervise_status
       FROM runs r JOIN stories story ON story.id=${value.input.storyDbId}

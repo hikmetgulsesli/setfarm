@@ -1794,11 +1794,14 @@ export async function reserveV3EvidenceOnlyImplementationAttempt(input: Readonly
   });
 }
 
-export function reserveV3DownstreamEvidenceAttempt(input: Readonly<{
+export async function reserveV3DownstreamEvidenceAttempt(input: Readonly<{
   authority: V3DownstreamEvidenceAuthorityV1;
   worktree: string;
   branch: string;
 }>): Promise<V3ImplementationAttemptResult> {
+  const options={sql:getSql(),artifactRoot:resolveProductArtifactDir(),artifactLimits:resolveProductArtifactCapacity()};
+  const packet=await createRuntimeArtifactReader(options).readExactSealedPacket(input.authority.runId);
+  if("implementationSourceMap" in packet) return createNativeV3ImplementationContextService(options).reserveDownstream(input);
   return runtimeCompiler().reserve({
     runId: input.authority.runId,
     stepId: input.authority.workflowStepId,

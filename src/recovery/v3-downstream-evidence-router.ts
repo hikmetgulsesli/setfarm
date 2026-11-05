@@ -15,6 +15,7 @@ import {
   V3ImplementationAttemptError,
   type V3ImplementationAttemptResult,
 } from "../execution/v3-implementation-attempt.js";
+import { captureNativeDownstreamCurrentSource } from "../execution/v3-native-implementation-attempt.js";
 import { captureShadowSourceRevision } from "../execution/shadow-attempt-recorder.js";
 import {
   SourceRevisionV1Schema,
@@ -312,7 +313,7 @@ export type V3DownstreamEvidenceRouterDependencies = Readonly<{
     context: V3ImplementationAttemptResult;
     worktree: string;
   }>): Promise<EvidenceBundleV2>;
-  captureSource(worktree: string): Promise<SourceRevisionV1>;
+  captureSource(worktree: string, packet?: ExactSealedRuntimePacket): Promise<SourceRevisionV1>;
   findEvidenceBundle(hash: string): Promise<EvidenceBundleV2 | undefined>;
   findFindingSet(hash: string): Promise<FindingSetV1 | undefined>;
   coordinate(input: unknown): Promise<V3RecoveryCoordinatorResult>;
@@ -397,7 +398,7 @@ export function createV3DownstreamEvidenceRouter(
         );
       }
 
-      const finalSource = await dependencies.captureSource(input.worktree);
+      const finalSource = await dependencies.captureSource(input.worktree, packet);
       const stagedStories: StagedStoryEvidence[] = [];
       const stories: V3DownstreamStoryEvidenceResult[] = [];
       for (const storyId of storyIds) {
@@ -452,7 +453,7 @@ export function createV3DownstreamEvidenceRouter(
         } else {
           attempt = await dependencies.markRunning({ authority, attempt });
           bundle = await dependencies.executeEvidence({ packet, context, worktree: input.worktree });
-          const sourceAfter = await dependencies.captureSource(input.worktree);
+          const sourceAfter = await dependencies.captureSource(input.worktree, packet);
           if (!sameRevision(sourceAfter, finalSource)) {
             fail("V3_DOWNSTREAM_EVIDENCE_SOURCE_MUTATED", "downstream evidence execution changed integrated product source");
           }
@@ -494,7 +495,7 @@ export function createV3DownstreamEvidenceRouter(
         });
       }
 
-      const postEvidenceSource = await dependencies.captureSource(input.worktree);
+      const postEvidenceSource = await dependencies.captureSource(input.worktree, packet);
       if (!sameRevision(postEvidenceSource, finalSource)) {
         fail("V3_DOWNSTREAM_EVIDENCE_FINAL_SOURCE_DRIFT", "integrated source changed across the story evidence matrix");
       }
@@ -651,7 +652,8 @@ export function createPostgresV3DownstreamEvidenceRouter(sql: Sql = getSql()) {
       }
       return result.canonicalEvidence.bundle;
     },
-    captureSource: (worktree) => captureShadowSourceRevision(worktree),
+    captureSource: async (worktree,packet) => packet && "implementationSourceMap" in packet
+      ? captureNativeDownstreamCurrentSource(worktree,packet) : captureShadowSourceRevision(worktree),
     findEvidenceBundle: (hash) => findings.findEvidenceBundle(hash),
     findFindingSet: (hash) => findings.findFindingSet(hash),
     coordinate: (input) => coordinator.coordinate(input),

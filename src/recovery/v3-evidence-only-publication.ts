@@ -912,7 +912,7 @@ export async function readNativeEvidenceOnlyTerminalAuthority(
       AND rc.owner='infrastructure'
       AND ((rc.status='resolved' AND delivery.state='succeeded')
         OR (rc.status='evidencing' AND delivery.state IN ('attempt_reserved','running')
-          AND delivery.terminal_result IS NULL AND delivery.terminal_at IS NULL AND rc.terminal IS NULL))
+          AND delivery.terminal_result='{}'::jsonb AND delivery.terminal_at IS NULL AND rc.terminal IS NULL))
       AND rc.expected_delta=rev.expected_delta AND rc.allowed_paths=rev.allowed_paths
       AND rc.evidence_plan=rev.evidence_plan
       AND (rc.status='evidencing' OR rc.prior_attempt_refs::jsonb ? a.attempt_id)

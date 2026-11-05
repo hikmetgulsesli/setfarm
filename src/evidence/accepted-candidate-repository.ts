@@ -1,6 +1,10 @@
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 
+import { EvidencePlanV2Schema, compileEvidencePlanV2, type EvidencePlanV2 } from "./evidence-plan-v2.js";
+import { LegacyImplementationSliceV2Schema } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
+import { readNativeDownstreamAttemptAuthority } from "../recovery/v3-downstream-evidence-publication.js";
+import type { NativeImplementationContextV3 } from "../execution/v3-native-implementation-attempt.js";
 import { EvidencePlanV1Schema, compileEvidencePlanV1 } from "./evidence-plan-v1.js";
 import {
   EvidenceBundleV2Schema,
@@ -93,7 +97,7 @@ function exactStrings(left: readonly string[], right: readonly string[]): boolea
   return first.length === second.length && first.every((value, index) => value === second[index]);
 }
 
-function expectedPredicateRefs(plan: ReturnType<typeof EvidencePlanV1Schema.parse>): string[] {
+function expectedPredicateRefs(plan: ReturnType<typeof EvidencePlanV1Schema.parse> | EvidencePlanV2): string[] {
   return [
     ...plan.predicateRefs,
     ...plan.commands.map((command) => `EVID_COMMAND_${command.commandRef}`),
@@ -109,7 +113,7 @@ export function createAcceptedCandidateRepository(input: Readonly<{
 
   async function readExactArtifact(
     artifactHash: string,
-    artifactType: "setfarm.implementation-slice.v1" | "setfarm.evidence-plan.v1",
+    artifactType: "setfarm.implementation-slice.v1" | "setfarm.evidence-plan.v1" | "setfarm.implementation-slice.v2" | "setfarm.evidence-plan.v2",
     producer: unknown,
   ) {
     const [indexed, stored] = await Promise.all([
@@ -189,13 +193,27 @@ export function createAcceptedCandidateRepository(input: Readonly<{
         }
         return { created: false, candidate: alreadyAccepted };
       }
-      const packet = await reader.readSealedPacket(runId);
+      const packet = await reader.readExactSealedPacket(runId);
       const expectedStoryIds = packet.storyPlan.stories.map((story) => story.id).sort();
       const requestedStoryIds = raw.storyEvidence.map((story) => story.storyId).sort();
       if (!exactStrings(expectedStoryIds, requestedStoryIds)) {
         fail("ACCEPTED_CANDIDATE_STORY_SET_MISMATCH", "final evidence must cover every sealed StoryPlan story exactly once");
       }
 
+      // Native contract/original Git and final candidate I/O precedes the lock.
+      // The transaction below rechecks actual child/parent/source-owner rows.
+      const nativeContexts=new Map<string,NativeImplementationContextV3>();
+      if("implementationSourceMap" in packet){
+        const {loadV3ImplementationAttemptContext}=await import("../execution/v3-implementation-attempt.js");
+        for(const request of raw.storyEvidence){
+          const context=await loadV3ImplementationAttemptContext({runId,storyId:request.storyId,attemptId:request.attemptId});
+          if(context.kind!=="native-dispatch-ready"||!context.downstreamEvidence
+            ||context.evidencePlanArtifactHash!==request.evidencePlanArtifactHash
+            ||context.sourceBefore.sha!==sourceRevision.sha||context.sourceBefore.treeHash!==sourceRevision.treeHash)
+            fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native final-source contract lacks genuine downstream authority");
+          nativeContexts.set(request.storyId,context);
+        }
+      }
       return input.sql.begin(async (transaction) => {
         await transaction.unsafe(
           "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -308,30 +326,32 @@ export function createAcceptedCandidateRepository(input: Readonly<{
             fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID", `${request.storyId} final slice and plan lack immutable run refs`);
           }
 
-          const sliceEnvelope = await readExactArtifact(
-            attempt.slice_hash,
-            "setfarm.implementation-slice.v1",
-            packet.producer,
-          );
-          const slice = ImplementationSliceV1Schema.parse(sliceEnvelope.payload);
-          if (
-            slice.packetHash !== packet.packetHash
-            || slice.storyId !== request.storyId
-            || slice.sourceRevision.baseSha !== sourceRevision.sha
-            || slice.sourceRevision.treeHash !== sourceRevision.treeHash
-          ) {
-            fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID", `${request.storyId} slice is not compiled from the final source`);
+          const native=nativeContexts.get(request.storyId);
+          const sliceEnvelope = await readExactArtifact(attempt.slice_hash,
+            native?"setfarm.implementation-slice.v2":"setfarm.implementation-slice.v1",packet.producer);
+          const slice=native?LegacyImplementationSliceV2Schema.parse(sliceEnvelope.payload):ImplementationSliceV1Schema.parse(sliceEnvelope.payload);
+          if(slice.packetHash!==packet.packetHash||slice.storyId!==request.storyId)
+            fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID",`${request.storyId} slice differs from exact packet/story`);
+          if(native){
+            const authority=native.downstreamEvidence;
+            if(!authority) fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native downstream authority is missing");
+            const lineage=await readNativeDownstreamAttemptAuthority(transaction,native.attempt);
+            if(lineage.sourceOwner.attempt_id!==authority.sourceOwnerAttemptId
+              ||lineage.parentClaimId!==authority.parentClaimId
+              ||canonicalJsonStringify(slice)!==canonicalJsonStringify(native.slice))
+              fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native source-owner contract changed before acceptance");
+          }else if(slice.schema!=="setfarm.implementation-slice.v1"||slice.sourceRevision.baseSha!==sourceRevision.sha
+            ||slice.sourceRevision.treeHash!==sourceRevision.treeHash){
+            fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID",`${request.storyId} slice is not compiled from the final source`);
           }
-          const planEnvelope = await readExactArtifact(
-            request.evidencePlanArtifactHash,
-            "setfarm.evidence-plan.v1",
-            packet.producer,
-          );
-          const plan = EvidencePlanV1Schema.parse(planEnvelope.payload);
-          const expectedPlan = compileEvidencePlanV1({ slice, sliceHash: attempt.slice_hash });
-          if (canonicalJsonStringify(plan) !== canonicalJsonStringify(expectedPlan)) {
-            fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID", `${request.storyId} evidence plan is not exact slice-derived authority`);
-          }
+          const planEnvelope=await readExactArtifact(request.evidencePlanArtifactHash,
+            native?"setfarm.evidence-plan.v2":"setfarm.evidence-plan.v1",packet.producer);
+          const plan=slice.schema==="setfarm.implementation-slice.v2"
+            ?EvidencePlanV2Schema.parse(planEnvelope.payload):EvidencePlanV1Schema.parse(planEnvelope.payload);
+          const expectedPlan=slice.schema==="setfarm.implementation-slice.v2"
+            ?compileEvidencePlanV2({slice,sliceHash:attempt.slice_hash}):compileEvidencePlanV1({slice,sliceHash:attempt.slice_hash});
+          if(canonicalJsonStringify(plan)!==canonicalJsonStringify(expectedPlan))
+            fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID",`${request.storyId} evidence plan is not exact slice-derived authority`);
 
           const evidenceRows = await transaction.unsafe<EvidenceRow[]>(
             selectedFreshInstallationRootV1() !== null
