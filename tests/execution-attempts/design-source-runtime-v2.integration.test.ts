@@ -183,6 +183,149 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
     }
   });
 
+  it("seals only exactly proven all-candidate MCP file retrieval failure without generation retry", async () => {
+    const database = await createIsolatedTestDatabase();
+    const repos: string[] = [];
+    try {
+      const releaseSha = "a".repeat(40);
+      const admissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+      const compiled = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal: containedGamePlanProposalV2() });
+      assert.equal(compiled.status, "canonicalized");
+      if (compiled.status !== "canonicalized") return;
+      const targets = produceDesignGenerationTargetsV2(compiled.productSpec);
+      assert.equal(targets.status, "produced");
+      if (targets.status !== "produced") return;
+      const target = targets.generationTargets.targets[0]!;
+      const cause = { schema: "setfarm.operational-failure-cause.v1", workflowStepId: "design",
+        boundary: "product_compiler.design_source.artifact_download", failureClass: "infrastructure_failure",
+        failureCode: "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED" };
+      for (const mode of ["mcp-success", "mcp", "screenshot", "mixed-sibling", "wrong-transport", "mismatch", "duplicate", "untyped", "success-receipt", "local-html", "excluded-sibling", "unknown-sibling", "semantic-sibling", "valid-sibling"]) {
+        const repo = await mkdtemp(path.join(tmpdir(), "setfarm-artifact-auth-"));
+        repos.push(repo);
+        const runId = `run-artifact-auth-${mode}`;
+        await database.sql`INSERT INTO runs (id, workflow_id, task, status, protocol, protocol_version,
+          compiler_release_sha, activation_preflight_hash, release_admission_hash)
+          VALUES (${runId}, 'feature-dev', 'Artifact access fixture', 'running', 'v3', 1,
+          ${releaseSha}, ${"b".repeat(64)}, ${admissionHash})`;
+        const claims = await database.sql<Array<{ id: string }>>`INSERT INTO claim_log
+          (run_id, step_id, story_id, agent_id) VALUES (${runId}, 'design', NULL, 'artifact-auth-test') RETURNING id::text AS id`;
+        const claimId = Number(claims[0]!.id);
+        const screenId = "auth-blocked";
+        const htmlSourceRef = { kind: "mcp_file", name: "projects/artifact-auth-project/files/blocked-html" };
+        const sourceRefHash = createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify(htmlSourceRef)).digest("hex");
+        const screenshotSourceRef = { kind: "mcp_file", name: "projects/artifact-auth-project/files/blocked-png" };
+        const screenshotSourceRefHash = createHash("sha256").update("setfarm.stitch-source-ref.v1\n" + JSON.stringify(screenshotSourceRef)).digest("hex");
+        const candidate = { screenId, title: target.expectedScreenTitle, responsePaths: ["$result.screens[0]"],
+          htmlAvailable: true, screenshotAvailable: true, htmlSourceRef, htmlSourceRefHash: sourceRefHash,
+          screenshotSourceRef, screenshotSourceRefHash,
+          ...(mode === "success-receipt" || mode === "screenshot" ? { htmlDownloadedArtifactHash: mode === "screenshot" ? createHash("sha256").update(validStitchHtml("<main>Incomplete semantics</main>")).digest("hex") : "e".repeat(64) } : {}), identityConflicts: [],
+          disposition: "admitted_renderable_screen", missingEvidence: [] };
+        const receipt = { screenId, title: target.expectedScreenTitle,
+          ...(mode === "success-receipt" || mode === "screenshot" ? { htmlFile: `${screenId}.html` } : {}), downloadError: "MCP file retrieval failed",
+          ...(mode === "untyped" ? {} : { artifactDownloadFailure: { artifactKind: mode === "screenshot" ? "screenshot" : "html",
+            sourceRefHash: mode === "mismatch" ? "d".repeat(64) : mode === "screenshot" ? screenshotSourceRefHash : sourceRefHash,
+            code: mode === "wrong-transport" ? "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED" : "STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED",
+            ...(mode === "wrong-transport" ? { httpStatus: 401 } : {}) } }) };
+        const placement = target.requiredControlPlacements[0]!;
+        const statusObservable = target.requiredObservableSelectors.find((observable) => observable.selector.kind === "accessibility")!;
+        assert.equal(statusObservable.selector.kind, "accessibility");
+        if (statusObservable.selector.kind !== "accessibility") return;
+        const canvasSurface = target.containedSurfaceRefs.find((ref) => ref !== statusObservable.selector.surfaceRef)!;
+        const validHtml = validStitchHtml([
+          `<main data-surface-id="${target.surfaceRef}">`,
+          `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+          `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
+          `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+          "</main>",
+        ].join(""));
+        const validPng = validStitchPng(229);
+        const semanticHtml = validStitchHtml("<main>Incomplete semantics</main>");
+        if (mode === "mcp-success") Object.assign(candidate, {
+          htmlDownloadedArtifactHash: createHash("sha256").update(validHtml).digest("hex"),
+          screenshotDownloadedArtifactHash: createHash("sha256").update(validPng).digest("hex"),
+        });
+        const { htmlSourceRef: omittedHtmlRef, screenshotSourceRef: omittedPngRef, ...legacyCandidate } = candidate;
+        const mixedHash = createHash("sha256").update("https://example.invalid/mixed.html").digest("hex");
+        const transport = { schema: "setfarm.stitch-attempt-transport.v1", total: mode.endsWith("sibling") && mode !== "excluded-sibling" ? 2 : 1,
+          screens: [{ screenId, title: target.expectedScreenTitle }, ...(mode.endsWith("sibling") && mode !== "excluded-sibling"
+            ? [{ screenId: mode, title: target.expectedScreenTitle }] : [])], screenSource: "direct",
+          directCandidateTotal: mode.endsWith("sibling") ? 2 : 1, excludedDirectTotal: mode === "excluded-sibling" ? 1 : 0,
+          directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
+          directScreenEvidence: [candidate, ...(mode === "mixed-sibling" ? [{ ...legacyCandidate, screenId: "mixed-sibling", htmlSourceRefHash: mixedHash, screenshotSourceRefHash: "c".repeat(64) }] : []), ...(mode === "excluded-sibling" ? [{
+            screenId: "excluded-sibling", title: target.expectedScreenTitle, responsePaths: ["$result.screens[1]"],
+            htmlAvailable: false, screenshotAvailable: false, identityConflicts: [],
+            disposition: "excluded_missing_render_evidence", missingEvidence: ["html", "screenshot"],
+          }] : []), ...(mode === "semantic-sibling" ? [{ ...legacyCandidate, screenId: "semantic-sibling", ...stitchDownloadReceipts("semantic-sibling", semanticHtml, validPng) }] : []), ...(mode === "unknown-sibling" ? [{ ...candidate, screenId: "unknown-sibling" }] : []),
+            ...(mode === "valid-sibling" ? [{ ...legacyCandidate, screenId: "valid-sibling", ...stitchDownloadReceipts("valid-sibling", validHtml, validPng) }] : [])],
+          downloaded: [mode === "mcp-success" ? { screenId, title: target.expectedScreenTitle, htmlFile: `${screenId}.html`, screenshotFile: `${screenId}.png` } : receipt, ...(mode === "mixed-sibling" ? [{ screenId: "mixed-sibling", title: target.expectedScreenTitle, downloadError: "Download failed: HTTP 401", artifactDownloadFailure: { artifactKind: "html", httpStatus: 401, sourceRefHash: mixedHash, code: "STITCH_ARTIFACT_DOWNLOAD_ACCESS_DENIED" } }] : []), ...(mode === "semantic-sibling" ? [{ screenId: "semantic-sibling", title: target.expectedScreenTitle, htmlFile: "semantic-sibling.html", screenshotFile: "semantic-sibling.png" }] : []), ...(mode === "duplicate" ? [receipt] : []),
+            ...(mode === "valid-sibling" ? [{ screenId: "valid-sibling", title: target.expectedScreenTitle, htmlFile: "valid-sibling.html", screenshotFile: "valid-sibling.png" }] : [])] };
+        const repository = new ProductCompilationAttemptRepository(database.sql);
+        let dispatches = 0;
+        const input = { repo, runId, projectId: "artifact-auth-project",
+          contract: { productSpec: compiled.productSpec, generationTargets: targets.generationTargets },
+          originClaimId: claimId, ownerClaimId: claimId, ownerInstanceId: "artifact-auth-owner",
+          producerReleaseSha: releaseSha, provider: "stitch", model: "GEMINI_3_8_FLASH", deviceType: "DESKTOP" as const };
+        const dependencies = { repository, generateStage: async () => {
+          dispatches += 1;
+          return { disposition: "accepted" as const, response: transport,
+            rawEvidence: serializeAttemptTransportV2(transport), artifacts: mode === "mcp-success"
+              ? [{ screenId, htmlBytes: validHtml, screenshotBytes: validPng }] : mode === "valid-sibling"
+              ? [{ screenId: "valid-sibling", htmlBytes: validHtml, screenshotBytes: validPng }]
+              : mode === "semantic-sibling" ? [{ screenId: "semantic-sibling", htmlBytes: semanticHtml, screenshotBytes: validPng }]
+              : mode === "local-html" || mode === "screenshot" ? [{ screenId, htmlBytes: semanticHtml }] : [] };
+        } };
+        const result = await runDesignSourceAuthorityV2(input, dependencies);
+        if (mode === "valid-sibling" || mode === "mcp-success") {
+          assert.equal(result.runner.status, "accepted", JSON.stringify(result.runner));
+          if (result.runner.status !== "accepted") throw new Error("Expected accepted named-file fixture");
+          assert.equal(dispatches, 1);
+          await readFile(path.join(repo, "stitch/DESIGN_MANIFEST.json"));
+          if (mode === "mcp-success") {
+            const attemptRoot = path.join(repo, result.runner.attempt.attemptLocator);
+            const direct = JSON.parse(await readFile(path.join(attemptRoot, "raw/direct-response-evidence.json"), "utf8"));
+            assert.deepEqual(direct.batches[0].candidates[0].htmlSourceRef, htmlSourceRef);
+            assert.deepEqual(direct.batches[0].candidates[0].screenshotSourceRef, screenshotSourceRef);
+            assert.equal(direct.batches[0].candidates[0].htmlSourceRefHash, sourceRefHash);
+            assert.equal(direct.batches[0].candidates[0].screenshotSourceRefHash, screenshotSourceRefHash);
+            const projected = await readProjectedDesignSourceAuthorityV2(repo, input.contract);
+            assert.deepEqual(projected.directResponseEvidence, direct);
+            const replay = await runDesignSourceAuthorityV2(input, dependencies);
+            assert.equal(replay.runner.status, "accepted", JSON.stringify(replay.runner));
+            assert.deepEqual(replay.authority, result.authority);
+            assert.equal(dispatches, 1);
+          }
+          continue;
+        }
+        const proven = mode === "mcp" || mode === "screenshot" || mode === "mixed-sibling";
+        assert.equal(result.runner.status, proven ? "infrastructure_failure" : "rejected", JSON.stringify(result.runner));
+        if (result.runner.status === "accepted") throw new Error("Missing HTML cannot project authority");
+        assert.equal(dispatches, proven ? 1 : 2);
+        if (proven) {
+          assert.equal(result.runner.stopReason, "no_retry");
+          assert.equal(result.runner.failure.operationalCauseHash, hashCanonicalJson(cause));
+          assert.deepEqual(result.runner.failure.reasonCodes, ["STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED"]);
+          assert.equal(result.runner.attempt.outputRefs, null);
+          assert.deepEqual(await repository.get(result.runner.attempt.attemptId), result.runner.attempt);
+          const attemptRoot = path.join(repo, result.runner.attempt.attemptLocator);
+          const selection = JSON.parse(await readFile(path.join(attemptRoot, "selection/candidate-selection.json"), "utf8"));
+          assert.ok(selection.selections.some((item: { status: string }) => item.status === "unresolved"));
+          const failure = JSON.parse(await readFile(path.join(attemptRoot, "raw/failure.json"), "utf8"));
+          assert.deepEqual(failure.evidence.cause, cause);
+          assert.ok(failure.evidence.candidateSelectionArtifact);
+          assert.ok(failure.evidence.unresolvedTargets.length);
+          assert.equal(await readFile(path.join(attemptRoot, "raw/stages/DSGS_001/response.bin"), "utf8"), serializeAttemptTransportV2(transport));
+          await assert.rejects(readFile(path.join(repo, "stitch/DESIGN_MANIFEST.json")));
+          const replay = await runDesignSourceAuthorityV2(input, dependencies);
+          assert.equal(replay.runner.status, "infrastructure_failure");
+          assert.equal(dispatches, 1);
+        }
+      }
+    } finally {
+      await Promise.all(repos.map((repo) => rm(repo, { recursive: true, force: true })));
+      await database.cleanup();
+    }
+  });
+
   it("seals offline resource prefetch as infrastructure without semantic retry or projection", async () => {
     const database = await createIsolatedTestDatabase();
     const originalFetch = globalThis.fetch;

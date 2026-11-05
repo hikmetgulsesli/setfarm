@@ -22,6 +22,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
+  mcpFileSourceHash,
   collectScreenCandidatesFromResult,
   htmlUrlOf,
   isSafeScreenId,
@@ -640,6 +641,79 @@ class StitchArtifactDownloadAccessDenied extends Error {
   }
 }
 
+class StitchMcpArtifactRetrievalFailure extends Error {
+  constructor(kind, name) {
+    super('STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED');
+    this.artifactDownloadFailure = Object.freeze({ artifactKind: kind, sourceRefHash: mcpFileSourceHash(name), code: 'STITCH_MCP_ARTIFACT_RETRIEVAL_FAILED' });
+  }
+}
+
+function canonicalMcpFilePayload(value) {
+  if (Array.isArray(value)) return value.map(canonicalMcpFilePayload);
+  if (!value || typeof value !== 'object') return value;
+  const aliases = { image_metadata: 'imageMetadata', mime_type: 'mimeType' };
+  const normalized = {};
+  for (const key of Object.keys(value).sort()) {
+    const canonicalKey = aliases[key] || key;
+    const item = canonicalMcpFilePayload(value[key]);
+    if (Object.hasOwn(normalized, canonicalKey) && JSON.stringify(normalized[canonicalKey]) !== JSON.stringify(item)) throw new Error('CONFLICTING_FILE_ALIAS');
+    normalized[canonicalKey] = item;
+  }
+  return Object.fromEntries(Object.entries(normalized).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+async function downloadMcpFile(ref, outputPath, projectId, artifactKind) {
+  if (ref.kind !== 'mcp_file' || !ref.name.startsWith(`projects/${projectId}/files/`)
+    || !isSafeScreenId(ref.name.slice(`projects/${projectId}/files/`.length))) throw new Error('STITCH_FILE_RESOURCE_REFUSED');
+  rmSync(outputPath, { force: true });
+  let payload;
+  try {
+    const result = await rpcOnce('tools/call', { name: 'download_file', arguments: { name: ref.name } });
+    assertToolResultOk(result, 'download_file');
+    const objects = [];
+    for (const value of [result?.structuredContent, result?.structured_content]) {
+      if (value !== undefined) objects.push(canonicalMcpFilePayload(value));
+    }
+    for (const item of result?.content || []) {
+      if (item?.type === 'text') objects.push(canonicalMcpFilePayload(JSON.parse(item.text)));
+    }
+    if (!objects.length || objects.some((value) => !value || typeof value !== 'object' || Array.isArray(value))) throw new Error('INVALID_FILE_ENVELOPE');
+    if (new Set(objects.map((value) => JSON.stringify(value))).size !== 1) throw new Error('CONFLICTING_FILE_ENVELOPE');
+    payload = objects[0];
+    if (artifactKind === 'html' ? typeof payload.html !== 'string' || payload.image !== undefined
+      : typeof payload.image !== 'string' || payload.html !== undefined) throw new Error('INVALID_FILE_PAYLOAD');
+  } catch {
+    throw new StitchMcpArtifactRetrievalFailure(artifactKind, ref.name);
+  }
+  let buffer;
+  if (artifactKind === 'html') buffer = Buffer.from(payload.html, 'utf8');
+  else {
+    const base64 = payload.image;
+    if (!base64 || base64.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) throw new Error('Invalid Stitch image base64');
+    buffer = Buffer.from(base64, 'base64');
+    if (buffer.toString('base64') !== base64) throw new Error('Invalid Stitch image base64');
+    if (payload.imageMetadata !== undefined) {
+      const meta = payload.imageMetadata;
+      if (!meta || typeof meta !== 'object' || Array.isArray(meta)
+        || (meta.mimeType !== undefined && !['png', 'image/png'].includes(meta.mimeType))) throw new Error('Invalid Stitch PNG metadata');
+    }
+  }
+  if (artifactKind === 'html' ? !validDownloadedHtml(buffer) : !validDownloadedPng(buffer)) throw new Error(`Invalid Stitch ${artifactKind} (${buffer.length} bytes)`);
+  const attemptPath = `${outputPath}.download-${process.pid}-${Date.now()}`;
+  try {
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(attemptPath, buffer, { flag: 'wx' });
+    renameSync(attemptPath, outputPath);
+    const actual = readFileSync(outputPath);
+    if (!actual.equals(buffer)) throw new Error('STITCH_FILE_READBACK_MISMATCH');
+    return { artifactHash: createHash('sha256').update(actual).digest('hex'), sourceRefHash: mcpFileSourceHash(ref.name) };
+  } catch (error) {
+    rmSync(attemptPath, { force: true });
+    rmSync(outputPath, { force: true });
+    throw error;
+  }
+}
+
 // Download to a new attempt file, validate it, then atomically publish it.
 async function downloadFile(url, outputPath, attempt = 1) {
   if (attempt === 1) rmSync(outputPath, { force: true });
@@ -857,7 +931,7 @@ const commands = {
     if (!projectId || !screenId) throw new Error('Usage: get-screen <projectId> <screenId>');
     await initialize();
     const name = `projects/${projectId}/screens/${screenId}`;
-    const result = await callTool('get_screen', { name, projectId, screenId });
+    const result = await callTool('get_screen', { name }); assertToolResultOk(result, 'get_screen');
 
     let screen = null;
     if (result && result.content) {
@@ -1258,7 +1332,7 @@ const commands = {
     if (!projectId || !screenId || !outputPath) throw new Error('Usage: download-screen <projectId> <screenId> <outputPath>');
     await initialize();
     const name = `projects/${projectId}/screens/${screenId}`;
-    const result = await callTool('get_screen', { name, projectId, screenId });
+    const result = await callTool('get_screen', { name }); assertToolResultOk(result, 'get_screen');
 
     let htmlUrl = null;
     if (result && result.content) {
@@ -1344,7 +1418,7 @@ const commands = {
             const sid = inst.id || (inst.sourceScreen || '').replace(/^projects\/\d+\/screens\//, '');
             if (isSafeScreenId(sid)) {
               try {
-                const sr = await callTool('get_screen', { name: 'projects/' + projectId + '/screens/' + sid, projectId, screenId: sid });
+                const sr = await callTool('get_screen', { name: 'projects/' + projectId + '/screens/' + sid }); assertToolResultOk(sr, 'get_screen');
                 if (sr && sr.structuredContent) {
                   screens.push(sr.structuredContent);
                 } else if (sr && sr.content) {
@@ -1374,7 +1448,7 @@ const commands = {
         if (!isSafeScreenId(sid)) continue;
         try {
           const name = `projects/${projectId}/screens/${sid}`;
-          const sr = await callTool('get_screen', { name, projectId, screenId: sid });
+          const sr = await callTool('get_screen', { name }); assertToolResultOk(sr, 'get_screen');
           // Prefer structuredContent (cleaner), fall back to text content
           if (sr && sr.structuredContent && sr.structuredContent.name) {
             screens.push(sr.structuredContent);
@@ -1675,7 +1749,7 @@ const commands = {
         if (!sid) return;
         try {
           let htmlUrl = screen.htmlUrl, screenshotUrl = screen.screenshotUrl;
-          if (!htmlUrl) { try { const sd = await callTool('get_screen', { projectId, screenId: sid, name: 'projects/' + projectId + '/screens/' + sid });
+          if (!htmlUrl) { try { const sd = await callTool('get_screen', { name: 'projects/' + projectId + '/screens/' + sid }); assertToolResultOk(sd, 'get_screen');
             if (sd && sd.content) for (const item of sd.content) { if (item.type === 'text') { try { const p = JSON.parse(item.text); htmlUrl = p.htmlCode?.downloadUrl || htmlUrl; screenshotUrl = p.screenshot?.downloadUrl || screenshotUrl; } catch {} } }
           } catch {} }
           const hp = join(outputDir, sid + '.html');
@@ -1911,9 +1985,9 @@ const commands = {
       if (!evidence) continue;
       const receipt = { screenId: screen.screenId, title: screen.title || "" };
       try {
-        if (screen.htmlUrl) {
+        if (evidence.htmlSourceRef || screen.htmlUrl) {
           const htmlPath = resolve(resolvedOutput, `${screen.screenId}.html`);
-          const html = await downloadFile(screen.htmlUrl, htmlPath);
+          const html = evidence.htmlSourceRef ? await downloadMcpFile(evidence.htmlSourceRef, htmlPath, projectId, 'html') : await downloadFile(screen.htmlUrl, htmlPath);
           if (html.sourceRefHash !== evidence.htmlSourceRefHash) {
             rmSync(htmlPath, { force: true });
             throw new Error("STITCH_HTML_SOURCE_RECEIPT_MISMATCH");
@@ -1921,9 +1995,9 @@ const commands = {
           evidence.htmlDownloadedArtifactHash = html.artifactHash;
           receipt.htmlFile = `${screen.screenId}.html`;
         }
-        if (screen.screenshotUrl) {
+        if (evidence.screenshotSourceRef || screen.screenshotUrl) {
           const screenshotPath = resolve(resolvedOutput, `${screen.screenId}.png`);
-          const screenshot = await downloadFile(screen.screenshotUrl, screenshotPath);
+          const screenshot = evidence.screenshotSourceRef ? await downloadMcpFile(evidence.screenshotSourceRef, screenshotPath, projectId, 'screenshot') : await downloadFile(screen.screenshotUrl, screenshotPath);
           if (screenshot.sourceRefHash !== evidence.screenshotSourceRefHash) {
             rmSync(screenshotPath, { force: true });
             throw new Error("STITCH_SCREENSHOT_SOURCE_RECEIPT_MISMATCH");
@@ -1933,7 +2007,7 @@ const commands = {
         }
       } catch (error) {
         receipt.downloadError = redactDiagnosticText(error?.message || error).slice(0, 700);
-        if (error instanceof StitchArtifactDownloadAccessDenied && error.artifactDownloadFailure) {
+        if ((error instanceof StitchArtifactDownloadAccessDenied || error instanceof StitchMcpArtifactRetrievalFailure) && error.artifactDownloadFailure) {
           receipt.artifactDownloadFailure = error.artifactDownloadFailure;
         }
       }

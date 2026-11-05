@@ -27,6 +27,22 @@ function screenshotUrlOf(screen) {
   return screen?.screenshotUrl || screen?.screenshot?.downloadUrl || screen?.screenshot?.download_url || null;
 }
 
+function mcpFileSourceHash(name) {
+  return sha256Text('setfarm.stitch-source-ref.v1\n' + JSON.stringify({ kind: 'mcp_file', name }));
+}
+
+function fileReference(screen, kind) {
+  const slots = kind === 'html' ? [screen?.htmlCode, screen?.html_code] : [screen?.screenshot];
+  const names = slots.filter((slot) => slot && Object.hasOwn(slot, 'name')).map((slot) => slot.name);
+  if (!names.length) return { ref: null, invalid: false };
+  const project = /^projects\/([A-Za-z0-9][A-Za-z0-9._-]{0,499})\/screens\//.exec(String(screen?.name || ''))?.[1];
+  const valid = names.every((name) => typeof name === 'string'
+    && name.startsWith(`projects/${project}/files/`)
+    && isSafeScreenId(name.slice(`projects/${project}/files/`.length)))
+    && new Set(names).size === 1 && Boolean(project);
+  return { ref: valid ? { kind: 'mcp_file', name: names[0] } : null, invalid: !valid };
+}
+
 function jsonPayloadsFromToolText(text) {
   const raw = String(text || '').trim();
   if (!raw) return [];
@@ -75,14 +91,21 @@ function normalizeScreenEntry(screen, responsePath) {
   if (!explicitScreenIdentity) return null;
   const htmlUrl = htmlUrlOf(screen);
   const screenshotUrl = screenshotUrlOf(screen);
+  const html = fileReference(screen, 'html');
+  const screenshot = fileReference(screen, 'screenshot');
+  // These are compiler-derived provenance, never provider-supplied authority.
+  const { htmlSourceRef: ignoredHtmlRef, screenshotSourceRef: ignoredScreenshotRef, ...providerScreen } = screen;
   return {
-    ...screen,
+    ...providerScreen,
     screenId,
     title: titleOf(screen),
     titleExplicit: hasExplicitTitle(screen),
     htmlUrl,
     screenshotUrl,
-    completeRenderOccurrence: Boolean(htmlUrl && screenshotUrl),
+    ...(html.ref ? { htmlSourceRef: html.ref } : {}),
+    ...(screenshot.ref ? { screenshotSourceRef: screenshot.ref } : {}),
+    identityConflicts: [...(html.invalid ? ['html_url'] : []), ...(screenshot.invalid ? ['screenshot_url'] : [])],
+    completeRenderOccurrence: Boolean((html.ref || htmlUrl) && (screenshot.ref || screenshotUrl)),
     width: screen?.width,
     height: screen?.height,
     responsePaths: normalizedResponsePaths([responsePath]),
@@ -107,14 +130,23 @@ function mergeScreenEntries(existing, candidate) {
   if (existing.titleExplicit && candidate.titleExplicit) {
     conflictIfDifferent('title', existing.title, candidate.title, { ignoreUntitled: true });
   }
-  conflictIfDifferent('html_url', existing.htmlUrl, candidate.htmlUrl);
-  conflictIfDifferent('screenshot_url', existing.screenshotUrl, candidate.screenshotUrl);
+  for (const kind of ['html', 'screenshot']) {
+    const leftRef = existing[`${kind}SourceRef`];
+    const rightRef = candidate[`${kind}SourceRef`];
+    const leftUrl = existing[`${kind}Url`];
+    const rightUrl = candidate[`${kind}Url`];
+    if (leftRef && rightRef) conflictIfDifferent(`${kind}_url`, leftRef.name, rightRef.name);
+    else if ((leftRef && rightUrl) || (rightRef && leftUrl)) conflicts.add(`${kind}_url`);
+    else conflictIfDifferent(`${kind}_url`, leftUrl, rightUrl);
+  }
   conflictIfDifferent('width', existing.width, candidate.width);
   conflictIfDifferent('height', existing.height, candidate.height);
   const htmlUrl = candidate.htmlUrl || existing.htmlUrl || null;
   const screenshotUrl = candidate.screenshotUrl || existing.screenshotUrl || null;
   const completeRenderOccurrence = Boolean(existing.completeRenderOccurrence || candidate.completeRenderOccurrence);
-  if (htmlUrl && screenshotUrl && !completeRenderOccurrence) conflicts.add('render_evidence_splice');
+  const htmlSourceRef = candidate.htmlSourceRef || existing.htmlSourceRef || null;
+  const screenshotSourceRef = candidate.screenshotSourceRef || existing.screenshotSourceRef || null;
+  if ((htmlSourceRef || htmlUrl) && (screenshotSourceRef || screenshotUrl) && !completeRenderOccurrence) conflicts.add('render_evidence_splice');
   const candidateExactTitle = candidate.titleExplicit && candidate.title !== 'Untitled';
   const existingExactTitle = existing.titleExplicit && existing.title !== 'Untitled';
   const title = candidateExactTitle
@@ -132,6 +164,8 @@ function mergeScreenEntries(existing, candidate) {
     titleExplicit: Boolean(existingExactTitle || candidateExactTitle),
     htmlUrl,
     screenshotUrl,
+    ...(htmlSourceRef ? { htmlSourceRef } : {}),
+    ...(screenshotSourceRef ? { screenshotSourceRef } : {}),
     completeRenderOccurrence,
     width: candidate.width || existing.width,
     height: candidate.height || existing.height,
@@ -217,8 +251,10 @@ function collectScreenCandidatesFromResult(result) {
 }
 
 function directScreenEvidence(screen) {
-  const htmlAvailable = Boolean(htmlUrlOf(screen));
-  const screenshotAvailable = Boolean(screenshotUrlOf(screen));
+  const htmlRef = screen?.htmlSourceRef || fileReference(screen, 'html').ref;
+  const screenshotRef = screen?.screenshotSourceRef || fileReference(screen, 'screenshot').ref;
+  const htmlAvailable = Boolean(htmlRef || htmlUrlOf(screen));
+  const screenshotAvailable = Boolean(screenshotRef || screenshotUrlOf(screen));
   const missingEvidence = [
     ...(!htmlAvailable ? ['html'] : []),
     ...(!screenshotAvailable ? ['screenshot'] : []),
@@ -243,8 +279,8 @@ function directScreenEvidence(screen) {
     ...(screen?.height != null ? { height: String(screen.height) } : {}),
     htmlAvailable,
     screenshotAvailable,
-    ...(htmlUrlOf(screen) ? { htmlSourceRefHash: sha256Text(htmlUrlOf(screen)) } : {}),
-    ...(screenshotUrlOf(screen) ? { screenshotSourceRefHash: sha256Text(screenshotUrlOf(screen)) } : {}),
+    ...(htmlRef ? { htmlSourceRef: htmlRef, htmlSourceRefHash: mcpFileSourceHash(htmlRef.name) } : htmlUrlOf(screen) ? { htmlSourceRefHash: sha256Text(htmlUrlOf(screen)) } : {}),
+    ...(screenshotRef ? { screenshotSourceRef: screenshotRef, screenshotSourceRefHash: mcpFileSourceHash(screenshotRef.name) } : screenshotUrlOf(screen) ? { screenshotSourceRefHash: sha256Text(screenshotUrlOf(screen)) } : {}),
     identityConflicts,
     disposition: identityConflicts.length > 0
       ? 'excluded_identity_conflict'
@@ -279,6 +315,7 @@ function partitionDirectScreenCandidates(candidates) {
 }
 
 export {
+  mcpFileSourceHash,
   collectScreenCandidatesFromResult,
   directScreenEvidence,
   htmlUrlOf,
