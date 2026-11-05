@@ -22,14 +22,12 @@ async function implementation(){
   return import(MODULE.href);
 }
 const root='/tmp/setfarm-task6a-pg.Abc123';
-test('native implementation join selects its fixed affected owned files with unchanged private cluster controls',async()=>{
+test('native implementation join selects exactly one owned file with unchanged private cluster controls',async()=>{
   const {planPrivatePostgresTestsV1:plan}=await implementation();
   const value=plan({root,port:55439,mode:'native-implementation-join'});
   assert.deepEqual(value.test,['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
     'node','--import','tsx','--test','--test-concurrency=1',
-    'tests/execution-attempts/native-implementation-join.integration.test.ts',
-    'tests/findings/v3-recovery-coordinator.test.ts',
-    'tests/findings/v3-evidence-only-worker.test.ts']);
+    'tests/execution-attempts/native-implementation-join.integration.test.ts']);
   assert.equal(Object.isFrozen(value.test),true);
   assert.deepEqual(value.initdb,plan({root,port:55439,mode:'subscription-runtime'}).initdb);
   assert.deepEqual(value.server,plan({root,port:55439,mode:'subscription-runtime'}).server);
@@ -38,6 +36,25 @@ test('native implementation join selects its fixed affected owned files with unc
     assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
   assert.throws(()=>plan({root,port:5432,mode:'native-implementation-join'}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
   const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'native-implementation-join','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.equal(child.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
+});
+for(const [mode,file] of [
+  ['native-recovery-coordinator','tests/findings/v3-recovery-coordinator.test.ts'],
+  ['native-evidence-only-worker','tests/findings/v3-evidence-only-worker.test.ts'],
+])test(`native affected findings selector ${mode} retains one-file P3 custody`,async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode});
+  assert.deepEqual(value.test,['--import','tsx','scripts/run-isolated-postgres-tests.ts','--',
+    'node','--import','tsx','--test','--test-concurrency=1',file]);
+  assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'native-implementation-join'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'native-implementation-join'}).server);
+  for(const invalid of [mode+' extra',mode+';echo denied',mode.toUpperCase()])
+    assert.throws(()=>plan({root,port:55439,mode:invalid}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),mode,'extra'],{
     encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
   });
   assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
@@ -969,7 +986,7 @@ test('after-cutover retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap','subscription-runtime','runtime-sessions','native-implementation-join'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap','subscription-runtime','runtime-sessions','native-implementation-join','native-recovery-coordinator','native-evidence-only-worker'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
@@ -1023,7 +1040,7 @@ test('after-receipt retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap','subscription-runtime','runtime-sessions','native-implementation-join'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full','manual-orphan-bootstrap','subscription-runtime','runtime-sessions','native-implementation-join','native-recovery-coordinator','native-evidence-only-worker'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
