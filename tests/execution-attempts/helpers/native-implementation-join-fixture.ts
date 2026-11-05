@@ -80,8 +80,9 @@ export function nativeJoinEnvelope(artifactType: string, payload: unknown) {
   });
 }
 
-export function nativeJoinPacket(runId: string, twoStories = false, runnableCli = false, runnableApi = false, runtimeServerEnv?: Readonly<Record<string, string>>): SealedRuntimePacketV3 {
+export function nativeJoinPacket(runId: string, twoStories = false, runnableCli = false, runnableApi = false, runtimeServerEnv?: Readonly<Record<string, string>>, sharedWritable = false): SealedRuntimePacketV3 {
   assert.ok(!runnableApi || (twoStories && !runnableCli));
+  assert.ok(!sharedWritable || twoStories, "a shared writer requires the actual two-story product");
   assert.ok(!runtimeServerEnv || runnableApi, "external evidence environment belongs only to the real API fixture");
   assert.ok(!(twoStories && runnableCli), "the two-story HTTP and one-story CLI fixtures are separate products");
   const contracts = buildNoDesignProductBuildPacketV3Contracts();
@@ -96,7 +97,7 @@ export function nativeJoinPacket(runId: string, twoStories = false, runnableCli 
     });
     contracts.buildTopologyV1.sharedGrants.push({
       id: "GRANT_APP_TO_NOTES", fromOwnerRef: "OWNER_US_001", toOwnerRef: "OWNER_US_002",
-      pathRefs: ["PATH_APP"], permissions: ["read"],
+      pathRefs: ["PATH_APP"], permissions: sharedWritable ? ["read","write"] : ["read"],
     });
     contracts.buildTopologyV1.entrypoints[0]!.kind = "api";
     contracts.buildTopologyV1.entrypoints[0]!.routeRefs = contracts.productSpecV2.routes.map(route => route.id).sort();

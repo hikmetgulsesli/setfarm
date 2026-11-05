@@ -97,14 +97,14 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     }
   });
 
-  async function fixture(suffix: string, twoStories = false, runnableCli = false, lifecycle = false, evidenceServiceUnavailable = false) {
+  async function fixture(suffix: string, twoStories = false, runnableCli = false, lifecycle = false, evidenceServiceUnavailable = false, sharedWritable = false) {
     const source = await nativeJoinSourceFixture(runnableCli, twoStories && lifecycle, lifecycle);
     roots.push(source.root);
     const runId = `run-native-join-${suffix}`;
     const evidencePreload = evidenceServiceUnavailable ? path.join(source.root, "evidence-service-preload.cjs") : undefined;
     assert.ok(!evidencePreload || (twoStories && lifecycle && !runnableCli));
     const packet = nativeJoinPacket(runId, twoStories, runnableCli, twoStories && lifecycle,
-      evidencePreload ? { NODE_OPTIONS: `--require=${evidencePreload}` } : undefined);
+      evidencePreload ? { NODE_OPTIONS: `--require=${evidencePreload}` } : undefined, sharedWritable);
     const admission = await seedCanonicalCompilerStoryAdmissionFixture(database, {
       runId, releaseSha: NATIVE_JOIN_PRODUCER.codeSha, packetHash: packet.packetHash,
       productSpec: packet.productSpec, repo: source.repo,
@@ -509,10 +509,10 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(afterExhaustion.attempts, 2);
   });
 
-  it("native Task11 accepted operational fallback remains the model source owner after cleanup", async () => {
+  async function runNativeFallbackReviewScenario(dependent=false) {
     // Success and budget exhaustion are mutually exclusive terminal outcomes.
     // Keep the existing actual-caller exhaustion regression unchanged.
-    const value = await fixture("task11-fallback-success", false, true, true);
+    const value = await fixture(dependent ? "task11-review-fallback-dependent" : "task11-fallback-success", dependent, !dependent, true);
     const suffix = path.basename(value.root);
     const agentId = `feature-dev_native-task11-fallback-${suffix}`;
     const supervisorAgentId = `feature-dev_native-task11-fallback-review-${suffix}`;
@@ -625,7 +625,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       workdir: handoff.workdir, repo: value.repo, attempt: retry.attempt });
     const completed = await completeNeverStartedNativeSession(value, { compiled: fallback, handoff, envelope,
       sessionId: retryRuntime.sessionId, ownerInstanceId: retryRuntime.ownerInstanceId },
-    NATIVE_JOIN_CLI_SOURCE + "// genuine operational fallback candidate\n");
+    (dependent ? NATIVE_JOIN_API_SOURCE : NATIVE_JOIN_CLI_SOURCE) + "// genuine operational fallback candidate\n");
     const acceptedRows = await database.sql<Array<{ attempt_id: string; attempt_class: string; disposition: string;
       output_hash: string; output: string; state: string; apply_phase: string; claim_outcome: string;
       actual_claim_outcome: string; runtime_state: string }>>`
@@ -670,6 +670,10 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       FROM v3_preparation_authority_attempts_v2 WHERE authority_hash=${initialHandoff.nativeAuthority.authorityHash}`)
       .map(row => ({ ...row })), initialBindings.map(row => ({ ...row })));
     assert.deepEqual(await countEffects(value), { claims: 2, attempts: 2, bindings: 2, runtimes: 2 });
+    if(dependent) {
+      await continueNativeDependencyReview(value,agentId,"infrastructure_retry",false);
+      return;
+    }
     const workflow = await database.sql`SELECT r.status AS run_status,r.accepted_candidate_hash,
       story.status AS story_status,i.status AS implement_status,s.status AS supervise_status
       FROM runs r JOIN stories story ON story.id=${value.input.storyDbId}
@@ -757,11 +761,12 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const supervisorRequests = await database.sql`SELECT request_id FROM runtime_completion_requests
       WHERE claim_id=${supervisor.claimId}`;
     assert.equal(supervisorRequests.length, 0, "this probe does not complete or fabricate supervisor evidence");
+  }
+
+  it("native Task11 accepted operational fallback remains the model source owner after cleanup", async () => {
+    await runNativeFallbackReviewScenario();
   });
 
-  // Break: upgrading genuine prepared authority through the actual default
-  // facade still calls readSealedPacket/compileEvidencePlanV1; completion also
-  // reconstructs V1. The fixture supplies no plan or context to the facade.
   it("native Task11 default reserve and completion reload genuine native context after source edits", async () => {
     const value = await fixture("task11-context", false, true);
     const publication = await claim(value);
@@ -865,17 +870,22 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     handoff: ReturnType<typeof V3ImplementationClaimHandoffSchema.parse>;
     envelope: ReturnType<typeof ClaimEnvelopeV1Schema.parse>;
     sessionId: string; ownerInstanceId: string;
-  }>, candidate: string) {
+  }>, candidate: string | Readonly<Record<string,string>>) {
     const { compiled, handoff, envelope, sessionId, ownerInstanceId } = input;
     const sessions = createRuntimeSessionRepository(database.sql);
     const context = createV3ImplementationContext({ handoff });
     const { loadV3ImplementationAttemptContext } = await import("../../src/execution/v3-implementation-attempt.js");
     assert.equal(handoff.storyId, envelope.storyId);
     assert.equal(compiled.attempt.storyId, handoff.storyId);
-    assert.equal(context.writeAuthority.allowedPaths.length, 1,
-      "this bounded probe requires exactly one authentic writable file");
-    const candidatePath = context.writeAuthority.allowedPaths[0]!;
-    await writeFile(path.join(envelope.workdir, candidatePath), candidate);
+    const candidateFiles=typeof candidate==="string"
+      ? {[context.writeAuthority.allowedPaths[0]!]:candidate}:candidate;
+    if(typeof candidate==="string") assert.equal(context.writeAuthority.allowedPaths.length,1,
+      "the default bounded probe requires exactly one authentic writable file");
+    assert.ok(Object.keys(candidateFiles).length>0);
+    for(const [candidatePath,contents] of Object.entries(candidateFiles)) {
+      assert.ok(context.writeAuthority.allowedPaths.includes(candidatePath),"test candidate must use actual write grants");
+      await writeFile(path.join(envelope.workdir,candidatePath),contents);
+    }
     assert.deepEqual(await loadV3ImplementationAttemptContext({ runId: value.runId, storyId: handoff.storyId,
       attemptId: compiled.attempt.attemptId }), compiled,
       "actual after-edit reload must reproduce immutable original/current recovery authority");
@@ -884,7 +894,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       attemptId: compiled.attempt.attemptId, packetHash: value.packet.packetHash,
       sliceHash: compiled.sliceHash, sourceBefore: compiled.sourceBefore,
       summary: "Native owned candidate probe; no selected worker was started",
-      changes: [{ path: candidatePath, summary: "Scoped product implementation candidate" }] };
+      changes: Object.keys(candidateFiles).sort().map(candidatePath=>({path:candidatePath,summary:"Scoped product implementation candidate"})) };
     if (compiled.recovery) {
       const { compileV3ImplementationAgentOutputV1 } = await import("../../src/execution/v3-implementation-output.js");
       const effects = await countEffects(value);
@@ -994,8 +1004,12 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     return { compiled, envelope, accepted, result, candidateSource };
   }
 
-  it("native Task11 real evidence-plane unavailability resolves through one unchanged-source non-model lease", async () => {
-    const value = await fixture("task11-native-evidence-only", true, false, true, true);
+  async function runNativeRefreshReviewScenario(mode:"control"|"dependent_repair"|"later_refresh") {
+    const value = await fixture(mode === "control" ? "task11-native-evidence-only" : `task11-review-${mode}`, true, false, true, true);
+    if(mode !== "control") await database.sql`INSERT INTO steps (
+      id,run_id,step_id,agent_id,step_index,input_template,expects,status,type,retry_count,max_retries
+    ) VALUES (${`${value.runId}-supervise-step`},${value.runId},'supervise','feature-dev_supervisor',5,
+      'Review the exact accepted native product.','','waiting','single',0,3)`;
     assert.ok(value.evidencePreload);
     await assert.rejects(stat(value.evidencePreload), { code: "ENOENT" });
     // Only the typed HTTP server command receives NODE_OPTIONS. Real build runs
@@ -1261,6 +1275,10 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(prepared.authority.dependencyAttempts[0]?.attemptClass, "evidence_only");
     assert.deepEqual(await countEffects(value), after, "preclaim may publish readiness, never execution owners");
 
+    if(mode !== "control") {
+      await continueNativeDependencyReview(value,value.input.claimAgentId,"evidence_only",mode === "later_refresh");
+      return;
+    }
     const { claimStep } = await import("../../src/installer/step-ops.js");
     const second = await claimStep(value.input.claimAgentId, value.input.callerGatewayAgent, {
       ...value.input.runtimeIntent, sessionId: `${value.input.runtimeIntent.sessionId}-second`,
@@ -1292,18 +1310,218 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     });
     // Stop at authentic reservation. No second-story completion, final subject
     // or selected physical worker is manufactured to extend this proof.
+  }
+
+  it("native Task11 real evidence-plane unavailability resolves through one unchanged-source non-model lease", async () => {
+    await runNativeRefreshReviewScenario("control");
   });
 
-  it("native Task11 owned failed candidate creates genuine delivery before the native successor boundary", async () => {
-    const value = await fixture("task11-owned-repair", false, true, true);
+  async function runNativeRoutedExpiryReview(route:"supervise"|"verify") {
+    const value=await fixture(`task11-review-route-${route}`,true,false,true,true);
+    assert.ok(value.evidencePreload);
+    const routeStep=`${value.runId}-${route}-step`;
+    // Real frozen route layout is seeded before any original claim/completion.
+    await database.sql`UPDATE steps SET loop_config=${JSON.stringify({over:"stories",mergeStrategy:"direct-merge",
+      ...(route==="supervise"?{superviseEach:true,superviseStep:"supervise"}:{verifyEach:true,verifyStep:"verify"})})}
+      WHERE id=${value.admission.implementStepDbId}`;
+    await database.sql`INSERT INTO steps(id,run_id,step_id,agent_id,step_index,input_template,expects,status,type,retry_count,max_retries)
+      VALUES(${routeStep},${value.runId},${route},${`feature-dev_${route}`},5,
+        'Check the exact accepted story.','','waiting','single',0,3)`;
+    await completeNeverStartedNativeCandidate(value,NATIVE_JOIN_API_SOURCE+"// routed evidence refresh candidate\n");
+    const {createRecoveryDeliveryRepository}=await import("../../src/recovery/recovery-delivery-repository.js");
+    const deliveries=createRecoveryDeliveryRepository(database.sql);
+    const delivery=await deliveries.findActiveForStory({runId:value.runId,storyId:"US-001"});assert.ok(delivery);
+    await writeFile(value.evidencePreload,"// actual infrastructure restored\n",{flag:"wx"});
+    const {createV3EvidenceOnlyRuntimeDependencies}=await import("../../src/recovery/v3-evidence-only-runtime.js");
+    const {createV3EvidenceOnlyRecoveryWorker}=await import("../../src/recovery/v3-evidence-only-worker.js");
+    const {createV3EvidenceOnlyPublication,prepareNativeEvidenceOnlyContinuation}=await import("../../src/recovery/v3-evidence-only-publication.js");
+    const dependencies=createV3EvidenceOnlyRuntimeDependencies(database.sql);
+    const worker=createV3EvidenceOnlyRecoveryWorker(database.sql,dependencies);
+    const lease=await worker.acquireNext({workflowId:"feature-dev",ownerInstanceId:`${value.runId}-verifier`});assert.ok(lease);
+    assert.equal(lease.dispatchId,delivery.dispatchId);
+    const context=await dependencies.loadOrReserveAttempt({lease});
+    const publicationLease={mode:"fresh_execution" as const,runId:lease.runId,stepDbId:lease.stepDbId,storyDbId:lease.storyDbId,
+      storyId:lease.storyId,recoveryCaseId:lease.recoveryCaseId,revisionId:lease.revisionId,dispatchId:lease.dispatchId,
+      packetHash:lease.packetHash,contractSliceHash:lease.contractSliceHash,findingSetHash:lease.findingSetHash,
+      sourceRevision:lease.sourceRevision,evidencePlan:lease.evidencePlan,
+      ...(lease.priorEvidencePlanArtifactHash?{priorEvidencePlanArtifactHash:lease.priorEvidencePlanArtifactHash}:{}),
+      ownerInstanceId:lease.ownerInstanceId,leaseToken:lease.leaseToken,leaseExpiresAt:lease.leaseExpiresAt};
+    const publication=createV3EvidenceOnlyPublication(database.sql);
+    await publication.markRunning({lease:publicationLease,attempt:context.attempt});
+    assert.deepEqual(await dependencies.captureSource(context.workdir),lease.sourceRevision);
+    const evidence=await dependencies.executeEvidence({lease,context});
+    assert.equal(evidence.bundle.aggregateVerdict,"pass");
+    assert.deepEqual(await dependencies.captureSource(context.workdir),lease.sourceRevision);
+    await publication.completeAttempt({lease:publicationLease,attempt:context.attempt,disposition:"verified",bundle:evidence.bundle});
+    const {createAttemptRepository}=await import("../../src/execution/attempt-repository.js");
+    const terminal=await createAttemptRepository(database.sql).findById(context.attempt.attemptId);assert.ok(terminal?.claimId&&terminal.agentId);
+    await dependencies.completeClaim({lease,attempt:terminal,diagnostic:"Actual canonical terminal verifier before routed expiry probe"});
+    const owner={runId:lease.runId,storyId:lease.storyId,packetHash:lease.packetHash,attemptId:terminal.attemptId,
+      claimId:terminal.claimId,generation:terminal.generation,fenceToken:terminal.fenceToken,
+      revisionId:lease.revisionId,dispatchId:lease.dispatchId,ownerInstanceId:lease.ownerInstanceId,leaseToken:lease.leaseToken};
+    assert.equal(await prepareNativeEvidenceOnlyContinuation(database.sql,owner),undefined,
+      "frozen supervise/verify route has no direct merge receipt");
+    const {createV3RecoveryOwnerLeaseRepository}=await import("../../src/recovery/v3-recovery-owner-lease.js");
+    const heartbeat={kind:"evidence_only" as const,runId:lease.runId,storyId:lease.storyId,claimId:terminal.claimId,
+      claimAgentId:terminal.agentId,revisionId:lease.revisionId,dispatchId:lease.dispatchId,
+      ownerInstanceId:lease.ownerInstanceId,leaseToken:lease.leaseToken,
+      attempt:{attemptId:terminal.attemptId,generation:terminal.generation,fenceToken:terminal.fenceToken}};
+    const retained=await createV3RecoveryOwnerLeaseRepository(database.sql).heartbeatNativeTerminalEvidenceOnly(heartbeat,{leaseMs:30_000});
+    assert.equal(retained.status,"retained");
+    if(retained.status!=="retained")assert.fail("actual routed owner must be live before expiry");
+    const {createV3RecoveryCoordinator}=await import("../../src/recovery/v3-recovery-coordinator.js");
+    const coordinator=createV3RecoveryCoordinator(database.sql);
+    const event={kind:"recovery_evidence",recoveryCaseId:lease.recoveryCaseId,revisionId:lease.revisionId,
+      dispatchId:lease.dispatchId,attemptId:terminal.attemptId,slice:context.slice,sliceHash:context.sliceHash,
+      evidencePlan:context.evidencePlan,evidencePlanArtifactHash:context.evidencePlanArtifactHash,evidenceBundle:evidence.bundle};
+    const before=await deliveries.findDelivery(lease.dispatchId);
+    // Hold precisely the existing coordinator owner lock, without touching run,
+    // attempt, delivery or case rows. The coordinator starts while its lease is
+    // live and must recheck DB time only after this real lock wait finishes.
+    const ownerKey=`setfarm:v3-recovery:${lease.runId}:${lease.storyId}`;
+    let releaseOwner:()=>void=()=>undefined;
+    const releaseGate=new Promise<void>(resolve=>{releaseOwner=resolve;});
+    let reportOwner:(pid:number)=>void=()=>undefined;
+    const ownerHeld=new Promise<number>(resolve=>{reportOwner=resolve;});
+    const holding=database.sql.begin(async tx=>{
+      await tx.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",[ownerKey]);
+      const rows=await tx.unsafe<Array<{pid:number}>>("SELECT pg_backend_pid() AS pid");
+      reportOwner(rows[0]!.pid);
+      await releaseGate;
+    });
+    const blockerPid=await Promise.race([ownerHeld,holding.then(()=>{throw Error("REVIEW_OWNER_LOCK_NOT_HELD");})]);
+    let coordination:Promise<{status:"resolved";value:Awaited<ReturnType<typeof coordinator.coordinate>>}|{status:"rejected";error:unknown}>|undefined;
+    try {
+      const live=await database.sql<Array<{live:boolean}>>`SELECT lease_expires_at>clock_timestamp() AS live
+        FROM recovery_dispatch_deliveries WHERE dispatch_id=${lease.dispatchId}`;
+      assert.equal(live[0]?.live,true,"coordination must enter while the real owner lease is live");
+      coordination=coordinator.coordinate(event).then(value=>({status:"resolved" as const,value}),error=>({status:"rejected" as const,error}));
+      let blocked=false;
+      const waitDeadline=Date.now()+5_000;
+      while(!blocked&&Date.now()<waitDeadline) {
+        const waiting=await database.sql<Array<{pid:number;query:string}>>`
+          SELECT waiting.pid,activity.query FROM pg_locks waiting
+          JOIN pg_locks held ON held.locktype=waiting.locktype AND held.database IS NOT DISTINCT FROM waiting.database
+            AND held.classid=waiting.classid AND held.objid=waiting.objid AND held.objsubid=waiting.objsubid
+          JOIN pg_stat_activity activity ON activity.pid=waiting.pid
+          WHERE held.pid=${blockerPid} AND held.granted AND waiting.locktype='advisory'
+            AND NOT waiting.granted AND waiting.pid<>held.pid`;
+        blocked=waiting.some(row=>row.query.includes("pg_advisory_xact_lock(hashtextextended("));
+        if(!blocked)await new Promise(resolve=>setTimeout(resolve,25));
+      }
+      assert.equal(blocked,true,"actual coordinator must be observed waiting behind the exact held owner lock");
+      await new Promise(resolve=>setTimeout(resolve,Math.max(1,Date.parse(retained.expiresAt)-Date.now()+30)));
+      const expired=await database.sql<Array<{expired:boolean}>>`SELECT lease_expires_at<=clock_timestamp() AS expired
+        FROM recovery_dispatch_deliveries WHERE dispatch_id=${lease.dispatchId}`;
+      assert.equal(expired[0]?.expired,true,"real DB-clock lease must expire before owner lock release");
+    } finally {
+      releaseOwner();
+      await holding;
+      // Always observe any started coordinator before test/database cleanup.
+      if(coordination)await coordination;
+    }
+    assert.ok(coordination);
+    const outcome=await coordination;
+    assert.equal(outcome.status,"rejected","expired-at-commit routed owner must not settle after a live-entry lock wait");
+    if(outcome.status!=="rejected")assert.fail("expired routed coordination unexpectedly committed");
+    assert.match(String(outcome.error),/LEASE|EXPIRED|STALE|AUTHORITY/);
+    assert.deepEqual(await deliveries.findDelivery(lease.dispatchId),before);
+    const target=await database.sql<Array<{status:string}>>`SELECT status FROM steps WHERE id=${routeStep}`;
+    assert.equal(target[0]?.status,"waiting");
+    const replay=await worker.acquireNext({workflowId:"feature-dev",ownerInstanceId:`${value.runId}-replay`});assert.ok(replay);
+    assert.equal(replay.dispatchId,lease.dispatchId);assert.equal(replay.mode,"coordinator_replay");
+    const resumed=await worker.runLease(replay);
+    assert.equal(resumed.execution,"replayed");assert.equal(resumed.coordinator.status,"resolved");
+    const effects=await countEffects(value);
+    assert.deepEqual(await coordinator.coordinate(event),resumed.coordinator);
+    assert.deepEqual(await countEffects(value),effects,"settled replay cannot mint another verifier or lease");
+  }
+
+  async function continueNativeDependencyReview(value:Awaited<ReturnType<typeof fixture>>,agentId:string,
+    expectedDependency:"product_implementation"|"evidence_only"|"infrastructure_retry",laterRefresh:boolean) {
+    const {claimStep}=await import("../../src/installer/step-ops.js");
+    const {loadV3ImplementationAttemptContext}=await import("../../src/execution/v3-implementation-attempt.js");
+    const sessions=createRuntimeSessionRepository(database.sql);
+    const second=await claimStep(agentId,value.input.callerGatewayAgent,{...value.input.runtimeIntent,
+      sessionId:`${value.input.runtimeIntent.sessionId}-dependent`,ownerInstanceId:`${value.runId}-dependent`});
+    assert.equal(second.found,true,JSON.stringify({second,state:await publicationDiagnostics(value)}));
+    assert.equal(second.storyId,"US-002");
+    assert.ok(second.attempt&&second.claimId&&second.v3ImplementationHandoff&&second.runtimeSessionId);
+    const handoff=V3ImplementationClaimHandoffSchema.parse(second.v3ImplementationHandoff);
+    if(handoff.schema!=="setfarm.v3-implementation-claim-handoff.v2")assert.fail("genuine dependent native handoff required");
+    assert.equal(handoff.nativeAuthority.dependencyAttempts[0]?.attemptClass,expectedDependency);
+    const originalNotes=await readFile(path.join(handoff.workdir,"src/notes.ts"),"utf8");
+    const context=await loadV3ImplementationAttemptContext({runId:value.runId,storyId:"US-002",attemptId:second.attempt.attemptId});
+    const runtime=await sessions.findById(second.runtimeSessionId);assert.ok(runtime);
+    const envelope=ClaimEnvelopeV1Schema.parse({schema:"setfarm.claim-envelope.v1",protocol:"v3",issuedAt:new Date().toISOString(),
+      runId:value.runId,stepId:second.stepId,workflowStepId:second.workflowStepId,storyId:second.storyId,storyDbId:second.storyDbId,
+      claimId:second.claimId,claimGeneration:second.claimGeneration,claimAgentId:runtime.claimAgentId,runtimeAgentId:runtime.runtimeAgentId,
+      workdir:handoff.workdir,repo:value.repo,attempt:second.attempt});
+    await completeNeverStartedNativeSession(value,{compiled:context,handoff,envelope,
+      sessionId:runtime.sessionId,ownerInstanceId:runtime.ownerInstanceId},"export const brokenNotes = ;\n");
+    const {createRecoveryDeliveryRepository}=await import("../../src/recovery/recovery-delivery-repository.js");
+    const deliveries=createRecoveryDeliveryRepository(database.sql);
+    const failed=await deliveries.findActiveForStory({runId:value.runId,storyId:"US-002"});assert.ok(failed);
+    const dispatch=await deliveries.findDispatch(failed.dispatchId);assert.ok(dispatch);
+    assert.equal(dispatch.dispatchClass,"product_implementation");
+    const repair=await claimStep(agentId,value.input.callerGatewayAgent,{...value.input.runtimeIntent,
+      sessionId:`${value.input.runtimeIntent.sessionId}-dependent-repair`,ownerInstanceId:`${value.runId}-dependent-repair`},
+      {workflowId:"feature-dev",recoveryDispatchClass:"product_implementation"});
+    assert.equal(repair.found,true,JSON.stringify({repair,state:await publicationDiagnostics(value)}));
+    assert.ok(repair.attempt&&repair.claimId&&repair.v3ImplementationHandoff&&repair.runtimeSessionId);
+    assert.equal(repair.runId,value.runId);assert.equal(repair.storyId,"US-002");
+    const repairHandoff=V3ImplementationClaimHandoffSchema.parse(repair.v3ImplementationHandoff);
+    if(repairHandoff.schema!=="setfarm.v3-implementation-claim-handoff.v2")assert.fail("genuine dependent repair required");
+    assert.equal(repairHandoff.nativeAuthority.dependencyAttempts[0]?.attemptClass,expectedDependency);
+    assert.deepEqual(repairHandoff.implementationSlice.dependencyOutputs,handoff.implementationSlice.dependencyOutputs);
+    const repairContext=await loadV3ImplementationAttemptContext({runId:value.runId,storyId:"US-002",attemptId:repair.attempt.attemptId});
+    const repairRuntime=await sessions.findById(repair.runtimeSessionId);assert.ok(repairRuntime);
+    const repairEnvelope=ClaimEnvelopeV1Schema.parse({schema:"setfarm.claim-envelope.v1",protocol:"v3",issuedAt:new Date().toISOString(),
+      runId:value.runId,stepId:repair.stepId,workflowStepId:repair.workflowStepId,storyId:repair.storyId,storyDbId:repair.storyDbId,
+      claimId:repair.claimId,claimGeneration:repair.claimGeneration,claimAgentId:repairRuntime.claimAgentId,runtimeAgentId:repairRuntime.runtimeAgentId,
+      workdir:repairHandoff.workdir,repo:value.repo,attempt:repair.attempt});
+    if(laterRefresh) {assert.ok(value.evidencePreload);await rm(value.evidencePreload);}
+    const completed=await completeNeverStartedNativeSession(value,{compiled:repairContext,handoff:repairHandoff,envelope:repairEnvelope,
+      sessionId:repairRuntime.sessionId,ownerInstanceId:repairRuntime.ownerInstanceId},originalNotes+"// genuine dependent repair\n");
+    if(!laterRefresh) {assert.equal(completed.accepted.state,"accepted");return;}
+    assert.ok(value.evidencePreload);
+    const next=await deliveries.findActiveForStory({runId:value.runId,storyId:"US-002"});assert.ok(next);
+    const nextDispatch=await deliveries.findDispatch(next.dispatchId);assert.ok(nextDispatch);
+    const nextRevision=await deliveries.findRevision(next.revisionId);assert.ok(nextRevision);
+    assert.equal(nextDispatch.dispatchClass,"evidence_only");
+    assert.ok(nextRevision.revisionNumber>1,"actual source repair must advance the real recovery revision");
+    assert.equal(nextRevision.contractSliceHash,repairContext.sliceHash);
+    assert.deepEqual(nextRevision.sourceRevision,{sha:completed.candidateSource.source_after_sha,treeHash:completed.candidateSource.source_after_tree_hash});
+    await writeFile(value.evidencePreload,"// genuine infrastructure restored after repair\n",{flag:"wx"});
+    const {createV3EvidenceOnlyRecoveryWorker}=await import("../../src/recovery/v3-evidence-only-worker.js");
+    const {createV3EvidenceOnlyRuntimeDependencies}=await import("../../src/recovery/v3-evidence-only-runtime.js");
+    const worker=createV3EvidenceOnlyRecoveryWorker(database.sql,createV3EvidenceOnlyRuntimeDependencies(database.sql));
+    const lease=await worker.acquireNext({workflowId:"feature-dev",ownerInstanceId:`${value.runId}-later-refresh`});assert.ok(lease);
+    assert.equal(lease.dispatchId,next.dispatchId);
+    const result=await worker.runLease(lease);assert.equal(result.coordinator.status,"resolved");
+    const refreshed=await loadV3ImplementationAttemptContext({runId:value.runId,storyId:"US-002",attemptId:result.attemptId});
+    assert.equal(refreshed.sliceHash,repairContext.sliceHash);
+    assert.equal(refreshed.evidencePlanArtifactHash,repairContext.evidencePlanArtifactHash);
+    assert.deepEqual(refreshed.sourceBefore,nextRevision.sourceRevision);
+    assert.equal(refreshed.attempt.attemptClass,"evidence_only");
+    assert.equal(refreshed.attempt.generation,repairContext.attempt.generation+1);
+  }
+
+  async function runNativeRepairReviewScenario(mode:"control"|"renewed_lease"|"repair_final") {
+    const value = await fixture(mode === "control" ? "task11-owned-repair" : `task11-review-${mode}`, false, true, true);
     // This probe accepts the repaired story, not the entire product. Seed the
     // actual downstream workflow shape before publishing any implementation
     // owner, as in v3-implementation-continuation.integration.test.ts.
+    const finalStepDbId = `${value.runId}-final-test-step`;
+    if(mode === "repair_final") await database.sql`INSERT INTO steps (
+      id,run_id,step_id,agent_id,step_index,input_template,expects,status,type,retry_count,max_retries
+    ) VALUES (${finalStepDbId},${value.runId},'final-test','feature-dev_final-tester',5,
+      'Validate the exact repaired native product.','','waiting','single',0,3)`;
     const superviseStepDbId = `${value.runId}-supervise-step`;
     await database.sql`INSERT INTO steps (
       id,run_id,step_id,agent_id,step_index,input_template,expects,status,type,retry_count,max_retries
     ) VALUES (
-      ${superviseStepDbId},${value.runId},'supervise','feature-dev_supervisor',5,
+      ${superviseStepDbId},${value.runId},'supervise','feature-dev_supervisor',${mode === 'repair_final' ? 6 : 5},
       'Review the accepted native implementation.','','waiting','single',0,3
     )`;
     const completed = await completeNeverStartedNativeCandidate(value, "const brokenProduct = ;\n");
@@ -1352,7 +1570,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(await realpath(resolveWorktreeBaseDir(value.repo, "feature-dev_developer")),
       path.join(ownedAgentWorkspace, "story-worktrees"), "actual recovery destination must be fixture-owned before claimStep");
     const successor = await claimStep("feature-dev_developer", value.input.callerGatewayAgent, {
-      schema: "setfarm.runtime-claim-intent.v1", sessionId: "RTS_native-task11-real-recovery-successor",
+      schema: "setfarm.runtime-claim-intent.v1", sessionId: mode === "control" ? "RTS_native-task11-real-recovery-successor" : `RTS_native-task11-recovery-${mode}`,
       runtimeAgentId: "native-task11-repair-runtime", runtimeKind: "local_process",
       ownerInstanceId: "native-task11-live-repair-owner",
     }, { workflowId: "feature-dev", recoveryDispatchClass: "product_implementation" });
@@ -1414,6 +1632,44 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(repairRuntime.attemptId, repairContext.attempt.attemptId);
     assert.equal(repairRuntime.claimId, successor.claimId);
     assert.equal(repairRuntime.ownerInstanceId, successor.runtimeOwnerInstanceId);
+    if(mode === "renewed_lease") {
+      assert.ok(fresh.leaseToken && fresh.ownerInstanceId && fresh.leaseExpiresAt && successor.claimId);
+      const publicationBefore = await database.sql<Array<{ handoff_canonical_json:string; handoff_hash:string }>>`
+        SELECT handoff_canonical_json,handoff_hash FROM internal_production_v3_recovery_claim_publications_v1
+        WHERE claim_id=${successor.claimId}`;
+      assert.equal(publicationBefore.length,1);
+      const sessions=createRuntimeSessionRepository(database.sql);
+      const starting=await sessions.markStarting({sessionId:repairRuntime.sessionId,
+        ownerInstanceId:repairRuntime.ownerInstanceId,worktree:handoff.workdir,
+        recoveryFence:{revisionId:revision.revisionId,dispatchId:dispatch.dispatchId,
+          leaseToken:fresh.leaseToken,attempt:successor.attempt}});
+      assert.equal(starting.state,"starting");
+      assert.equal(starting.pid,undefined,"only a genuine start-intent row; no worker is fabricated");
+      const {createV3RecoveryOwnerLeaseRepository}=await import("../../src/recovery/v3-recovery-owner-lease.js");
+      const ownerLeases=createV3RecoveryOwnerLeaseRepository(database.sql);
+      const heartbeat={kind:"model_runtime" as const,runId:value.runId,storyId:"US-001",
+        claimId:successor.claimId,claimAgentId:repairRuntime.claimAgentId,
+        runtimeSessionId:repairRuntime.sessionId,revisionId:revision.revisionId,dispatchId:dispatch.dispatchId,
+        ownerInstanceId:fresh.ownerInstanceId,leaseToken:fresh.leaseToken,
+        attempt:successor.attempt};
+      const retained=await ownerLeases.heartbeat(heartbeat,{leaseMs:30_000});
+      assert.equal(retained.status,"retained");
+      const renewed=await deliveries.findDelivery(dispatch.dispatchId);
+      assert.ok(renewed?.leaseExpiresAt);
+      assert.notEqual(renewed.leaseExpiresAt,fresh.leaseExpiresAt,"the actual heartbeat must change the published receipt's expiry");
+      assert.deepEqual(await database.sql`SELECT handoff_canonical_json,handoff_hash
+        FROM internal_production_v3_recovery_claim_publications_v1 WHERE claim_id=${successor.claimId}`,publicationBefore);
+      assert.equal((await ownerLeases.heartbeat({...heartbeat,leaseToken:lease.leaseToken})).status,"stale_fence");
+      assert.equal((await ownerLeases.heartbeat({...heartbeat,ownerInstanceId:lease.ownerInstanceId})).status,"stale_fence");
+      const reloaded=await loadV3ImplementationAttemptContext({runId:value.runId,storyId:"US-001",attemptId:successor.attempt.attemptId});
+      assert.equal(reloaded.sliceHash,repairContext.sliceHash);
+      assert.equal(reloaded.evidencePlanArtifactHash,repairContext.evidencePlanArtifactHash);
+      await new Promise(resolve=>setTimeout(resolve,Math.max(1,Date.parse(renewed.leaseExpiresAt!)-Date.now()+30)));
+      assert.equal((await ownerLeases.heartbeat(heartbeat)).status,"stale_fence");
+      await assert.rejects(loadV3ImplementationAttemptContext({runId:value.runId,storyId:"US-001",attemptId:successor.attempt.attemptId}),
+        /V3_NATIVE_RECOVERY_|LEASE|STALE/);
+      return;
+    }
     const repairEnvelope = ClaimEnvelopeV1Schema.parse({ schema: "setfarm.claim-envelope.v1", protocol: "v3",
       issuedAt: new Date().toISOString(), runId: successor.runId, stepId: successor.stepId,
       workflowStepId: successor.workflowStepId, storyId: successor.storyId, storyDbId: successor.storyDbId,
@@ -1469,13 +1725,44 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       JOIN steps s ON s.id=${superviseStepDbId} WHERE r.id=${value.runId}`;
     assert.equal(workflow.length, 1);
     assert.deepEqual({ ...workflow[0]! }, { run_status: "running", accepted_candidate_hash: null,
-      implement_status: "done", supervise_status: "pending", current_story_id: null, supervise_claims: 0 });
+      implement_status: "done", supervise_status: mode === "repair_final" ? "waiting" : "pending", current_story_id: null, supervise_claims: 0 });
+    if(mode === "repair_final") {
+      const {publishSingleClaimRuntime}=await import("../../src/execution/claim-runtime-publication.js");
+      const parent=await publishSingleClaimRuntime(database.sql,{runId:value.runId,stepDbId:finalStepDbId,
+        workflowStepId:"final-test",claimAgentId:"feature-dev_final-tester",runtimeIntent:{...value.input.runtimeIntent,
+          sessionId:`${value.input.runtimeIntent.sessionId}-final`,ownerInstanceId:"native-task11-repaired-final-parent"}});
+      assert.ok(parent);
+      const rows=await database.sql<Array<{context:string}>>`SELECT context FROM runs WHERE id=${value.runId}`;
+      const finalContext:Record<string,string>=JSON.parse(rows[0]!.context);
+      const {createPostgresV3DownstreamEvidenceRouter}=await import("../../src/recovery/v3-downstream-evidence-router.js");
+      const route=await createPostgresV3DownstreamEvidenceRouter(database.sql).route({runId:value.runId,
+        stepDbId:finalStepDbId,workflowStepId:"final-test",phase:"final",parentClaimId:parent.claimId,
+        worktree:finalContext.repo!,branch:finalContext.branch!,intent:"final_acceptance"});
+      assert.equal(route.status,"accepted_candidate_ready",JSON.stringify(route));
+      if(route.status!=="accepted_candidate_ready")assert.fail("real repaired final matrix required");
+      const {createAcceptedCandidateRepository}=await import("../../src/evidence/accepted-candidate-repository.js");
+      const candidates=createAcceptedCandidateRepository({sql:database.sql,artifactRoot:value.artifactRoot,artifactLimits:NATIVE_JOIN_LIMITS});
+      const candidate=await candidates.publish({runId:value.runId,sourceRevision:route.sourceRevision,
+        storyEvidence:route.stories.map(story=>({storyId:story.storyId,attemptId:story.attemptId,
+          evidencePlanArtifactHash:story.evidencePlanArtifactHash,evidenceBundleHash:story.evidenceBundleHash}))});
+      assert.equal(candidate.created,true);
+      assert.deepEqual(await candidates.findByRun(value.runId),candidate.candidate);
+    }
     // No final-product/supervisor subject or selected physical closure is
     // manufactured by successful SQL/canonical evidence completion.
+  }
+
+  it("native Task11 owned failed candidate creates genuine delivery before the native successor boundary", async () => {
+    await runNativeRepairReviewScenario("control");
   });
 
-  it("native Task11 accepted predecessor survives production cleanup for dependent native enrichment", async () => {
-    const value = await fixture("task11-owned-dependency", true, false, true);
+  async function runNativeFinalReviewScenario(mode:"control"|"shared_writer"|"single_pool"|"later_refresh") {
+    const value = await fixture(mode === "control" ? "task11-owned-dependency" : `task11-review-${mode}`, true, false, true,
+      mode === "later_refresh", mode === "shared_writer");
+    if(mode === "later_refresh") {
+      assert.ok(value.evidencePreload);
+      await writeFile(value.evidencePreload,"// infrastructure available for real initial model predecessor\n",{flag:"wx"});
+    }
     // Existing producer fixture layout, seeded before any implementation owner.
     // This is the final evidence API boundary, not a claimed physical workflow.
     const finalStepDbId = `${value.runId}-final-test-step`;
@@ -1546,6 +1833,10 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       sessionId: `${value.input.runtimeIntent.sessionId}-second`,
       ownerInstanceId: "native-task11-second-owner" };
     const selectionBefore = await publicationDiagnostics(value);
+    if(mode === "later_refresh") {
+      await continueNativeDependencyReview(value,value.input.claimAgentId,"product_implementation",true);
+      return;
+    }
     const second = await claimStep(value.input.claimAgentId, value.input.callerGatewayAgent, secondIntent);
     const blocks = await database.sql`SELECT phase,error_code,detail FROM v3_preparation_blocks
       WHERE run_id=${value.runId} ORDER BY opened_at,block_id`;
@@ -1570,8 +1861,10 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.ok(selectedStory.actionRefs.length > 0);
     assert.ok(selectedStory.actionRefs.every(ref => value.packet.productSpec.actions.some(action => action.id === ref)));
     const agentContext = createV3ImplementationContext({ handoff });
-    assert.deepEqual(agentContext.writeAuthority.allowedPaths, ["src/notes.ts"]);
-    assert.ok(handoff.implementationSlice.files.some(file => file.path === "src/index.ts" && file.role === "shared_readonly"));
+    assert.deepEqual([...agentContext.writeAuthority.allowedPaths].sort(), mode === "shared_writer"
+      ? ["src/index.ts","src/notes.ts"] : ["src/notes.ts"]);
+    assert.ok(handoff.implementationSlice.files.some(file => file.path === "src/index.ts"
+      && file.role === (mode === "shared_writer" ? "shared_writable" : "shared_readonly")));
     const secondRuntime = await createRuntimeSessionRepository(database.sql).findById(second.runtimeSessionId);
     assert.ok(secondRuntime);
     assert.equal(secondRuntime.attemptId, second.attempt.attemptId);
@@ -1587,10 +1880,14 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const originalOwned = await readFile(path.join(handoff.workdir, agentContext.writeAuthority.allowedPaths[0]!), "utf8");
     // Preserve actual API behavior and selected action semantics. Only the real
     // owned module receives a scoped delta; canonical HTTP evidence decides.
+    const candidateContents=mode === "shared_writer" ? Object.fromEntries(await Promise.all(
+      agentContext.writeAuthority.allowedPaths.map(async file=>[file,
+        await readFile(path.join(handoff.workdir,file),"utf8")+`// Accepted writer ${handoff.storyId} for ${file}\n`])))
+      : originalOwned + `// Accepted native component ${handoff.storyId}\n`;
     const secondCompletion = await completeNeverStartedNativeSession(value, {
       compiled: secondContext, handoff, envelope: secondEnvelope,
       sessionId: secondRuntime.sessionId, ownerInstanceId: secondRuntime.ownerInstanceId,
-    }, originalOwned + `// Accepted native component ${handoff.storyId}\n`);
+    }, candidateContents);
     assert.equal(secondCompletion.accepted.state, "accepted");
     const stories = await database.sql<Array<{ story_id: string; status: string }>>`
       SELECT story_id,status FROM stories WHERE run_id=${value.runId} ORDER BY story_index`;
@@ -1629,13 +1926,34 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     const candidateInput = { runId: value.runId, sourceRevision: route.sourceRevision,
       storyEvidence: route.stories.map(story => ({ storyId: story.storyId, attemptId: story.attemptId,
         evidencePlanArtifactHash: story.evidencePlanArtifactHash, evidenceBundleHash: story.evidenceBundleHash })) };
-    const candidate = await candidates.publish(candidateInput);
+    let candidate: Awaited<ReturnType<typeof candidates.publish>>;
+    if(mode === "single_pool") {
+      const {default:postgres}=await import("postgres");
+      const singleConnection=postgres(database.url,{max:1,connect_timeout:5,idle_timeout:1});
+      const isolatedCandidates=createAcceptedCandidateRepository({sql:singleConnection,
+        artifactRoot:value.artifactRoot,artifactLimits:NATIVE_JOIN_LIMITS});
+      const publication=isolatedCandidates.publish(candidateInput);
+      let timer:ReturnType<typeof setTimeout>|undefined;
+      try {
+        candidate=await Promise.race([publication,new Promise<never>((_resolve,reject)=>{
+          timer=setTimeout(()=>reject(Error("NATIVE_ACCEPTED_CANDIDATE_NESTED_POOL_WAIT")),10_000);
+        })]);
+      } finally {
+        if(timer)clearTimeout(timer);
+        await singleConnection.end({timeout:1});
+        await publication.catch(()=>undefined);
+      }
+    } else candidate = await candidates.publish(candidateInput);
     assert.equal(candidate.created, true);
     assert.deepEqual(await candidates.findByRun(value.runId), candidate.candidate);
     assert.deepEqual(await candidates.publish(candidateInput), { created: false, candidate: candidate.candidate });
     assert.deepEqual({ sha: git(["rev-parse", "HEAD"]), treeHash: git(["rev-parse", "HEAD^{tree}"]) }, exactFinal);
     const parentRows = await database.sql<Array<{ outcome: string | null }>>`SELECT outcome FROM claim_log WHERE id=${parent.claimId}`;
     assert.equal(parentRows[0]?.outcome, null, "this probe does not claim final-stage or physical completion");
+  }
+
+  it("native Task11 accepted predecessor survives production cleanup for dependent native enrichment", async () => {
+    await runNativeFinalReviewScenario("control");
   });
 
   // Break: keeping the old reader in the native join. The real legacy reader
@@ -1885,6 +2203,34 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     await writeFile(path.join(value.worktree, "src/index.ts"), "source changed before reserve\n");
     await assert.rejects(native.reserve(input));
     assert.deepEqual(await countEffects(value), { claims: 1, attempts: 0, bindings: 1, runtimes: 1 });
+  });
+
+  it("native review R1 repairs a dependent story after an authentic accepted fallback", async () => {
+    await runNativeFallbackReviewScenario(true);
+  });
+  it("native review R1 repairs a dependent story after an authentic nonmodel refresh", async () => {
+    await runNativeRefreshReviewScenario("dependent_repair");
+  });
+  it("native review R7 refreshes evidence after repair with a real model-owned dependency", async () => {
+    await runNativeFinalReviewScenario("later_refresh");
+  });
+  it("native review R4 fences expired supervise routing then accepts live replay", async () => {
+    await runNativeRoutedExpiryReview("supervise");
+  });
+  it("native review R4 fences expired verify routing then accepts live replay", async () => {
+    await runNativeRoutedExpiryReview("verify");
+  });
+  it("native review R3 publishes final candidate with one actual SQL connection", async () => {
+    await runNativeFinalReviewScenario("single_pool");
+  });
+  it("native review R6 authenticates a later sealed shared-writable accepted writer", async () => {
+    await runNativeFinalReviewScenario("shared_writer");
+  });
+  it("native review R5 accepts final evidence after the real generated repair", async () => {
+    await runNativeRepairReviewScenario("repair_final");
+  });
+  it("native review R2 reloads after real recovery renewal and refuses expired or crossed owners", async () => {
+    await runNativeRepairReviewScenario("renewed_lease");
   });
 
 });
