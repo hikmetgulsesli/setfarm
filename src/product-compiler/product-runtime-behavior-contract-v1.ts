@@ -784,7 +784,7 @@ function compileEntityFieldBindings(
           diagnostics.push(diagnostic(
             "PRODUCT_RUNTIME_BEHAVIOR_V1_ENTITY_SNAPSHOT_INVALID",
             `${basePath}/collectionPath`,
-            `Initial singleton snapshot must contain typed field ${field.name}`,
+            `Initial singleton snapshot must contain case-sensitive own property ${JSON.stringify(field.name)} with declared type ${JSON.stringify(field.valueType)}; collectionPath selects the containing object and does not rename fields`,
             field.id,
           ));
         }
