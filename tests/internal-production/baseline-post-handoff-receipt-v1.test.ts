@@ -46,9 +46,9 @@ const isolatedRunner = path.join(sourceRoot, "scripts/run-isolated-postgres-test
 const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
 function assertColdRecoveryRuntimeExportContractV1(names: readonly (string | undefined)[]): string[] {
-  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionColdSpawnerHelperBootstrapObservationV1", "resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1"];
+  const additions = ["observeInternalProductionPreReadinessServiceCensusV1", "observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionColdSpawnerHelperBootstrapObservationV1", "resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1"];
   const capture = "observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1";
-  assert.equal(names.length, 59, "cold recovery and diagnostic capture add exactly six fixed read-only ports");
+  assert.equal(names.length, 60, "cold recovery, pre-readiness evidence and diagnostic capture add exactly seven fixed read-only ports");
   assert.deepEqual(names.filter((name) => additions.includes(name!)).sort(), [...additions].sort());
   assert.deepEqual(names.filter((name) => name === capture), [capture], "only the delivered original-owner diagnostic is added");
   const historical = names.filter((name): name is string => typeof name === "string" && !additions.includes(name) && name !== capture);
@@ -1480,6 +1480,26 @@ function exactZeroEffectServiceCensusV1(): Readonly<Record<string, unknown>> {
     openClaw: service("ai.openclaw.gateway", 81_004, 18789),
   });
   return Object.freeze({ ...body, censusHash: canonicalHash(body) });
+}
+
+function preReadinessServiceCensusFixtureV1(ordinary: Readonly<Record<string, unknown>> = exactZeroEffectServiceCensusV1()) {
+  const sha256FixtureBytesV1 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const services: any = ordinary;
+  const home = userInfo().homedir;
+  const absenceBody = {
+    schema: "setfarm.internal-production-pre-readiness-dashboard-absence.v1",
+    source: { sha: services.spawner.loadedSourceSha, treeHash: services.spawner.loadedTreeHash, buildHash: services.spawner.loadedBuildHash },
+    uid: process.getuid!(), globalDashboardFamilyCount: 0, globalTcp3333ListenerState: "absent",
+    launchJobs: ["com.setrox.setfarm-dashboard", "com.setrox.setfarm-fresh-dashboard"].map(label => ({ label, state: "absent", status: 113,
+      stdoutSha256: sha256FixtureBytesV1(Buffer.alloc(0)), stderrSha256: sha256FixtureBytesV1(Buffer.from(`Bad request.\nCould not find service "${label}" in domain for user gui: ${process.getuid!()}\n`)) })),
+    pidFile: { state: "absent" },
+    ancestors: [home, path.join(home, ".openclaw"), path.join(home, ".openclaw/setfarm")].map(target => ({ path: target, dev: "1", ino: "2", uid: String(process.getuid!()), gid: String(process.getgid!()), mode: 0o700 })),
+    entrypoint: path.join(sourceRoot, "dist/server/daemon.js"), entrypointBytesSha256: "a".repeat(64),
+  };
+  const dashboard = { ...absenceBody, absenceHash: canonicalHash(absenceBody) };
+  const censusBody = { schema: "setfarm.internal-production-pre-readiness-service-census.v1", spawner: services.spawner, dashboard, missionControl: services.missionControl, openClaw: services.openClaw };
+  const census = { ...censusBody, censusHash: canonicalHash(censusBody) };
+  return census;
 }
 
 function exactZeroEffectPhysicalInventoryV1(): Readonly<Record<string, unknown>> {
@@ -16830,7 +16850,7 @@ function runPrecompiledRecoveryFixtureExpressionV1(root: string, expression: str
   return runFixtureExpressionAsync(root, `(async()=>{for(const url of ${JSON.stringify(modules)})await import(url);await new Promise(resolve=>setTimeout(resolve,100));return ${expression}})()`);
 }
 
-function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none", mode: "ordinary" | "cold" | "launch-profile" = "ordinary"): ReturnType<typeof spawnSync> {
+function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none", mode: "ordinary" | "cold" | "launch-profile" | "dashboard-absence" = "ordinary"): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
   if (mode === "launch-profile") assert.ok(source.includes("export async function observeInternalProductionSpawnerLaunchProfileCandidateV1()"), "real launch profile candidate is not implemented");
   const start = source.indexOf("type DetachedSetfarmServiceLabelV1 =");
@@ -16890,11 +16910,19 @@ function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.se
     for (const name of ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"]) fixtureFile(canonicalRoot, `dist/${name}`, `{"fixture":"${name}"}\n`, 0o444);
     fixtureFile(root, "baseline-spawner-launch-environment-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-spawner-launch-environment-v1.ts")));
   }
+  if (mode === "dashboard-absence") {
+    mkdirSync(path.join(fixtureHome, "ai/setrox"), {recursive:true,mode:0o700});
+    const spawnerPid = path.join(singletonRoot, "spawner.pid"), dashboardPid = path.join(singletonRoot, "dashboard.pid");
+    if (existsSync(spawnerPid) || fault === "pid_symlink") renameSync(spawnerPid, dashboardPid);
+    if (fault === "dashboard_parent_symlink") { renameSync(singletonRoot, singletonRoot + ".held"); symlinkSync(singletonRoot + ".held", singletonRoot); }
+  }
   const harness = String.raw`
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync as realReadFileSync, readSync as realReadSync, realpathSync as realRealpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import path from "node:path";
+const PHYSICAL_ENV_V1={},PHYSICAL_COMMAND_CAP_V1=1048576;
+function isEnoent(error:any){return error?.code==="ENOENT"}
 const CURRENT_ENTRY_MAX_BYTES=1048576, MAX_BUILD_FILE_BYTES_V1=33554432, PHYSICAL_PROCESS_CAP_V1=4096;
 type InternalProductionServiceCensusSpawnerV1=Readonly<Record<string,unknown>>;
 type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>;
@@ -16936,7 +16964,16 @@ function plistText(label:string,args:readonly string[]){const home=userInfo().ho
 ...(label.endsWith("dashboard")?{SETFARM_OPERATIONAL_WRITE_TOKEN:"fixture-token"}:{})},StartInterval:60,ProgramArguments:actual,StandardErrorPath:home+"/.openclaw/logs/"+stem+".watch.err.log",RunAtLoad:true,Label:label})}
 function boundedChildText(executable:string,args:readonly string[],_label:string,input?:Buffer){if(executable==="/bin/launchctl"){activeLabel=args[1]!.split("/").at(-1)!;const profile=detachedSetfarmServiceProfileV1(activeLabel as DetachedSetfarmServiceLabelV1);const result=launchText(activeLabel,profile.launchArguments);launchScan+=1;return result}if(executable==="/usr/bin/plutil"){const parsed=JSON.parse(input!.toString());if(fault==="plist_args")parsed.ProgramArguments.push("extra");return JSON.stringify(parsed)}if(executable==="/bin/ps")return (fault==="wrong_comm"?"/tmp/crossed":realpathSync(process.execPath))+"\n";throw new Error("unexpected command "+executable)}
 function processRows(){const profile=detachedSetfarmServiceProfileV1(activeLabel as DetachedSetfarmServiceLabelV1);const pid=activeLabel.endsWith("spawner")?101:102;const node=realpathSync(process.execPath);const args=[node,profile.entrypoint,...profile.daemonArguments];if(fault==="wrong_args")args.push("extra");const row={uid:fault==="selected_nobody"?-2:fault==="wrong_uid"?process.getuid!()+1:process.getuid!(),pid,ppid:fault==="wrong_ppid"?2:1,pgid:fault==="wrong_pgid"?7:pid,stat:fault==="zombie"?"Z":fault==="stat_drift"&&scan>0?"R":"Ss",lstart:"Sun Aug 16 15:42:28 2026",command:args.join(" "),cwd:null};const rows=fault==="zero"?[]:[Object.freeze(row)];if(fault==="multiple"||(fault==="multiple_after"&&scan>0))rows.push(Object.freeze({...row,pid:pid+20,pgid:pid+20,command:[node,profile.entrypoint,"crossed"].join(" ")}));if(fault==="drift"&&scan>0&&rows[0])rows[0]=Object.freeze({...row,lstart:"Sun Aug 16 15:42:29 2026"});if(fault==="cli_drift"&&scan>0){unlinkSync(profile.launchArguments[0]!);symlinkSync(profile.entrypoint,profile.launchArguments[0]!)}scan+=1;return Object.freeze(rows)}
-function runPhysicalCommandV1(executable:string,args:readonly string[]){if(mode==="cold"&&executable==="/bin/ps"){
+function spawnSync(executable:string,args:readonly string[],options:unknown){
+ if(executable!=="/bin/launchctl"||args[0]!=="print")throw Error("unexpected phase launch capture");
+ const label=args[1].split("/").at(-1),pass=launchScan++;
+ const loaded=fault==="dashboard_normal_loaded"&&label==="com.setrox.setfarm-dashboard"||fault==="dashboard_fresh_loaded"&&label==="com.setrox.setfarm-fresh-dashboard"||fault==="dashboard_job_late"&&pass>1;
+ return {status:loaded?0:fault==="dashboard_launch_wrong_exit"?1:113,signal:null,stdout:Buffer.from(loaded?"loaded idle\n":fault==="dashboard_launch_stdout"?"partial":""),stderr:Buffer.from(fault==="dashboard_launch_wrong_stderr"?"Could not find service\n":"Bad request.\nCould not find service \""+label+"\" in domain for user gui: "+process.getuid!()+"\n"),...(fault==="dashboard_launch_error"?{error:Error("timeout")}:{} )};
+}
+function runPhysicalCommandV1(executable:string,args:readonly string[]){if(mode==="dashboard-absence"&&executable==="/usr/sbin/lsof"){
+ if(JSON.stringify(args)!==JSON.stringify(["-nP","-iTCP:3333","-sTCP:LISTEN","-F0pcfn"]))throw Error("global dashboard listener argv crossed");
+ return {status:fault==="dashboard_listener"?0:1,stdout:Buffer.from(fault==="dashboard_listener"?"p999\0n*:3333\0":fault==="partial_lsof"?"partial":"")};
+}if((mode==="cold"||mode==="dashboard-absence")&&executable==="/bin/ps"){
   if(JSON.stringify(args)!==JSON.stringify(["-ww","-axo","uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]))throw new Error("cold global process argv is crossed");
   const rows=coldProcessRows();return {status:0,stdout:Buffer.from(rows.map(row=>row.uid+" "+row.pid+" "+row.ppid+" "+row.pgid+" "+row.stat+" "+row.lstart+" "+row.command).join("\n")+"\n")};
 }if(executable==="/usr/sbin/lsof"){const pid=Number(args[3]);if(fault==="partial_lsof")return Object.freeze({status:1,stdout:Buffer.from("partial")});if(activeLabel.endsWith("spawner")||fault==="listener_missing")return Object.freeze({status:1,stdout:Buffer.alloc(0)});return Object.freeze({status:0,stdout:Buffer.from("listener:"+pid)})}return Object.freeze({status:0,stdout:Buffer.from("fixture\n")})}
@@ -16944,6 +16981,7 @@ function coldProcessRows(){
   const pass=scan++;
   if(fault==="empty_processes")return [];
   const own={uid:process.getuid!()+(fault==="wrong_self_uid"?1:0),pid:fault==="omitted_self"?929292:process.pid,ppid:1,pgid:process.pid,stat:"Ss",lstart:"Sun Aug 16 15:42:28 2026",command:"/usr/bin/node /fixture/controller.js",cwd:null};
+  if(mode==="dashboard-absence"&&(fault==="dashboard_foreign_daemon"||fault==="dashboard_foreign_cli"||fault==="dashboard_process_late"&&pass>0))return [own,{...own,uid:process.getuid!()+1,pid:919191,command:fault==="dashboard_foreign_cli"?"/usr/bin/node /foreign/dist/cli/cli.js dashboard start":"/usr/bin/node /foreign/dist/server/daemon.js"}];
   if(fault==="foreign_spawner"||fault==="foreign_launcher"||fault==="cold_appears"&&pass>0){
     const command=fault==="foreign_launcher"?"/usr/bin/node /unrelated/worktree/dist/cli/cli.js spawner start":"/usr/bin/node /unrelated/worktree/dist/spawner.js";
     return [own,{uid:process.getuid!()+1,pid:919191,ppid:1,pgid:919191,stat:"Ss",lstart:"Sun Aug 16 15:42:28 2026",command,cwd:null}];
@@ -16951,7 +16989,7 @@ function coldProcessRows(){
   return [own];
 }
 ${processParser}
-function parsePhysicalProcessesV1(bytes:Buffer){return mode==="cold"?parseColdPhysicalProcessesForHarnessV1(bytes):processRows()}
+function parsePhysicalProcessesV1(bytes:Buffer){return (mode==="cold"||mode==="dashboard-absence")?parseColdPhysicalProcessesForHarnessV1(bytes):processRows()}
 function parseProcessListenersV1(_bytes:Buffer,pid:number){if(fault==="listener_cross")return Object.freeze([{pid:pid+1,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);if(fault==="listener_multiple")return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333},{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3334}]);return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}])}
 function observeProcessListenersV1(pid:number){if(activeLabel.endsWith("spawner"))return Object.freeze([]);if(fault==="listener_missing")return Object.freeze([]);if(fault==="listener_cross")return Object.freeze([{pid:pid+1,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);if(fault==="listener_multiple")return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333},{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3334}]);return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}])}
 ${slice}
@@ -16961,7 +16999,16 @@ if(mode==="launch-profile"){
   observeInternalProductionSpawnerLaunchProfileCandidateV1().then(result=>process.stdout.write(JSON.stringify({...result,
     environmentInstalled:result.environment.TEST_FLAG==="fixture-sensitive-value",
     plaintextLeaked:JSON.stringify(result).includes("fixture-sensitive-value")||JSON.stringify(result).includes("postgresql://fixture/setfarm")})+"\n")).catch(error=>{process.stderr.write(error.message+(fault==="profile_plist_growth"?"\nprofile-read-bytes:"+profileReadBytes:""));process.exitCode=7});
-}else{const result=mode==="cold"?observeColdSpawnerAbsenceV1(source):observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,source);process.stdout.write(JSON.stringify(result)+"\n");}
+ }else if(mode==="dashboard-absence"&&fault==="dashboard_spawner_siblings"){
+ const singleton=path.join(userInfo().homedir,'.openclaw/setfarm');
+ const before=observePreReadinessDashboardAbsenceV1(source),directoryBefore=lstatSync(singleton,{bigint:true});
+ writeFileSync(path.join(singleton,'spawner.lock'),String(process.pid)+'\n',{mode:0o600,flag:'wx'});
+ writeFileSync(path.join(singleton,'spawner.pid'),String(process.pid),{mode:0o600,flag:'wx'});
+ const created=lstatSync(singleton,{bigint:true}),after=observePreReadinessDashboardAbsenceV1(source);
+ unlinkSync(path.join(singleton,'spawner.pid'));unlinkSync(path.join(singleton,'spawner.lock'));
+ const removed=observePreReadinessDashboardAbsenceV1(source);
+ process.stdout.write(JSON.stringify({before,after,removed,siblingMetadataChanged:directoryBefore.size!==created.size||directoryBefore.mtimeNs!==created.mtimeNs||directoryBefore.ctimeNs!==created.ctimeNs})+'\n');
+}else{const result=mode==="dashboard-absence"?observePreReadinessDashboardAbsenceV1(source):mode==="cold"?observeColdSpawnerAbsenceV1(source):observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,source);process.stdout.write(JSON.stringify(result)+"\n");}
 `;
   try {
     fixtureFile(root, "harness.ts", harness);
@@ -16971,7 +17018,7 @@ if(mode==="launch-profile"){
       encoding: "utf8",
       env: { ...process.env, LABEL: label, FAULT: fault, MODE: mode, CANONICAL_ROOT: canonicalRoot, FIXTURE_HOME: fixtureHome },
     });
-    if (mode === "cold") assert.deepEqual(filesystemTreeSnapshot(root), beforeRun, "cold absence leaf must not mutate PID/lock or any fixture files");
+    if (mode === "cold" || (mode === "dashboard-absence" && fault !== "dashboard_spawner_siblings")) assert.deepEqual(filesystemTreeSnapshot(root), beforeRun, "cold absence leaf must not mutate PID/lock or any fixture files");
     if (mode === "launch-profile" && fault === "none") assert.deepEqual(filesystemTreeSnapshot(root), beforeRun, "launch profile candidate must remain read-only");
     return result;
   } finally {
@@ -18932,13 +18979,13 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const ports = [
         "observeCurrentInternalProductionCleanSetfarmSourceBuildV1", "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1",
         "observeExactPoisonSyntheticGitObjectAbsenceV1", "observeServiceProcessV1", "observeMissionControlLoadedBuildServiceV1",
-        "observeColdSpawnerAbsenceV1", "observeColdPhysicalInventoryV1", "observePhaseClosedZeroV1", "observeLegacyDatabaseCensusV1",
+        "observeColdSpawnerAbsenceV1", "observePreReadinessDashboardAbsenceV1", "observeColdPhysicalInventoryV1", "observePhaseClosedZeroV1", "observeLegacyDatabaseCensusV1",
       ];
       for (const name of ports) {
         const region = topLevelFunctionRegionV1(source, name);
         source = source.replace(region, `${region.startsWith("export ") ? "export " : ""}function ${name}(...args: unknown[]) { return Reflect.get(globalThis, "__coldBracketProbeV1").port(${JSON.stringify(name)}, args); }\n`);
       }
-      source += '\nexport const coldBracketForTestV1 = typeof observeExactPoisonColdBootstrapBracketNoWriteV1 === "function" ? observeExactPoisonColdBootstrapBracketNoWriteV1 : undefined;\n';
+      source += '\nexport const coldBracketForTestV1 = (context, schema = "setfarm.internal-production-cold-bootstrap-observation.v1") => observeExactPoisonColdBootstrapBracketNoWriteV1(context, schema);\n';
       fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
       fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-restart-authority-retirement-v1.ts")));
       const authority = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8"));
@@ -18963,6 +19010,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           undo=()=>{fs.unlinkSync(edge);for(const directory of created)fs.rmdirSync(directory);};
         };
         const authority=${JSON.stringify(authority)},pending=${JSON.stringify(pending)},inventory=${JSON.stringify(inventory)};
+        const phaseServices=${JSON.stringify(preReadinessServiceCensusFixtureV1())};
         const services=${JSON.stringify(exactZeroEffectServiceCensusV1())},zeros=${JSON.stringify(zeroOwnerCensusFixtureV1())};
         const physical=${JSON.stringify(exactZeroEffectPhysicalInventoryV1())};
         const dbKeys=["activeRunCount","openClaimCount","executionAttemptCount","activeRuntimeSessionCount","activeCompletionOwnerCount","unsettledMandatoryEffectCount","artifactReservationCount","publicationBatchCount","artifactPublicationCount","terminationOwnerCount","findingOwnerCount","recoveryOwnerCount","operationalDeliveryCount"];
@@ -18974,7 +19022,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         for(const foreign of [{},{schema:"setfarm.internal-production-cold-helper-context.v1"}]){
           await assert.rejects(()=>m.observeInternalProductionColdSpawnerHelperBootstrapObservationV1(foreign),/cold helper context is foreign/);
         }
-        for(const fault of ["none","helper-context","source-drift","prerequisite-drift","crossed-source","service-drift","absence-drift","physical-drift","phase-nonzero","database-nonzero","inventory-drift","inventory-invalid","database-refusal","edge-present","edge-appears","edge-transient","operation-replaced","directory-replaced"]){
+        for(const observationSchema of ["setfarm.internal-production-cold-bootstrap-observation.v1","setfarm.internal-production-cold-bootstrap-observation.v2"])for(const fault of ["none","helper-context","source-drift","prerequisite-drift","crossed-source","service-drift","absence-drift","physical-drift","phase-nonzero","database-nonzero","inventory-drift","inventory-invalid","database-refusal","edge-present","edge-appears","edge-transient","operation-replaced","directory-replaced"]){
           const calls={};
           const helperContext=fault==="helper-context"?Object.freeze({fixture:"opaque routing identity"}):undefined;
           undo=()=>{};
@@ -19001,6 +19049,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
               return value;
             }
             if(name==="observeMissionControlLoadedBuildServiceV1")return services.missionControl;
+            if(name==="observePreReadinessDashboardAbsenceV1"){const value=structuredClone(phaseServices.dashboard);if(fault==="service-drift"&&n>1)value.absenceHash="0".repeat(64);return value;}
             if(name==="observeColdSpawnerAbsenceV1")return {schema:"setfarm.internal-production-cold-spawner-absence.v1",absenceHash:fault==="absence-drift"&&n>1?"d".repeat(64):"c".repeat(64)};
             if(name==="observeColdPhysicalInventoryV1"){
               assert.equal(Object.hasOwn(args[0],"spawner"),false);return {...physical,...(fault==="physical-drift"&&n>1?{ownedProcessCount:1}:{})};
@@ -19032,8 +19081,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             throw new Error("unexpected port:"+name);
           }});
           if(fault==="none"||fault==="helper-context"){
-            const value=await m.coldBracketForTestV1(helperContext);
-            assert.equal(value.schema,"setfarm.internal-production-cold-bootstrap-observation.v1");
+            const value=await m.coldBracketForTestV1(helperContext,observationSchema);
+            assert.equal(value.schema,observationSchema);
             assert.equal(value.operation.operationHash,${JSON.stringify(EXACT_POISON_OPERATION_HASH_V1)});
             assert.equal(value.contaminationFingerprintHash,${JSON.stringify(EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1)});
             assert.deepEqual(value.census,zeros);assert.deepEqual(value.legacyFindingPublicationInventory,inventory);
@@ -19041,7 +19090,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             const {observationHash,...body}=value;
             assert.equal(observationHash,(await import("node:crypto")).createHash("sha256").update(JSON.stringify(canonical(body))).digest("hex"));
             for(const name of ["observeLegacyDatabaseCensusV1","observeColdSpawnerAbsenceV1","observeColdPhysicalInventoryV1","observePhaseClosedZeroV1","observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1"])assert.equal(calls[name],2,name);
-          }else await assert.rejects(()=>m.coldBracketForTestV1(),
+          }else await assert.rejects(()=>m.coldBracketForTestV1(undefined,observationSchema),
             fault.startsWith("edge-")?/successor (edge|parent)/:
             fault==="operation-replaced"?/cold bootstrap poison operation/:
             fault==="directory-replaced"?/directory chain changed/:undefined,fault);
@@ -19082,6 +19131,35 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.notEqual(refused.status, 0, fault);
       assert.equal(refused.stdout, "");
       assert.ok(!String(refused.stderr).includes("fixture-sensitive-value"), "secret input must not enter diagnostics");
+    }
+  });
+
+  it("pre-readiness dashboard absence stays identical across real spawner sibling-file creation and removal", () => {
+    const result=runDetachedServiceHarness("com.setrox.setfarm-dashboard","dashboard_spawner_siblings","dashboard-absence");
+    assert.equal(result.status,0,String(result.stderr));
+    const observed=JSON.parse(String(result.stdout));
+    assert.equal(observed.siblingMetadataChanged,true,"real singleton directory metadata must change");
+    assert.deepEqual(observed.after,observed.before,"authorized spawner startup siblings do not alter dashboard absence evidence");
+    assert.deepEqual(observed.removed,observed.before,"replacement spawner sibling removal also preserves stable dashboard absence");
+  });
+
+  it("pre-readiness dashboard collector proves actual absence and refuses live foreign late or ambiguous ownership", () => {
+    for (const fault of ["none", "stale_pid"]) {
+      const observed = runDetachedServiceHarness("com.setrox.setfarm-dashboard", fault, "dashboard-absence");
+      assert.equal(observed.status, 0, String(observed.stderr));
+      const value = JSON.parse(String(observed.stdout));
+      assert.equal(value.schema, "setfarm.internal-production-pre-readiness-dashboard-absence.v1");
+      assert.equal(value.pidFile.state, fault === "none" ? "absent" : "stale-dead-pid");
+      assert.equal(Object.hasOwn(value, "pid"), false);
+      assert.equal(Object.hasOwn(value, "listener"), false);
+      assert.deepEqual(value.launchJobs.map((job: any) => job.state), ["absent", "absent"]);
+      const {absenceHash,...body} = value; assert.equal(absenceHash, canonicalHash(body));
+    }
+    for (const fault of ["dashboard_foreign_daemon", "dashboard_foreign_cli", "dashboard_process_late", "dashboard_listener", "partial_lsof", "dashboard_normal_loaded", "dashboard_fresh_loaded", "dashboard_job_late", "dashboard_launch_wrong_exit", "dashboard_launch_wrong_stderr", "dashboard_launch_stdout", "dashboard_launch_error", "empty_processes", "omitted_self", "wrong_self_uid", "pid_bad", "pid_symlink", "pid_writable", "pid_permission_denied", "live_pid", "dashboard_parent_symlink"]) {
+      const observed = runDetachedServiceHarness("com.setrox.setfarm-dashboard", fault, "dashboard-absence");
+      assert.notEqual(observed.status, 0, fault);
+      assert.match(String(observed.stderr), /INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID/, fault);
+      assert.doesNotMatch(String(observed.stderr), /ReferenceError|SyntaxError|TypeError/, fault);
     }
   });
 
@@ -23460,6 +23538,108 @@ export async function run(value){ports=value;if(!value.continueOwner)exactPoison
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
+  it("pre-readiness v3 projection accepts truthful absence while ordinary v1 stays strict", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-pre-readiness-projection-"));
+    try {
+      const source = readFileSync(observerSource, "utf8");
+      const names = ["requireTask12PreMutationLoadedRuntimeServiceAuthorityV1", "requirePair", "requireSha256", "requireGitHash", "currentEntryFail", "fail", "hasExactKeys", "isPlainRecord", "canonicalComparable", "compareBytes", "sha256", "recursivelyFreeze", "requireExactPoisonPostVisibleServiceCensusEffectV1", "requireExactPoisonPostVisibleSpawnerServiceCensusMemberV1", "requireExactPoisonPostVisibleListeningServiceCensusMemberV1", "requireExactPoisonPostVisibleServiceCensusMemberCommonV1"];
+      const ts = await import("typescript"), tree = ts.createSourceFile("receipt.ts", source, ts.ScriptTarget.Latest, true);
+      const declarations = tree.statements.filter(statement => ts.isFunctionDeclaration(statement) && statement.name && (names.includes(statement.name.text) || /^(?:requirePreReadiness|serviceCensusFromPreMutation)/.test(statement.name.text)));
+      const body = declarations.map(statement => statement.getText(tree)).join("\n");
+      const file = path.join(root, "projection.mjs");
+      writeFileSync(file, transformSync(`import path from 'node:path';import {userInfo} from 'node:os';import {createHash} from 'node:crypto';
+import {hashCanonicalJson} from ${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")).href)};
+const SHA256=/^[a-f0-9]{64}$/,FULL_HASH=/^[a-f0-9]{40}$/;
+const TASK12_PRE_MUTATION_PREFIX_V1='setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/';
+function fixedRepositoryRoot(){return ${JSON.stringify(sourceRoot)}}
+${body}
+export const validate=requireTask12PreMutationLoadedRuntimeServiceAuthorityV1;
+export const ordinary=requireExactPoisonPostVisibleServiceCensusEffectV1;`, { loader: "ts", format: "esm", target: "es2022" }).code);
+      const m = await import(pathToFileURL(file).href);
+      const services: any = exactZeroEffectServiceCensusV1();
+      const census = preReadinessServiceCensusFixtureV1(services), dashboard = census.dashboard;
+      const projection: any = { schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3", currentEntryOperationRef: `setfarm://internal-production/current-entry-operation/sha256/${"a".repeat(64)}`, currentEntryOperationHash: "a".repeat(64), observedServiceCensusHash: census.censusHash, spawner: census.spawner, dashboard, missionControl: census.missionControl, openClaw: census.openClaw,
+        coldSpawnerPredecessor: { settlementRef: `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${"b".repeat(64)}`, settlementHash: "b".repeat(64), settlementIdentity: ["1", "2", String(process.getuid!()), "20", "33152", "1", "512", "1", "2", "3"] } };
+      const rehash = (value: any) => { delete value.serviceProjectionSetHash; delete value.preMutationLoadedRuntimeServiceAuthorityRef; delete value.preMutationLoadedRuntimeServiceAuthorityHash; value.serviceProjectionSetHash = canonicalHash(value); value.preMutationLoadedRuntimeServiceAuthorityHash = canonicalHash(value); value.preMutationLoadedRuntimeServiceAuthorityRef = `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${value.preMutationLoadedRuntimeServiceAuthorityHash}`; return value; };
+      rehash(projection);
+      assert.deepEqual(m.validate(structuredClone(projection)), projection);
+      assert.throws(() => m.ordinary(census), /service census is invalid/);
+      for (const mutate of [(v: any) => { v.schema = v.schema.replace("v3", "v2"); }, (v: any) => { v.dashboard = services.dashboard; }, (v: any) => { delete v.coldSpawnerPredecessor; }, (v: any) => { v.dashboard.launchJobs[1].state = "loaded"; }, (v: any) => { v.dashboard.globalTcp3333ListenerState = "unknown"; }]) {
+        const crossed = structuredClone(projection); mutate(crossed); rehash(crossed);
+        assert.throws(() => m.validate(crossed), undefined, "self-hashed crossed phase projection refuses");
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("pre-readiness row-tail survives migration33 status fences and requires live census after the loaded-runtime barrier", async () => {
+    const root=mkdtempSync(path.join(tmpdir(),"setfarm-pre-readiness-row-tail-"));
+    try {
+      const source=readFileSync(observerSource,"utf8");
+      const baseline=execFileSync("git",["show","535d5d117cf92f130a7beed05d4177345fb52350:src/internal-production/baseline-post-handoff-receipt-v1.ts"],{cwd:sourceRoot,encoding:"utf8",maxBuffer:8*1024*1024});
+      const legacy=topLevelFunctionRegionV1(baseline,"observeExactPoisonPostVisibleProgressRowTailNoWriteV1").replace("function observeExactPoisonPostVisibleProgressRowTailNoWriteV1(","function legacyRowTailV1(");
+      const names=["observeExactPoisonPostVisibleProgressRowTailNoWriteV1","preReadinessPolicyForProgressRowV1","requirePreReadinessServiceCensusForProgressRowV1","requirePreReadinessServiceCensusV1","requirePreReadinessDashboardAbsenceV1","requireExactPoisonPostVisibleServiceCensusEffectV1","requireExactPoisonPostVisibleSpawnerServiceCensusMemberV1","requireExactPoisonPostVisibleListeningServiceCensusMemberV1","requireExactPoisonPostVisibleServiceCensusMemberCommonV1","buildExactPoisonPostVisibleProgressNextStatusV1","requireExactPoisonPostVisibleProgressEffectV1","requireExactPoisonPostVisibleProgressRowV1","parseInternalProductionCurrentEntryAuthorityStatusV1","requireTask12PreMutationLoadedRuntimeServiceAuthorityV1","serviceCensusFromPreMutationV1","recursivelyFreeze","requireExactPoisonPostVisiblePreSchemaStatusEffectV1","requirePair","requireSha256","requireGitHash","currentEntryFail","fail","canonicalComparable","compareBytes","sha256","isPlainRecord","hasExactKeys"];
+      const ts=await import("typescript"),tree=ts.createSourceFile("receipt.ts",source,ts.ScriptTarget.Latest,true);
+      const functions=tree.statements.filter(statement=>ts.isFunctionDeclaration(statement)&&statement.name&&names.includes(statement.name.text));
+      assert.equal(functions.length,names.length);
+      const tables=tree.statements.filter(statement=>ts.isVariableStatement(statement)&&statement.declarationList.declarations.some(declaration=>["EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1","EXACT_POISON_POST_VISIBLE_PROGRESS_EFFECTS_V1"].includes(declaration.name.getText(tree))));
+      const body=[...tables,...functions].map(statement=>statement.getText(tree)).join("\n");
+      const physical=exactZeroEffectPhysicalInventoryV1();
+      const script=`import path from 'node:path';import {userInfo} from 'node:os';import {createHash} from 'node:crypto';
+import {hashCanonicalJson} from ${JSON.stringify(pathToFileURL(path.join(sourceRoot,"src/product-compiler/canonical-json.ts")).href)};
+const SHA256=/^[a-f0-9]{64}$/,FULL_HASH=/^[a-f0-9]{40}$/,TASK12_STATUS_PREFIX_V1='setfarm://internal-production/current-entry-authority-status/sha256/',TASK12_PRE_MUTATION_PREFIX_V1='setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/';
+async function canonicalRecordBytes(value){return Buffer.from(canonicalComparable(value)+'\\n')}
+function fixedRepositoryRoot(){return ${JSON.stringify(sourceRoot)}}
+const physical=${JSON.stringify(physical)};
+let service,operation,events;
+function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){return operation.controllerSource}
+async function observeCurrentPba(){return operation.productBuildAuthorityV2DeliveryEvidence}
+function pbaPair(value){return value}
+async function observeInternalProductionServiceCensusV1(){events.push('ordinary');if(service.schema!=='setfarm.internal-production-service-census.v1')throw Error('ORDINARY_DASHBOARD_ABSENT');return service}
+async function observeExactPoisonServiceCensusForPolicyV1(policy){events.push(policy);return policy==='pre-readiness-absence-v1'?service:observeInternalProductionServiceCensusV1()}
+function observePhysicalInventoryV1(){return physical}
+function observePreReadinessPhysicalInventoryV1(){return physical}
+async function observeExactPoisonPostVisibleProgressDatabaseNoWriteV1(){return {migration33:'current',assertFilesystemStable(){},assertStable(){},close(){}}}
+async function observeExactPoisonPostVisibleProgressOwnerCensusNoWriteV1(){return {activeRunCount:0,assertFilesystemStable(){},assertStable(){},close(){}}}
+${body}
+${legacy}
+export async function run(row,policy,census,original=false){service=census;events=[];operation={operationRef:'setfarm://internal-production/current-entry-operation/sha256/'+ 'a'.repeat(64),operationHash:'a'.repeat(64),controllerSource:{sha:census.spawner.loadedSourceSha,treeHash:census.spawner.loadedTreeHash,buildHash:census.spawner.loadedBuildHash},productBuildAuthorityV2DeliveryEvidence:{deliveryEvidenceRef:'fixture',deliveryEvidenceHash:'b'.repeat(64)},authorityV3Migration31Audit:{},pendingBootstrapHandoffMigration:{}};const authority={successorOperation:operation,dashboardEvidencePolicy:policy,assertStable(){}};const result=await (original?legacyRowTailV1:observeExactPoisonPostVisibleProgressRowTailNoWriteV1)(authority,{state:'progress',row},null);await result.assertStable();await result.close();return {row:result.row,service:result.service,database:result.database,events};}
+export const ordinary=requireExactPoisonPostVisibleServiceCensusEffectV1;
+export async function adjacent(status,effectResult){const selection=requireExactPoisonPostVisibleProgressRowV1(status);const candidate=await buildExactPoisonPostVisibleProgressNextStatusV1({authorityKind:'pinned-commit-chain',successorRoot:${JSON.stringify(root)}},status,selection,effectResult);const reopened=parseInternalProductionCurrentEntryAuthorityStatusV1(JSON.parse(candidate.contentBytes));return {status:reopened,pair:JSON.parse(candidate.pairBytes),row:requireExactPoisonPostVisibleProgressRowV1(reopened).row};}`;
+      const file=path.join(root,"row-tail.mjs");writeFileSync(file,transformSync(script,{loader:"ts",format:"esm",target:"es2022"}).code);
+      const m=await import(pathToFileURL(file).href),phase=preReadinessServiceCensusFixtureV1(),ordinary=exactZeroEffectServiceCensusV1();
+      await assert.rejects(m.run("migration_applying/current_audited","pre-readiness-absence-v1",phase,true),/ORDINARY_DASHBOARD_ABSENT/,"original collector reproduces the real pre33 cycle at the existing evidence boundary");
+      for(const row of ["operation_prepared","migration_applying/current_audited","manifest_activating","spawner_admission_transitioning/sealed"]){
+        const observed=await m.run(row,"pre-readiness-absence-v1",phase);
+        assert.deepEqual(observed.service,phase);assert.equal(observed.database.migration33,"current","committed33 does not prematurely demand readiness");
+        assert.deepEqual(observed.events,["pre-readiness-absence-v1"]);
+      }
+      await assert.rejects(m.run("spawner_admission_transitioning/admission_ready","pre-readiness-absence-v1",phase),/ORDINARY_DASHBOARD_ABSENT/);
+      await assert.rejects(m.run("migration_applying/current_audited","ordinary-live-v1",phase),/ORDINARY_DASHBOARD_ABSENT/,"old durable policy remains strict even on a pre-runtime row");
+      assert.throws(()=>m.ordinary(phase),/service census is invalid/);
+      // The actual adjacent-status builder serializes the sealed arrow's
+      // admission-ready result before another invocation observes live services.
+      const sealed: any = structuredClone(phase5cSCanonicalProgressStatusFixtureV1("spawner_admission_transitioning/sealed"));
+      const originalProjection=sealed.preMutationLoadedRuntimeServiceAuthority;
+      const sealedPhase=preReadinessServiceCensusFixtureV1({schema:"setfarm.internal-production-service-census.v1",spawner:originalProjection.spawner,dashboard:originalProjection.dashboard,missionControl:originalProjection.missionControl,openClaw:originalProjection.openClaw,censusHash:originalProjection.observedServiceCensusHash});
+      const phaseProjection:any={...originalProjection,schema:"setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3",dashboard:sealedPhase.dashboard,observedServiceCensusHash:sealedPhase.censusHash,coldSpawnerPredecessor:{settlementRef:`setfarm://internal-production/cold-spawner-controller-settlement/sha256/${"b".repeat(64)}`,settlementHash:"b".repeat(64),settlementIdentity:["1","2",String(process.getuid!()),"20","33152","1","512","1","2","3"]}};
+      delete phaseProjection.serviceProjectionSetHash;delete phaseProjection.preMutationLoadedRuntimeServiceAuthorityRef;delete phaseProjection.preMutationLoadedRuntimeServiceAuthorityHash;
+      phaseProjection.serviceProjectionSetHash=canonicalHash(phaseProjection);phaseProjection.preMutationLoadedRuntimeServiceAuthorityHash=canonicalHash(phaseProjection);phaseProjection.preMutationLoadedRuntimeServiceAuthorityRef=`setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${phaseProjection.preMutationLoadedRuntimeServiceAuthorityHash}`;
+      sealed.preMutationLoadedRuntimeServiceAuthority=phaseProjection;sealed.preMutationLoadedRuntimeServiceAuthorityRef=phaseProjection.preMutationLoadedRuntimeServiceAuthorityRef;sealed.preMutationLoadedRuntimeServiceAuthorityHash=phaseProjection.preMutationLoadedRuntimeServiceAuthorityHash;
+      const adjacentEffect = phase5cSProgressEffectResultFixtureV1(PHASE5C_S_NONBLOCKED_ROWS_V1.find(entry=>entry.row==="spawner_admission_transitioning/sealed")!);
+      const published = await m.adjacent(sealed, adjacentEffect);
+      assert.equal(published.row,"spawner_admission_transitioning/admission_ready");
+      assert.equal(published.pair.statusHash,published.status.statusHash);
+      assert.deepEqual(published.status.preMutationLoadedRuntimeServiceAuthority,phaseProjection,"adjacent status preserves the actual v3 historical phase projection");
+      const advance=topLevelFunctionRegionV1(source,"advanceTask12CurrentStatusV1");
+      assert.match(advance,/await task12CasCurrentStatusV1\(context, passOwner, candidate\.pairBytes\)/,"CAS retains the authenticated original sealed pass");
+      assert.doesNotMatch(advance,/observeExactPoisonPostVisibleProgressRawNoWriteV1|observeInternalProduction(?:PreReadiness)?ServiceCensusV1|selectCurrentEntryStoreContextV1/,"exact post-CAS reopen does not begin the next effect's service pass");
+      const ready=await m.run("spawner_admission_transitioning/admission_ready","pre-readiness-absence-v1",ordinary);
+      assert.deepEqual(ready.service,ordinary);
+      assert.deepEqual(ready.events,["ordinary-live-v1","ordinary"]);
+      await assert.rejects(m.run("unknown","pre-readiness-absence-v1",phase),/row is unrecognized/);
+    } finally {rmSync(root,{recursive:true,force:true});}
+  });
+
   it("cold predecessor preparation binds fixed settlement history without changing V1 publication bytes", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "setfarm-cold-predecessor-builder-"));
     try {
@@ -23483,12 +23663,13 @@ export async function run(value){ports=value;if(!value.continueOwner)exactPoison
       for (const name of ["buildTask12PreparedCurrentEntryReplayPublicationSetV1", "materializeTask12PreparedCurrentEntryPublicationSetV1"]) if (source.includes(`function ${name}(`)) names.push(name);
       if (source.includes("function requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(")) names.push("requireTask12PreMutationLoadedRuntimeServiceAuthorityV1", "requirePair", "requireGitHash", "requireExactPoisonPostVisibleServiceCensusEffectV1", "requireExactPoisonPostVisibleSpawnerServiceCensusMemberV1", "requireExactPoisonPostVisibleListeningServiceCensusMemberV1", "requireExactPoisonPostVisibleServiceCensusMemberCommonV1");
       if (source.includes("function openTask12ColdSpawnerPredecessorHistoryV1(")) names.push("openTask12ColdSpawnerPredecessorHistoryV1");
+      names.push("serviceCensusFromPreMutationV1", "requirePreReadinessServiceCensusV1", "requirePreReadinessDashboardAbsenceV1", "observeExactPoisonServiceCensusForPolicyV1", "dashboardEvidencePolicyFromProofV1");
       const typescript = await import("typescript");
       const tree = typescript.createSourceFile("receipt.ts", source, typescript.ScriptTarget.Latest, true);
       const declarations = tree.statements.filter(statement => typescript.isFunctionDeclaration(statement) && statement.name && names.includes(statement.name.text));
       assert.equal(declarations.length, names.length, "copied builder extracts each production dependency exactly once");
       const body = declarations.map(statement => statement.getText(tree)).join("\n");
-      const harness = `import path from 'node:path';import {createHash} from 'node:crypto';
+      const harness = `import path from 'node:path';import {userInfo} from 'node:os';import {createHash} from 'node:crypto';
 import {hashCanonicalJson} from ${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")).href)};
 const SHA256=/^[a-f0-9]{64}$/,FULL_HASH=/^[a-f0-9]{40}$/,task12PreparedCurrentEntryPublicationAuthorityBrandV1=Symbol('fixture-private-authority');
 const TASK12_PRE_MUTATION_PREFIX_V1='setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/';
@@ -23496,11 +23677,13 @@ const TASK12_STATUS_PREFIX_V1='setfarm://internal-production/current-entry-autho
 const CURRENT_ENTRY_MAX_BYTES=1048576,UTF8=new TextDecoder('utf-8',{fatal:true});
 async function canonicalRecordBytes(value){await globalThis.__preparedSerialization?.();return Buffer.from(canonicalComparable(value)+'\\n');}
 async function observeInternalProductionServiceCensusV1(){return globalThis.__preparedOrdinaryCensus();}
+async function observeInternalProductionPreReadinessServiceCensusV1(){return globalThis.__preparedPhaseCensus();}
+function fixedRepositoryRoot(){return ${JSON.stringify(sourceRoot)}}
 ${body}
-export function build(operation){return buildTask12PreparedCurrentEntryPublicationSetV1({[task12PreparedCurrentEntryPublicationAuthorityBrandV1]:true,kind:'pinned-successor',context:{successorOperation:operation,successorRoot:${JSON.stringify(root)},assertStable(){}}});}
+export function build(operation){return buildTask12PreparedCurrentEntryPublicationSetV1({[task12PreparedCurrentEntryPublicationAuthorityBrandV1]:true,kind:'pinned-successor',context:{zeroEffectProof:{value:{schema:"setfarm.internal-production-current-entry-store-zero-effect-proof.v1"}},successorOperation:operation,successorRoot:${JSON.stringify(root)},assertStable(){}}});}
 export function validate(value){return requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value);}
 export function authenticate(value){return openTask12ColdSpawnerPredecessorHistoryV1(value);}
-export function replay(operation,status,target){return exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChainV1({successorOperation:operation,successorRoot:${JSON.stringify(root)},assertStable(){}}).buildPreparedPublicationSet({status,lastValidStatus:null,target,assertStable(){globalThis.__preparedStatusFence?.();}});}
+export function replay(operation,status,target){return exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChainV1({zeroEffectProof:{value:{schema:"setfarm.internal-production-current-entry-store-zero-effect-proof.v1"}},successorOperation:operation,successorRoot:${JSON.stringify(root)},assertStable(){}}).buildPreparedPublicationSet({status,lastValidStatus:null,target,assertStable(){globalThis.__preparedStatusFence?.();}});}
 export function status(value){return parseInternalProductionCurrentEntryAuthorityStatusV1(value);}
 export function nested(value){return requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1({name:'preMutationLoadedRuntimeServiceAuthority',sourceKind:'status-pair',pairKeys:['preMutationLoadedRuntimeServiceAuthorityRef','preMutationLoadedRuntimeServiceAuthorityHash']},{preMutationLoadedRuntimeServiceAuthorityRef:value.preMutationLoadedRuntimeServiceAuthorityRef,preMutationLoadedRuntimeServiceAuthorityHash:value.preMutationLoadedRuntimeServiceAuthorityHash},Buffer.from(canonicalComparable(value)+'\\n'));}
 `;
@@ -23587,8 +23770,26 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       currentHistory = { schema: settled.schema, state: "absent", incompleteOwnerCount: 0, absenceIdentityHash: "e".repeat(64), censusHash: "e".repeat(64) };
       const unchanged = await builder.build(operation);
       assert.deepEqual(unchanged.candidates.map((candidate: any) => candidate.bytes), original.candidates.map((candidate: any) => candidate.bytes));
+      const phase = preReadinessServiceCensusFixtureV1(service);
+      const phaseSettlementBody = {...settlementBody,schema:"setfarm.internal-production-cold-spawner-controller-settlement.v2",serviceCensus:phase};
+      const phaseSettlementHash = canonicalHash(phaseSettlementBody);
+      currentHistory = {...settled,settlement:{...phaseSettlementBody,settlementHash:phaseSettlementHash,settlementRef:`setfarm://internal-production/cold-spawner-controller-settlement/sha256/${phaseSettlementHash}`}};
+      Reflect.set(globalThis,"__preparedPhaseCensus",()=>phase);
+      Reflect.set(globalThis,"__preparedOrdinaryCensus",()=>{throw Error("phase preparation must not request ordinary readiness")});
+      const phasePrepared = await builder.build(operation), v3=JSON.parse(phasePrepared.candidates[0].bytes.toString());
+      assert.equal(v3.schema,"setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3");
+      assert.deepEqual(builder.validate(structuredClone(v3)),v3);
+      const phaseStatus=JSON.parse(phasePrepared.candidates[2].bytes.toString());
+      assert.deepEqual(builder.status(structuredClone(phaseStatus)),phaseStatus);
+      assert.notEqual(v3.preMutationLoadedRuntimeServiceAuthorityHash,v2.preMutationLoadedRuntimeServiceAuthorityHash);
+      const phaseReplay=await builder.replay(operation,phaseStatus,phasePrepared.candidates[3].target);
+      assert.deepEqual(phaseReplay.candidates.map((candidate:any)=>candidate.bytes),phasePrepared.candidates.map((candidate:any)=>candidate.bytes));
+      assert.deepEqual(phaseReplay.serviceCensus,phase);
+      const phaseHistory=await builder.authenticate(v3); phaseHistory();
+      currentHistory=settled; assert.throws(phaseHistory,undefined,"ordinary settlement cannot authenticate phase projection");
+
     } finally {
-      Reflect.deleteProperty(globalThis, "__preparedColdHistory"); Reflect.deleteProperty(globalThis, "__preparedOrdinaryCensus");
+      Reflect.deleteProperty(globalThis, "__preparedColdHistory"); Reflect.deleteProperty(globalThis, "__preparedOrdinaryCensus"); Reflect.deleteProperty(globalThis, "__preparedPhaseCensus");
       Reflect.deleteProperty(globalThis, "__preparedSerialization");
       rmSync(root, { recursive: true, force: true });
     }

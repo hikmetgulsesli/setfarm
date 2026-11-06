@@ -3438,7 +3438,7 @@ async function parseCurrentEntryStoreZeroEffectProofV1(value: unknown): Promise<
     "zeroEffectProofHash",
     CURRENT_ENTRY_STORE_ZERO_EFFECT_PROOF_PREFIX_V1,
   );
-  if (parsed.value.schema !== "setfarm.internal-production-current-entry-store-zero-effect-proof.v1") currentEntryFail("zero-effect proof schema is invalid");
+  if (parsed.value.schema !== "setfarm.internal-production-current-entry-store-zero-effect-proof.v1" && parsed.value.schema !== "setfarm.internal-production-current-entry-store-zero-effect-proof.v2") currentEntryFail("zero-effect proof schema is invalid");
   requireExactPoisonPredecessorV1(parsed.value.predecessorOperation, "zero-effect proof");
   if (
     parsed.value.contaminationFingerprintHash !== EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1
@@ -4924,7 +4924,7 @@ function requireExactZeroCountsV1(value: unknown, keys: readonly string[], label
 function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
   source: InternalProductionCleanSetfarmSourceBuildV1,
   audit: ExactPoisonRecoveryPrerequisiteRecordV1,
-  service: InternalProductionServiceCensusV1,
+  service: PreReadinessOrOrdinaryServiceCensusV1,
   database: Record<string, unknown>,
   phase: Record<string, unknown>,
   physical: PhysicalInventoryV1,
@@ -4964,7 +4964,7 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
 
 // Evidence only: genesis must repeat this under its physical transition lease,
 // and separately authenticate retirement/cutover history before any mutation.
-async function observeExactPoisonColdBootstrapBracketNoWriteV1(helperContext?: object) {
+async function observeExactPoisonColdBootstrapBracketNoWriteV1(helperContext?: object, observationSchema: "setfarm.internal-production-cold-bootstrap-observation.v1" | "setfarm.internal-production-cold-bootstrap-observation.v2" = "setfarm.internal-production-cold-bootstrap-observation.v2") {
   const operation = requireExactPoisonRecoverySnapshotV1(
     path.join(fixedLegacyCurrentEntryRootV1(), "current-entry-operation.json"), "cold bootstrap poison operation",
   );
@@ -5014,7 +5014,7 @@ async function observeExactPoisonColdBootstrapBracketNoWriteV1(helperContext?: o
       if (canonicalComparable(syntheticGitAbsence) !== canonicalComparable(EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1)) {
         currentEntryFail("cold bootstrap synthetic Git absence is crossed");
       }
-      const remainingServices = await observeColdRemainingServicesV1(source);
+      const remainingServices = await observeColdRemainingServicesV1(source, observationSchema);
       const spawnerAbsence = observeColdSpawnerAbsenceV1(source);
       const physical = observeColdPhysicalInventoryV1(remainingServices, 0);
       const phase = requireExactZeroCountsV1(await observePhaseClosedZeroV1(source, helperContext), EXACT_POISON_PHASE_ZERO_KEYS_V1, "cold bootstrap phase");
@@ -5049,7 +5049,7 @@ async function observeExactPoisonColdBootstrapBracketNoWriteV1(helperContext?: o
     assertExactPoisonRecoverySnapshotStableV1(operation, "cold bootstrap poison operation");
     requireNoSuccessor();
     const body = recursivelyFreeze({
-      schema: "setfarm.internal-production-cold-bootstrap-observation.v1",
+      schema: observationSchema,
       operation: pair, operationBytesSha256: sha256(operation.observed.bytes),
       contaminationFingerprintHash: contamination.fingerprintHash, source,
       authorityV3Migration31Audit: first.prerequisites.authorityV3Migration31Audit.pair,
@@ -5063,24 +5063,42 @@ async function observeExactPoisonColdBootstrapBracketNoWriteV1(helperContext?: o
   }
 }
 
-export async function observeInternalProductionColdBootstrapObservationV1() {
-  return observeExactPoisonColdBootstrapBracketNoWriteV1();
+export async function observeInternalProductionColdBootstrapObservationV1(previous?: Readonly<Record<string, unknown>>) {
+  if (previous !== undefined && previous.schema !== "setfarm.internal-production-cold-bootstrap-observation.v1" && previous.schema !== "setfarm.internal-production-cold-bootstrap-observation.v2") currentEntryFail("cold reobservation policy is invalid");
+  return observeExactPoisonColdBootstrapBracketNoWriteV1(undefined, previous?.schema as "setfarm.internal-production-cold-bootstrap-observation.v1" | "setfarm.internal-production-cold-bootstrap-observation.v2" | undefined);
 }
 
 export async function observeInternalProductionColdSpawnerHelperBootstrapObservationV1(context: object) {
   const retirement = await import("./baseline-restart-authority-retirement-v1.js");
   const before = retirement.observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
-  const observation = await observeExactPoisonColdBootstrapBracketNoWriteV1(context);
+  const observation = await observeExactPoisonColdBootstrapBracketNoWriteV1(context, retirement.resolveInternalProductionColdSpawnerHelperObservationSchemaV1(context));
   const after = retirement.observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
   if (canonicalComparable(before) !== canonicalComparable(after)) currentEntryFail("cold helper owned intent changed across full observation");
   return observation;
+}
+
+type PreReadinessDashboardEvidencePolicyV1 = "ordinary-live-v1" | "pre-readiness-absence-v1";
+async function observeExactPoisonAdmissionDashboardPolicyV1(): Promise<PreReadinessDashboardEvidencePolicyV1> {
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  const cold = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  return cold.state === "settled" && cold.settlement.schema === "setfarm.internal-production-cold-spawner-controller-settlement.v2" ? "pre-readiness-absence-v1" : "ordinary-live-v1";
+}
+function dashboardEvidencePolicyFromProofV1(proof: CurrentEntryStoreZeroEffectProofV1): PreReadinessDashboardEvidencePolicyV1 {
+  if (proof.value.schema === "setfarm.internal-production-current-entry-store-zero-effect-proof.v2") return "pre-readiness-absence-v1";
+  if (proof.value.schema === "setfarm.internal-production-current-entry-store-zero-effect-proof.v1") return "ordinary-live-v1";
+  return currentEntryFail("unrecognized dashboard evidence proof policy");
+}
+async function observeExactPoisonServiceCensusForPolicyV1(policy: PreReadinessDashboardEvidencePolicyV1): Promise<PreReadinessOrOrdinaryServiceCensusV1> {
+  return policy === "pre-readiness-absence-v1" ? observeInternalProductionPreReadinessServiceCensusV1() : observeInternalProductionServiceCensusV1();
 }
 
 async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   operation: FileSnapshot,
   inventory: ExactPoisonRecoveryInventoryEvidenceV1,
   admittedCurrentPrerequisites: ExactPoisonRecoveryPrerequisitesV1,
+  selectedPolicy?: PreReadinessDashboardEvidencePolicyV1,
 ): Promise<ExactPoisonRecoveryNoWriteFenceV1> {
+  const policy = selectedPolicy ?? await observeExactPoisonAdmissionDashboardPolicyV1();
   const predecessorPair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
   if (
     predecessorPair.operationRef !== EXACT_POISON_OPERATION_REF_V1
@@ -5099,8 +5117,8 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   const sourceA = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   const pbaA = await observeCurrentPba();
   const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "exact-poison phase-a");
-  const serviceA = await observeInternalProductionServiceCensusV1();
-  const physicalA = observePhysicalInventoryV1(serviceA, 0);
+  const serviceA = await observeExactPoisonServiceCensusForPolicyV1(policy);
+  const physicalA = observePreReadinessPhysicalInventoryV1(serviceA, 0);
   const { legacyFindingPublicationInventory, ...databaseCounts } = await observeLegacyDatabaseCensusV1();
   validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory);
   const database = requireExactZeroCountsV1(databaseCounts, [
@@ -5112,8 +5130,8 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   if (canonicalComparable(downstreamAbsence) !== canonicalComparable(EXACT_POISON_DOWNSTREAM_ABSENCE_V1)) {
     currentEntryFail("exact-poison downstream authority is present");
   }
-  const serviceB = await observeInternalProductionServiceCensusV1();
-  const physicalB = observePhysicalInventoryV1(serviceB, 0);
+  const serviceB = await observeExactPoisonServiceCensusForPolicyV1(policy);
+  const physicalB = observePreReadinessPhysicalInventoryV1(serviceB, 0);
   const phaseB = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), Object.keys(phaseA), "exact-poison phase-b");
   const sourceB = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   const pbaB = await observeCurrentPba();
@@ -5175,7 +5193,7 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   ]);
   const completeZeroEffectBracketHash = hashCanonicalJson(completeZeroEffectBracket);
   const zeroEffectProofCore = recursivelyFreeze({
-    schema: "setfarm.internal-production-current-entry-store-zero-effect-proof.v1",
+    schema: policy === "pre-readiness-absence-v1" ? "setfarm.internal-production-current-entry-store-zero-effect-proof.v2" : "setfarm.internal-production-current-entry-store-zero-effect-proof.v1",
     predecessorOperation: exactPoisonOperationPairV1(),
     contaminationFingerprintHash: contaminationFingerprint.fingerprintHash,
     quarantinedInventoryHash: inventory.inventoryHash,
@@ -5858,7 +5876,7 @@ async function observeExactPoisonRecoveryPostVisibleZeroFenceV1(
   let primaryError: unknown | null = null;
   try {
     const operation = exactPoisonRecoveryPinnedRecordFileSnapshotV1(context.operation);
-    const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, originals.evidence, currentPrerequisites);
+    const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, originals.evidence, currentPrerequisites, dashboardEvidencePolicyFromProofV1(context.zeroEffectProof));
     const expectedCandidates = Object.freeze([
       Object.freeze({ phase: "disposition" as const, target: context.disposition.target, bytes: context.disposition.bytes }),
       Object.freeze({ phase: "successor-authority-v31" as const, target: context.successorAuthorityV31.target, bytes: context.successorAuthorityV31.bytes }),
@@ -5937,7 +5955,7 @@ type ExactPoisonPostVisiblePreStatusRawFenceV1 = Readonly<{
   completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1;
   completeZeroEffectBracketHash: Sha256V1;
   syntheticGitAbsence: typeof EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1;
-  serviceCensus: InternalProductionServiceCensusV1;
+  serviceCensus: PreReadinessOrOrdinaryServiceCensusV1;
 }>;
 
 type ExactPoisonPostVisiblePreStatusPassV1 = Readonly<{
@@ -5981,8 +5999,8 @@ async function observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(
   const pbaA = await observeCurrentPba();
   const prerequisitesA = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
   const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "pre-status phase-a");
-  const serviceA = await observeInternalProductionServiceCensusV1();
-  const physicalA = observePhysicalInventoryV1(serviceA, 0);
+  const serviceA = await observeExactPoisonServiceCensusForPolicyV1(dashboardEvidencePolicyFromProofV1(context.zeroEffectProof));
+  const physicalA = observePreReadinessPhysicalInventoryV1(serviceA, 0);
   const { legacyFindingPublicationInventory, ...databaseCounts } = await observeLegacyDatabaseCensusV1();
   validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory);
   const database = requireExactZeroCountsV1(databaseCounts, [
@@ -5991,8 +6009,8 @@ async function observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(
     "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
   ], "pre-status database");
   const downstreamA = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseA, physicalA, legacyFindingPublicationInventory);
-  const serviceB = await observeInternalProductionServiceCensusV1();
-  const physicalB = observePhysicalInventoryV1(serviceB, 0);
+  const serviceB = await observeExactPoisonServiceCensusForPolicyV1(dashboardEvidencePolicyFromProofV1(context.zeroEffectProof));
+  const physicalB = observePreReadinessPhysicalInventoryV1(serviceB, 0);
   const phaseB = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), Object.keys(phaseA), "pre-status phase-b");
   const sourceB = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   const pbaB = await observeCurrentPba();
@@ -7177,7 +7195,7 @@ async function ensureExactPoisonSpawnerBeforeQuarantineV1(): Promise<void> {
   exactPoisonColdPreselectionMayOwnResourcesV1 = true;
   const settled = await retirement.ensureInternalProductionColdSpawnerBootstrapSettledV1();
   if (before?.state === "settled" && canonicalComparable(before) !== canonicalComparable(settled)) currentEntryFail("preselection cold history changed across facade");
-  const ordinary = await observeInternalProductionServiceCensusV1();
+  const ordinary = await observeExactPoisonServiceCensusForPolicyV1(settled.settlement.schema === "setfarm.internal-production-cold-spawner-controller-settlement.v2" ? "pre-readiness-absence-v1" : "ordinary-live-v1");
   if (canonicalComparable(ordinary) !== canonicalComparable(settled.settlement.serviceCensus)) currentEntryFail("preselection ordinary census is not its cold settlement");
   if (canonicalComparable(retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== canonicalComparable(settled)) currentEntryFail("preselection cold history changed across ordinary observation");
   exactPoisonColdPreselectionMayOwnResourcesV1 = false;
@@ -7566,6 +7584,17 @@ type InternalProductionListeningServiceCensusV1 = Readonly<{
   }>;
 }>;
 
+type PreReadinessDashboardAbsenceV1 = ReturnType<typeof observePreReadinessDashboardAbsenceV1>;
+type PreReadinessServiceCensusV1 = Readonly<{
+  schema: "setfarm.internal-production-pre-readiness-service-census.v1";
+  spawner: InternalProductionServiceCensusSpawnerV1;
+  dashboard: PreReadinessDashboardAbsenceV1;
+  missionControl: InternalProductionListeningServiceCensusV1;
+  openClaw: InternalProductionListeningServiceCensusV1;
+  censusHash: Sha256V1;
+}>;
+type PreReadinessOrOrdinaryServiceCensusV1 = InternalProductionServiceCensusV1 | PreReadinessServiceCensusV1;
+
 export type InternalProductionServiceCensusV1 = Readonly<{
   schema: "setfarm.internal-production-service-census.v1";
   spawner: InternalProductionServiceCensusSpawnerV1;
@@ -7926,15 +7955,15 @@ function observeProcessListenersV1(pid: number): readonly Readonly<{ pid: number
 
 function isExpectedPersistentListenerV1(
   listener: Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>,
-  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  services: Pick<PreReadinessOrOrdinaryServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
   serviceBoundOpenClawListeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: "127.0.0.1" | "[::1]"; port: 18789 }>[],
 ): boolean {
-  return (listener.pid === services.dashboard.pid && listener.localAddress === "127.0.0.1" && listener.port === 3333)
+  return ("pid" in services.dashboard && listener.pid === services.dashboard.pid && listener.localAddress === "127.0.0.1" && listener.port === 3333)
     || (listener.pid === services.missionControl.pid && listener.localAddress === "*" && listener.port === 3080)
     || serviceBoundOpenClawListeners.some((expected) => canonicalComparable(expected) === canonicalComparable(listener));
 }
 
-function assertServiceCensusPassStableV1(first: InternalProductionServiceCensusV1, second: InternalProductionServiceCensusV1, label: string): void {
+function assertServiceCensusPassStableV1(first: PreReadinessOrOrdinaryServiceCensusV1, second: PreReadinessOrOrdinaryServiceCensusV1, label: string): void {
   if (canonicalComparable(first) !== canonicalComparable(second)) currentEntryFail(label);
 }
 
@@ -7948,15 +7977,21 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
 
 // A collection leaf only: cold admission must additionally prove global
 // spawner absence and bind the incident/source/zero-owner observation bracket.
+function observePreReadinessPhysicalInventoryV1(services: PreReadinessOrOrdinaryServiceCensusV1, activeRunCount: number): PhysicalInventoryV1 {
+  if (services.schema === "setfarm.internal-production-service-census.v1") return observePhysicalInventoryV1(services, activeRunCount);
+  requirePreReadinessServiceCensusV1(services);
+  return observePhysicalInventoryForPersistentServicesV1(services, [services.spawner, services.missionControl, services.openClaw], activeRunCount);
+}
+
 function observeColdPhysicalInventoryV1(
-  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  services: Pick<PreReadinessOrOrdinaryServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
   activeRunCount: number,
 ): PhysicalInventoryV1 {
-  return observePhysicalInventoryForPersistentServicesV1(services, [services.dashboard, services.missionControl, services.openClaw], activeRunCount);
+  return observePhysicalInventoryForPersistentServicesV1(services, [...("pid" in services.dashboard ? [services.dashboard] : []), services.missionControl, services.openClaw], activeRunCount);
 }
 
 function observePhysicalInventoryForPersistentServicesV1(
-  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  services: Pick<PreReadinessOrOrdinaryServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
   persistent: readonly (InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1)[],
   activeRunCount: number,
 ): PhysicalInventoryV1 {
@@ -7984,7 +8019,7 @@ function observePhysicalDirectoryIdentityV1(target: string) {
 }
 
 function collectPhysicalInventoryPassV1(
-  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  services: Pick<PreReadinessOrOrdinaryServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
   persistent: readonly (InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1)[],
   activeRunCount: number,
 ) {
@@ -8924,6 +8959,102 @@ function observeColdSpawnerAbsenceV1(source: Readonly<{ sha: string; treeHash: s
   } finally { for (const pin of pins.reverse()) closeSync(pin.descriptor); }
 }
 
+// Evidence only. Exact-poison/cold callers must still authenticate their own
+// incident, custody, database and source bracket. No service readiness or effect
+// grant is represented by this distinct leaf.
+function isPreReadinessDashboardFamilyProcessV1(row: PhysicalProcessV1): boolean {
+  const tokens = row.command.split(/\s+/).map(token => token.replace(/^["']|["']$/g, ""));
+  return tokens.some(token => /(?:^|\/)(?:daemon|dashboard)\.(?:js|ts|mjs|cjs)$/.test(token))
+    || (tokens.includes("dashboard") && tokens.some(token => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|cli\.(?:js|ts|mjs|cjs))$/.test(token)));
+}
+
+function observePreReadinessDashboardAbsentLaunchJobV1(label: string, uid: number) {
+  const result = spawnSync("/bin/launchctl", ["print", `gui/${uid}/${label}`], {
+    env: PHYSICAL_ENV_V1, shell: false, encoding: "buffer", timeout: 10_000,
+    maxBuffer: PHYSICAL_COMMAND_CAP_V1, stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout = result.stdout, stderr = result.stderr;
+  const expected = Buffer.from(`Bad request.\nCould not find service "${label}" in domain for user gui: ${uid}\n`);
+  if (result.error || result.signal || result.status !== 113 || !Buffer.isBuffer(stdout) || stdout.length !== 0
+    || !Buffer.isBuffer(stderr) || !stderr.equals(expected)) currentEntryFail("pre-readiness dashboard launch job is present or ambiguous");
+  return { label, state: "absent" as const, status: 113 as const, stdoutSha256: sha256(stdout), stderrSha256: sha256(stderr) };
+}
+
+function observePreReadinessDashboardAbsenceV1(source: Readonly<{ sha: string; treeHash: string; buildHash: string }>) {
+  if (process.platform !== "darwin") currentEntryFail("pre-readiness dashboard absence requires Darwin");
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("pre-readiness dashboard UID is invalid");
+  const current = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  const loaded = { sha: current.sha, treeHash: current.treeHash, buildHash: current.buildHash };
+  if (canonicalComparable(source) !== canonicalComparable(loaded)) currentEntryFail("pre-readiness dashboard source is crossed");
+  const home = userInfo().homedir, singletonRoot = path.join(home, ".openclaw", "setfarm");
+  const pins: Array<{ target: string; descriptor: number; identity: BigIntStats }> = [];
+  const metadata = (stats: BigIntStats) => ({ dev: String(stats.dev), ino: String(stats.ino), uid: String(stats.uid),
+    mode: Number(stats.mode & 0o7777n), nlink: String(stats.nlink), size: String(stats.size), mtimeNs: String(stats.mtimeNs), ctimeNs: String(stats.ctimeNs) });
+  const assertPins = () => {
+    for (const pin of pins) {
+      const atPath = lstatSync(pin.target, { bigint: true });
+      if (!atPath.isDirectory() || atPath.isSymbolicLink() || realpathSync(pin.target) !== pin.target
+        || !sameRegularMetadata(pin.identity, atPath) || !sameRegularMetadata(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) currentEntryFail("pre-readiness dashboard ancestor changed");
+    }
+  };
+  const pin = (target: string) => {
+    if (pins.some(value => value.target === target)) return;
+    const identity = lstatSync(target, { bigint: true });
+    if (!identity.isDirectory() || identity.isSymbolicLink() || realpathSync(target) !== target
+      || identity.uid !== BigInt(uid!) || (identity.mode & 0o022n) !== 0n) currentEntryFail("pre-readiness dashboard ancestor ownership is invalid");
+    const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    pins.push({ target, descriptor, identity }); assertPins();
+  };
+  try {
+    const repository = fixedRepositoryRoot(), profile = detachedSetfarmServiceProfileV1("com.setrox.setfarm-dashboard");
+    for (const target of [home, path.join(home, ".openclaw"), singletonRoot, path.join(home, ".local"), path.join(home, ".local/bin"),
+      resolveInternalProductionBaselineWorkspaceRootV1(), repository, path.join(repository, "dist"), path.join(repository, "dist/server")]) pin(target);
+    const launcher = profile.launchArguments[0]!, expectedCli = path.join(repository, "dist/cli/cli.js");
+    const cliBefore = lstatSync(launcher, { bigint: true });
+    if (!cliBefore.isSymbolicLink() || cliBefore.nlink !== 1n || cliBefore.uid !== BigInt(uid!) || realpathSync(launcher) !== expectedCli) currentEntryFail("pre-readiness dashboard launcher is crossed");
+    const entryDevice = lstatSync(path.dirname(profile.entrypoint), { bigint: true }).dev;
+    const entryBefore = readStableRegular(profile.entrypoint, MAX_BUILD_FILE_BYTES_V1, entryDevice, 1);
+    if (entryBefore.stats.uid !== BigInt(uid!) || (entryBefore.stats.mode & 0o022n) !== 0n) currentEntryFail("pre-readiness dashboard entrypoint ownership is invalid");
+    const pass = () => {
+      assertPins();
+      const rows = observeColdSpawnerGlobalProcessRowsV1();
+      if (rows.some(isPreReadinessDashboardFamilyProcessV1)) currentEntryFail("pre-readiness dashboard global process family is present");
+      const listener = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-iTCP:3333", "-sTCP:LISTEN", "-F0pcfn"], [0, 1]);
+      if (listener.status !== 1 || listener.stdout.length !== 0) currentEntryFail("pre-readiness dashboard global TCP3333 listener is present or ambiguous");
+      const launchJobs = ["com.setrox.setfarm-dashboard", "com.setrox.setfarm-fresh-dashboard"].map(label => observePreReadinessDashboardAbsentLaunchJobV1(label, uid!));
+      const pidPath = path.join(singletonRoot, "dashboard.pid");
+      let observed: StableRegular | null = null;
+      try { observed = readStableRegular(pidPath, 32, pins[0]!.identity.dev, 1); } catch (error) { if (!isEnoent(error)) throw error; }
+      let pidFile: Readonly<Record<string, unknown>> = { state: "absent" };
+      if (observed !== null) {
+        const text = observed.bytes.toString("ascii"), pid = Number(text);
+        if (!Buffer.from(text, "ascii").equals(observed.bytes) || !/^[1-9][0-9]*$/.test(text) || !Number.isSafeInteger(pid) || pid > 2_147_483_647
+          || observed.stats.uid !== BigInt(uid!) || (observed.stats.mode & 0o022n) !== 0n || rows.some(row => row.pid === pid)) currentEntryFail("pre-readiness dashboard PID residue is invalid or reused");
+        let dead = false;
+        try { process.kill(pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") dead = true; else currentEntryFail("pre-readiness dashboard PID liveness is ambiguous"); }
+        if (!dead) currentEntryFail("pre-readiness dashboard PID is live or reused");
+        pidFile = { state: "stale-dead-pid", pid, bytesSha256: sha256(observed.bytes), identity: metadata(observed.stats) };
+      }
+      assertPins();
+      return { launchJobs, pidFile };
+    };
+    const first = pass(), second = pass();
+    const entryAfter = readStableRegular(profile.entrypoint, MAX_BUILD_FILE_BYTES_V1, entryDevice, 1), cliAfter = lstatSync(launcher, { bigint: true });
+    const after = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+    assertPins();
+    if (canonicalComparable(first) !== canonicalComparable(second) || !sameStableRegularV1(entryBefore, entryAfter)
+      || !cliAfter.isSymbolicLink() || !sameRegularMetadata(cliBefore, cliAfter) || realpathSync(launcher) !== expectedCli
+      || canonicalComparable(current) !== canonicalComparable(after)) currentEntryFail("pre-readiness dashboard absence changed across observation");
+    const body = { schema: "setfarm.internal-production-pre-readiness-dashboard-absence.v1" as const,
+      source: loaded, uid: uid!, globalDashboardFamilyCount: 0 as const, globalTcp3333ListenerState: "absent" as const,
+      ...first, ancestors: pins.slice(0, 3).map(value => ({ path: value.target, dev: String(value.identity.dev), ino: String(value.identity.ino),
+        uid: String(value.identity.uid), gid: String(value.identity.gid), mode: Number(value.identity.mode & 0o7777n) })),
+      entrypoint: profile.entrypoint, entrypointBytesSha256: sha256(entryBefore.bytes) };
+    return recursivelyFreeze({ ...body, absenceHash: hashCanonicalJson(body) });
+  } finally { for (const pin of pins.reverse()) closeSync(pin.descriptor); }
+}
+
 // A read-only candidate, never launch authority. Only the authenticated cold
 // intent/dispatch protocol may authorize use of its runtime-only environment.
 export async function observeInternalProductionSpawnerLaunchProfileCandidateV1() {
@@ -9127,13 +9258,30 @@ function observeServiceProcessV1(
   });
 }
 
-async function observeColdRemainingServicesV1(source: InternalProductionCleanSetfarmSourceBuildV1) {
+async function observeColdRemainingServicesV1(source: InternalProductionCleanSetfarmSourceBuildV1, observationSchema: string) {
   const loaded = Object.freeze({ sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash });
   return recursivelyFreeze({
-    dashboard: observeServiceProcessV1("com.setrox.setfarm-dashboard", 3333, loaded) as InternalProductionListeningServiceCensusV1,
+    dashboard: observationSchema === "setfarm.internal-production-cold-bootstrap-observation.v2" ? observePreReadinessDashboardAbsenceV1(loaded) : observeServiceProcessV1("com.setrox.setfarm-dashboard", 3333, loaded) as InternalProductionListeningServiceCensusV1,
     missionControl: await observeMissionControlLoadedBuildServiceV1(),
     openClaw: observeServiceProcessV1("ai.openclaw.gateway", 18789, null) as InternalProductionListeningServiceCensusV1,
   });
+}
+
+// Read-only evidence only. Admitting consumers bind this tagged census to
+// authenticated cold intent/proof/P3 and the exact pre-readiness planner row.
+export async function observeInternalProductionPreReadinessServiceCensusV1(): Promise<PreReadinessServiceCensusV1> {
+  const setfarm = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  const source = { sha: setfarm.sha, treeHash: setfarm.treeHash, buildHash: setfarm.buildHash };
+  const body = {
+    schema: "setfarm.internal-production-pre-readiness-service-census.v1" as const,
+    spawner: observeServiceProcessV1("com.setrox.setfarm-spawner", null, source) as InternalProductionServiceCensusSpawnerV1,
+    dashboard: observePreReadinessDashboardAbsenceV1(source),
+    missionControl: await observeMissionControlLoadedBuildServiceV1(),
+    openClaw: observeServiceProcessV1("ai.openclaw.gateway", 18789, null) as InternalProductionListeningServiceCensusV1,
+  };
+  const census = recursivelyFreeze({ ...body, censusHash: hashCanonicalJson(body) });
+  requirePreReadinessServiceCensusV1(census);
+  return census;
 }
 
 export async function observeInternalProductionServiceCensusV1(): Promise<InternalProductionServiceCensusV1> {
@@ -10931,12 +11079,14 @@ async function observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1
   const source = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   if (canonicalComparable(source) !== canonicalComparable(operation.controllerSource) || canonicalComparable(source) !== canonicalComparable(audit.controllerSource)) currentEntryFail("legacy zero-owner controller source is crossed");
   await reobserveStoredMigration31AuditV1(audit);
+  const preMutation = await readHistoricalPreMutationRuntimeAuthorityAtRootV1(readCurrentEntryStore(context).directory, operation, () => { requireSelectedCurrentEntryStoreContextStateV1(context); });
+  const policy: PreReadinessDashboardEvidencePolicyV1 = preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3" ? "pre-readiness-absence-v1" : "ordinary-live-v1";
   const phaseA = await observePhaseClosedZeroV1(source);
-  const servicesA = await observeInternalProductionServiceCensusV1();
-  const physicalA = observePhysicalInventoryV1(servicesA, 0);
+  const servicesA = await observeExactPoisonServiceCensusForPolicyV1(policy);
+  const physicalA = observePreReadinessPhysicalInventoryV1(servicesA, 0);
   const database = await observeLegacyDatabaseCensusV1();
-  const servicesB = await observeInternalProductionServiceCensusV1();
-  const physicalB = observePhysicalInventoryV1(servicesB, database.activeRunCount);
+  const servicesB = await observeExactPoisonServiceCensusForPolicyV1(policy);
+  const physicalB = observePreReadinessPhysicalInventoryV1(servicesB, database.activeRunCount);
   const phaseB = await observePhaseClosedZeroV1(source);
   const auditAgain = await resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, auditPair);
   await reobserveStoredMigration31AuditV1(auditAgain);
@@ -11425,6 +11575,7 @@ type ExactPoisonPostVisibleProgressRowSelectionV1 = Readonly<
 
 type ExactPoisonPostVisibleProgressObservationAuthorityV1 = Readonly<{
   authorityKind: "pinned-commit-chain" | "selected-root-reader";
+  dashboardEvidencePolicy: PreReadinessDashboardEvidencePolicyV1;
   successorRoot: string;
   successorOperation: InternalProductionCurrentEntryOperationV1;
   operationDirectory: string;
@@ -11525,6 +11676,7 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChain
   const preparedAuthority = createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1(context);
   const authority = {
     authorityKind: "pinned-commit-chain" as const,
+    dashboardEvidencePolicy: dashboardEvidencePolicyFromProofV1(context.zeroEffectProof),
     successorRoot: context.successorRoot,
     successorOperation: context.successorOperation,
     operationDirectory,
@@ -11538,16 +11690,18 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChain
   return Object.freeze(authority);
 }
 
-function exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1(
+async function exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1(
   rootReader: SelectedCurrentEntryPrerequisiteRootReaderV1,
   operation: InternalProductionCurrentEntryOperationV1,
   buildPreparedPublicationSet: (statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1) => Promise<Task12PreparedCurrentEntryPublicationSetV1>,
-): ExactPoisonPostVisibleProgressObservationAuthorityV1 {
+): Promise<ExactPoisonPostVisibleProgressObservationAuthorityV1> {
   const selected = rootReader.selectedBinding;
   if (!selected.operation || selected.operation.operationRef !== operation.operationRef || selected.operation.operationHash !== operation.operationHash) currentEntryFail("selected progress operation binding is crossed");
   const operationDirectory = path.join(rootReader.store.directory, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash);
+  const preMutation = await readHistoricalPreMutationRuntimeAuthorityAtRootV1(rootReader.store.directory, operation, rootReader.assertStable);
   const authority = {
     authorityKind: "selected-root-reader" as const,
+    dashboardEvidencePolicy: (preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3" ? "pre-readiness-absence-v1" : "ordinary-live-v1") as PreReadinessDashboardEvidencePolicyV1,
     successorRoot: rootReader.store.directory,
     successorOperation: operation,
     operationDirectory,
@@ -11670,6 +11824,76 @@ function requireExactPoisonPostVisibleServiceCensusEffectV1(value: unknown): Rea
   requireExactPoisonPostVisibleListeningServiceCensusMemberV1(value.missionControl, "com.setrox.mission-control", 3080);
   requireExactPoisonPostVisibleListeningServiceCensusMemberV1(value.openClaw, "ai.openclaw.gateway", 18789);
   return value;
+}
+
+function requirePreReadinessDashboardAbsenceV1(value: unknown): Readonly<Record<string, unknown>> {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["schema", "source", "uid", "globalDashboardFamilyCount", "globalTcp3333ListenerState", "launchJobs", "pidFile", "ancestors", "entrypoint", "entrypointBytesSha256", "absenceHash"])
+    || value.schema !== "setfarm.internal-production-pre-readiness-dashboard-absence.v1" || value.uid !== process.getuid?.()
+    || !Number.isSafeInteger(value.uid) || Number(value.uid) < 0 || value.globalDashboardFamilyCount !== 0 || value.globalTcp3333ListenerState !== "absent") currentEntryFail("pre-readiness dashboard absence is invalid");
+  if (!isPlainRecord(value.source) || !hasExactKeys(value.source, ["sha", "treeHash", "buildHash"])) currentEntryFail("pre-readiness dashboard source is invalid");
+  requireGitHash(value.source.sha, "pre-readiness dashboard source"); requireGitHash(value.source.treeHash, "pre-readiness dashboard tree"); requireSha256(value.source.buildHash, "pre-readiness dashboard build");
+  if (!Array.isArray(value.launchJobs) || value.launchJobs.length !== 2) currentEntryFail("pre-readiness dashboard launch jobs are invalid");
+  for (const [index, label] of ["com.setrox.setfarm-dashboard", "com.setrox.setfarm-fresh-dashboard"].entries()) {
+    const job = value.launchJobs[index];
+    if (!isPlainRecord(job) || !hasExactKeys(job, ["label", "state", "status", "stdoutSha256", "stderrSha256"]) || job.label !== label || job.state !== "absent" || job.status !== 113
+      || job.stdoutSha256 !== sha256(Buffer.alloc(0)) || job.stderrSha256 !== sha256(`Bad request.\nCould not find service "${label}" in domain for user gui: ${value.uid}\n`)) currentEntryFail("pre-readiness dashboard launch job evidence is crossed");
+  }
+  const metadataKeys = ["dev", "ino", "uid", "mode", "nlink", "size", "mtimeNs", "ctimeNs"];
+  const metadata = (entry: Record<string, unknown>) => {
+    if (metadataKeys.filter(key => key !== "mode").some(key => typeof entry[key] !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(entry[key] as string))
+      || entry.uid !== String(value.uid) || BigInt(String(entry.ino)) < 1n || BigInt(String(entry.nlink)) < 1n
+      || !Number.isSafeInteger(entry.mode) || Number(entry.mode) < 0 || Number(entry.mode) > 0o7777 || (Number(entry.mode) & 0o022) !== 0) currentEntryFail("pre-readiness dashboard filesystem evidence is invalid");
+  };
+  const stableAncestorKeys = ["path", "dev", "ino", "uid", "gid", "mode"];
+  const home = userInfo().homedir;
+  if (!Array.isArray(value.ancestors) || value.ancestors.length !== 3) currentEntryFail("pre-readiness dashboard ancestor evidence is incomplete");
+  for (const [index, target] of [home, path.join(home, ".openclaw"), path.join(home, ".openclaw/setfarm")].entries()) {
+    const entry = value.ancestors[index];
+    if (!isPlainRecord(entry) || !hasExactKeys(entry, stableAncestorKeys) || entry.path !== target) currentEntryFail("pre-readiness dashboard ancestor evidence is crossed");
+    if (["dev", "ino", "uid", "gid"].some(key => typeof entry[key] !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(entry[key] as string))
+      || entry.uid !== String(value.uid) || BigInt(String(entry.ino)) < 1n || !Number.isSafeInteger(entry.mode)
+      || Number(entry.mode) < 0 || Number(entry.mode) > 0o7777 || (Number(entry.mode) & 0o022) !== 0) currentEntryFail("pre-readiness dashboard stable ancestor evidence is invalid");
+    if (entry.dev !== (value.ancestors[0] as Record<string, unknown>).dev) currentEntryFail("pre-readiness dashboard ancestor device is crossed");
+  }
+  const pid = value.pidFile;
+  if (!isPlainRecord(pid)) currentEntryFail("pre-readiness dashboard PID evidence is invalid");
+  if (pid.state === "absent") { if (!hasExactKeys(pid, ["state"])) currentEntryFail("pre-readiness dashboard PID absence is crossed"); }
+  else {
+    if (!hasExactKeys(pid, ["state", "pid", "bytesSha256", "identity"]) || pid.state !== "stale-dead-pid" || !Number.isSafeInteger(pid.pid) || Number(pid.pid) < 1 || Number(pid.pid) > 2_147_483_647
+      || pid.bytesSha256 !== sha256(String(pid.pid)) || !isPlainRecord(pid.identity) || !hasExactKeys(pid.identity, metadataKeys)) currentEntryFail("pre-readiness dashboard PID residue is crossed");
+    metadata(pid.identity);
+    if (pid.identity.nlink !== "1" || pid.identity.size !== String(String(pid.pid).length) || pid.identity.dev !== (value.ancestors[0] as Record<string, unknown>).dev) currentEntryFail("pre-readiness dashboard PID metadata is crossed");
+  }
+  if (value.entrypoint !== path.join(fixedRepositoryRoot(), "dist/server/daemon.js")) currentEntryFail("pre-readiness dashboard entrypoint is crossed");
+  requireSha256(value.entrypointBytesSha256, "pre-readiness dashboard entrypoint bytes");
+  const body = { ...value }; delete body.absenceHash;
+  if (value.absenceHash !== hashCanonicalJson(body)) currentEntryFail("pre-readiness dashboard absence hash is crossed");
+  return value;
+}
+
+function requirePreReadinessServiceCensusV1(value: unknown): Readonly<Record<string, unknown>> {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["schema", "spawner", "dashboard", "missionControl", "openClaw", "censusHash"])
+    || value.schema !== "setfarm.internal-production-pre-readiness-service-census.v1") currentEntryFail("pre-readiness service census is invalid");
+  const body = { ...value }; delete body.censusHash;
+  if (value.censusHash !== hashCanonicalJson(body)) currentEntryFail("pre-readiness service census hash is crossed");
+  requireExactPoisonPostVisibleSpawnerServiceCensusMemberV1(value.spawner);
+  const absent = requirePreReadinessDashboardAbsenceV1(value.dashboard);
+  const spawner = value.spawner as Record<string, unknown>;
+  if (canonicalComparable(absent.source) !== canonicalComparable({ sha: spawner.loadedSourceSha, treeHash: spawner.loadedTreeHash, buildHash: spawner.loadedBuildHash })) currentEntryFail("pre-readiness dashboard/spawner source is crossed");
+  requireExactPoisonPostVisibleListeningServiceCensusMemberV1(value.missionControl, "com.setrox.mission-control", 3080);
+  requireExactPoisonPostVisibleListeningServiceCensusMemberV1(value.openClaw, "ai.openclaw.gateway", 18789);
+  const pids = [value.spawner, value.missionControl, value.openClaw].map(member => (member as Record<string, unknown>).pid);
+  const pid = absent.pidFile as Record<string, unknown>;
+  if (new Set(pids).size !== pids.length || (pid.state === "stale-dead-pid" && pids.includes(pid.pid))) currentEntryFail("pre-readiness service PID evidence is crossed");
+  return value;
+}
+
+function serviceCensusFromPreMutationV1(value: Readonly<Record<string, unknown>>) {
+  const census = { schema: value.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3"
+    ? "setfarm.internal-production-pre-readiness-service-census.v1" : "setfarm.internal-production-service-census.v1",
+    spawner: value.spawner, dashboard: value.dashboard, missionControl: value.missionControl, openClaw: value.openClaw, censusHash: value.observedServiceCensusHash };
+  return (value.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3"
+    ? requirePreReadinessServiceCensusV1(census) : requireExactPoisonPostVisibleServiceCensusEffectV1(census)) as unknown as PreReadinessOrOrdinaryServiceCensusV1;
 }
 
 function requireExactPoisonPostVisibleZeroOwnerEffectV1(value: unknown): Readonly<Record<string, unknown>> {
@@ -12163,6 +12387,9 @@ function openExactPoisonPostVisibleProgressStatusV1(
         if (lastValidStatus === null || lastValidStatus.state === "blocked" || lastValidStatus.operationRef !== authority.successorOperation.operationRef || lastValidStatus.operationHash !== authority.successorOperation.operationHash) currentEntryFail("post-visible progress last-valid status operation is crossed");
       } else if (lastValidStatus !== null || status.operationRef !== authority.successorOperation.operationRef || status.operationHash !== authority.successorOperation.operationHash) currentEntryFail("post-visible progress status operation is crossed");
       const effectiveStatus = lastValidStatus ?? status;
+      const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(effectiveStatus.preMutationLoadedRuntimeServiceAuthority);
+      const statusPolicy: PreReadinessDashboardEvidencePolicyV1 = preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3" ? "pre-readiness-absence-v1" : "ordinary-live-v1";
+      if (statusPolicy !== authority.dashboardEvidencePolicy) currentEntryFail("post-visible progress proof/pre-mutation policy is crossed");
       const operation = authority.successorOperation;
       if (
         !isPlainRecord(effectiveStatus.controllerSourceAuthority)
@@ -12592,7 +12819,12 @@ function requireExactPoisonPostVisibleProgressRawCurrentV1(
       break;
     case "admission":
       if (sources.length !== 8) currentEntryFail("admission raw source cardinality is invalid");
-      requireSources(["resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1", "observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1", "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1", "observeInternalProductionServiceCensusV1", "observePhysicalInventoryV1", "verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1", "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "observeExactPoisonPostVisibleProgressRowTailNoWriteV1"]);
+      {
+        const tail = sources.find(source => source.port === "observeExactPoisonPostVisibleProgressRowTailNoWriteV1")?.value;
+        if (!isPlainRecord(tail) || typeof tail.row !== "string") currentEntryFail("admission row-tail source is absent");
+        const policy = preReadinessPolicyForProgressRowV1(authority, tail.row);
+        requireSources(["resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1", "observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1", "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1", policy === "pre-readiness-absence-v1" ? "observeInternalProductionPreReadinessServiceCensusV1" : "observeInternalProductionServiceCensusV1", policy === "pre-readiness-absence-v1" ? "observePreReadinessPhysicalInventoryV1" : "observePhysicalInventoryV1", "verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1", "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "observeExactPoisonPostVisibleProgressRowTailNoWriteV1"]);
+      }
       for (const source of sources) if (!isPlainRecord(source.value) || (isPlainRecord(source.value.currentEntryOperation) && (source.value.currentEntryOperation.operationRef !== operation.operationRef || source.value.currentEntryOperation.operationHash !== operation.operationHash))) currentEntryFail("admission raw source value operation is crossed");
       break;
     case "recovery-source":
@@ -12670,6 +12902,12 @@ function requireExactPoisonPostVisibleProgressRawCurrentV1(
   if (zeroOwnerSource !== undefined) requireExactPoisonPostVisibleZeroOwnerEffectV1(zeroOwnerSource.value);
   const serviceCensusSource = sources.find((source) => source.port === "observeInternalProductionServiceCensusV1");
   if (serviceCensusSource !== undefined) requireExactPoisonPostVisibleServiceCensusEffectV1(serviceCensusSource.value);
+  const phaseServiceSource = sources.find(source => source.port === "observeInternalProductionPreReadinessServiceCensusV1");
+  if (phaseServiceSource !== undefined) {
+    const tail = sources.find(source => source.port === "observeExactPoisonPostVisibleProgressRowTailNoWriteV1")?.value;
+    if (!isPlainRecord(tail) || typeof tail.row !== "string" || preReadinessPolicyForProgressRowV1(authority, tail.row) !== "pre-readiness-absence-v1") currentEntryFail("pre-readiness raw source policy is crossed");
+    requirePreReadinessServiceCensusForProgressRowV1(authority, tail.row, phaseServiceSource.value);
+  }
   const entryAuthoritySource = sources.find((source) => source.port === "observeInternalProductionCurrentEntryAuthorityAtRootV1");
   if (entryAuthoritySource !== undefined && entryAuthoritySource.value !== null) {
     const entryAuthority = requireExactPoisonPostVisibleProgressCurrentEntryAuthorityV1(entryAuthoritySource.value);
@@ -12732,12 +12970,13 @@ function requireExactPoisonPostVisibleProgressRowTailV1(
     || canonicalComparable(tail.productBuildAuthority) !== canonicalComparable(operation.productBuildAuthorityV2DeliveryEvidence)
     || canonicalComparable(tail.authorityV3Migration31Audit) !== canonicalComparable(operation.authorityV3Migration31Audit)
     || canonicalComparable(tail.pendingBootstrapHandoffMigration) !== canonicalComparable(operation.pendingBootstrapHandoffMigration)) currentEntryFail("progress raw row-tail immutable authority is crossed");
-  const service = requireExactPoisonPostVisibleServiceCensusEffectV1(tail.service);
+  const service = requirePreReadinessServiceCensusForProgressRowV1(authority, tail.row, tail.service);
   if (!isPlainRecord(tail.physical) || !hasExactKeys(tail.physical, ["worktrees", "processes", "listeners", "stale", "ownedProcessCount", "ownedListenerCount", "ownedWorktreeCount", "dirtyWorktreeCount", "staleChildCount"])
     || !Array.isArray(tail.physical.worktrees) || !Array.isArray(tail.physical.processes) || !Array.isArray(tail.physical.listeners) || !Array.isArray(tail.physical.stale)
     || ![tail.physical.ownedProcessCount, tail.physical.ownedListenerCount, tail.physical.ownedWorktreeCount, tail.physical.dirtyWorktreeCount, tail.physical.staleChildCount].every((value) => Number.isInteger(value) && Number(value) >= 0)) currentEntryFail("progress raw row-tail physical census is invalid");
-  const serviceSource = sources.find((source) => source.port === "observeInternalProductionServiceCensusV1");
-  const physicalSource = sources.find((source) => source.port === "observePhysicalInventoryV1");
+  const phase = preReadinessPolicyForProgressRowV1(authority, tail.row) === "pre-readiness-absence-v1";
+  const serviceSource = sources.find((source) => source.port === (phase ? "observeInternalProductionPreReadinessServiceCensusV1" : "observeInternalProductionServiceCensusV1"));
+  const physicalSource = sources.find((source) => source.port === (phase ? "observePreReadinessPhysicalInventoryV1" : "observePhysicalInventoryV1"));
   if (serviceSource !== undefined && canonicalComparable(serviceSource.value) !== canonicalComparable(service)) currentEntryFail("progress raw row-tail service census is crossed");
   if (physicalSource !== undefined && canonicalComparable(physicalSource.value) !== canonicalComparable(tail.physical)) currentEntryFail("progress raw row-tail physical census is crossed");
   if (!isPlainRecord(tail.database) || !hasExactKeys(tail.database, ["schema", "migration31", "migration32", "migration33", "manifestA", "manifestActivationRef", "manifestActivationHash", "manifestHeadRef", "manifestHeadHash", "migration32JournalChecksum", "migration33JournalChecksum", "databasePrefixOrdinal", "driftMarker"])
@@ -14199,7 +14438,7 @@ async function requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV
   const operation = authority.successorOperation;
   const statusValue = (status.lastValidStatus ?? status.status) as unknown as Readonly<Record<string, unknown>>;
   if (!isPlainRecord(statusValue.preMutationLoadedRuntimeServiceAuthority)) currentEntryFail("operation-prepared pre-mutation authority is absent");
-  const preMutation = statusValue.preMutationLoadedRuntimeServiceAuthority;
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(statusValue.preMutationLoadedRuntimeServiceAuthority);
   const preMutationHash = requireSha256(preMutation.preMutationLoadedRuntimeServiceAuthorityHash, "operation-prepared pre-mutation hash");
   const expectedPrefix = Object.freeze([
     path.dirname(path.dirname(path.dirname(authority.operationDirectory))),
@@ -14215,7 +14454,9 @@ async function requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV
   ] as const);
   status.assertStable();
   authority.assertStable();
-  requireExactPoisonPostVisibleServiceCensusEffectV1(prepared.serviceCensus);
+  if (prepared.serviceCensus.schema === "setfarm.internal-production-pre-readiness-service-census.v1") requirePreReadinessServiceCensusV1(prepared.serviceCensus);
+  else requireExactPoisonPostVisibleServiceCensusEffectV1(prepared.serviceCensus);
+  if (canonicalComparable(prepared.serviceCensus) !== canonicalComparable(serviceCensusFromPreMutationV1(preMutation))) currentEntryFail("operation-prepared census policy/body is crossed");
   if (canonicalComparable(prepared.operationDirectoryPrefix) !== canonicalComparable(expectedPrefix)
     || prepared.controllerLockTarget !== path.join(authority.operationDirectory, "current-entry-controller.lock")
     || prepared.candidates.length !== expected.length) currentEntryFail("operation-prepared publication topology is crossed");
@@ -15982,6 +16223,21 @@ async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
   }
 }
 
+function preReadinessPolicyForProgressRowV1(authority: ExactPoisonPostVisibleProgressObservationAuthorityV1, row: string): PreReadinessDashboardEvidencePolicyV1 {
+  const rowIndex = EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1.findIndex(candidate => candidate.row === row);
+  const barrierIndex = EXACT_POISON_POST_VISIBLE_PROGRESS_EFFECTS_V1.findIndex(candidate => candidate.effect === "observe-loaded-runtime");
+  if (rowIndex < 0 || barrierIndex < 0) currentEntryFail("pre-readiness service row is unrecognized");
+  // Each pass observes its authenticated original row/arrow. The sealed arrow
+  // retains absence through its CAS; the next admission-ready invocation begins
+  // the loaded-runtime barrier and requires ordinary census from its first pass.
+  return authority.dashboardEvidencePolicy === "pre-readiness-absence-v1" && rowIndex < barrierIndex ? "pre-readiness-absence-v1" : "ordinary-live-v1";
+}
+
+function requirePreReadinessServiceCensusForProgressRowV1(authority: ExactPoisonPostVisibleProgressObservationAuthorityV1, row: string, value: unknown): Readonly<Record<string, unknown>> {
+  return preReadinessPolicyForProgressRowV1(authority, row) === "pre-readiness-absence-v1"
+    ? requirePreReadinessServiceCensusV1(value) : requireExactPoisonPostVisibleServiceCensusEffectV1(value);
+}
+
 async function observeExactPoisonPostVisibleProgressRowTailNoWriteV1(
   authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
   selection: ExactPoisonPostVisibleProgressRowSelectionV1,
@@ -16004,9 +16260,9 @@ async function observeExactPoisonPostVisibleProgressRowTailNoWriteV1(
   try {
     databaseOwner = await observeExactPoisonPostVisibleProgressDatabaseNoWriteV1(authority, selection, current);
     ownerCensusOwner = await observeExactPoisonPostVisibleProgressOwnerCensusNoWriteV1(authority, selection, current, databaseOwner);
-    const observedService = await observeInternalProductionServiceCensusV1();
-    const service = requireExactPoisonPostVisibleServiceCensusEffectV1(observedService);
-    const physical = observePhysicalInventoryV1(observedService, Number(ownerCensusOwner.activeRunCount));
+    const observedService = await observeExactPoisonServiceCensusForPolicyV1(preReadinessPolicyForProgressRowV1(authority, row));
+    const service = requirePreReadinessServiceCensusForProgressRowV1(authority, row, observedService);
+    const physical = observePreReadinessPhysicalInventoryV1(observedService, Number(ownerCensusOwner.activeRunCount));
     if (!isPlainRecord(physical)
       || !Array.isArray(physical.processes) || !Array.isArray(physical.listeners) || !Array.isArray(physical.worktrees) || !Array.isArray(physical.stale)
       || !Number.isSafeInteger(physical.ownedProcessCount) || Number(physical.ownedProcessCount) !== physical.processes.length
@@ -17507,8 +17763,11 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
         const recoveryOwner = await observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(authority, operation);
         own(recoveryOwner);
         const recoveryCurrent = recoveryOwner.value;
-        const serviceCurrent = await observeInternalProductionServiceCensusV1();
-        const physicalCurrent = observePhysicalInventoryV1(serviceCurrent, 0);
+        const policy = preReadinessPolicyForProgressRowV1(authority, row);
+        const servicePort = policy === "pre-readiness-absence-v1" ? "observeInternalProductionPreReadinessServiceCensusV1" : "observeInternalProductionServiceCensusV1";
+        const physicalPort = policy === "pre-readiness-absence-v1" ? "observePreReadinessPhysicalInventoryV1" : "observePhysicalInventoryV1";
+        const serviceCurrent = policy === "pre-readiness-absence-v1" ? await observeInternalProductionPreReadinessServiceCensusV1() : await observeInternalProductionServiceCensusV1();
+        const physicalCurrent = policy === "pre-readiness-absence-v1" ? observePreReadinessPhysicalInventoryV1(serviceCurrent, 0) : observePhysicalInventoryV1(serviceCurrent as InternalProductionServiceCensusV1, 0);
         const databaseCurrent = await verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1();
         const externalArrowAdmission = selectExactPoisonPostVisibleExternalArrowV1(descriptor, recoveryCurrent, preSchemaCurrent);
         const externalPublicationAdmission = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowAdmission, recoveryCurrent, null);
@@ -17516,11 +17775,11 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationAdmission, operation);
         const rowTailAdmission = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, recoveryCurrent);
         own(rowTailAdmission);
-        const observed = Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash, sources: Object.freeze([source("resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1", manifestCurrent), source("observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1", preSchemaCurrent), source("observeInternalProductionRecoverySourceBootstrapStatusAtRootV1", recoveryCurrent), source("observeInternalProductionServiceCensusV1", serviceCurrent), source("observePhysicalInventoryV1", physicalCurrent), source("verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1", databaseCurrent), source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", externalPublicationAdmission), source("observeExactPoisonPostVisibleProgressRowTailNoWriteV1", rowTailAdmission)]), current: recoveryCurrent });
+        const observed = Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash, sources: Object.freeze([source("resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1", manifestCurrent), source("observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1", preSchemaCurrent), source("observeInternalProductionRecoverySourceBootstrapStatusAtRootV1", recoveryCurrent), source(servicePort, serviceCurrent), source(physicalPort, physicalCurrent), source("verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1", databaseCurrent), source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", externalPublicationAdmission), source("observeExactPoisonPostVisibleProgressRowTailNoWriteV1", rowTailAdmission)]), current: recoveryCurrent });
         const boundCurrent = requireExactPoisonPostVisibleProgressRawCurrentV1(authority, "admission", observed);
         if (boundCurrent === null) currentEntryFail("admission raw current is absent");
         current = boundCurrent;
-        sourceValues = Object.freeze({ resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1: manifestCurrent, observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1: preSchemaCurrent, observeInternalProductionRecoverySourceBootstrapStatusAtRootV1: recoveryCurrent, observeInternalProductionServiceCensusV1: serviceCurrent, observePhysicalInventoryV1: physicalCurrent, verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1: databaseCurrent, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: externalPublicationAdmission, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: rowTailAdmission });
+        sourceValues = Object.freeze({ resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1: manifestCurrent, observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1: preSchemaCurrent, observeInternalProductionRecoverySourceBootstrapStatusAtRootV1: recoveryCurrent, [servicePort]: serviceCurrent, [physicalPort]: physicalCurrent, verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1: databaseCurrent, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: externalPublicationAdmission, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: rowTailAdmission });
         break;
       }
       case "recovery-source": {
@@ -18212,7 +18471,7 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
     rootReader.assertStable();
     const buildPreparedPublicationSet = async (statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1> =>
       buildTask12PreparedCurrentEntryReplayPublicationSetV1(createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(context, operation), statusOwner);
-    const authority = exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1(rootReader, operation, buildPreparedPublicationSet);
+    const authority = await exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1(rootReader, operation, buildPreparedPublicationSet);
     const operationDirectory = authority.operationDirectory;
     operationDirectoryGuard = authenticateTask12ReceiptDirectoryChainV1(operationDirectory);
     operationDirectoryGuard.assertStable();
@@ -19165,7 +19424,7 @@ type Task12PreparedCurrentEntryPublicationAuthorityV1 = Readonly<
 type Task12PreparedCurrentEntryPublicationSetV1 = Readonly<{
   operationDirectoryPrefix: readonly [string, string, string, string];
   controllerLockTarget: string;
-  serviceCensus: InternalProductionServiceCensusV1;
+  serviceCensus: PreReadinessOrOrdinaryServiceCensusV1;
   candidates: readonly [
     Task12PreparedCurrentEntryPublicationCandidateV1<"P2">,
     Task12PreparedCurrentEntryPublicationCandidateV1<"P3">,
@@ -19176,7 +19435,7 @@ type Task12PreparedCurrentEntryPublicationSetV1 = Readonly<{
 
 async function buildTask12PreparedCurrentEntryPublicationSetV1(
   authority: Task12PreparedCurrentEntryPublicationAuthorityV1,
-  expectedServiceCensus?: InternalProductionServiceCensusV1,
+  expectedServiceCensus?: PreReadinessOrOrdinaryServiceCensusV1,
 ): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
   if (!(task12PreparedCurrentEntryPublicationAuthorityBrandV1 in authority)) currentEntryFail("prepared publication authority is invalid");
   const operation = authority.kind === "selected" ? authority.operation : authority.context.successorOperation;
@@ -19188,7 +19447,7 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
 
   const retirement = await import("./baseline-restart-authority-retirement-v1.js");
   const coldBefore = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
-  const census = await observeInternalProductionServiceCensusV1();
+  const census = await observeExactPoisonServiceCensusForPolicyV1(coldBefore.state === "settled" && coldBefore.settlement.schema === "setfarm.internal-production-cold-spawner-controller-settlement.v2" ? "pre-readiness-absence-v1" : "ordinary-live-v1");
   const coldAfter = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   if (canonicalComparable(coldBefore) !== canonicalComparable(coldAfter)) currentEntryFail("prepared publication cold predecessor changed");
   if (coldAfter.state === "settled" && canonicalComparable(coldAfter.settlement.serviceCensus) !== canonicalComparable(census)) {
@@ -19199,7 +19458,9 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
   }
   const serviceProjection = {
     schema: coldAfter.state === "settled"
-      ? "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2"
+      ? census.schema === "setfarm.internal-production-pre-readiness-service-census.v1"
+        ? "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3"
+        : "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2"
       : "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",
     currentEntryOperationRef: operation.operationRef,
     currentEntryOperationHash: operation.operationHash,
@@ -19274,7 +19535,7 @@ async function buildTask12PreparedCurrentEntryReplayPublicationSetV1(
   const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(status.preMutationLoadedRuntimeServiceAuthority);
   const assertHistory = await openTask12ColdSpawnerPredecessorHistoryV1(preMutation);
   statusOwner.assertStable();
-  const census = requireExactPoisonPostVisibleServiceCensusEffectV1({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash }) as unknown as InternalProductionServiceCensusV1;
+  const census = serviceCensusFromPreMutationV1(preMutation);
   const prepared = await materializeTask12PreparedCurrentEntryPublicationSetV1(authority, preMutation, status, census);
   assertHistory();
   statusOwner.assertStable();
@@ -19286,7 +19547,7 @@ async function materializeTask12PreparedCurrentEntryPublicationSetV1(
   authority: Task12PreparedCurrentEntryPublicationAuthorityV1,
   preMutation: Readonly<Record<string, unknown>>,
   status: Readonly<Record<string, unknown>>,
-  census: InternalProductionServiceCensusV1,
+  census: PreReadinessOrOrdinaryServiceCensusV1,
 ): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
   if (!(task12PreparedCurrentEntryPublicationAuthorityBrandV1 in authority)) currentEntryFail("prepared materialization authority is invalid");
   const operation = authority.kind === "selected" ? authority.operation : authority.context.successorOperation;
@@ -19381,14 +19642,15 @@ async function materializeTask12PreparedCurrentEntryPublicationSetV1(
 
 function requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value: unknown): Readonly<Record<string, unknown>> {
   if (!isPlainRecord(value)) currentEntryFail("pre-mutation runtime authority is not a record");
+  const v3 = value.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3";
   const v2 = value.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2";
   const keys = ["schema", "currentEntryOperationRef", "currentEntryOperationHash", "observedServiceCensusHash", "spawner", "dashboard", "missionControl", "openClaw", "serviceProjectionSetHash", "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"];
-  if (v2) keys.push("coldSpawnerPredecessor");
-  if ((!v2 && value.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1") || !hasExactKeys(value, keys)) currentEntryFail("pre-mutation runtime authority versioned shape is invalid");
+  if (v2 || v3) keys.push("coldSpawnerPredecessor");
+  if ((!v2 && !v3 && value.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1") || !hasExactKeys(value, keys)) currentEntryFail("pre-mutation runtime authority versioned shape is invalid");
   requirePair({ operationRef: value.currentEntryOperationRef, operationHash: value.currentEntryOperationHash }, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
   const pair = requirePair({ preMutationLoadedRuntimeServiceAuthorityRef: value.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: value.preMutationLoadedRuntimeServiceAuthorityHash }, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
-  requireExactPoisonPostVisibleServiceCensusEffectV1({ schema: "setfarm.internal-production-service-census.v1", spawner: value.spawner, dashboard: value.dashboard, missionControl: value.missionControl, openClaw: value.openClaw, censusHash: value.observedServiceCensusHash });
-  if (v2) {
+  serviceCensusFromPreMutationV1(value);
+  if (v2 || v3) {
     const cold = value.coldSpawnerPredecessor;
     if (!isPlainRecord(cold) || !hasExactKeys(cold, ["settlementRef", "settlementHash", "settlementIdentity"])) currentEntryFail("pre-mutation cold predecessor fields are invalid");
     requirePair({ settlementRef: cold.settlementRef, settlementHash: cold.settlementHash }, "settlementRef", "settlementHash", "setfarm://internal-production/cold-spawner-controller-settlement/sha256/");
@@ -19412,7 +19674,7 @@ async function openTask12ColdSpawnerPredecessorHistoryV1(value: unknown): Promis
     const history = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
     if (history.state !== "settled" || history.settlement.settlementRef !== predecessor.settlementRef || history.settlement.settlementHash !== predecessor.settlementHash
       || canonicalComparable(history.settlementIdentity) !== canonicalComparable(predecessor.settlementIdentity)
-      || canonicalComparable(history.settlement.serviceCensus) !== canonicalComparable({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash })) currentEntryFail("pre-mutation cold predecessor history is crossed");
+      || canonicalComparable(history.settlement.serviceCensus) !== canonicalComparable(serviceCensusFromPreMutationV1(preMutation))) currentEntryFail("pre-mutation cold predecessor history is crossed");
   };
   assertStable();
   return assertStable;
@@ -21188,7 +21450,7 @@ function requireTask12PredecessorGraphRelationsV1(
   const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(node("preMutationLoadedRuntimeServiceAuthority"));
   if (!operationMatches(preMutation)) currentEntryFail("pre-mutation loaded runtime service authority operation is crossed");
   if (!isPlainRecord(status.preMutationLoadedRuntimeServiceAuthority) || !exact(preMutation, status.preMutationLoadedRuntimeServiceAuthority)) currentEntryFail("pre-mutation loaded runtime service authority external/embedded body is crossed");
-  const preMutationCensus = requireExactPoisonPostVisibleServiceCensusEffectV1(Object.freeze({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash }));
+  const preMutationCensus = serviceCensusFromPreMutationV1(preMutation);
 
   const preDispatchLegacy = node("preDispatchLegacyZeroOwnerObservation");
   const authorization = node("preSchemaSpawnerRebindAuthorization");
@@ -21214,7 +21476,7 @@ function requireTask12PredecessorGraphRelationsV1(
   if (!operationMatches(replacement) || !matches(replacement, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(replacement, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !matches(replacement, "restartAuthorityRef", "restartAuthorityHash", "preSchemaSpawnerRestartAuthority") || !matches(replacement, "predecessorTerminationObservationRef", "predecessorTerminationObservationHash", "predecessorTerminationObservation") || !sourceMatches(replacement, "actualSpawner") || replacement.replacementSpawnerProcessIdentityHash === startup.predecessorSpawnerProcessIdentityHash || replacement.replacementSpawnerServiceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash || replacement.actualSpawnerGenerationHash !== startup.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema replacement-process graph is crossed");
   const predecessorIdentity = node("predecessorSpawnerProcessIdentity");
   const replacementIdentity = node("replacementSpawnerProcessIdentity");
-  if (preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2") {
+  if (preMutation.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1") {
     const coldSpawner = preMutationCensus.spawner as Readonly<Record<string, unknown>>;
     if (coldSpawner.pid !== predecessorIdentity.pid || coldSpawner.processStartTimeEpochMs !== predecessorIdentity.processStartTimeEpochMs
       || coldSpawner.processIdentityHash !== predecessorIdentity.processIdentityHash || coldSpawner.serviceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash
@@ -21234,6 +21496,11 @@ function requireTask12PredecessorGraphRelationsV1(
   for (const name of ["dashboard", "missionControl"] as const) {
     const admittedService = preMutationCensus[name] as Readonly<Record<string, unknown>>;
     const loadedService = loadedRuntime[name];
+    if (name === "dashboard" && preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3") {
+      requireExactPoisonPostVisibleListeningServiceCensusMemberV1(loadedService, "com.setrox.setfarm-dashboard", 3333);
+      if (!isPlainRecord(loadedService) || !exact(admittedService.source, { sha: loadedService.loadedSourceSha, treeHash: loadedService.loadedTreeHash, buildHash: loadedService.loadedBuildHash })) currentEntryFail("loaded runtime dashboard source is crossed with pre-readiness authority");
+      continue;
+    }
     if (
       !isPlainRecord(loadedService)
       || loadedService.pid !== admittedService.pid

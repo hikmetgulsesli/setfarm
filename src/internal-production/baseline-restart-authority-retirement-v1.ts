@@ -19,6 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { userInfo } from "node:os";
 import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
 import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
 import { fileURLToPath } from "node:url";
@@ -813,7 +814,7 @@ function observeColdControllerSettlementHistoryV1() {
     inventory();
     const publication = read(target, 65_536);
     const record = coldRecordV1(JSON.parse(publication.bytes.toString("utf8")), ["schema", "purpose", "completion", "epochEvidence", "genesisIdentity", "serviceCensus", "settlementRef", "settlementHash"], "controller settlement");
-    if (!publication.bytes.equals(Buffer.from(`${canonical(record)}\n`)) || record.schema !== "setfarm.internal-production-cold-spawner-controller-settlement.v1"
+    if (!publication.bytes.equals(Buffer.from(`${canonical(record)}\n`)) || (record.schema !== "setfarm.internal-production-cold-spawner-controller-settlement.v1" && record.schema !== "setfarm.internal-production-cold-spawner-controller-settlement.v2")
       || record.purpose !== "exact-poison-sealed-cold-spawner-v1"
       || record.settlementRef !== `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${coldHashV1(record.settlementHash, "settlement")}`) fail("cold settlement binding is crossed");
     coldSelfHashV1(record, "settlementHash", ["settlementRef"]);
@@ -822,6 +823,7 @@ function observeColdControllerSettlementHistoryV1() {
       || canonical(completion.journalIdentity) !== canonical(coldFileIdentityTupleV1(journal))) fail("cold settlement completion is crossed");
     const intentFile = read(path.join(root, "intent.json"), COLD_GENESIS_MAX_BYTES_V1, completion.intentIdentity);
     const intent = parseColdSpawnerBootstrapIntentV1(intentFile.bytes);
+    if (record.schema !== ((intent.coldObservation as Record<string, unknown>).schema === "setfarm.internal-production-cold-bootstrap-observation.v2" ? "setfarm.internal-production-cold-spawner-controller-settlement.v2" : "setfarm.internal-production-cold-spawner-controller-settlement.v1")) fail("cold settlement/intent policy is crossed");
     validateColdHistoricalLaunchProfileV1(intent);
     const dispatch = parseColdSpawnerBootstrapDispatchV1(read(path.join(root, "dispatch.json"), 65_536, completion.dispatchIdentity).bytes, intent,
       { devDecimal: String(intentFile.stats.dev), inoDecimal: String(intentFile.stats.ino) });
@@ -1348,7 +1350,7 @@ async function terminateDirectSpawnerRebindPredecessorV1(
     if (termination.receipt !== null) return termination.receipt.record;
     if (termination.dispatch === null) {
       const receipt = await import("./baseline-post-handoff-receipt-v1.js"); assertStable();
-      const census = await receipt.observeInternalProductionServiceCensusV1(); assertStable();
+      const census = await (state.inputs.preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3" ? receipt.observeInternalProductionPreReadinessServiceCensusV1() : receipt.observeInternalProductionServiceCensusV1()); assertStable();
       const fresh = census.spawner;
       if (["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash", "processOwnerCount", "listener"].some(key => canonical(fresh[key as keyof typeof fresh]) !== canonical(predecessor[key]))
         || fresh.loadedSourceSha !== state.inputs.restart.targetSpawnerSourceSha || fresh.loadedTreeHash !== state.inputs.restart.targetSpawnerTreeHash
@@ -1775,11 +1777,59 @@ function coldSelfHashV1(record: Record<string, unknown>, hashKey: string, exclud
   if (coldHashV1(record[hashKey], hashKey) !== sha256(canonical(body))) fail(`cold ${hashKey} is crossed`);
 }
 
+function isColdPlainRecordV1(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype; }
+function hasColdExactKeysV1(value: Record<string, unknown>, keys: readonly string[]): boolean { return canonical(Object.keys(value).sort()) === canonical([...keys].sort()); }
+function requirePreReadinessDashboardAbsenceV1(value: unknown): Readonly<Record<string, unknown>> {
+  if (!isColdPlainRecordV1(value) || !hasColdExactKeysV1(value, ["schema", "source", "uid", "globalDashboardFamilyCount", "globalTcp3333ListenerState", "launchJobs", "pidFile", "ancestors", "entrypoint", "entrypointBytesSha256", "absenceHash"])
+    || value.schema !== "setfarm.internal-production-pre-readiness-dashboard-absence.v1" || value.uid !== process.getuid?.()
+    || !Number.isSafeInteger(value.uid) || Number(value.uid) < 0 || value.globalDashboardFamilyCount !== 0 || value.globalTcp3333ListenerState !== "absent") fail("pre-readiness dashboard absence is invalid");
+  if (!isColdPlainRecordV1(value.source) || !hasColdExactKeysV1(value.source, ["sha", "treeHash", "buildHash"])) fail("pre-readiness dashboard source is invalid");
+  if (typeof value.source.sha !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.source.sha) || typeof value.source.treeHash !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.source.treeHash)) fail("pre-readiness dashboard source is invalid"); coldHashV1(value.source.buildHash, "pre-readiness dashboard build");
+  if (!Array.isArray(value.launchJobs) || value.launchJobs.length !== 2) fail("pre-readiness dashboard launch jobs are invalid");
+  for (const [index, label] of ["com.setrox.setfarm-dashboard", "com.setrox.setfarm-fresh-dashboard"].entries()) {
+    const job = value.launchJobs[index];
+    if (!isColdPlainRecordV1(job) || !hasColdExactKeysV1(job, ["label", "state", "status", "stdoutSha256", "stderrSha256"]) || job.label !== label || job.state !== "absent" || job.status !== 113
+      || job.stdoutSha256 !== sha256(Buffer.alloc(0)) || job.stderrSha256 !== sha256(`Bad request.\nCould not find service "${label}" in domain for user gui: ${value.uid}\n`)) fail("pre-readiness dashboard launch job evidence is crossed");
+  }
+  const metadataKeys = ["dev", "ino", "uid", "mode", "nlink", "size", "mtimeNs", "ctimeNs"];
+  const metadata = (entry: Record<string, unknown>) => {
+    if (metadataKeys.filter(key => key !== "mode").some(key => typeof entry[key] !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(entry[key] as string))
+      || entry.uid !== String(value.uid) || BigInt(String(entry.ino)) < 1n || BigInt(String(entry.nlink)) < 1n
+      || !Number.isSafeInteger(entry.mode) || Number(entry.mode) < 0 || Number(entry.mode) > 0o7777 || (Number(entry.mode) & 0o022) !== 0) fail("pre-readiness dashboard filesystem evidence is invalid");
+  };
+  const stableAncestorKeys = ["path", "dev", "ino", "uid", "gid", "mode"];
+  const home = userInfo().homedir;
+  if (!Array.isArray(value.ancestors) || value.ancestors.length !== 3) fail("pre-readiness dashboard ancestor evidence is incomplete");
+  for (const [index, target] of [home, path.join(home, ".openclaw"), path.join(home, ".openclaw/setfarm")].entries()) {
+    const entry = value.ancestors[index];
+    if (!isColdPlainRecordV1(entry) || !hasColdExactKeysV1(entry, stableAncestorKeys) || entry.path !== target) fail("pre-readiness dashboard ancestor evidence is crossed");
+    if (["dev", "ino", "uid", "gid"].some(key => typeof entry[key] !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(entry[key] as string))
+      || entry.uid !== String(value.uid) || BigInt(String(entry.ino)) < 1n || !Number.isSafeInteger(entry.mode)
+      || Number(entry.mode) < 0 || Number(entry.mode) > 0o7777 || (Number(entry.mode) & 0o022) !== 0) fail("pre-readiness dashboard stable ancestor evidence is invalid");
+    if (entry.dev !== (value.ancestors[0] as Record<string, unknown>).dev) fail("pre-readiness dashboard ancestor device is crossed");
+  }
+  const pid = value.pidFile;
+  if (!isColdPlainRecordV1(pid)) fail("pre-readiness dashboard PID evidence is invalid");
+  if (pid.state === "absent") { if (!hasColdExactKeysV1(pid, ["state"])) fail("pre-readiness dashboard PID absence is crossed"); }
+  else {
+    if (!hasColdExactKeysV1(pid, ["state", "pid", "bytesSha256", "identity"]) || pid.state !== "stale-dead-pid" || !Number.isSafeInteger(pid.pid) || Number(pid.pid) < 1 || Number(pid.pid) > 2_147_483_647
+      || pid.bytesSha256 !== sha256(String(pid.pid)) || !isColdPlainRecordV1(pid.identity) || !hasColdExactKeysV1(pid.identity, metadataKeys)) fail("pre-readiness dashboard PID residue is crossed");
+    metadata(pid.identity);
+    if (pid.identity.nlink !== "1" || pid.identity.size !== String(String(pid.pid).length) || pid.identity.dev !== (value.ancestors[0] as Record<string, unknown>).dev) fail("pre-readiness dashboard PID metadata is crossed");
+  }
+  if (value.entrypoint !== path.join(repositoryRoot(), "dist/server/daemon.js")) fail("pre-readiness dashboard entrypoint is crossed");
+  coldHashV1(value.entrypointBytesSha256, "pre-readiness dashboard entrypoint bytes");
+  const body = { ...value }; delete body.absenceHash;
+  if (value.absenceHash !== sha256(canonical(body))) fail("pre-readiness dashboard absence hash is crossed");
+  return value;
+}
+
 function validateColdBootstrapObservationV1(value: unknown): Readonly<Record<string, unknown>> {
   const observation = coldRecordV1(value, ["schema", "operation", "operationBytesSha256", "contaminationFingerprintHash", "source",
     "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "remainingServices", "spawnerAbsence", "physical", "census",
     "syntheticGitAbsence", "legacyFindingPublicationInventory", "observationHash"], "observation");
-  if (observation.schema !== "setfarm.internal-production-cold-bootstrap-observation.v1"
+  const phase = observation.schema === "setfarm.internal-production-cold-bootstrap-observation.v2";
+  if ((!phase && observation.schema !== "setfarm.internal-production-cold-bootstrap-observation.v1")
     || observation.operationBytesSha256 !== COLD_INCIDENT_BYTES_HASH_V1 || observation.contaminationFingerprintHash !== COLD_INCIDENT_FINGERPRINT_V1) fail("cold incident fingerprint is invalid");
   const operation = coldPairV1(observation.operation, "operation", "setfarm://internal-production/current-entry-operation/sha256/");
   if (operation.operationHash !== COLD_INCIDENT_HASH_V1) fail("cold incident is not recognized");
@@ -1800,6 +1850,11 @@ function validateColdBootstrapObservationV1(value: unknown): Readonly<Record<str
   const services = coldRecordV1(observation.remainingServices, ["dashboard", "missionControl", "openClaw"], "remaining services");
   const pids = new Set<number>();
   for (const [key, label, port] of [["dashboard", "com.setrox.setfarm-dashboard", 3333], ["missionControl", "com.setrox.mission-control", 3080], ["openClaw", "ai.openclaw.gateway", 18789]] as const) {
+    if (key === "dashboard" && phase) {
+      const absent = requirePreReadinessDashboardAbsenceV1(services.dashboard);
+      if (canonical(absent.source) !== canonical(loadedSource)) fail("cold dashboard absence source is crossed");
+      continue;
+    }
     const service = coldRecordV1(services[key], ["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash", "loadedSourceSha", "loadedTreeHash", "loadedBuildHash", "processOwnerCount", "listenerOwnerCount", "listener"], `${key} service`);
     if (!Number.isSafeInteger(service.pid) || (service.pid as number) < 1 || pids.has(service.pid as number)
       || !Number.isSafeInteger(service.processStartTimeEpochMs) || (service.processStartTimeEpochMs as number) < 1
@@ -1820,6 +1875,10 @@ function validateColdBootstrapObservationV1(value: unknown): Readonly<Record<str
     const listener = coldRecordV1(service.listener, ["host", "port", "listenerIdentityHash"], "listener");
     if (listener.host !== "127.0.0.1" || listener.port !== port) fail("cold service listener is crossed");
     coldHashV1(listener.listenerIdentityHash, "listener identity");
+  }
+  if (phase) {
+    const dashboard = services.dashboard as Record<string, any>;
+    if (dashboard.pidFile.state === "stale-dead-pid" && pids.has(dashboard.pidFile.pid)) fail("cold dashboard PID residue is reused");
   }
   const absence = coldRecordV1(observation.spawnerAbsence, ["schema", "source", "uid", "globalSpawnerFamilyCount", "singletonLockState", "pidFile", "ancestors", "launcher", "entrypoint", "entrypointBytesSha256", "plistBytesSha256", "launchProjectionHash", "absenceHash"], "spawner absence");
   if (absence.schema !== "setfarm.internal-production-cold-spawner-absence.v1" || canonical(absence.source) !== canonical(loadedSource)
@@ -1874,6 +1933,7 @@ function freezeColdDataV1<T>(value: T): Readonly<T> {
 }
 
 function coldGenesisStableIdentityV1(observation: Readonly<Record<string, unknown>>): string {
+  if (observation.schema === "setfarm.internal-production-cold-bootstrap-observation.v2") return canonical({ schema: observation.schema, originalIdentity: coldGenesisStableIdentityV1({ ...observation, schema: "setfarm.internal-production-cold-bootstrap-observation.v1" }) });
   return canonical(Object.fromEntries(["operation", "operationBytesSha256", "contaminationFingerprintHash", "source", "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "syntheticGitAbsence", "legacyFindingPublicationInventory"].map((key) => [key, observation[key]])));
 }
 
@@ -2113,9 +2173,9 @@ export async function acquireInternalProductionColdRecoveryEpochGenesisTransitio
 }
 
 async function acquireColdGenesisTransitionLeaseOwnedV1(): Promise<InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1> {
-  observeColdGenesisHistoryV1(null);
+  const initialHistory = observeColdGenesisHistoryV1(null);
   const observer = await import("./baseline-post-handoff-receipt-v1.js");
-  const before = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1());
+  const before = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1(initialHistory.receipt?.coldObservation as Readonly<Record<string, unknown>> | undefined));
   observeColdGenesisHistoryV1(null);
   if (retainedColdGenesisRawV1 !== null && heldRawPhysicalTransitionLockV1(retainedColdGenesisRawV1).cleanup.phase === "owned-unlink-completed") {
     // Finish this invocation's authenticated unlink; never mistake it for a
@@ -2127,7 +2187,7 @@ async function acquireColdGenesisTransitionLeaseOwnedV1(): Promise<InternalProdu
   const raw = retainedColdGenesisRawV1 ?? await acquireRawPhysicalTransitionLockV1();
   try {
     let prefix = observeColdGenesisHistoryV1(raw);
-    const fresh = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1());
+    const fresh = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1(before));
     if (coldGenesisStableIdentityV1(before) !== coldGenesisStableIdentityV1(fresh)) fail("cold genesis prerequisites changed under lock");
     const reobserved = observeColdGenesisHistoryV1(raw);
     if (prefix.identityWitness !== reobserved.identityWitness || canonical(prefix.receipt) !== canonical(reobserved.receipt) || !((prefix.headBytes === null && reobserved.headBytes === null)
@@ -2262,7 +2322,8 @@ async function prepareColdSpawnerBootstrapIntentV1() {
         assertColdPreparationLeaseV1(preparation);
         const profile = await observer.observeInternalProductionSpawnerLaunchProfileCandidateV1();
         assertColdPreparationLeaseV1(preparation);
-        const cold = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1());
+        const retainedGenesis = parseColdEpochGenesisReceiptV1(readColdGenesisCandidateV1(coldGenesisReceiptPathV1(preparation.epoch!.genesisHash as string), lstatSync(coldGenesisReceiptPathV1(preparation.epoch!.genesisHash as string), { bigint: true })));
+        const cold = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1(retainedGenesis.coldObservation as Readonly<Record<string, unknown>>));
         assertColdPreparationLeaseV1(preparation);
         const epoch = assertEpochOneActive();
         if (epoch.schema !== "setfarm.internal-production-physical-service-restart-authority-epoch.v2"
@@ -2641,7 +2702,8 @@ function directControllerExpectedServiceCensusV1(preMutation: Readonly<Record<st
   for (const key of ["dashboard", "missionControl", "openClaw"]) {
     if (!original[key] || original[key].pid === child.pid) fail("direct settlement original service changed");
   }
-  const body = { schema: "setfarm.internal-production-service-census.v1", spawner: expected, dashboard: original.dashboard, missionControl: original.missionControl, openClaw: original.openClaw };
+  if (preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3") requirePreReadinessDashboardAbsenceV1(original.dashboard);
+  const body = { schema: preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3" ? "setfarm.internal-production-pre-readiness-service-census.v1" : "setfarm.internal-production-service-census.v1", spawner: expected, dashboard: original.dashboard, missionControl: original.missionControl, openClaw: original.openClaw };
   return freezeColdDataV1({ ...body, censusHash: sha256(canonical(body)) });
 }
 
@@ -2655,7 +2717,7 @@ function directControllerSettlementRecordV1(
   dispatch: Readonly<Record<string, unknown>>, dispatchIdentity: readonly string[],
   receipt: Readonly<Record<string, unknown>>, receiptIdentity: readonly string[], serviceCensus: Readonly<Record<string, unknown>>,
 ) {
-  const body = { schema: "setfarm.internal-production-direct-spawner-controller-settlement.v1", action: "task6a-pre-schema-setfarm-spawner-rebind-v1",
+  const body = { schema: serviceCensus.schema === "setfarm.internal-production-pre-readiness-service-census.v1" ? "setfarm.internal-production-direct-spawner-controller-settlement.v2" : "setfarm.internal-production-direct-spawner-controller-settlement.v1", action: "task6a-pre-schema-setfarm-spawner-rebind-v1",
     currentEntryOperation: intent.currentEntryOperation, restartAuthority: intent.restartAuthority, completion,
     terminationDispatch: { dispatchRef: dispatch.dispatchRef, dispatchHash: dispatch.dispatchHash, identity: dispatchIdentity },
     terminationReceipt: { receiptRef: receipt.terminationReceiptRef, receiptHash: receipt.terminationReceiptHash, identity: receiptIdentity },
@@ -2930,10 +2992,10 @@ async function settleDirectSpawnerRebindControllerV1(
     const claim = independentlyObserveDirectControllerClaimV1(state, completion);
     const receipt = await import("./baseline-post-handoff-receipt-v1.js");
     independentlyObserveDirectControllerClaimV1(state, completion);
-    const first = await receipt.observeInternalProductionServiceCensusV1();
+    const first = await (state.inputs.preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3" ? receipt.observeInternalProductionPreReadinessServiceCensusV1() : receipt.observeInternalProductionServiceCensusV1());
     independentlyObserveDirectControllerClaimV1(state, completion); assertDirectControllerServiceCensusV1(state, claim, first);
     await assertDirectControllerLaunchProfileV1(state); independentlyObserveDirectControllerClaimV1(state, completion);
-    const second = await receipt.observeInternalProductionServiceCensusV1();
+    const second = await (state.inputs.preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3" ? receipt.observeInternalProductionPreReadinessServiceCensusV1() : receipt.observeInternalProductionServiceCensusV1());
     independentlyObserveDirectControllerClaimV1(state, completion); assertDirectControllerServiceCensusV1(state, claim, second);
     if (canonical(first) !== canonical(second) || state.settlement && canonical(first) !== canonical(state.settlement.record.serviceCensus)) fail("direct settlement service census changed across observations");
     await assertDirectControllerLaunchProfileV1(state); independentlyObserveDirectControllerClaimV1(state, completion);
@@ -3113,8 +3175,10 @@ async function invokeColdSpawnerBootstrapHelperV1() {
 
 function assertColdControllerServiceCensusV1(intent: Readonly<Record<string, unknown>>, claim: Readonly<Record<string, unknown>>, value: unknown): void {
   const census = coldRecordV1(value, ["schema", "spawner", "dashboard", "missionControl", "openClaw", "censusHash"], "settlement service census");
-  if (census.schema !== "setfarm.internal-production-service-census.v1") fail("cold settlement service census schema is crossed");
+  const phase = (intent.coldObservation as Record<string, unknown>).schema === "setfarm.internal-production-cold-bootstrap-observation.v2";
+  if (census.schema !== (phase ? "setfarm.internal-production-pre-readiness-service-census.v1" : "setfarm.internal-production-service-census.v1")) fail("cold settlement service census schema is crossed");
   coldSelfHashV1(census, "censusHash");
+  if (phase) requirePreReadinessDashboardAbsenceV1(census.dashboard);
   const child = claim.child as Record<string, any>, source = claim.source as Record<string, unknown>;
   const label = "com.setrox.setfarm-spawner";
   const serviceIdentityHash = sha256(canonical({ schema: "setfarm.internal-production-service-identity.v1", label, command: child.command }));
@@ -3142,10 +3206,10 @@ async function settleColdSpawnerBootstrapV1(): Promise<Readonly<Record<string, u
     const target = path.join(rootPaths().root, "cold-spawner-bootstrap-controller-settlement-v1.json");
     const pending = path.join(path.dirname(target), `.${path.basename(target)}.pending`);
     const observer = await import("./baseline-post-handoff-receipt-v1.js");
-    const first = await observer.observeInternalProductionServiceCensusV1();
+    const first = await ((state.intent.coldObservation as Record<string, unknown>).schema === "setfarm.internal-production-cold-bootstrap-observation.v2" ? observer.observeInternalProductionPreReadinessServiceCensusV1() : observer.observeInternalProductionServiceCensusV1());
     independentlyObserveColdControllerClaimV1(state, completion);
     assertColdControllerServiceCensusV1(state.intent, claim, first);
-    const second = await observer.observeInternalProductionServiceCensusV1();
+    const second = await ((state.intent.coldObservation as Record<string, unknown>).schema === "setfarm.internal-production-cold-bootstrap-observation.v2" ? observer.observeInternalProductionPreReadinessServiceCensusV1() : observer.observeInternalProductionServiceCensusV1());
     independentlyObserveColdControllerClaimV1(state, completion);
     assertColdControllerServiceCensusV1(state.intent, claim, second);
     if (canonical(first) !== canonical(second)) fail("cold settlement service census changed across observation");
@@ -3153,7 +3217,7 @@ async function settleColdSpawnerBootstrapV1(): Promise<Readonly<Record<string, u
     if (!state.settlement) {
       const epoch = invocation.pins.find(pin => pin.path === rootPaths().epoch)!;
       const genesis = invocation.pins.find(pin => pin.path === coldGenesisReceiptPathV1(state.intent.genesisHash as string))!;
-      const body = { schema: "setfarm.internal-production-cold-spawner-controller-settlement.v1", purpose: "exact-poison-sealed-cold-spawner-v1",
+      const body = { schema: (state.intent.coldObservation as Record<string, unknown>).schema === "setfarm.internal-production-cold-bootstrap-observation.v2" ? "setfarm.internal-production-cold-spawner-controller-settlement.v2" : "setfarm.internal-production-cold-spawner-controller-settlement.v1", purpose: "exact-poison-sealed-cold-spawner-v1",
         completion, epochEvidence: { record: JSON.parse(epoch.bytes.toString("utf8")), identity: coldFileIdentityTupleV1(epoch.stats) },
         genesisIdentity: coldFileIdentityTupleV1(genesis.stats), serviceCensus: first };
       const settlementHash = sha256(canonical(body));
@@ -3664,6 +3728,12 @@ function heldColdHelperContextV1(context: unknown): ColdHelperContextStateV1 {
   if (!state || state.phase === "closing" || context !== coldHelperRuntimeContextV1) fail("cold helper context is foreign, cloned or closed");
   state.authentication.assertStable();
   return state;
+}
+
+export function resolveInternalProductionColdSpawnerHelperObservationSchemaV1(context: unknown): "setfarm.internal-production-cold-bootstrap-observation.v1" | "setfarm.internal-production-cold-bootstrap-observation.v2" {
+  const state = heldColdHelperContextV1(context);
+  if (state.phase !== "refreshing") fail("cold helper observation is not refreshing");
+  return validateColdBootstrapObservationV1(state.authentication.intent.coldObservation).schema as "setfarm.internal-production-cold-bootstrap-observation.v1" | "setfarm.internal-production-cold-bootstrap-observation.v2";
 }
 
 export function observeInternalProductionColdSpawnerHelperIntentPhaseV1(context: unknown) {
