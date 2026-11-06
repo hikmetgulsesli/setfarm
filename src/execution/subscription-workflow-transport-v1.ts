@@ -6,7 +6,7 @@ import {ClaimEnvelopeV1Schema,type ClaimEnvelopeV1} from "./schemas/claim-envelo
 import {parseV3ImplementationContext} from "./v3-implementation-handoff.js";
 import {V3StageClaimHandoffV1Schema} from "./v3-stage-execution-context.js";
 import type {SubscriptionCodingCanonicalAuthorityV1} from "./subscription-coding-runtime-binding-v1.js";
-import {compileV3ImplementationAgentOutputV1} from "./v3-implementation-output.js";
+import {compileV3ImplementationAgentOutputV1,V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES} from "./v3-implementation-output.js";
 export {decodeSubscriptionSdkWorkflowReportV1} from "./subscription-sdk-workflow-report-v1.js";
 export {projectSubscriptionSuperviseWritePathsV1} from "./subscription-supervise-scope-v1.js";
 const hash=(bytes:string|Buffer)=>createHash("sha256").update(bytes).digest("hex");
@@ -114,9 +114,19 @@ export function materializeSubscriptionWorkflowHandoffV1(input:Input){
   return{handoffRef:plan.handoffRef,readOnlyControlPaths:plan.readOnlyControlPaths};
 }
 export function parseSubscriptionWorkflowReportV1(input:Input&Readonly<{assistantText:string}>):{output:string}{
-  checked(input);const output=input.assistantText;
+  const {authority}=checked(input);let output=input.assistantText;
   if(typeof output!=="string"||!output.trim()||output.includes("\0"))refuse();
-  if(input.authority.schema==="setfarm.implementation-context.v3")compileV3ImplementationAgentOutputV1(output,input.authority);
-  else if(Buffer.byteLength(output)>65536||!/^STATUS:\s*\S+/m.test(output))refuse();
+  if(authority.schema==="setfarm.implementation-context.v3"){
+    if(authority.handoff.schema==="setfarm.v3-implementation-claim-handoff.v2"
+      &&authority.handoff.implementationSlice.schema==="setfarm.implementation-slice.v2"){
+      const trimmed=output.trim();
+      if(trimmed.startsWith("```")){
+        if(Buffer.byteLength(output,"utf8")>V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES)throw Error("V3_IMPLEMENTATION_OUTPUT_SIZE_INVALID");
+        const framed=/^```json\r?\n([\s\S]*?)\r?\n```$/.exec(trimmed);
+        if(framed)output=framed[1]!;
+      }
+    }
+    compileV3ImplementationAgentOutputV1(output,authority);
+  }else if(Buffer.byteLength(output)>65536||!/^STATUS:\s*\S+/m.test(output))refuse();
   return{output};
 }

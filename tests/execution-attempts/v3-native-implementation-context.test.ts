@@ -20,9 +20,9 @@ import { compileLegacyImplementationSliceV2, verifyLegacyImplementationSliceV2 }
 import { createGithubReviewSource, GithubReviewThreadEvidenceV1Schema } from "../../src/findings/github-review-source.js";
 import { ingestGithubReviewThreadsV1, type GithubActionableReviewCommentV1 } from "../../src/findings/github-review-ingestion.js";
 import { buildClaimSummary } from "../../src/spawner-prompt.js";
-import { planSubscriptionWorkflowHandoffV1 } from "../../src/execution/subscription-workflow-transport-v1.js";
+import { parseSubscriptionWorkflowReportV1, planSubscriptionWorkflowHandoffV1 } from "../../src/execution/subscription-workflow-transport-v1.js";
 import { createV3ImplementationContext, parseV3ImplementationContext, serializeV3ImplementationContext } from "../../src/execution/v3-implementation-handoff.js";
-import { compileV3ImplementationAgentOutputV1 } from "../../src/execution/v3-implementation-output.js";
+import { V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES, compileV3ImplementationAgentOutputV1 } from "../../src/execution/v3-implementation-output.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { buildV3ImplementationRefusalDecision, captureV3RefusalFileSnapshots } from "../../src/recovery/v3-implementation-refusal.js";
 import { createFindingSetFromEvidenceBundleV2 } from "../../src/findings/evidence-finding-set.js";
@@ -431,6 +431,48 @@ describe("native generated unstructured review DATA", () => {
 });
 
 describe("native PacketV3 context and owned evidence admission", () => {
+
+  it("transports one complete native JSON fence through unchanged identity and scope compilation", () => {
+    const context = createV3ImplementationContext({ handoff: nativeHandoff(compiledNativeCliFixture(), "/native-framed-report") });
+    const input = { claim: claimFor(context.handoff.workdir), authority: context };
+    const report = JSON.stringify({ ...proposalIdentity(context), disposition: "ready_for_evidence", summary: "Exact native source",
+      changes: [{ path: "src/index.ts", summary: "owned source" }], commands: [{ commandId: "CMD_BUILD", outcome: "passed" }] }, null, 2);
+    const bare = parseSubscriptionWorkflowReportV1({ ...input, assistantText: report });
+    assert.equal(bare.output, report);
+    const framed = "```json\n" + report + "\n```";
+    const transported = parseSubscriptionWorkflowReportV1({ ...input, assistantText: framed });
+    assert.equal(transported.output, report);
+    assert.deepEqual(compileV3ImplementationAgentOutputV1(transported.output, context), compileV3ImplementationAgentOutputV1(bare.output, context));
+    assert.throws(() => compileV3ImplementationAgentOutputV1(framed, context), /JSON_REQUIRED/);
+    assert.equal(parseSubscriptionWorkflowReportV1({ ...input, assistantText: " \n```json\r\n" + report + "\r\n```\n " }).output, report);
+    for (const changed of [{ attemptId: "ATT_crossed-native-attempt-00001" }, { handoffHash: "0".repeat(64) },
+      { packetHash: "0".repeat(64) }, { sliceHash: "0".repeat(64) }, { sourceBefore: CANDIDATE_SOURCE },
+      { changes: [{ path: "src/undeclared.ts", summary: "outside scope" }] }, { disposition: "self_certified_pass" }]) {
+      assert.throws(() => parseSubscriptionWorkflowReportV1({ ...input, assistantText: "```json\n" + JSON.stringify({ ...JSON.parse(report), ...changed }) + "\n```" }));
+    }
+    for (const framed of ["Here is the result:\n```json\n" + report + "\n```", "```json\n" + report + "\n```\nDone.",
+      "```json\n" + report + "\n```\n```json\n" + report + "\n```", "```json\n" + report,
+      "```JSON\n" + report + "\n```", "```\n" + report + "\n```", "```json\n[]\n```", "```json\n{bad}\n```",
+      "```json\n" + report + "\n````", "```json\n" + report + "\0\n```" ]) {
+      assert.throws(() => parseSubscriptionWorkflowReportV1({ ...input, assistantText: framed }));
+    }
+  });
+
+  it("counts native fenced raw UTF8 bytes before removing its wrapper while retaining the bare limit", () => {
+    const context = createV3ImplementationContext({ handoff: nativeHandoff(compiledNativeCliFixture(), "/native-framed-capacity") });
+    const input = { claim: claimFor(context.handoff.workdir), authority: context };
+    const proposal = { ...proposalIdentity(context), disposition: "ready_for_evidence", summary: "Exact native source",
+      changes: [{ path: "src/index.ts", summary: "owned source" }], notes: "" };
+    const remaining = V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES - Buffer.byteLength(JSON.stringify(proposal));
+    const atLimit = JSON.stringify({ ...proposal, notes: "x".repeat(remaining) });
+    assert.equal(Buffer.byteLength(atLimit), V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES);
+    assert.equal(parseSubscriptionWorkflowReportV1({ ...input, assistantText: "  " + atLimit + "  " }).output, "  " + atLimit + "  ");
+    assert.throws(() => parseSubscriptionWorkflowReportV1({ ...input, assistantText: "```json\n" + atLimit + "\n```" }), /SIZE_INVALID/);
+    const multibyte = "```json\n" + JSON.stringify({ ...proposal, notes: "é".repeat(Math.ceil(remaining / 2)) }) + "\n```";
+    assert.ok(multibyte.length < V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES);
+    assert.ok(Buffer.byteLength(multibyte) > V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES);
+    assert.throws(() => parseSubscriptionWorkflowReportV1({ ...input, assistantText: multibyte }), /SIZE_INVALID/);
+  });
   it("keeps native owned/shared writable files exact and refuses readonly or protected output", () => {
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-scope-"));
     try {

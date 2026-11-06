@@ -7849,7 +7849,19 @@ async function startSelectedSubscriptionClaimV1(input:Readonly<{
       try{
         const output=await owned.worker.output,closure=await owned.closed;
         if(closure.status!=="closed"||retained.runtimeDrainRequested)throw Error("SUBSCRIPTION_JOINT_CLOSURE_REFUSED");
-        const decoded=decodeSubscriptionSdkWorkflowReportV1({identity:owned.worker.identity,output});
+        let decoded:ReturnType<typeof decodeSubscriptionSdkWorkflowReportV1>;
+        try{decoded=decodeSubscriptionSdkWorkflowReportV1({identity:owned.worker.identity,output});}
+        catch(error){
+          // Preserve original process mechanics without changing retry diagnostics.
+          try{console.warn("[spawner] SUBSCRIPTION_SDK_ORIGINAL_DECODE_REFUSED "+JSON.stringify({
+            runId:envelope.runId,stepId:envelope.workflowStepId,runtimeSessionId:input.runtimeSessionId,
+            exitCode:output.exitCode,signal:output.signal,stdoutBytes:output.stdoutBytes,stderrBytes:output.stderrBytes,
+            stdoutTruncated:output.stdoutTruncated,stderrTruncated:output.stderrTruncated,processClosed:output.processClosed,
+            stdoutEnded:output.stdoutEnded,stderrEnded:output.stderrEnded,stdoutClosed:output.stdoutClosed,stderrClosed:output.stderrClosed,
+            streamError:Boolean(output.streamError),
+          }));}catch{}
+          throw error;
+        }
         const report=parseSubscriptionWorkflowReportV1({claim:envelope,authority:input.authority,assistantText:decoded.assistantText});
         const publication=await publishRuntimeCompletionProposal(envelope.stepId,report.output,envelope);
         if(!publication.managed)throw Error("SUBSCRIPTION_RUNTIME_COMPLETION_OWNER_REQUIRED");

@@ -8,6 +8,7 @@ import ts from "typescript";
 import { deriveSubscriptionCodingRuntimePathsV1,projectSubscriptionCodingRuntimeBindingV1,sameSubscriptionRuntimeDataV1,subscriptionRuntimeRefusedV1,subscriptionRuntimePreparationHashV1 } from "../../src/execution/subscription-coding-runtime-binding-v1.js";
 import { createV3StageClaimHandoffV1,V3StageClaimHandoffV1Schema } from "../../src/execution/v3-stage-execution-context.js";
 import { assertSubscriptionWorkflowRoleV1,planSubscriptionWorkflowHandoffV1,renderSubscriptionWorkflowPromptV1 } from "../../src/execution/subscription-workflow-transport-v1.js";
+import { decodeSubscriptionSdkWorkflowReportV1 } from "../../src/execution/subscription-sdk-workflow-report-v1.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
 
 // Existing Source-DATA testing pattern: evaluate exact private production bodies
@@ -268,5 +269,38 @@ it("actual service start admits exact subscription with readiness and captured-r
     assert.ok(events.indexOf("ready")<events.indexOf("unref"));
     ports.prepareFreshInstallationOperationalEntryV1=async()=>{env.SETFARM_AGENT_RUNTIME=runner==="codex"?"subscription":"codex";};
     await assert.rejects(evaluate("server/spawnerctl.ts","startFreshSpawnerV1",ports)(),/CHANGED|REFUSED/);
+  }
+});
+
+
+it("selected SDK decode refusal logs only original mechanics and preserves the same settlement error even if logging fails", async () => {
+  for (const failLog of [false, true]) {
+    const f = fixture(), warnings: string[] = [];
+    let originalRefusal: unknown, settledError: unknown;
+    f.ports.console.warn = (message: string) => { warnings.push(message); if (failLog) throw Error("diagnostic sink unavailable"); };
+    f.ports.decodeSubscriptionSdkWorkflowReportV1 = (input: Parameters<typeof decodeSubscriptionSdkWorkflowReportV1>[0]) => {
+      try { return decodeSubscriptionSdkWorkflowReportV1(input); }
+      catch (error) { originalRefusal = error; throw error; }
+    };
+    f.ports.settleExitedClaimAndRuntime = async (_active: unknown, error: unknown) => { settledError = error; f.events.push("settle-failure"); };
+    await evaluate("spawner.ts", "startSelectedSubscriptionClaimV1", f.ports)(f.input);
+    const stdout = "PRIVATE_STDOUT_SENTINEL", stderr = "PRIVATE_STDERR_SENTINEL";
+    f.output.resolve({ stdout, stderr, exitCode: 17, signal: null, stdoutBytes: Buffer.byteLength(stdout), stderrBytes: Buffer.byteLength(stderr),
+      stdoutTruncated: false, stderrTruncated: false, processClosed: true, stdoutEnded: true, stderrEnded: true,
+      stdoutClosed: true, stderrClosed: true, streamError: null });
+    f.closed.resolve({ status: "closed", broker: "closed", worker: "closed", evidenceRefs: ["original-process-and-streams"] });
+    await new Promise(setImmediate);
+    assert.equal(settledError, originalRefusal);
+    assert.equal((settledError as Error).message, "SUBSCRIPTION_SDK_WORKFLOW_REPORT_REFUSED");
+    assert.equal(f.published(), 0);
+    assert.equal(f.activeProcesses.size, 0);
+    assert.equal(warnings.length, 1);
+    assert.ok(warnings[0]!.startsWith("[spawner] SUBSCRIPTION_SDK_ORIGINAL_DECODE_REFUSED "));
+    const facts = JSON.parse(warnings[0]!.slice(warnings[0]!.indexOf("{") ));
+    assert.deepEqual(facts, { runId: f.input.claimEnvelope.runId, stepId: "plan", runtimeSessionId: f.input.runtimeSessionId,
+      exitCode: 17, signal: null, stdoutBytes: Buffer.byteLength(stdout), stderrBytes: Buffer.byteLength(stderr),
+      stdoutTruncated: false, stderrTruncated: false, processClosed: true, stdoutEnded: true, stderrEnded: true,
+      stdoutClosed: true, stderrClosed: true, streamError: false });
+    assert.doesNotMatch(warnings[0]!, /PRIVATE_|diagnostic sink|SUBSCRIPTION_SDK_WORKFLOW_REPORT_REFUSED|sessionKey|fenceToken/);
   }
 });
