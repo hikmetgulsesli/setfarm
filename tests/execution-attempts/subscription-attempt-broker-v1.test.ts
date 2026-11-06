@@ -96,7 +96,7 @@ for (const [modelRef, modelId, url, path] of [
   }
   assert.equal(f.calls.length, 2);
   const expectedContent = modelRef === 'minimax/MiniMax-M3.1-Flash'
-    ? JSON.stringify({ ...JSON.parse(content), thinking: { type: 'adaptive' }, output_config: { effort: 'medium' } })
+    ? JSON.stringify({ ...JSON.parse(content), thinking: { type: 'adaptive' }, output_config: { effort: 'low' } })
     : content;
   for (const request of f.calls) {
     assert.equal(request.url, url); assert.equal(request.path, path);
@@ -140,7 +140,7 @@ test('fixed PLAN profile projects only MiniMax adaptive low wire fields and exac
 for (const profile of [undefined, 'plan-report-v1'] as const)
 test(`${profile ?? 'ordinary MiniMax'} projection rechecks the same request-byte ceiling before upstream or token reservation`,async t=>{
   const content=body(),originalBytes=Buffer.byteLength(content);
-  const effort=profile==='plan-report-v1'?'low':'medium';
+  const effort='low';
   assert.ok(Buffer.byteLength(JSON.stringify({...JSON.parse(content),thinking:{type:'adaptive'},output_config:{effort}}))>originalBytes);
   const f=await fixture(t,(_req,res)=>res.end('unexpected'),{...(profile?{requestProfile:profile}:{}),limits:{...limits,maxRequestBytes:originalBytes}});
   await fixedError(await call(f.broker,content),413,'BYTES');
