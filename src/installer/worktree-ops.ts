@@ -643,7 +643,7 @@ export function syncBaseBranch(repo: string, baseBranch = "main"): boolean {
 
 // ── Stitch Asset Copy ───────────────────────────────────────────────
 
-type StoryWorktreeAssetMode = "full" | "implement" | NativeImplementationAssets;
+type StoryWorktreeAssetMode = "full" | "implement" | NativeImplementationAssets | "native-audit";
 
 export type NativeImplementationAssets = "native-implementation";
 export class NativeImplementationAssetError extends Error {
@@ -1585,6 +1585,16 @@ function removeManagedWorktreePath(repo: string, worktreeDir: string, reason: st
 function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBranch: string, mode: StoryWorktreeAssetMode = "full"): void {
   const nmSrc = path.join(repo, "node_modules");
   const nmDst = path.join(worktreeDir, "node_modules");
+  if (mode === "native-audit") {
+    // Audits see the committed branch corpus, never mutable repository assets.
+    // Existing external aliases are not silently adopted or removed.
+    try {
+      if (fs.lstatSync(path.join(worktreeDir, "references")).isSymbolicLink()) nativeAssetRefused("audit reference link");
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    prepareNativeImplementationDependencies(repo, worktreeDir);
+    installScopeHook(worktreeDir, storyBranch);
+    return;
+  }
   if (mode === "native-implementation") {
     prepareNativeImplementationDependencies(repo, worktreeDir);
   } else if (fs.existsSync(nmSrc)) {
@@ -1613,13 +1623,18 @@ function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBran
  * from createStoryWorktree: it never resets the branch to main/base, because
  * review must see the exact completed implementation that was just pushed.
  */
-export function ensureStoryBranchWorktree(repo: string, storyBranch: string, agentId?: string): string {
+export function ensureStoryBranchWorktree(
+  repo: string, storyBranch: string, agentId?: string,
+  assets?: "native-audit", preferredWorkdir?: string,
+): string {
+  if (assets !== undefined && assets !== "native-audit") nativeAssetRefused("audit asset mode");
   const branch = safeManagedStoryBranch(storyBranch);
   if (!repo || !fs.existsSync(repo) || !branch) return "";
 
   try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
 
-  const existing = findWorktreeDir(repo, branch, agentId) || gitWorktreePathForBranch(repo, branch);
+  const existing = (assets && preferredWorkdir && fs.existsSync(preferredWorkdir) ? preferredWorkdir : "")
+    || findWorktreeDir(repo, branch, agentId) || gitWorktreePathForBranch(repo, branch);
   if (existing && fs.existsSync(existing)) {
     try {
       const current = execFileSync("git", ["branch", "--show-current"], {
@@ -1629,12 +1644,18 @@ export function ensureStoryBranchWorktree(repo: string, storyBranch: string, age
         stdio: ["pipe", "pipe", "pipe"],
       }).trim().toLowerCase();
       if (current === branch) {
-        clearUnexpectedWorktreeIndexFlags(existing);
-        prepareStoryWorktreeAssets(repo, existing, branch);
+        if (assets && gitWorktreePathForBranch(repo, branch) !== existing) nativeAssetRefused("audit worktree repository");
+        if (!assets) clearUnexpectedWorktreeIndexFlags(existing);
+        prepareStoryWorktreeAssets(repo, existing, branch, assets);
         return existing;
       }
-    } catch {
-      // Fall through to re-creation below.
+      if (assets) nativeAssetRefused("audit branch mismatch");
+    } catch (error) {
+      if (assets) {
+        if (error instanceof NativeImplementationAssetError) throw error;
+        nativeAssetRefused("audit worktree reuse");
+      }
+      // Legacy callers retain their existing re-creation behavior.
     }
   }
 
@@ -1673,10 +1694,11 @@ export function ensureStoryBranchWorktree(repo: string, storyBranch: string, age
     }
   }
 
-  releaseMainWorktreeBranch(repo, branch, "main");
+  if (!assets) releaseMainWorktreeBranch(repo, branch, "main");
   const worktreeBase = resolveWorktreeBaseDir(repo, agentId);
   const worktreeDir = path.join(worktreeBase, branch);
   if (fs.existsSync(worktreeDir)) {
+    if (assets) nativeAssetRefused("audit destination exists");
     if (isManagedWorktreePath(worktreeDir)) {
       removeManagedWorktreePath(repo, worktreeDir, "review worktree recreate");
     } else {
@@ -1695,16 +1717,16 @@ export function ensureStoryBranchWorktree(repo: string, storyBranch: string, age
   } catch (err: any) {
     const occupied = gitWorktreePathForBranch(repo, branch);
     if (occupied && fs.existsSync(occupied)) {
-      clearUnexpectedWorktreeIndexFlags(occupied);
-      prepareStoryWorktreeAssets(repo, occupied, branch);
+      if (!assets) clearUnexpectedWorktreeIndexFlags(occupied);
+      prepareStoryWorktreeAssets(repo, occupied, branch, assets);
       return occupied;
     }
     logger.warn(`[worktree] Failed to create review worktree for ${branch}: ${String(err).slice(0, 180)}`, {});
     return "";
   }
 
-  clearUnexpectedWorktreeIndexFlags(worktreeDir);
-  prepareStoryWorktreeAssets(repo, worktreeDir, branch);
+  if (!assets) clearUnexpectedWorktreeIndexFlags(worktreeDir);
+  prepareStoryWorktreeAssets(repo, worktreeDir, branch, assets);
   logger.info(`[worktree] Created review worktree ${worktreeDir} for ${branch}`, {});
   return worktreeDir;
 }

@@ -1322,18 +1322,20 @@ function ensureStoryAuditWorkdir(
   runId: string,
   storyId: string,
   purpose: string,
+  assets?: "native-audit",
 ): string {
   const branch = String(storyBranch || context["story_branch"] || "").trim().toLowerCase();
   if (!branch) return "";
 
   const current = context["story_workdir"] || "";
-  if (storyWorkdirMatchesBranch(current, branch)) {
+  const currentMatches = storyWorkdirMatchesBranch(current, branch);
+  if (!assets && currentMatches) {
     context["story_workdir"] = current;
     return current;
   }
 
   const repo = context["repo"] || "";
-  const workdir = ensureStoryBranchWorktree(repo, branch, agentId || undefined);
+  const workdir = ensureStoryBranchWorktree(repo, branch, agentId || undefined, assets, assets && currentMatches ? current : undefined);
   if (workdir) {
     context["story_branch"] = branch;
     context["story_workdir"] = workdir;
@@ -5114,7 +5116,8 @@ async function injectSuperviseEachContext(
   context["story_branch"] = storyBranch;
   context["story_diff_base"] = storyDiffBase;
 
-  const workdir = ensureStoryAuditWorkdir(context, storyBranch, agentId, step.run_id, story.story_id, "supervise_each");
+  const workdir = ensureStoryAuditWorkdir(context, storyBranch, agentId, step.run_id, story.story_id, "supervise_each",
+    authenticatedSubject?.kind === "story_member" ? "native-audit" : undefined);
   if (!workdir) {
     const failure = `PLATFORM_STORY_WORKTREE_MISSING: ${story.story_id} has branch ${storyBranch}, but Setfarm could not prepare a story worktree for supervisor audit. Supervisor must not audit the main repo fallback.`;
     context["previous_failure"] = failure;
@@ -6563,7 +6566,15 @@ async function claimSingleStep(
 
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
   // story info from the oldest unverified 'done' story (not from stale context).
-  if (!await injectSuperviseEachContext(step, context, agentId, authenticatedStorySubject)) {
+  let superviseContextReady: boolean;
+  try {
+    superviseContextReady = await injectSuperviseEachContext(step, context, agentId, authenticatedStorySubject);
+  } catch (error) {
+    if (authenticatedStorySubject?.kind !== "story_member" || !(error instanceof NativeImplementationAssetError)) throw error;
+    logger.error(`[story-workdir] Native supervisor assets refused: ${error.message}`, { runId: step.run_id });
+    superviseContextReady = false;
+  }
+  if (!superviseContextReady) {
     await pgRun(
       "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2 AND status = 'running'",
       [now(), step.id],
