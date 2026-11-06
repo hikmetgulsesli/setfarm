@@ -333,11 +333,12 @@ async function startCore(
       if (acceptedRequests >= limits.maxRequests || value.max_tokens > limits.maxOutputTokens
         || value.max_tokens > limits.maxTotalOutputTokens - reservedTokens) { fail(res, 429, 'BUDGET'); return; }
       let upstreamBytes = bytes;
-      if (requestProfile === 'plan-report-v1') {
-        // M3.1 Flash always reasons: its Anthropic contract requires adaptive
-        // thinking and controls depth through output_config.effort, not the
-        // SDK's legacy thinking budget. Worker input remains strictly unchanged.
-        upstreamBytes = Buffer.from(JSON.stringify({ ...value, thinking: { type: 'adaptive' }, output_config: { effort: 'low' } }));
+      if (modelRef === 'minimax/MiniMax-M3.1-Flash') {
+        // Map the owned SDK default medium to provider medium, not its omitted
+        // effort default max. PLAN deliberately retains low. Legacy thinking
+        // budgets cannot encode this model's effort; worker DATA grants no override.
+        const effort = requestProfile === 'plan-report-v1' ? 'low' : 'medium';
+        upstreamBytes = Buffer.from(JSON.stringify({ ...value, thinking: { type: 'adaptive' }, output_config: { effort } }));
         if (upstreamBytes.length > limits.maxRequestBytes) { fail(res, 413, 'BYTES'); return; }
       }
       acceptedRequests++; reservedTokens += value.max_tokens;
