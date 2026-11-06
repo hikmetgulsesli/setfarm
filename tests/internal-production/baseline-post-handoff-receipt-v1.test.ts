@@ -19750,6 +19750,40 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     });
   }
 
+  it("exact-poison physical profiles preserve old evidence and bind the current device without mixing", () => {
+    const root = createFixture();
+    try {
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replace("function requireExactPoisonPhysicalInventoryProfileV1(", "export function requireExactPoisonPhysicalInventoryProfileV1("));
+      const result = runFixtureExpression(root, `(()=>{
+        const oldHash=${JSON.stringify(EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1)};
+        const newHash="cc0c4e2548653752a8abf20ade992140b740cd2b8941cc022082a0cb72cb4842";
+        const oldIds=${JSON.stringify([
+          { locator: "current-entry-operation.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141401" },
+          { locator: "records/authority-v3-migration31-audits/sha256/31/319576e4632f52b03f9dd1c5a8ec893b8ffe4091524deaac692792a389ddf76d.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141143" },
+          { locator: "records/authority-v3-migration31-audits/sha256/e2/e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133136356" },
+          { locator: "records/pending-bootstrap-handoff-migrations/sha256/6e/6e3c6e68f5888b1092a89f6b48a990ff83a88ebdfd7be9c8c51f721a29f09741.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141205" },
+          { locator: "records/pending-bootstrap-handoff-migrations/sha256/ce/ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133136424" },
+        ])};
+        const newIds=oldIds.map(x=>({...x,deviceDecimal:"16777233"}));
+        const accepted=[m.requireExactPoisonPhysicalInventoryProfileV1(oldHash,oldIds),m.requireExactPoisonPhysicalInventoryProfileV1(newHash,newIds)];
+        const refused=[];
+        for(const [hash,ids] of [[oldHash,newIds],[newHash,oldIds],["f".repeat(64),newIds],[newHash,newIds.map(x=>({...x,deviceDecimal:"16777234"}))],[newHash,newIds.map((x,i)=>i===0?{...x,inodeDecimal:"133141402"}:x)],[newHash,newIds.slice(1)]]){
+          try{m.requireExactPoisonPhysicalInventoryProfileV1(hash,ids);refused.push(false)}catch{refused.push(true)}
+        }
+        process.stdout.write(JSON.stringify({accepted,refused}));
+      })()`);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout);
+      assert.equal(observed.accepted[0].inventoryHash, EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1);
+      assert.equal(observed.accepted[1].inventoryHash, "cc0c4e2548653752a8abf20ade992140b740cd2b8941cc022082a0cb72cb4842");
+      assert.equal(observed.accepted[0].predecessorFileIdentities[0].deviceDecimal, "16777230");
+      assert.equal(observed.accepted[1].predecessorFileIdentities[0].deviceDecimal, "16777233");
+      assert.deepEqual(observed.refused, [true, true, true, true, true, true]);
+    } finally { removeFixture(root); }
+  });
+
   it("P4 exact-poison publisher authenticates its deterministic admission fixture", () => {
     const root = createFixture();
     try {
@@ -20851,14 +20885,30 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
-  it("P4 exact-poison publisher publishes the exact admitted chain without changing predecessor evidence", () => {
+  for (const currentPhysicalProfile of [false, true]) {
+  it(`P4 exact-poison publisher publishes the exact admitted chain without changing predecessor evidence (${currentPhysicalProfile ? "current" : "historical"} physical profile)`, () => {
     const root = createFixture();
     try {
       installExactCurrentSuccessorGitFixtureV1(root);
       const original = seedExactOriginalPoisonStoreV1(root);
       const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
       const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
-      instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
+      if (currentPhysicalProfile) {
+        // The actual files retain their real dev/inode identities. Only the copied
+        // Source's two closed profiles are substituted for this temporary fixture.
+        const oldDevice = (BigInt(original.predecessorFileIdentities[0]!.deviceDecimal!) + 1000n).toString();
+        const historicalBody = { ...original.inventoryBody, orderedDirectories: (original.inventoryBody.orderedDirectories as readonly Record<string, unknown>[]).map((entry) => ({ ...entry, deviceDecimal: oldDevice })) };
+        const historical = { ...original, inventoryBody: historicalBody, inventoryHash: canonicalHash(historicalBody), predecessorFileIdentities: original.predecessorFileIdentities.map((entry) => ({ ...entry, deviceDecimal: oldDevice })) };
+        instrumentExactPoisonPublisherCoreFixtureV1(root, historical, null);
+        const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+        const source = readFileSync(modulePath, "utf8");
+        const hashLiteral = 'const EXACT_POISON_CURRENT_INVENTORY_HASH_V1 = "cc0c4e2548653752a8abf20ade992140b740cd2b8941cc022082a0cb72cb4842";';
+        const deviceLiteral = 'const EXACT_POISON_CURRENT_DEVICE_V1 = "16777233";';
+        assert.equal(source.split(hashLiteral).length - 1, 1);
+        assert.equal(source.split(deviceLiteral).length - 1, 1);
+        writeFileSync(modulePath, source.replace(hashLiteral, `const EXACT_POISON_CURRENT_INVENTORY_HASH_V1 = "${original.inventoryHash}";`)
+          .replace(deviceLiteral, `const EXACT_POISON_CURRENT_DEVICE_V1 = "${original.predecessorFileIdentities[0]!.deviceDecimal}";`));
+      } else instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
       const result = runExactPoisonPublisherCoreFixtureV1(root, observations, null);
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stderr, "");
@@ -20890,6 +20940,35 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.deepEqual(reobserved.inventoryBody, original.inventoryBody, "all original directory/file bytes, modes, links, and identities must remain exact");
       assert.deepEqual(reobserved.predecessorFileIdentities, original.predecessorFileIdentities, "all five predecessor dev/inode identities must remain exact");
 
+      if (currentPhysicalProfile) {
+        const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+        writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+          .replace(/^async function openExactPoisonRecoveryPinnedCommitChainV1\(/m, "export async function openExactPoisonRecoveryPinnedCommitChainV1(")
+          .replace(/^async function parseCurrentEntryStoreQuarantineDispositionV1\(/m, "export async function parseCurrentEntryStoreQuarantineDispositionV1(")
+          .replace(/^function openExactPoisonRecoveryPostVisibleOriginalsV1\(/m, "export function openExactPoisonRecoveryPostVisibleOriginalsV1("));
+        const reopened = runFixtureExpression(root, `(async()=>{
+          const context=await m.openExactPoisonRecoveryPinnedCommitChainV1();
+          try{const originals=m.openExactPoisonRecoveryPostVisibleOriginalsV1(context);
+            try{originals.evidence.assertStableOriginals();process.stdout.write(JSON.stringify({hash:originals.evidence.inventoryHash,ids:originals.evidence.predecessorFileIdentities}));}
+            finally{originals.close();}}
+          finally{context.close();}
+        })()`);
+        assert.equal(reopened.status, 0, reopened.stderr);
+        assert.deepEqual(JSON.parse(reopened.stdout), { hash: original.inventoryHash, ids: original.predecessorFileIdentities });
+
+        const crossed = structuredClone(admitted.chain.records.disposition.value) as Record<string, unknown>;
+        delete crossed.dispositionRef; delete crossed.dispositionHash;
+        const oldDevice = (BigInt(original.predecessorFileIdentities[0]!.deviceDecimal!) + 1000n).toString();
+        const oldBody = { ...original.inventoryBody, orderedDirectories: (original.inventoryBody.orderedDirectories as readonly Record<string, unknown>[]).map((entry) => ({ ...entry, deviceDecimal: oldDevice })) };
+        crossed.quarantinedInventory = { inventoryBody: oldBody, inventoryHash: canonicalHash(oldBody) };
+        const hash = canonicalHash(crossed);
+        const ref = `setfarm://internal-production/current-entry-store-quarantine-disposition/sha256/${hash}`;
+        const bytes = Buffer.from(`${canonical({ ...crossed, dispositionRef: ref, dispositionHash: hash })}\n`).toString("base64");
+        const refused = runFixtureExpression(root, `(async()=>{try{await m.parseCurrentEntryStoreQuarantineDispositionV1(Buffer.from(${JSON.stringify(bytes)},"base64"),${JSON.stringify({ ref, hash })});process.stdout.write("returned");}catch(error){process.stdout.write(String(error));}})()`);
+        assert.equal(refused.status, 0, refused.stderr);
+        assert.match(refused.stdout, /quarantined inventory and zero-effect proof profiles are crossed/);
+      }
+
       instrumentExactPoisonPreselectionFixtureV1(root);
       const preselection = runFixtureExpression(root, '(async()=>{const probe={calls:0,afterPrehook:0,throwOnCall:true};Reflect.set(globalThis,"__p4ExactPoisonPreselectionProbeV1",probe);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantineBeforeSelectionV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,calls:probe.calls}))})()');
       assert.equal(preselection.status, 0, preselection.stderr);
@@ -20899,6 +20978,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       removeFixture(root);
     }
   });
+  }
 
   it("P5a-A freezes private zero-input chain builders, async durability helpers, and publisher ordering", async () => {
     const source = readFileSync(observerSource, "utf8");
