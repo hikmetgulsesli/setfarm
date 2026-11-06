@@ -7,12 +7,15 @@ import { EventEmitter } from 'node:events';
 import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { ChildProcess } from 'node:child_process';
+import * as ownedPath from 'node:path';
+import { SUBSCRIPTION_SCOPED_FILE_OPERATIONS_V1 } from '../../src/execution/subscription-coding-scoped-file-tools-v1.js';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import { buildSubscriptionCodingMaterialV1 } from '../../src/execution/subscription-coding-policy-v1.js';
 import type { ProcessIdentityV1 } from '../../src/execution/schemas/process-identity-v1.js';
 
 // These tests exercise inert production data/protocol/custody and bounded owned
-// filesystem DATA only. They never launch, listen, or qualify an OS sandbox.
+// filesystem DATA only, including a fixed mkfifo fixture utility. They never
+// launch an SDK worker, listen, or qualify an OS sandbox.
 let api: typeof import('../../src/execution/subscription-coding-worker-policy-v1.js') | undefined;
 const workerApi = await import('../../src/execution/subscription-coding-worker-v1.js');
 try {
@@ -281,7 +284,7 @@ test('empty canonical mutation grants narrow the effective SDK to read and bind 
     material: seed, writeGrants: [{ path: seed.cwd + '/src', kind: 'directory' }],
     readOnlyControlPaths: [control],
   });
-  assert.deepEqual(JSON.parse(writable.material.files[0].contents).tools.allow, ['read', 'write', 'edit']);
+  assert.deepEqual(JSON.parse(writable.material.files[0].contents).tools.allow, ['read', 'setfarm_write', 'setfarm_edit']);
   assert.notEqual(effective.materialHash, writable.materialHash);
   const otherControl = api!.narrowSubscriptionCodingWorkerMaterialV1({
     material: seed, writeGrants: [], readOnlyControlPaths: [seed.cwd + '/.setfarm/other-claim.json'],
@@ -674,4 +677,203 @@ test('foreign or duplicate OPENED still faults through the exact private callbac
   const duplicate=openedStartupCallback();duplicate.observed.accept(line(proofFrame()));duplicate.protocol.openGate();duplicate.observed.accept(line(openedFrame()));
   duplicate.observed.accept(line(openedFrame()));assert.equal(duplicate.protocol.state,'failed');assert.equal(duplicate.faults(),1);
   assert.deepEqual(duplicate.recorded,['child-error']);assert.deepEqual(duplicate.cleared,[73],'duplicate frame cannot re-clear or revive the startup timer');
+});
+
+
+test('writable material binds only the fixed private plugin while readonly seed stays three files', () => {
+  assert.ok(api);
+  const seed = material(), grants = [{ path: seed.cwd + '/allowed.ts', kind: 'file' as const }];
+  const readOnly = api.narrowSubscriptionCodingWorkerMaterialV1({ material: seed, writeGrants: [], readOnlyControlPaths: [] });
+  assert.equal(readOnly.material.files.length, 3);
+  assert.deepEqual(JSON.parse(readOnly.material.files[0].contents).plugins, { enabled: false });
+  const writable = api.narrowSubscriptionCodingWorkerMaterialV1({ material: seed, writeGrants: grants, readOnlyControlPaths: [] });
+  const root = '/private/tmp/owned worker', config = JSON.parse(writable.material.files[0].contents);
+  assert.equal(writable.material.files.length, 5);
+  assert.deepEqual(config.plugins, { enabled: true, allow: ['setfarm-scoped-files-v1'],
+    load: { paths: [root + '/scoped-files'] }, slots: { memory: 'none', contextEngine: 'none' }, bundledDiscovery: 'allowlist', entries: { 'setfarm-scoped-files-v1': { enabled: true } } });
+  assert.deepEqual(config.tools.allow, ['read', 'setfarm_write', 'setfarm_edit']);
+  assert.equal(config.tools.fs.workspaceOnly, true);
+  const manifest = JSON.parse(writable.material.files[3].contents);
+  assert.deepEqual(manifest.contracts.tools, ['setfarm_write', 'setfarm_edit']);
+  assert.deepEqual(writable.material.files.slice(3).map(file => [file.path, file.mode]), [
+    [root + '/scoped-files/openclaw.plugin.json', 0o600], [root + '/scoped-files/index.mjs', 0o600],
+  ]);
+  const input = { binding: binding(), profilePath: paths().profilePath, preloadPath: paths().preloadPath,
+    credentialProbePath: paths().authorityRoots[0], brokerPort: 49157, nodePath: paths().nodePath,
+    argvHash: '5'.repeat(64), environmentHash: '6'.repeat(64),
+    files: writable.material.files.map(file => ({ path: file.path, hash: createHash('sha256').update(file.contents).digest('hex') })) };
+  assert.equal(api.buildSubscriptionCodingProbeChallengeV1(input).files.length, 5);
+  for (const files of [input.files.slice(0, 4), [...input.files, input.files[4]],
+    input.files.map((file, index) => index === 4 ? { ...file, path: root + '/scoped-files/other.mjs' } : file),
+    [input.files[0], input.files[1], input.files[2], input.files[4], input.files[3]]]) {
+    assert.throws(() => api!.buildSubscriptionCodingProbeChallengeV1({ ...input, files }), /SUBSCRIPTION_CODING_WORKER_REFUSED/);
+  }
+  assert.throws(() => api!.validateSubscriptionCodingWorkerMaterialV1(writable.material), /SUBSCRIPTION_CODING_WORKER_REFUSED/,
+    'effective plugin material cannot become caller-authored seed authority');
+  const crossed = api.narrowSubscriptionCodingWorkerMaterialV1({ material: seed,
+    writeGrants: [{ path: seed.cwd + '/other.ts', kind: 'file' }], readOnlyControlPaths: [] });
+  assert.notEqual(crossed.materialHash, writable.materialHash);
+  assert.notEqual(crossed.material.files[4].contents, writable.material.files[4].contents);
+});
+
+type ScopedOperations = {
+  access(path: string): Promise<void>; readFile(path: string): Promise<Buffer>;
+  mkdir(path: string): Promise<void>; writeFile(path: string, contents: string): Promise<void>; dispose(): void;
+};
+const scopedOperations = new Function('return (' + SUBSCRIPTION_SCOPED_FILE_OPERATIONS_V1 + ')')() as
+  (fs: typeof ownedFs, path: typeof ownedPath, scope: { root: string; grants: { path: string; kind: 'file' | 'directory' }[];
+    controls: string[]; maxBytes: number }, signal: AbortSignal | undefined, editing: boolean, rootIdentity: ownedFs.BigIntStats) => ScopedOperations;
+
+test('pinned Node operations write exact existing/new files and retain invocation-specific edit preimages', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'setfarm-scoped-files-')));
+  const file = root + '/existing.txt', fresh = root + '/new.txt', control = root + '/protected.txt';
+  const scope = { root, grants: [file, fresh, control].map(path => ({ path, kind: 'file' as const })),
+    controls: [control], maxBytes: 2097152 };
+  writeFileSync(file, 'before\n', { mode: 0o600 }); writeFileSync(control, 'protected', { mode: 0o600 });
+  try {
+    const write = scopedOperations(ownedFs, ownedPath, scope, undefined, false, ownedFs.lstatSync(root, { bigint: true }));
+    await write.mkdir(root); await write.writeFile(file, 'written\n'); await write.writeFile(fresh, 'new\n');
+    assert.equal(ownedFs.readFileSync(file, 'utf8'), 'written\n');
+    assert.equal(ownedFs.readFileSync(fresh, 'utf8'), 'new\n');
+    const edit = scopedOperations(ownedFs, ownedPath, scope, undefined, true, ownedFs.lstatSync(root, { bigint: true }));
+    assert.equal((await edit.readFile(file)).toString(), 'written\n');
+    await edit.writeFile(file, 'edited\n'); edit.dispose();
+    assert.equal(ownedFs.readFileSync(file, 'utf8'), 'edited\n');
+    const stale = scopedOperations(ownedFs, ownedPath, scope, undefined, true, ownedFs.lstatSync(root, { bigint: true }));
+    await stale.readFile(file); writeFileSync(file, 'concurrent\n');
+    await assert.rejects(stale.writeFile(file, 'clobbered\n'), /SETFARM_SCOPED_FILE_REFUSED/); stale.dispose();
+    assert.equal(ownedFs.readFileSync(file, 'utf8'), 'concurrent\n');
+    const unrelated = scopedOperations(ownedFs, ownedPath, scope, undefined, true, ownedFs.lstatSync(root, { bigint: true }));
+    await assert.rejects(unrelated.writeFile(file, 'no-read'), /SETFARM_SCOPED_FILE_REFUSED/);
+    await assert.rejects(write.writeFile(control, 'changed'), /SETFARM_SCOPED_FILE_REFUSED/);
+    await assert.rejects(write.writeFile(root + '/ungranted.txt', 'changed'), /SETFARM_SCOPED_FILE_REFUSED/);
+    const stopped = new AbortController(); stopped.abort();
+    const canceled = scopedOperations(ownedFs, ownedPath, scope, stopped.signal, false, ownedFs.lstatSync(root, { bigint: true }));
+    await assert.rejects(canceled.writeFile(file, 'canceled'), /Operation aborted/);
+    assert.equal(ownedFs.readFileSync(file, 'utf8'), 'concurrent\n');
+    const abortBetween = new AbortController();
+    const readThenAbort = scopedOperations(ownedFs, ownedPath, scope, abortBetween.signal, true, ownedFs.lstatSync(root, { bigint: true }));
+    await readThenAbort.readFile(file); abortBetween.abort();
+    await assert.rejects(readThenAbort.writeFile(file, 'late write'), /Operation aborted/); readThenAbort.dispose();
+    assert.equal(ownedFs.readFileSync(file, 'utf8'), 'concurrent\n');
+    assert.equal(ownedFs.readFileSync(control, 'utf8'), 'protected');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('pinned Node operations refuse aliases, hardlinks, nonregulars and unsafe modes without adoption', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'setfarm-scoped-refusals-')));
+  const target = root + '/target', alias = root + '/alias', hard = root + '/hard', directory = root + '/directory';
+  writeFileSync(target, 'retained', { mode: 0o600 }); symlinkSync(target, alias); linkSync(target, hard); mkdirSync(directory, { mode: 0o700 });
+  const scope = { root, grants: [target, alias, hard, directory].map(path => ({ path, kind: 'file' as const })), controls: [], maxBytes: 2097152 };
+  try {
+    const operations = scopedOperations(ownedFs, ownedPath, scope, undefined, false, ownedFs.lstatSync(root, { bigint: true }));
+    for (const path of [target, alias, hard, directory]) await assert.rejects(operations.writeFile(path, 'bad'));
+    assert.equal(ownedFs.readFileSync(target, 'utf8'), 'retained');
+    ownedFs.unlinkSync(hard); chmodSync(target, 0o666);
+    await assert.rejects(operations.writeFile(target, 'bad'), /SETFARM_SCOPED_FILE_REFUSED/);
+    assert.equal(ownedFs.readFileSync(target, 'utf8'), 'retained');
+    assert.equal(lstatSync(alias).isSymbolicLink(), true);
+    await assert.rejects(operations.mkdir(root + '/ungranted-parent'));
+    assert.equal(ownedFs.existsSync(root + '/ungranted-parent'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test('pinned Node operations reject a real FIFO using nonblocking descriptor opens', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'setfarm-scoped-fifo-'))), fifo = root + '/fifo';
+  const scope = { root, grants: [{ path: fifo, kind: 'file' as const }], controls: [], maxBytes: 2097152 };
+  try {
+    execFileSync('/usr/bin/mkfifo', ['-m', '600', fifo], { timeout: 2000, stdio: 'pipe' });
+    assert.equal(lstatSync(fifo).isFIFO(), true);
+    let opened = 0, closed = 0;
+    const fs = new Proxy(ownedFs, { get(target, key) {
+      if (key === 'openSync') return (value: ownedFs.PathLike, flags: string | number, mode?: ownedFs.Mode) => {
+        if (typeof flags !== 'number' || !(flags & ownedFs.constants.O_NONBLOCK)) throw new Error('TEST_NONBLOCK_MISSING');
+        assert.ok(flags & ownedFs.constants.O_NOFOLLOW); opened++;
+        return ownedFs.openSync(value, flags, mode);
+      };
+      if (key === 'closeSync') return (fd: number) => { closed++; ownedFs.closeSync(fd); };
+      return Reflect.get(target, key);
+    } });
+    const operations = scopedOperations(fs, ownedPath, scope, undefined, true, ownedFs.lstatSync(root, { bigint: true }));
+    await assert.rejects(operations.access(fifo), /^Error: SETFARM_SCOPED_FILE_REFUSED$/);
+    await assert.rejects(operations.readFile(fifo), /^Error: SETFARM_SCOPED_FILE_REFUSED$/);
+    assert.equal(opened, 2); assert.equal(closed, 2);
+    const writer = scopedOperations(fs, ownedPath, scope, undefined, false, ownedFs.lstatSync(root, { bigint: true }));
+    await assert.rejects(writer.writeFile(fifo, 'bad'), /^Error: SETFARM_SCOPED_FILE_REFUSED$/);
+    assert.equal(opened, 2, 'FIFO write refuses its nonregular preimage before opening');
+    assert.equal(lstatSync(fifo).isFIFO(), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('pinned Node operations enforce byte limits and precreation abort without touching absent targets', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'setfarm-scoped-limits-')));
+  const exact = root + '/exact', oversized = root + '/oversized', canceled = root + '/canceled';
+  const scope = { root, grants: [exact, oversized, canceled].map(path => ({ path, kind: 'file' as const })),
+    controls: [], maxBytes: 2097152 };
+  try {
+    const operations = scopedOperations(ownedFs, ownedPath, scope, undefined, false, ownedFs.lstatSync(root, { bigint: true }));
+    const content = 'x'.repeat(scope.maxBytes);
+    await operations.writeFile(exact, content);
+    assert.equal(ownedFs.readFileSync(exact, 'utf8'), content);
+    let opens = 0;
+    const fs = new Proxy(ownedFs, { get(target, key) {
+      if (key === 'openSync') return (..._args: unknown[]) => { opens++; throw new Error('TEST_UNEXPECTED_OPEN'); };
+      return Reflect.get(target, key);
+    } });
+    const guarded = scopedOperations(fs, ownedPath, scope, undefined, false, ownedFs.lstatSync(root, { bigint: true }));
+    await assert.rejects(guarded.writeFile(oversized, content + 'x'), /^Error: SETFARM_SCOPED_FILE_REFUSED$/);
+    const controller = new AbortController(); controller.abort();
+    const aborted = scopedOperations(fs, ownedPath, scope, controller.signal, false, ownedFs.lstatSync(root, { bigint: true }));
+    await assert.rejects(aborted.writeFile(canceled, 'no-create'), /^Error: Operation aborted$/);
+    assert.equal(opens, 0);
+    assert.equal(ownedFs.existsSync(oversized), false); assert.equal(ownedFs.existsSync(canceled), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('pinned Node operations never adopt an EXCL race and refuse write or close failures', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'setfarm-scoped-errors-')));
+  const raced = root + '/raced', file = root + '/existing';
+  const scope = { root, grants: [raced, file].map(path => ({ path, kind: 'file' as const })), controls: [], maxBytes: 2097152 };
+  try {
+    let raceOpens = 0;
+    const raceFs = new Proxy(ownedFs, { get(target, key) {
+      if (key === 'openSync') return (value: ownedFs.PathLike, flags: string | number, mode?: ownedFs.Mode) => {
+        assert.equal(value, raced); assert.equal(typeof flags, 'number');
+        assert.ok(Number(flags) & ownedFs.constants.O_EXCL); assert.ok(Number(flags) & ownedFs.constants.O_CREAT);
+        raceOpens++; writeFileSync(raced, 'other-creator', { flag: 'wx', mode: 0o600 });
+        return ownedFs.openSync(value, flags, mode);
+      };
+      return Reflect.get(target, key);
+    } });
+    const racedWrite = scopedOperations(raceFs, ownedPath, scope, undefined, false, ownedFs.lstatSync(root, { bigint: true }));
+    await assert.rejects(racedWrite.writeFile(raced, 'must-not-adopt'), { code: 'EEXIST' });
+    assert.equal(raceOpens, 1); assert.equal(ownedFs.readFileSync(raced, 'utf8'), 'other-creator');
+    for (const fault of ['write-error', 'zero-progress', 'close-error'] as const) {
+      writeFileSync(file, 'before', { mode: 0o600 });
+      let opens = 0, closes = 0, openedFd: number | undefined;
+      const fs = new Proxy(ownedFs, { get(target, key) {
+        if (key === 'openSync') return (value: ownedFs.PathLike, flags: string | number, mode?: ownedFs.Mode) => {
+          opens++; openedFd = ownedFs.openSync(value, flags, mode); return openedFd;
+        };
+        if (key === 'writeSync' && fault !== 'close-error') return (..._args: unknown[]) => {
+          if (fault === 'zero-progress') return 0;
+          throw Object.assign(new Error('TEST_WRITE_ERROR'), { code: 'EIO' });
+        };
+        if (key === 'closeSync') return (fd: number) => {
+          closes++; ownedFs.closeSync(fd);
+          if (fault === 'close-error') throw Object.assign(new Error('TEST_CLOSE_ERROR'), { code: 'EIO' });
+        };
+        return Reflect.get(target, key);
+      } });
+      const operations = scopedOperations(fs, ownedPath, scope, undefined, false, ownedFs.lstatSync(root, { bigint: true }));
+      const expected = fault === 'write-error' ? /^Error: TEST_WRITE_ERROR$/
+        : fault === 'zero-progress' ? /^Error: SETFARM_SCOPED_FILE_REFUSED$/ : /^Error: TEST_CLOSE_ERROR$/;
+      await assert.rejects(operations.writeFile(file, 'after'), expected);
+      assert.equal(opens, 1); assert.equal(closes, 1); assert.notEqual(openedFd, undefined);
+      assert.throws(() => ownedFs.fstatSync(openedFd!), { code: 'EBADF' });
+      assert.equal(ownedFs.readFileSync(file, 'utf8'), fault === 'close-error' ? 'after' : 'before',
+        'close-error may leave candidate bytes but must never produce a success result');
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

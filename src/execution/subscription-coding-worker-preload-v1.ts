@@ -90,10 +90,17 @@ try {
     || !exact(challenge.identity, ['attemptId', 'generationId', 'modelRef'])
     || !Number.isInteger(challenge.brokerPort) || challenge.brokerPort < 1 || challenge.brokerPort > 65535
     || [3080, 3333, 18789].includes(challenge.brokerPort)
-    || !Array.isArray(challenge.files) || challenge.files.length !== 3
+    || !Array.isArray(challenge.files) || (challenge.files.length !== 3 && challenge.files.length !== 5)
     || challenge.preloadPath !== fileURLToPath(import.meta.url)
     || challenge.authorityProbePath !== challenge.profilePath
     || challenge.authorityProbeHash !== challenge.policyHash) fail();
+  if (challenge.files.length === 5) {
+    const root = challenge.profilePath.slice(0, -'/profile.sb'.length);
+    const suffixes = ['/config.json', '/state/agents/subscription-worker/agent/auth-profiles.json',
+      '/state/agents/main/agent/auth-profiles.json', '/scoped-files/openclaw.plugin.json', '/scoped-files/index.mjs'];
+    if (challenge.profilePath !== root + '/profile.sb'
+      || challenge.files.some((file, index) => file.path !== root + suffixes[index])) fail();
+  }
   const binding = Object.fromEntries(bindingKeys.map(key => [key, challenge[key]]));
   if (hash(fs.readFileSync(fileURLToPath(import.meta.url))) !== challenge.preloadHash
     || hash(fs.readFileSync(challenge.profilePath)) !== challenge.policyHash
