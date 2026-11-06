@@ -209,6 +209,28 @@ function decodePlanRejectionV1(task: string, raw: string): ProductSpecRejectionV
   return canonicalizeProductSpecRejectionV1({ task, rejection: parsed });
 }
 
+/** Native PacketV3 evidence has no admitted entity snapshot authority. */
+function assertNativeEntityFieldEvidenceSupported(productSpec: ProductSpecV2): void {
+  const diagnostics: ProductSpecProposalDiagnosticV1[] = [];
+  occurrences: for (const [actionIndex, action] of productSpec.actions.entries()) {
+    for (const [deltaIndex, delta] of action.stateDeltas.entries()) {
+      if (delta.valueFrom.kind !== "entity_field") continue;
+      diagnostics.push({
+        code: "V3_PLAN_V2_ENTITY_FIELD_EVIDENCE_UNSUPPORTED",
+        path: `/productSpec/actions/${actionIndex}/stateDeltas/${deltaIndex}/valueFrom`,
+        message: `Native PacketV3 evidence cannot resolve entity_field snapshot authority for ${action.id} state delta ${deltaIndex}. Use literal, input, inputs, or state only if the requested behavior is preserved; otherwise emit a typed product refusal.`,
+      });
+      if (diagnostics.length === 20) break occurrences;
+    }
+  }
+  if (diagnostics.length > 0) {
+    throw new V3PlanOutputV2RejectedError(
+      "V3_PLAN_V2_ENTITY_FIELD_EVIDENCE_UNSUPPORTED",
+      diagnostics,
+    );
+  }
+}
+
 /** New v2 prompts emit one atomic build proposal; semantic-only v2 stays readable. */
 export function resolveV3PlanOutputAuthorityV2(input: Readonly<{
   task: string;
@@ -286,6 +308,7 @@ export function resolveV3PlanOutputAuthorityV2(input: Readonly<{
         compiled.diagnostics.slice(0, 20),
       );
     }
+    assertNativeEntityFieldEvidenceSupported(compiled.productSpec);
     return {
       status: "proposal",
       productSpec: compiled.productSpec,
@@ -321,6 +344,7 @@ export function resolveV3PlanOutputAuthorityV2(input: Readonly<{
       compiled.diagnostics.slice(0, 20),
     );
   }
+  assertNativeEntityFieldEvidenceSupported(compiled.productSpec);
   return {
     status: "proposal",
     productSpec: compiled.productSpec,

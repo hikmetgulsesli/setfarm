@@ -8,6 +8,8 @@ import {
   V3PlanOutputV2RejectedError,
 } from "../../src/execution/v3-plan-output-authority-v2.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { compilePlanProductBuildProposalV1 } from "../../src/product-compiler/producers/plan-product-build-proposal-v1.js";
+import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
 import { canonicalizeProductSpecRejectionV1 } from "../../src/product-compiler/producers/plan-product-spec-proposal.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import {
@@ -34,7 +36,73 @@ function typedRejection(overrides: Record<string, unknown> = {}): any {
   };
 }
 
+// Same valid entity-instance construction exercised by the shadow producer tests.
+function entityFieldBuildProposal() {
+  const proposal = containedGamePlanProductBuildProposalV1();
+  const requirementRefs = proposal.semantics.states[0]!.requirementRefs;
+  proposal.semantics.entities.push({
+    key: "phase_value", name: "Phase Value",
+    fields: [{ key: "value", name: "value", valueType: "string", required: true }],
+    requirementRefs,
+  });
+  proposal.semantics.states.push({
+    key: "phase_source", name: "Phase Source", kind: "domain",
+    initialValue: { value: "playing" }, invariants: [], requirementRefs,
+  });
+  proposal.semantics.actions[0]!.preconditions.push({
+    stateKey: "phase_source", path: "", operator: "exists",
+  });
+  proposal.semantics.actions[0]!.stateDeltas[0]!.valueFrom = {
+    kind: "entity_field", entityKey: "phase_value", fieldKey: "value",
+  };
+  proposal.runtimeBehavior.entityFieldBindings = [{
+    actionKey: "start_game", stateDeltaKey: "start_phase",
+    snapshot: { stateKey: "phase_source", collectionPath: "", selection: { kind: "singleton" } },
+  }];
+  return proposal;
+}
+
 describe("PLAN v3 product semantics v2 output authority", () => {
+  for (const transport of ["atomic", "semantic compatibility"] as const) {
+    it(`rejects valid shadow entity-field authority at native PLAN admission: ${transport}`, () => {
+      const proposal = entityFieldBuildProposal();
+      const original = structuredClone(proposal);
+      const atomic = compilePlanProductBuildProposalV1({ task: CONTAINED_GAME_TASK, proposal });
+      assert.equal(atomic.status, "shadow_compiled",
+        atomic.status === "rejected" ? JSON.stringify(atomic.diagnostics) : undefined);
+      if (atomic.status !== "shadow_compiled") throw new Error("expected valid shadow entity fixture");
+      assert.equal(atomic.runtimeBehaviorContract.entityFieldBindings.length, 1);
+      assert.deepEqual(atomic.runtimeBehaviorContract.entityFieldBindings[0]!.snapshot, {
+        stateRef: "STATE_PHASE_SOURCE", collectionPath: "", selection: { kind: "singleton" },
+      });
+      const semantic = compilePlanSemanticProposalV2({
+        task: CONTAINED_GAME_TASK, proposal: proposal.semantics,
+      });
+      assert.equal(semantic.status, "canonicalized",
+        semantic.status === "rejected" ? JSON.stringify(semantic.diagnostics) : undefined);
+      if (semantic.status !== "canonicalized") throw new Error("expected valid semantic entity fixture");
+      assert.deepEqual(semantic.productSpec, atomic.productSpec);
+      assert.equal(atomic.productSpec.actions[0]!.stateDeltas[0]!.valueFrom.kind, "entity_field");
+      assert.throws(() => resolveV3PlanOutputAuthorityV2({
+        task: CONTAINED_GAME_TASK,
+        parsed: { status: "done", prd: transport === "atomic"
+          ? block("plan-product-build-proposal-v1", proposal)
+          : block("plan-semantic-proposal-v2", proposal.semantics) },
+        ...(transport === "semantic compatibility" ? { allowSemanticOnlyCompatibility: true } : {}),
+      }), (error: unknown) => {
+        assert.ok(error instanceof V3PlanOutputV2RejectedError);
+        assert.equal(error.message, "V3_PLAN_V2_ENTITY_FIELD_EVIDENCE_UNSUPPORTED");
+        assert.equal(error.diagnostics.length, 1);
+        assert.equal(error.diagnostics[0]!.code, "V3_PLAN_V2_ENTITY_FIELD_EVIDENCE_UNSUPPORTED");
+        assert.equal(error.diagnostics[0]!.path, "/productSpec/actions/0/stateDeltas/0/valueFrom");
+        assert.match(error.diagnostics[0]!.message, /ACT_START_GAME state delta 0/);
+        assert.match(error.diagnostics[0]!.message, /requested behavior is preserved/);
+        return true;
+      });
+      assert.deepEqual(proposal, original);
+    });
+  }
+
   for (const code of [
     "PRODUCT_SPEC_TASK_AMBIGUOUS",
     "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
