@@ -757,11 +757,37 @@ function publishStatus(operationHash: string, ordinal: string, input: StatusBody
   return value;
 }
 
-async function deriveAuthorization(): Promise<Readonly<{ body: InternalProductionPreSchemaSpawnerRebindAuthorizationV1; operation: Awaited<ReturnType<typeof resolveInternalProductionCurrentEntryOperationV1>>; legacy: Awaited<ReturnType<typeof resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1>>; census: Awaited<ReturnType<typeof observeInternalProductionServiceCensusV1>> }>> {
+/** Read-only evidence for the existing pre-schema effects, never launch authority.
+ * Mode comes only from the independently authenticated immutable P3/history.
+ */
+export async function observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1(
+  input: InternalProductionCurrentEntryOperationPairV1,
+) {
+  const expected = exactPair(input, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  const operation = Object.freeze({ operationRef: expected.operationRef!, operationHash: expected.operationHash! });
+  const originalOperation = await resolveInternalProductionCurrentEntryOperationV1(operation);
+  const receipt = await import("./baseline-post-handoff-receipt-v1.js");
+  const original = await receipt.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(operation);
+  if (original.currentEntryOperationRef !== operation.operationRef || original.currentEntryOperationHash !== operation.operationHash) fail("pre-schema effect P3 operation is crossed");
+  const phase = original.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3";
+  if (!phase && original.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1"
+    && original.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2") fail("pre-schema effect P3 version is invalid");
+  const census = phase ? await receipt.observeInternalProductionPreReadinessServiceCensusV1() : await observeInternalProductionServiceCensusV1();
+  const current = await receipt.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(operation);
+  const currentOperation = await resolveInternalProductionCurrentEntryOperationV1(operation);
+  if (canonical(current) !== canonical(original) || canonical(currentOperation) !== canonical(originalOperation)) fail("pre-schema effect P3 or operation history changed during observation");
+  if (census.schema !== (phase ? "setfarm.internal-production-pre-readiness-service-census.v1" : "setfarm.internal-production-service-census.v1")
+    || census.spawner.loadedSourceSha !== originalOperation.controllerSource.sha
+    || census.spawner.loadedTreeHash !== originalOperation.controllerSource.treeHash
+    || census.spawner.loadedBuildHash !== originalOperation.controllerSource.buildHash) fail("pre-schema effect service census source or policy is crossed");
+  return census;
+}
+
+async function deriveAuthorization(): Promise<Readonly<{ body: InternalProductionPreSchemaSpawnerRebindAuthorizationV1; operation: Awaited<ReturnType<typeof resolveInternalProductionCurrentEntryOperationV1>>; legacy: Awaited<ReturnType<typeof resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1>>; census: Awaited<ReturnType<typeof observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1>> }>> {
   const prepared = await observePreparedInternalProductionCurrentEntryOperationV1();
   if (prepared === null) fail("prepared current-entry operation is absent");
   const operation = await resolveInternalProductionCurrentEntryOperationV1(operationPair(prepared));
-  const census = await observeInternalProductionServiceCensusV1();
+  const census = await observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1(operationPair(operation));
   const observedLegacy = await observeInternalProductionLegacyPreManifestZeroOwnerV1();
   const legacy = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1({ observationRef: observedLegacy.observationRef, observationHash: observedLegacy.observationHash });
   if (legacy.cleanSetfarmSourceSha !== operation.controllerSource.sha || legacy.cleanSetfarmTreeHash !== operation.controllerSource.treeHash || legacy.cleanSetfarmBuildHash !== operation.controllerSource.buildHash || legacy.observedSpawnerGenerationHash !== census.spawner.generationHash) fail("authorization prerequisites are crossed");
@@ -1054,7 +1080,7 @@ export async function executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1
     let authorizationBody: InternalProductionPreSchemaSpawnerRebindAuthorizationV1;
     let authorization: InternalProductionPreSchemaSpawnerRebindAuthorizationPairV1;
     let preDispatchLegacy: Awaited<ReturnType<typeof resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1>>;
-    let predecessorCensus: Awaited<ReturnType<typeof observeInternalProductionServiceCensusV1>> | null = null;
+    let predecessorCensus: Awaited<ReturnType<typeof observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1>> | null = null;
     if (persisted[1]) {
       authorization = pairFromStored(persisted[1], "authorizationRef", "authorizationHash", PREFIXES.authorization) as InternalProductionPreSchemaSpawnerRebindAuthorizationPairV1;
       if (authorization.authorizationRef !== expected.authorizationRef || authorization.authorizationHash !== expected.authorizationHash || !persisted[0]) fail("persisted authorization differs from input or lacks legacy prefix");
@@ -1080,7 +1106,7 @@ export async function executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1
       startupToken = pairFromStored(persisted[2], "startupTokenRef", "startupTokenHash", PREFIXES.startupToken) as InternalProductionPreSchemaSpawnerStartupTokenPairV1;
       startup = await resolveInternalProductionPreSchemaSpawnerStartupTokenV1(startupToken);
     } else {
-      predecessorCensus ??= await observeInternalProductionServiceCensusV1();
+      predecessorCensus ??= await observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1(operation);
       if (predecessorCensus.spawner.serviceIdentityHash !== authorizationBody.predecessorSpawnerServiceIdentityHash || predecessorCensus.spawner.generationHash !== authorizationBody.predecessorSpawnerGenerationHash || predecessorCensus.spawner.loadedSourceSha !== operationBody.controllerSource.sha || predecessorCensus.spawner.loadedTreeHash !== operationBody.controllerSource.treeHash || predecessorCensus.spawner.loadedBuildHash !== operationBody.controllerSource.buildHash) fail("predecessor census changed before startup token");
       const predecessorProcessHash = hashCanonicalJson({ schema: "setfarm.internal-production-spawner-process-identity.v1", pid: predecessorCensus.spawner.pid, processStartTimeEpochMs: predecessorCensus.spawner.processStartTimeEpochMs, processIdentityHash: predecessorCensus.spawner.processIdentityHash });
       writeNoReplace(recordPath("process-identity", predecessorProcessHash), {
@@ -1200,7 +1226,7 @@ export async function executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1
     dispatchPrefix = deepFreeze({ phase: "predecessor_terminated", predecessorTerminationObservation, replacementProcessObservation: null });
     publishStatus(operation.operationHash, "03-predecessor-terminated", { state: "dispatching", currentEntryOperation: operation, authorization, startupToken, restartAuthority, dispatchPrefix, sealedAdmission: null, admissionReady: null, refusalCode: null });
 
-    let after: Awaited<ReturnType<typeof observeInternalProductionServiceCensusV1>> | null = null;
+    let after: Awaited<ReturnType<typeof observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1>> | null = null;
     let replacement: InternalProductionPreSchemaSpawnerReplacementProcessObservationV1;
     let replacementProcessObservation: InternalProductionPreSchemaSpawnerReplacementProcessObservationPairV1;
     if (persisted[5]) {
@@ -1208,7 +1234,7 @@ export async function executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1
       replacement = await resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1(replacementProcessObservation);
     } else {
       for (let attempt = 0; attempt < 40; attempt += 1) {
-        const observed = await observeInternalProductionServiceCensusV1();
+        const observed = await observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1(operation);
         if (observed.spawner.processIdentityHash !== predecessorIdentity.processIdentityHash && observed.spawner.serviceIdentityHash === startup.predecessorSpawnerServiceIdentityHash && observed.spawner.generationHash === startup.predecessorSpawnerGenerationHash && observed.spawner.loadedSourceSha === operationBody.controllerSource.sha && observed.spawner.loadedTreeHash === operationBody.controllerSource.treeHash && observed.spawner.loadedBuildHash === operationBody.controllerSource.buildHash) { after = observed; break; }
         if (attempt < 39) await new Promise((resolve) => setTimeout(resolve, 250));
       }

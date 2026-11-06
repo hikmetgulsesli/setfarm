@@ -782,6 +782,53 @@ async function createColdEpochGenesisFixtureV1(source = readFileSync(sourcePath,
   } };
 }
 
+test("pre-readiness cold v2 binds actual genesis intent and rejects crossed nested census policies", async () => {
+  const fixture = await createColdIntentFixtureV1(source => source + "\nexport {validateColdBootstrapObservationV1, coldGenesisStableIdentityV1, parseColdSpawnerBootstrapIntentV1, assertColdControllerServiceCensusV1, directControllerExpectedServiceCensusV1, directControllerSettlementRecordV1};\n");
+  try {
+    const runtime = fixture.isolated;
+    const old: any = structuredClone(Reflect.get(globalThis, "__coldGenesisObservation"));
+    const oldBytes = canonical(old);
+    assert.equal(canonical(runtime.validateColdBootstrapObservationV1(old)), oldBytes, "old live observation readback preserves exact bytes");
+    const source = {sha:old.source.sha,treeHash:old.source.treeHash,buildHash:old.source.buildHash};
+    const home = userInfo().homedir;
+    const body = {schema:"setfarm.internal-production-pre-readiness-dashboard-absence.v1",source,uid:process.getuid!(),globalDashboardFamilyCount:0,globalTcp3333ListenerState:"absent",
+      launchJobs:["com.setrox.setfarm-dashboard","com.setrox.setfarm-fresh-dashboard"].map(label=>({label,state:"absent",status:113,stdoutSha256:sha256(""),stderrSha256:sha256(`Bad request.\nCould not find service "${label}" in domain for user gui: ${process.getuid!()}\n`)})),
+      pidFile:{state:"absent"},ancestors:[home,path.join(home,".openclaw"),path.join(home,".openclaw/setfarm")].map(target=>({path:target,dev:"1",ino:"2",uid:String(process.getuid!()),gid:String(process.getgid!()),mode:0o700})),
+      entrypoint:path.join(fixture.fixture,"dist/server/daemon.js"),entrypointBytesSha256:"a".repeat(64)};
+    const phase = structuredClone(old); phase.schema="setfarm.internal-production-cold-bootstrap-observation.v2";
+    phase.remainingServices.dashboard={...body,absenceHash:sha256(canonical(body))};
+    const rehash=(value:any,key:string)=>{delete value[key];value[key]=sha256(canonical(value));return value};
+    rehash(phase,"observationHash");
+    assert.deepEqual(runtime.validateColdBootstrapObservationV1(phase),phase);
+    assert.notEqual(runtime.coldGenesisStableIdentityV1(old),runtime.coldGenesisStableIdentityV1(phase));
+    for(const crossed of [rehash({...structuredClone(phase),schema:old.schema},"observationHash"),rehash({...structuredClone(old),schema:phase.schema},"observationHash")])assert.throws(()=>runtime.validateColdBootstrapObservationV1(crossed));
+    Reflect.set(globalThis,"__coldGenesisObservation",phase);
+    const prepared=await runtime.prepareColdSpawnerBootstrapIntentV1();
+    const actual=runtime.inspectColdIntentFixtureV1().intent;
+    assert.deepEqual(actual.coldObservation,phase);
+    assert.deepEqual(runtime.parseColdSpawnerBootstrapIntentV1(Buffer.from(canonical(actual)+"\n")),actual);
+    const crossed=structuredClone(actual);crossed.coldObservation=old;delete crossed.intentRef;rehash(crossed,"intentHash");crossed.intentRef=`setfarm://internal-production/cold-spawner-bootstrap-intent/sha256/${crossed.intentHash}`;
+    assert.notEqual(crossed.intentHash,actual.intentHash,"changing nested policy necessarily changes parent hash");
+    const epoch=JSON.parse(readFileSync(fixture.epoch,"utf8"));
+    const genesis=JSON.parse(readFileSync(path.join(fixture.root,"epoch-genesis/sha256",epoch.genesisHash.slice(0,2),epoch.genesisHash+".json"),"utf8"));
+    assert.deepEqual(genesis.coldObservation,phase,"actual retained genesis binds v2 before intent publication");
+    const claim={child:{pid:9001,processStartTimeEpochMs:1800000000000,lstart:"fixture start",command:"/fixture/node /fixture/spawner.js"},source};
+    const preMutation={schema:"setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v3",...phase.remainingServices};
+    const census=runtime.directControllerExpectedServiceCensusV1(preMutation,claim);
+    assert.equal(census.schema,"setfarm.internal-production-pre-readiness-service-census.v1");
+    runtime.assertColdControllerServiceCensusV1(actual,claim,census);
+    const ordinary=structuredClone(census);ordinary.schema="setfarm.internal-production-service-census.v1";rehash(ordinary,"censusHash");
+    assert.throws(()=>runtime.assertColdControllerServiceCensusV1(actual,claim,ordinary),/schema is crossed/);
+    assert.throws(()=>runtime.assertColdControllerServiceCensusV1({coldObservation:old},claim,census),/schema is crossed/);
+    const terminal=runtime.directControllerSettlementRecordV1(actual,{}, {}, [], {}, [],census);
+    assert.equal(terminal.schema,"setfarm.internal-production-direct-spawner-controller-settlement.v2");
+    const oldCensus=runtime.directControllerExpectedServiceCensusV1({schema:"setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2",...old.remainingServices},claim);
+    assert.equal(runtime.directControllerSettlementRecordV1(actual,{}, {}, [], {}, [],oldCensus).schema,"setfarm.internal-production-direct-spawner-controller-settlement.v1");
+    assert.equal(canonical(old),oldBytes);
+    assert.ok(prepared.intentHash);
+  } finally {fixture.isolated.closeColdIntentFixtureV1();fixture.cleanup();}
+});
+
 function coldGenesisTreeSnapshotV1(root: string): unknown[] {
   const entries: unknown[] = [];
   const visit = (target: string, relative: string) => {
@@ -2956,7 +3003,7 @@ process.stdout.write(JSON.stringify({...result,diagnostic:globalThis.__coldHelpe
     // observation is controlled, since this isolated tree is not a built Git checkout.
     const original = readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
     const tree = typescript.createSourceFile("receipt.ts", original, typescript.ScriptTarget.Latest, true);
-    const names = new Set(["canonicalComparable", "strictUtf8", "directorySnapshot", "sameDirectory", "assertDirectory", "sameRegularMetadata", "readStableRegular", "fail", "currentEntryFail", "isEnoent", "recursivelyFreeze", "requireAbsentPhasePathV1", "requireAbsentProducerLiteralV1", "assertPhaseSourceEqualV1", "observePhaseClosedZeroV1"]);
+    const names = new Set(["canonicalComparable", "strictUtf8", "directorySnapshot", "snapshotDirectoryAfterResolutionV1", "sameDirectory", "assertDirectory", "sameRegularMetadata", "readStableRegular", "fail", "currentEntryFail", "isEnoent", "recursivelyFreeze", "requireAbsentPhasePathV1", "requireAbsentProducerLiteralV1", "assertPhaseSourceEqualV1", "observePhaseClosedZeroV1"]);
     const declarations = tree.statements.filter((statement) => typescript.isFunctionDeclaration(statement) && statement.name && names.has(statement.name.text));
     assert.equal(declarations.length, names.size);
     const constantsSource = tree.statements.filter((statement) => typescript.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) => typescript.isIdentifier(declaration.name) && ["PHASE_CLOSED_FUTURE_PRODUCERS_V1", "MAX_BUILD_FILE_BYTES_V1", "UTF8"].includes(declaration.name.text)));
@@ -3324,6 +3371,8 @@ function fsyncSync(fd){if(residueFixtureChild&&residueFixtureReader!==undefined&
 export function residueFixtureOwnedCount(){return residueFixtureOwned.size;}
 `;
     }
+    if (fault.startsWith("claim-real-helper-controller-settlement")) source = source.replace('stdio: ["ignore", "ignore", "ignore", handles.frameDescriptor, 4, handles.dispatchDescriptor, "pipe"],', 'stdio: ["ignore", "ignore", "pipe", handles.frameDescriptor, 4, handles.dispatchDescriptor, "pipe"],').replace('    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;', '    let fixtureChildErrorBytes=0;child.stderr?.on("data",bytes=>{if(fixtureChildErrorBytes+bytes.length<=4096){fixtureChildErrorBytes+=bytes.length;writeFileSync(path.join(repositoryRoot(),"fixture-claim-error"),bytes,{flag:"a"});}});\n    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;');
+    if (fault.startsWith("claim-real-helper-controller-settlement")) source = source.replace('    if (readiness) { readiness.on("error", () => {}); readiness.destroy(); }', '    child?.stderr?.destroy();\n    if (readiness) { readiness.on("error", () => {}); readiness.destroy(); }');
     if (fault.startsWith("claim-real-helper")) source = source.replace('    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;', '    writeFileSync(path.join(repositoryRoot(), "fixture-spawn-pids"), String(child.pid)+"\\n", {mode:0o600,flag:"a"});\n    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;');
     if (fault.startsWith("claim-real-helper-pid-residue")) source = source.replace('    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;', `
     const fixtureStart=spawnSync('/bin/ps',['-p',String(child.pid),'-o','pid=,uid=,pgid=,lstart=,stat=,ucomm=,command='],{encoding:'utf8',timeout:2000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});
@@ -3356,6 +3405,7 @@ export function residueFixtureOwnedCount(){return residueFixtureOwned.size;}
       ${fault === "claim-real-helper-journal-aba" ? "const foreign=path.join(root,'foreign');writeFileSync(foreign,'crossed',{mode:0o600,flag:'wx'});unlinkSync(foreign);" : fault === "claim-real-helper-output-drift" ? "writeFileSync(path.join(repositoryRoot(),'dist/fixture-dependency.js'),'export const crossed = true;\\n');" : fault === "claim-real-helper-claim-replace" ? "const copied=readFileSync(target);unlinkSync(target);writeFileSync(target,copied,{mode:0o600,flag:'wx'});" : `const changed=path.join(repositoryRoot(),'.openclaw/setfarm',${JSON.stringify(fault === "claim-real-helper-pid-restore" ? "spawner.pid" : "spawner.lock")}),copied=readFileSync(changed);writeFileSync(changed,'crossed');writeFileSync(changed,copied);`}
       const stats=lstatSync(target,{bigint:true});
       writeFileSync(path.join(repositoryRoot(),'fixture-claim-replaced'),'fired');`);
+    source = source.replace('} catch { /* The durable dispatch fence remains the only retry evidence. */ }', '} catch (error) { writeFileSync(path.join(repositoryRoot(), "fixture-claim-error"), String(error instanceof Error ? error.stack : error), {flag:"a"}); /* Fixture preserves the original refusal cause. */ }');
     if (fault.startsWith("claim")) source = source
       .replace('fail("cold child host ancestry changed")', 'fail("cold child host ancestry changed: " + target)')
       .replace('} catch { revokeColdSpawnerChildRuntimeV1(); return fail("cold child claim publication is uncertain"); }', '} catch (error) { writeFileSync(path.join(repositoryRoot(), "fixture-claim-error"), String(error)); revokeColdSpawnerChildRuntimeV1(); return fail("cold child claim publication is uncertain"); }')
@@ -3498,6 +3548,8 @@ process.stdout.write(JSON.stringify({accepted:true,childPid:process.pid,helperPi
       let compiledMain = `
 import {runtimeConfig,loadRuntimeEnv} from './runtime-config.js';import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {pathToFileURL} from 'node:url';import assert from 'node:assert/strict';
 ${retirementImport.getText(tree)}
+// This copied main exercises the inherited cold protocol, whose selector is ordinary/cold rather than a fresh installation.
+const SELECTED_SPAWNER_V1=null;
 const PID_FILE=${JSON.stringify(path.join(runtime, "spawner.pid"))},LOCK_FILE=${JSON.stringify(path.join(runtime, "spawner.lock"))};
 async function resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1(){throw Error('cold child reached ordinary admission')}
 function assertOrdinarySpawnerDeploymentCutoverAdmissionV1(){throw Error('cold child reached ordinary cutover refusal')}
@@ -3652,6 +3704,7 @@ finally{if(child&&!accepted){child.kill('SIGTERM');await new Promise(resolve=>{i
 `);
     }
     if (fault.startsWith("claim-real-helper")) compile("internal-production/baseline-service-restart-helper-v1.ts", source => {
+      source = source.replace('    process.stderr.write(', `    writeFileSync(${JSON.stringify(path.join(root, "fixture-claim-error"))}, String(error instanceof Error ? error.stack : error), {flag:"a"});\n    process.stderr.write(`);
       const mode = fault.slice("claim-real-helper-controller-wire-".length);
       if (!fault.startsWith("claim-real-helper-controller-wire-")) return source;
       const coldStart = source.indexOf('  if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== undefined) {');
@@ -3814,7 +3867,7 @@ test("cold child accepts its actual helper departure after the settled parent ro
 function installColdControllerServiceCensusFixtureV1(root: string, typescript: typeof import("typescript")): void {
   const receipt = readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
   const tree = typescript.createSourceFile("receipt.ts", receipt, typescript.ScriptTarget.Latest, true);
-  const names = new Set(["fail", "currentEntryFail", "strictUtf8", "isPlainRecord", "hasExactKeys", "canonicalComparable", "recursivelyFreeze", "directorySnapshot", "sameDirectory", "assertDirectory", "sameRegularMetadata", "readStableRegular", "runPhysicalCommandV1", "parsePhysicalProcessesV1", "lsofFieldsV1", "parseProcessListenersV1", "boundedChildBytes", "boundedChildText", "detachedSetfarmServiceProfileV1", "oneLaunchctlScalarV1", "oneLaunchctlBlockV1", "launchctlEnvironmentBlockV1", "observeDetachedLaunchProjectionV1", "observeDetachedLaunchPlistV1", "parseDetachedLaunchPlistV1", "sameStableRegularV1", "observeDetachedServiceListenersV1", "observeDetachedSetfarmServiceV1"]);
+  const names = new Set(["fail", "currentEntryFail", "strictUtf8", "isPlainRecord", "hasExactKeys", "canonicalComparable", "recursivelyFreeze", "directorySnapshot", "snapshotDirectoryAfterResolutionV1", "sameDirectory", "assertDirectory", "sameRegularMetadata", "readStableRegular", "readStableRegularWithDirectoriesV1", "runPhysicalCommandV1", "parsePhysicalProcessesV1", "lsofFieldsV1", "parseProcessListenersV1", "boundedChildBytes", "boundedChildText", "detachedSetfarmServiceProfileV1", "oneLaunchctlScalarV1", "oneLaunchctlBlockV1", "launchctlEnvironmentBlockV1", "observeDetachedLaunchProjectionV1", "observeDetachedLaunchPlistV1", "parseDetachedLaunchPlistV1", "sameStableRegularV1", "observeDetachedServiceListenersV1", "observeDetachedSetfarmServiceV1"]);
   const declarations = tree.statements.filter(statement => typescript.isFunctionDeclaration(statement) && statement.name && names.has(statement.name.text));
   assert.equal(declarations.length, names.size, "ordinary census fixture extracts every named production boundary once");
   const launcher = path.join(root, ".local/bin/setfarm"), label = "com.setrox.setfarm-spawner";

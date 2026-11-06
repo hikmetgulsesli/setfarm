@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
@@ -615,8 +615,8 @@ const operation = {
   controllerSource:{sha:${JSON.stringify("2".repeat(40))},treeHash:${JSON.stringify("3".repeat(40))},buildHash:${JSON.stringify("4".repeat(64))}},
   authorityV3Migration31Audit:{authorityV3Migration31AuditRef:${JSON.stringify(`setfarm://internal-production/authority-v3-migration31-audit/sha256/${"5".repeat(64)}`)},authorityV3Migration31AuditHash:${JSON.stringify("5".repeat(64))}}
 };
-const census = {spawner:{pid:99999,processStartTimeEpochMs:1,processIdentityHash:${JSON.stringify("6".repeat(64))},serviceIdentityHash:${JSON.stringify("7".repeat(64))},generationHash:${JSON.stringify("8".repeat(64))},loadedSourceSha:operation.controllerSource.sha,loadedTreeHash:operation.controllerSource.treeHash,loadedBuildHash:operation.controllerSource.buildHash}};
-export const preMutation = {currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,preMutationLoadedRuntimeServiceAuthorityRef:${JSON.stringify(`setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${"b".repeat(64)}`)},preMutationLoadedRuntimeServiceAuthorityHash:${JSON.stringify("b".repeat(64))},spawner:{...census.spawner,processOwnerCount:1,listener:null}};
+const census = {schema:"setfarm.internal-production-service-census.v1",spawner:{pid:99999,processStartTimeEpochMs:1,processIdentityHash:${JSON.stringify("6".repeat(64))},serviceIdentityHash:${JSON.stringify("7".repeat(64))},generationHash:${JSON.stringify("8".repeat(64))},loadedSourceSha:operation.controllerSource.sha,loadedTreeHash:operation.controllerSource.treeHash,loadedBuildHash:operation.controllerSource.buildHash}};
+export const preMutation = {schema:"setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,preMutationLoadedRuntimeServiceAuthorityRef:${JSON.stringify(`setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${"b".repeat(64)}`)},preMutationLoadedRuntimeServiceAuthorityHash:${JSON.stringify("b".repeat(64))},spawner:{...census.spawner,processOwnerCount:1,listener:null}};
 const profileBody = {source:operation.controllerSource,uid:process.getuid()};
 export const profile = {...profileBody,profileHash:hashCanonicalJson(profileBody)};
 export async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(pair){directCalls.p3+=1;if(pair.operationRef!==operation.operationRef||pair.operationHash!==operation.operationHash)throw new Error("CROSSED_P3_INPUT");return structuredClone(preMutation)}
@@ -935,5 +935,119 @@ test("P4 startup authenticates every historical status against the material pref
     for (const [ordinal, status] of mutations) assert.throws(() => loaded.authenticateObservedStatusHistoryV1(status, ordinal, pairs), /historical .* crossed/);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+async function preReadinessEffectFixtureV1(version: "v1" | "v2" | "v3", dashboardLive = false) {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-pre-readiness-effect-")));
+  const internal = path.join(fixture, "src/internal-production");
+  mkdirSync(internal, {recursive:true});
+  mkdirSync(path.join(fixture,"src/product-compiler"), {recursive:true});
+  installWorkspaceLocatorFixtureV1(internal,fixture);
+  writeFileSync(path.join(fixture,"src/product-compiler/canonical-json.ts"),readFileSync(path.resolve(import.meta.dirname,"../../src/product-compiler/canonical-json.ts")));
+  const exited=spawnSync(process.execPath,["-e",""] ,{encoding:"utf8",timeout:5000});
+  assert.equal(exited.status,0);assert.ok(exited.pid);
+  let startupSource=readFileSync(sourcePath,"utf8");
+  // Controlled dependency ports, real controller branches and real private-store
+  // publications. No helper/process/SQL effect is executed by this fixture.
+  startupSource=startupSource.replace('  writeNoReplace(operationPath(operationHash, locator), pair);', '  writeNoReplace(operationPath(operationHash, locator), pair);\n  if(locator === "01-authorization" && globalThis.__preReadinessEffectFault === "after-authorization") {globalThis.__preReadinessEffectFault=null;throw Error("AFTER_AUTHORIZATION_PREFIX");}');
+  const startupFile=path.join(internal,"baseline-spawner-startup-admission-v1.ts");
+  writeFileSync(startupFile,startupSource);
+  writeFileSync(path.join(internal,"baseline-post-handoff-receipt-v1.ts"), `
+const h='a'.repeat(64),source={sha:'b'.repeat(40),treeHash:'c'.repeat(40),buildHash:'d'.repeat(64)};
+export const state={version:${JSON.stringify(version)},dashboardLive:${dashboardLive},calls:[],observationFault:null,p3Drift:false};
+export const operation={schema:'setfarm.internal-production-current-entry-operation.v1',operationRef:'setfarm://internal-production/current-entry-operation/sha256/'+h,operationHash:h,controllerSource:source,authorityV3Migration31Audit:{authorityV3Migration31AuditRef:'setfarm://internal-production/authority-v3-migration31-audit/sha256/'+h,authorityV3Migration31AuditHash:h}};
+const spawner={pid:${exited.pid},processStartTimeEpochMs:1800000000000,processIdentityHash:'1'.repeat(64),serviceIdentityHash:'2'.repeat(64),generationHash:'3'.repeat(64),loadedSourceSha:source.sha,loadedTreeHash:source.treeHash,loadedBuildHash:source.buildHash,processOwnerCount:1,listener:null};
+export const preMutation={schema:'setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.'+state.version,currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,preMutationLoadedRuntimeServiceAuthorityRef:'setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/'+h,preMutationLoadedRuntimeServiceAuthorityHash:h,spawner};
+export const legacy={observationRef:'setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/'+h,observationHash:h,cleanSetfarmSourceSha:source.sha,cleanSetfarmTreeHash:source.treeHash,cleanSetfarmBuildHash:source.buildHash,observedSpawnerGenerationHash:spawner.generationHash};
+export async function observePreparedInternalProductionCurrentEntryOperationV1(){return operation}
+export async function resolveInternalProductionCurrentEntryOperationV1(pair){if(pair.operationRef!==operation.operationRef||pair.operationHash!==operation.operationHash)throw Error('CROSSED_OPERATION');return operation}
+export async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(pair){state.calls.push('p3');if(pair.operationRef!==operation.operationRef||pair.operationHash!==operation.operationHash)throw Error('CROSSED_P3_INPUT');return structuredClone(preMutation)}
+async function census(kind){state.calls.push(kind);if(state.observationFault)throw Error(state.observationFault);if(kind==='ordinary'&&!state.dashboardLive)throw Error('ORDINARY_DASHBOARD_ABSENT');if(kind==='phase'&&state.dashboardLive)throw Error('PHASE_DASHBOARD_PRESENT');if(state.p3Drift)preMutation.preMutationLoadedRuntimeServiceAuthorityHash='e'.repeat(64);return {schema:kind==='phase'?'setfarm.internal-production-pre-readiness-service-census.v1':'setfarm.internal-production-service-census.v1',spawner:{...spawner}}}
+export async function observeInternalProductionServiceCensusV1(){return census('ordinary')}
+export async function observeInternalProductionPreReadinessServiceCensusV1(){return census('phase')}
+export async function observeInternalProductionLegacyPreManifestZeroOwnerV1(){return legacy}
+export async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){return legacy}
+export async function observeInternalProductionCurrentEntryAuthorityStatusV1(){return state.currentEntry}
+export async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){const {hashCanonicalJson}=await import('../product-compiler/canonical-json.js');const body={source,uid:process.getuid()};return {profile:{...body,profileHash:hashCanonicalJson(body)}}}
+`);
+  writeFileSync(path.join(internal,"baseline-restart-authority-retirement-v1.ts"), `
+export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){return {fixture:'lease'}}
+export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){}
+export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(){const receipt=await import('./baseline-post-handoff-receipt-v1.js');receipt.state.observationFault='REPLACEMENT_CENSUS_BOUNDARY';}
+`);
+  const startup=await import(pathToFileURL(startupFile).href);
+  const receipt=await import(pathToFileURL(path.join(internal,"baseline-post-handoff-receipt-v1.ts")).href);
+  return {fixture,internal,startup,receipt,close(){Reflect.deleteProperty(globalThis,"__preReadinessEffectFault");rmSync(fixture,{recursive:true,force:true});}};
+}
+
+test("pre-readiness actual authorization and recovery census callees select authenticated P3 v3 without ordinary fallback", async () => {
+  for(const version of ["v1","v2","v3"] as const) {
+    const f=await preReadinessEffectFixtureV1(version,version!=="v3");
+    try {
+      const authorization=await f.startup.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1();
+      assert.ok(authorization.authorizationHash);
+      assert.equal(f.receipt.state.calls.includes(version==="v3"?"phase":"ordinary"),true);
+      assert.equal(f.receipt.state.calls.includes(version==="v3"?"ordinary":"phase"),false);
+      f.receipt.state.calls.length=0;
+      Reflect.set(globalThis,"__preReadinessEffectFault","after-authorization");
+      await assert.rejects(f.startup.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization),/AFTER_AUTHORIZATION_PREFIX/);
+      f.receipt.state.calls.length=0;
+      await assert.rejects(f.startup.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization),/REPLACEMENT_CENSUS_BOUNDARY/);
+      const expected=version==="v3"?"phase":"ordinary";
+      assert.ok(f.receipt.state.calls.filter((value:string)=>value===expected).length>=2,"actual persisted-predecessor and replacement branches each observe the selected census");
+      assert.equal(f.receipt.state.calls.includes(version==="v3"?"ordinary":"phase"),false);
+      f.receipt.state.observationFault=null;f.receipt.state.calls.length=0;f.receipt.state.dashboardLive=version==="v3";
+      await assert.rejects(f.startup.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1(),version==="v3"?/PHASE_DASHBOARD_PRESENT/:/ORDINARY_DASHBOARD_ABSENT/);
+      assert.equal(f.receipt.state.calls.includes(version==="v3"?"ordinary":"phase"),false,"refused exact mode never falls back to the other observer");
+    } finally {f.close();}
+  }
+  const f=await preReadinessEffectFixtureV1("v3");
+  try {
+    f.receipt.preMutation.currentEntryOperationHash='f'.repeat(64);
+    await assert.rejects(f.startup.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1(),/operation.*crossed|P3.*crossed/i);
+    assert.equal(f.receipt.state.calls.includes('phase'),false);
+    f.receipt.preMutation.currentEntryOperationHash=f.receipt.operation.operationHash;
+    f.receipt.state.p3Drift=true;
+    await assert.rejects(f.startup.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1(),/P3.*changed|history.*changed/i);
+    assert.equal(f.receipt.state.calls.includes('ordinary'),false);
+  } finally {f.close();}
+});
+
+test("pre-readiness actual sealed admission transition uses the authenticated P3 census before publishing readiness", async () => {
+  for(const version of ["v1","v2","v3"] as const) {
+    const f=await preReadinessEffectFixtureV1(version,version!=="v3");
+    try {
+      const h="a".repeat(64),pair=(stem:string,domain:string)=>({[stem+"Ref"]:`setfarm://internal-production/${domain}/sha256/${h}`,[stem+"Hash"]:h});
+      const status={state:"pre_manifest_bootstrap_sealed",currentEntryOperation:{operationRef:f.receipt.operation.operationRef,operationHash:h},authorization:pair("authorization","pre-schema-spawner-rebind-authorization"),startupToken:pair("startupToken","pre-schema-spawner-startup-token"),restartAuthority:pair("restartAuthority","pre-schema-spawner-restart-authority"),dispatchPrefix:{phase:"replacement_observed",predecessorTerminationObservation:pair("predecessorTerminationObservation","pre-schema-spawner-predecessor-termination-observation"),replacementProcessObservation:pair("replacementProcessObservation","pre-schema-spawner-replacement-process-observation")},sealedAdmission:pair("sealedAdmission","pre-schema-spawner-sealed-admission"),admissionReady:null};
+      f.receipt.state.currentEntry={state:"spawner_admission_transitioning",operationRef:f.receipt.operation.operationRef,operationHash:h,migrationApplyingPhase:{migrationReceipt:pair("migrationReceipt","baseline-bootstrap-handoff-migration-receipt"),currentAudit:pair("bootstrapHandoffCurrentAudit","bootstrap-handoff-current-audit")},manifestActivation:{ownerProducerManifestActivationRef:`setfarm://internal-production/owner-producer-manifest-set-activation/sha256/${h}`,ownerProducerManifestActivationHash:h,ownerProducerManifestHeadRef:`setfarm://internal-production/owner-producer-manifest-set-activation-head/sha256/${h}`,ownerProducerManifestHeadHash:h},spawnerAdmissionTransitionPhase:{phase:"sealed"}};
+      writeFileSync(path.join(f.internal,"transition-startup-fixture.ts"), `
+import {readFileSync} from 'node:fs';import path from 'node:path';import {hashCanonicalJson} from '../product-compiler/canonical-json.js';
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){return ${JSON.stringify(status)}}
+export async function resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1(){return {currentSpawnerGenerationHash:'3'.repeat(64)}}
+export async function observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1(pair){const actual=await import('./baseline-spawner-startup-admission-v1.js');return actual.observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1(pair)}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){const file=path.join(${JSON.stringify(f.fixture)},'data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256',pair.admissionReadyHash.slice(0,2),pair.admissionReadyHash+'.json');const value=JSON.parse(readFileSync(file,'utf8'));const {admissionReadyRef,admissionReadyHash,...body}=value;if(hashCanonicalJson(body)!==admissionReadyHash||admissionReadyRef!==pair.admissionReadyRef)throw Error('CROSSED_PUBLISHED_READY');return pair}
+`);
+      writeFileSync(path.join(f.fixture,"src/db-pg.ts"), `export async function verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1(){return {verificationHash:'a'.repeat(64)}}\nexport async function initializeInternalProductionCurrentEntryDatabaseV1(){return {state:'ready'}}\n`);
+      const spawnerSource=readFileSync(path.resolve(import.meta.dirname,"../../src/spawner.ts"),"utf8");
+      const tree=ts.createSourceFile("spawner.ts",spawnerSource,ts.ScriptTarget.Latest,true);
+      const fn=tree.statements.find(statement=>ts.isFunctionDeclaration(statement)&&statement.name?.text==="transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1");assert.ok(fn);
+      const body=fn.getText(tree).replace('./internal-production/baseline-spawner-startup-admission-v1.js','./internal-production/transition-startup-fixture.js');
+      writeFileSync(path.join(f.fixture,"src/transition.ts"), `import {mkdirSync,writeFileSync} from 'node:fs';import path from 'node:path';import {hashCanonicalJson as task12HashV1} from './product-compiler/canonical-json.js';import {resolveInternalProductionBaselineAuthorityPathV1} from './internal-production/baseline-workspace-authority-path-v1.js';
+function task12WriteNoReplaceV1(target,value){mkdirSync(path.dirname(target),{recursive:true,mode:0o700});writeFileSync(target,JSON.stringify(value)+'\\n',{mode:0o600,flag:'wx'})}
+${body}`);
+      const transition=await import(pathToFileURL(path.join(f.fixture,"src/transition.ts")).href);
+      f.receipt.state.currentEntry.operationHash="f".repeat(64);
+      await assert.rejects(transition.transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1(),/CURRENT_ENTRY_OPERATION_CROSSED/);
+      assert.deepEqual(f.receipt.state.calls,[],"crossed current operation cannot reach either census");
+      f.receipt.state.currentEntry.operationHash=h;
+      const result=await transition.transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1();
+      assert.match(result.admissionReadyHash,/^[a-f0-9]{64}$/);
+      const kinds=f.receipt.state.calls.filter((value:string)=>value==="ordinary"||value==="phase");
+      assert.deepEqual(kinds,[version==="v3"?"phase":"ordinary"]);
+      const published=JSON.parse(readFileSync(path.join(f.fixture,"data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256",result.admissionReadyHash.slice(0,2),result.admissionReadyHash+".json"),"utf8"));
+      assert.equal(published.unchangedSpawnerGenerationHash,"3".repeat(64));
+      assert.equal(published.normalDatabaseInitializationStatus,"ready");
+    } finally {f.close();}
   }
 });

@@ -11460,10 +11460,11 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
   const currentEntry = await receipt.observeInternalProductionCurrentEntryAuthorityStatusV1();
   if (currentEntry.state !== "spawner_admission_transitioning" || !currentEntry.migrationApplyingPhase || !currentEntry.manifestActivation) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_CURRENT_ENTRY_NOT_VERIFIED");
+  if (currentEntry.operationRef !== status.currentEntryOperation.operationRef || currentEntry.operationHash !== status.currentEntryOperation.operationHash) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_CURRENT_ENTRY_OPERATION_CROSSED");
   const db = await import("./db-pg.js");
   const verification = await db.verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1();
   const initialization = await db.initializeInternalProductionCurrentEntryDatabaseV1();
-  const census = await receipt.observeInternalProductionServiceCensusV1();
+  const census = await startup.observeInternalProductionPreSchemaSpawnerEffectServiceCensusV1(status.currentEntryOperation);
   const sealed = await startup.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1({ sealedAdmissionRef: status.sealedAdmission.sealedAdmissionRef, sealedAdmissionHash: status.sealedAdmission.sealedAdmissionHash });
   if (census.spawner.generationHash !== sealed.currentSpawnerGenerationHash) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_GENERATION_CHANGED");
   const migration = currentEntry.migrationApplyingPhase as Record<string, unknown>;
