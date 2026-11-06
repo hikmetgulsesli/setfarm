@@ -123,7 +123,7 @@ import {
   createV3NormalImplementationPreclaim,
 } from "../execution/v3-normal-implementation-preclaim.js";
 import { captureV3GitCommitRevision, resolveV3GitRevision } from "../execution/v3-git-revision.js";
-import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
+import { createRuntimeArtifactReader, type ExactSealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import type { EvidenceBundleV2 } from "../evidence/evidence-bundle-v2.js";
 import {
   INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
@@ -254,7 +254,7 @@ export { failStep } from "./step-fail.js";
 // ── Imports from extracted modules (used internally) ──
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes, pruneContextForStep } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAcceptanceCriteria, parseAndInsertStories } from "./story-ops.js";
-import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch, ensureStoryBranchWorktree, discardDirtyRetryWorktreeState } from "./worktree-ops.js";
+import { createStoryWorktree, prepareNativeImplementationDependencies, writeStoryScopeSnapshot, NativeImplementationAssetError, removeStoryWorktree, findWorktreeDir, syncBaseBranch, ensureStoryBranchWorktree, discardDirtyRetryWorktreeState } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { isVerifyRetryInfraFailure, isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
@@ -1422,9 +1422,7 @@ function syncStoryScopeContext(
   if (storyWorkdir && scopeFiles.length > 0) {
     try {
       const allAllowed = [...new Set([...scopeFiles, ...getImplicitScopeFiles(storyWorkdir)])];
-      const scopePath = path.join(storyWorkdir, ".story-scope-files");
-      fs.writeFileSync(scopePath, allAllowed.join("\n") + "\n");
-      try { fs.chmodSync(scopePath, 0o664); } catch { /* best effort */ }
+      writeStoryScopeSnapshot(storyWorkdir, allAllowed);
       cleanupOutOfScopeWorktreeFiles(
         storyWorkdir,
         allAllowed,
@@ -1432,6 +1430,7 @@ function syncStoryScopeContext(
         runId,
       );
     } catch (e) {
+      if (e instanceof NativeImplementationAssetError) throw e;
       logger.debug(`[scope-sync] Could not write story scope sidecar: ${String(e).slice(0, 120)}`);
     }
   }
@@ -5338,8 +5337,19 @@ async function claimV3RecoveryWork(
     return { found: false };
   }
 
+  let recoveryPacket: ExactSealedRuntimePacket;
+  try {
+    recoveryPacket = await createRuntimeArtifactReader({ sql: getSql(), artifactRoot: resolveProductArtifactDir(),
+      artifactLimits: resolveProductArtifactCapacity() }).readExactSealedPacket(step.run_id);
+    if (recoveryPacket.packetHash !== handoff.directive.packetHash) throw new Error("V3_RECOVERY_PACKET_MISMATCH");
+  } catch (error) {
+    await recordRecoveryPreparationFailure(work, "V3_RECOVERY_SOURCE_CAPTURE_FAILED",
+      `Could not authenticate recovery packet before worktree preparation: ${String(error).slice(0, 500)}`);
+    return { found: false };
+  }
   const storyBranch = recoveryBranchName(work);
-  const storyWorkdir = createStoryWorktree(repo, storyBranch, baseRef, agentId);
+  const storyWorkdir = createStoryWorktree(repo, storyBranch, baseRef, agentId,
+    "implementationSourceMap" in recoveryPacket ? "native-implementation" : undefined);
   if (!storyWorkdir) {
     await recordRecoveryPreparationFailure(
       work,
@@ -5350,10 +5360,6 @@ async function claimV3RecoveryWork(
   }
   let observedSource: Awaited<ReturnType<typeof captureShadowSourceRevision>>;
   try {
-    const recoveryPacket = await createRuntimeArtifactReader({ sql: getSql(),
-      artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity(),
-    }).readExactSealedPacket(step.run_id);
-    if (recoveryPacket.packetHash !== handoff.directive.packetHash) throw new Error("V3_RECOVERY_PACKET_MISMATCH");
     if ("implementationSourceMap" in recoveryPacket) {
       resolveV3GitRevision({ repo: storyWorkdir, requestedRef: "HEAD", expectedSha: baseRef });
       const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
@@ -8401,7 +8407,8 @@ export async function claimStep(
       if (runProtocol?.protocol !== "v3" && isPrEach && context["repo"]) {
         syncBaseBranch(context["repo"], "main");
       }
-      let storyWorkdir = createStoryWorktree(context["repo"], storyBranch, baseRef, agentId);
+      let storyWorkdir = createStoryWorktree(context["repo"], storyBranch, baseRef, agentId,
+        v3NativePreparationAuthority ? "native-implementation" : undefined);
       let worktreeFailureDetail = "";
       if (storyWorkdir && runProtocol?.protocol === "v3") {
         try {
@@ -8446,8 +8453,10 @@ export async function claimStep(
       context["story_workdir"] = storyWorkdir;
       context["story_base_ref"] = baseRef;
 
-      // Verify node_modules symlink is intact after worktree creation
-      if (storyWorkdir) {
+      // Native copies retain their producer custody; legacy callers retain the symlink repair.
+      if (storyWorkdir && v3NativePreparationAuthority) {
+        prepareNativeImplementationDependencies(context["repo"], storyWorkdir);
+      } else if (storyWorkdir) {
         const nmLink = path.join(storyWorkdir, "node_modules");
         const nmSource = path.join(context["repo"] || "", "node_modules");
         try {
@@ -9394,7 +9403,8 @@ export async function completeStep(
             || findWorktreeDir(context["repo"], recoveredStory.story_id, step.agent_id)
             || "";
           if (!storyWorkdir && storyBranch) {
-            storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["story_base_ref"] || "main", step.agent_id);
+            storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["story_base_ref"] || "main", step.agent_id,
+              nativeV3AttemptContext?.kind === "native-dispatch-ready" ? "native-implementation" : undefined);
           }
         }
         context["story_branch"] = storyBranch;

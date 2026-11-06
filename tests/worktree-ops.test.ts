@@ -4,8 +4,9 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { inspectSubscriptionCodingWorktreeV1 } from "../src/execution/subscription-coding-worker-v1.js";
 
-import { applyScopedRetryPatchForStory, copyStitchToWorktree, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
+import { writeStoryScopeSnapshot, applyScopedRetryPatchForStory, copyStitchToWorktree, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
 import { produceProductSpecV1 } from "../src/product-compiler/producers/product-spec.js";
 import { produceDesignGenerationTargetsV1 } from "../src/product-compiler/producers/design-targets.js";
 import {
@@ -105,6 +106,94 @@ function writeValidStitchV2Authority(repo: string): void {
 }
 
 describe("worktree operations", () => {
+  it("prepares private native implementation dependencies for the unchanged worker inspector and preserves legacy assets", () => {
+    const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-private-native-assets-")));
+    const origin = path.join(tmp, "origin.git");
+    const repo = path.join(tmp, "repo");
+    try {
+      git(tmp, ["init", "--bare", "--initial-branch=main", origin]);
+      git(tmp, ["clone", origin, repo]);
+      git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+      git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\n.worktrees/\n.setfarm/\n");
+      fs.writeFileSync(path.join(repo, "README.md"), "private native assets fixture\n");
+      git(repo, ["add", ".gitignore", "README.md"]);
+      git(repo, ["commit", "-m", "base"]);
+      git(repo, ["push", "origin", "main"]);
+      const baseSha = git(repo, ["rev-parse", "HEAD"]);
+      const dependencies = path.join(repo, "node_modules");
+      fs.mkdirSync(path.join(dependencies, "tiny", "bin"), { recursive: true });
+      fs.mkdirSync(path.join(dependencies, ".bin"));
+      const sourceFile = path.join(dependencies, "tiny", "index.cjs");
+      const sourceBytes = "module.exports = 'original dependency';\n";
+      fs.writeFileSync(sourceFile, sourceBytes);
+      fs.linkSync(sourceFile, path.join(dependencies, "tiny", "alias.cjs"));
+      fs.writeFileSync(path.join(dependencies, "tiny", "bin", "cli.cjs"), "#!/usr/bin/env node\n", { mode: 0o755 });
+      fs.symlinkSync("../tiny/bin/cli.cjs", path.join(dependencies, ".bin", "tiny"));
+      const sourceIdentity = fs.statSync(sourceFile);
+      assert.equal(sourceIdentity.nlink, 2);
+
+      const legacy = createStoryWorktree(repo, "legacy-assets", baseSha);
+      assert.ok(legacy);
+      assert.equal(fs.lstatSync(path.join(legacy, "node_modules")).isSymbolicLink(), true);
+      assert.equal(fs.realpathSync(path.join(legacy, "node_modules")), dependencies);
+
+      // Reflect.apply keeps the old producer callable for an honest behavioral
+      // RED: its existing implementation ignores the optional native choice.
+      const native: string = Reflect.apply(createStoryWorktree, undefined,
+        [repo, "native-assets", baseSha, undefined, "native-implementation"]);
+      assert.ok(native);
+      writeStoryScopeSnapshot(native, ["README.md"]);
+      assert.equal(fs.readFileSync(path.join(native, ".story-scope-files"), "utf8"), "README.md\n");
+      assert.equal(fs.statSync(path.join(native, ".story-scope-files")).mode & 0o7777, 0o600);
+      assert.doesNotThrow(() => inspectSubscriptionCodingWorktreeV1(native, []));
+      const nativeDependencies = path.join(native, "node_modules");
+      assert.equal(fs.lstatSync(nativeDependencies).isDirectory(), true);
+      assert.equal(fs.lstatSync(nativeDependencies).isSymbolicLink(), false);
+      const copied = path.join(nativeDependencies, "tiny", "index.cjs");
+      const copiedAlias = path.join(nativeDependencies, "tiny", "alias.cjs");
+      const copiedIdentity = fs.statSync(copied);
+      assert.equal(copiedIdentity.nlink, 1);
+      assert.equal(fs.statSync(copiedAlias).nlink, 1);
+      assert.notEqual(copiedIdentity.ino, sourceIdentity.ino);
+      assert.notEqual(copiedIdentity.ino, fs.statSync(copiedAlias).ino);
+      assert.equal(fs.readFileSync(copied, "utf8"), sourceBytes);
+      assert.equal(fs.readlinkSync(path.join(nativeDependencies, ".bin", "tiny")), "../tiny/bin/cli.cjs");
+      assert.equal(fs.statSync(path.join(nativeDependencies, "tiny", "bin", "cli.cjs")).mode & 0o111, 0o111);
+      const reused: string = Reflect.apply(createStoryWorktree, undefined,
+        [repo, "native-assets", baseSha, undefined, "native-implementation"]);
+      assert.equal(reused, native);
+      assert.equal(fs.statSync(copied).ino, copiedIdentity.ino);
+      assert.doesNotThrow(() => inspectSubscriptionCodingWorktreeV1(reused, []));
+      const marker = path.join(native, ".setfarm", "native-dependency-custody.json");
+      assert.equal(fs.statSync(marker).mode & 0o7777, 0o600);
+      assert.equal(git(native, ["status", "--porcelain"]), "");
+      fs.writeFileSync(copied, "private change\n");
+      assert.equal(fs.readFileSync(sourceFile, "utf8"), sourceBytes);
+      assert.equal(fs.readFileSync(copiedAlias, "utf8"), sourceBytes);
+      assert.equal(fs.statSync(sourceFile).nlink, 2);
+      assert.equal(git(repo, ["rev-parse", "HEAD"]), baseSha);
+      assert.equal(git(native, ["rev-parse", "HEAD"]), baseSha);
+      assert.throws(() => Reflect.apply(createStoryWorktree, undefined,
+        [repo, "native-assets", baseSha, undefined, "native-implementation"]), /NATIVE_IMPLEMENTATION_ASSETS_REFUSED/);
+      assert.equal(fs.readFileSync(copied, "utf8"), "private change\n");
+      const unknown = createStoryWorktree(repo, "unknown-assets", baseSha);
+      fs.unlinkSync(path.join(unknown, "node_modules"));
+      fs.mkdirSync(path.join(unknown, "node_modules"));
+      fs.writeFileSync(path.join(unknown, "node_modules", "sentinel"), "unknown bytes\n");
+      assert.throws(() => Reflect.apply(createStoryWorktree, undefined,
+        [repo, "unknown-assets", baseSha, undefined, "native-implementation"]), /NATIVE_IMPLEMENTATION_ASSETS_REFUSED/);
+      assert.equal(fs.readFileSync(path.join(unknown, "node_modules", "sentinel"), "utf8"), "unknown bytes\n");
+      fs.mkdirSync(path.join(repo, ".setfarm"), { recursive: true });
+      fs.writeFileSync(path.join(repo, ".setfarm", "outside.cjs"), "outside dependency\n");
+      fs.symlinkSync("../../.setfarm/outside.cjs", path.join(dependencies, ".bin", "escape"));
+      assert.throws(() => Reflect.apply(createStoryWorktree, undefined,
+        [repo, "escaping-assets", baseSha, undefined, "native-implementation"]), /NATIVE_IMPLEMENTATION_ASSETS_REFUSED/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("replaces stale worktree Stitch bytes when v2 output authority exists", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-v2-copy-"));
     const repo = path.join(tmp, "repo");
