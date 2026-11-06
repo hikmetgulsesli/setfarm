@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { types } from 'node:util';
+import { buildSubscriptionScopedFilePluginV1, SUBSCRIPTION_SCOPED_FILE_PLUGIN_ID_V1 } from './subscription-coding-scoped-file-tools-v1.js';
 import { buildSubscriptionCodingMaterialV1, type SubscriptionCodingMaterialV1 } from './subscription-coding-policy-v1.js';
 import type { SubscriptionAttemptIdentityV1 } from './subscription-attempt-launch-material-v1.js';
 import type { ProcessIdentityV1 } from './schemas/process-identity-v1.js';
@@ -143,9 +144,21 @@ export function narrowSubscriptionCodingWorkerMaterialV1(input: Readonly<{
     const seed = validateSubscriptionCodingWorkerMaterialV1(value.material);
     const scope = mutationScope(seed.material.cwd, value.writeGrants, value.readOnlyControlPaths);
     const config = JSON.parse(seed.material.files[0].contents);
-    config.tools.allow = scope.writeGrants.length ? ['read', 'write', 'edit'] : ['read'];
-    const material = freeze({ ...seed.material, files: seed.material.files.map((file, index) =>
-      index === 0 ? { ...file, contents: JSON.stringify(config, null, 2) + '\n' } : { ...file }) });
+    const pluginDirectory = seed.root + '/scoped-files';
+    const plugin = scope.writeGrants.length ? buildSubscriptionScopedFilePluginV1({
+      privateRoot: seed.root, worktree: seed.material.cwd, grants: scope.writeGrants, controls: scope.readOnlyControlPaths,
+    }) : undefined;
+    config.tools.allow = plugin ? ['read', 'setfarm_write', 'setfarm_edit'] : ['read'];
+    if (plugin) config.plugins = { enabled: true, allow: [SUBSCRIPTION_SCOPED_FILE_PLUGIN_ID_V1],
+      load: { paths: [pluginDirectory] }, slots: { memory: 'none', contextEngine: 'none' }, bundledDiscovery: 'allowlist', entries: { [SUBSCRIPTION_SCOPED_FILE_PLUGIN_ID_V1]: { enabled: true } } };
+    const pluginFiles = plugin ? [
+      { path: pluginDirectory + '/openclaw.plugin.json', mode: 0o600 as const, contents: plugin.manifest },
+      { path: pluginDirectory + '/index.mjs', mode: 0o600 as const, contents: plugin.source },
+    ] : [];
+    const material = freeze({ ...seed.material,
+      directories: plugin ? [...seed.material.directories, pluginDirectory] : [...seed.material.directories],
+      files: [...seed.material.files.map((file, index) =>
+        index === 0 ? { ...file, contents: JSON.stringify(config, null, 2) + '\n' } : { ...file }), ...pluginFiles] });
     return freeze({ material, root: seed.root, brokerPort: seed.brokerPort, capability: seed.capability,
       ...scope, materialHash: subscriptionCodingHashV1(JSON.stringify({
         material, writeGrants: scope.writeGrants, readOnlyControlPaths: scope.readOnlyControlPaths,
@@ -269,7 +282,14 @@ export function buildSubscriptionCodingProbeChallengeV1(input: Readonly<{
       || value.preloadPath !== value.profilePath.slice(0, -'/profile.sb'.length) + '/fixed-gate.mjs'
       || ![value.argvHash, value.environmentHash].every(hash => /^[a-f0-9]{64}$/.test(hash))
       || !Number.isInteger(value.brokerPort) || value.brokerPort < 1 || value.brokerPort > 65535
-      || [3080, 3333, 18789].includes(value.brokerPort) || !Array.isArray(value.files) || value.files.length !== 3) refuse();
+      || [3080, 3333, 18789].includes(value.brokerPort) || !Array.isArray(value.files)
+      || (value.files.length !== 3 && value.files.length !== 5)) refuse();
+    if (value.files.length === 5) {
+      const root = value.profilePath.slice(0, -'/profile.sb'.length);
+      const suffixes = ['/config.json', '/state/agents/subscription-worker/agent/auth-profiles.json',
+        '/state/agents/main/agent/auth-profiles.json', '/scoped-files/openclaw.plugin.json', '/scoped-files/index.mjs'];
+      if (value.files.some((file, index) => file.path !== root + suffixes[index])) refuse();
+    }
     for (const file of value.files) {
       exact(file, ['path', 'hash']);
       if (!subscriptionCodingCanonicalPathV1(file.path) || !/^[a-f0-9]{64}$/.test(file.hash)) refuse();

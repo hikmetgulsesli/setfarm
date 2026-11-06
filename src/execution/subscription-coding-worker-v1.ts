@@ -22,6 +22,8 @@ import { SUBSCRIPTION_CODING_SANDBOX_POLICY_MAX_BYTES_V1, buildSubscriptionCodin
 
 import { captureSubscriptionCodingNodeLibrariesV1, type SubscriptionCodingNodeLibrariesV1 } from './subscription-coding-node-libraries-v1.js';
 
+import { SUBSCRIPTION_SCOPED_FILE_SDK_ROOT_V1, SUBSCRIPTION_SCOPED_FILE_SDK_LEAVES_V1 } from './subscription-coding-scoped-file-tools-v1.js';
+
 const refuse: () => never = subscriptionCodingWorkerRefusedV1;
 const SDK_ROOT = '/opt/homebrew/lib/node_modules/openclaw';
 const SANDBOX = '/usr/bin/sandbox-exec';
@@ -352,7 +354,8 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     const policy = buildSubscriptionCodingSandboxPolicyV1({ ...lexical, gitControlPaths: gitPaths });
     const policyHash = subscriptionCodingHashV1(policy), preloadHash = subscriptionCodingHashV1(SUBSCRIPTION_CODING_WORKER_PRELOAD_V1);
     const publicPaths = [nodePath, SANDBOX, entryPath, sdkRoot + '/package.json',
-      sdkRoot + '/dist/entry.js', sdkRoot + '/dist/cli/run-main.js'];
+      sdkRoot + '/dist/entry.js', sdkRoot + '/dist/cli/run-main.js',
+      ...(material.files.length === 5 ? SUBSCRIPTION_SCOPED_FILE_SDK_LEAVES_V1.map(leaf => SUBSCRIPTION_SCOPED_FILE_SDK_ROOT_V1 + '/' + leaf) : [])];
     const ancestorPaths = new Set<string>();
     for (const path of publicPaths) {
       let parent = dirname(path);
@@ -368,6 +371,11 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     const packageData = JSON.parse(readSmall(sdkRoot + '/package.json', 262144, publicRuntimeDirectory));
     if (packageData.name !== 'openclaw' || packageData.version !== '2026.5.20'
       || packageData.engines?.node !== '>=22.19.0' || dirname(entryPath) !== sdkRoot) refuse();
+    if (material.files.length === 5) {
+      const codingPackage = JSON.parse(readSmall(SUBSCRIPTION_SCOPED_FILE_SDK_ROOT_V1 + '/package.json', 262144, publicRuntimeDirectory));
+      if (codingPackage.name !== '@earendil-works/pi-coding-agent' || codingPackage.version !== '0.75.4'
+        || codingPackage.exports?.['.']?.import !== './dist/index.js') refuse();
+    }
     createPrivateDirectory(root);
     for (const directory of material.directories) createPrivateDirectory(directory);
     const sdkTempDirectory = prepareSubscriptionCodingSdkTempDirectoryV1(root);
