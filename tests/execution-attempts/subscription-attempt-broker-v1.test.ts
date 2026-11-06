@@ -82,8 +82,10 @@ for (const [modelRef, modelId, url, path] of [
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
     received.push(Buffer.concat(chunks)); res.setHeader('content-type', 'application/json');
     res.setHeader('x-provider-secret', 'discard'); res.end(message(modelId));
-  }, { modelRef });
-  const content = body(modelId, { thinking: { type: 'enabled', budget_tokens: 32 },
+  }, { modelRef, ...(modelRef === 'minimax/MiniMax-M3.1-Flash'
+    ? { limits: { ...limits, maxOutputTokens: 8192, maxTotalOutputTokens: 524288 } } : {}) });
+  const content = body(modelId, { max_tokens: modelRef === 'minimax/MiniMax-M3.1-Flash' ? 8192 : 128,
+    thinking: { type: 'enabled', budget_tokens: modelRef === 'minimax/MiniMax-M3.1-Flash' ? 7168 : 32 },
     messages: [{ role: 'assistant', content: [{ type: 'thinking', thinking: 'reason', signature: 'sig123' },
       { type: 'tool_use', id: 'tool-1', name: 'read', input: { path: 'a' } }] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'read result' }] }] });
@@ -93,13 +95,17 @@ for (const [modelRef, modelId, url, path] of [
     assert.equal(await response.text(), message(modelId));
   }
   assert.equal(f.calls.length, 2);
+  const expectedContent = modelRef === 'minimax/MiniMax-M3.1-Flash'
+    ? JSON.stringify({ ...JSON.parse(content), thinking: { type: 'adaptive' }, output_config: { effort: 'medium' } })
+    : content;
   for (const request of f.calls) {
     assert.equal(request.url, url); assert.equal(request.path, path);
     assert.equal(request.headers.authorization, `Bearer ${f.fakeCredential}`);
     assert.ok(!JSON.stringify(request.headers).includes(f.broker.worker.apiKey));
-    assert.deepEqual(request.body, Buffer.from(content));
+    assert.deepEqual(request.body, Buffer.from(expectedContent));
+    assert.equal(request.headers['content-length'], String(Buffer.byteLength(expectedContent)));
   }
-  assert.deepEqual(received, [Buffer.from(content), Buffer.from(content)]);
+  assert.deepEqual(received, [Buffer.from(expectedContent), Buffer.from(expectedContent)]);
   const stop1 = f.broker.stop('completed'); assert.equal(stop1, f.broker.stop('owner-abort'));
   assert.equal(stop1, f.broker.closed);
   assert.deepEqual(await stop1, { status: 'closed', reason: 'completed', acceptedRequests: 2,
@@ -131,10 +137,12 @@ test('fixed PLAN profile projects only MiniMax adaptive low wire fields and exac
   assert.equal((await f.broker.stop('completed')).acceptedRequests,2);
 });
 
-test('PLAN projection rechecks the same request-byte ceiling before upstream or token reservation',async t=>{
+for (const profile of [undefined, 'plan-report-v1'] as const)
+test(`${profile ?? 'ordinary MiniMax'} projection rechecks the same request-byte ceiling before upstream or token reservation`,async t=>{
   const content=body(),originalBytes=Buffer.byteLength(content);
-  assert.ok(Buffer.byteLength(JSON.stringify({...JSON.parse(content),thinking:{type:'adaptive'},output_config:{effort:'low'}}))>originalBytes);
-  const f=await fixture(t,(_req,res)=>res.end('unexpected'),{requestProfile:'plan-report-v1',limits:{...limits,maxRequestBytes:originalBytes}});
+  const effort=profile==='plan-report-v1'?'low':'medium';
+  assert.ok(Buffer.byteLength(JSON.stringify({...JSON.parse(content),thinking:{type:'adaptive'},output_config:{effort}}))>originalBytes);
+  const f=await fixture(t,(_req,res)=>res.end('unexpected'),{...(profile?{requestProfile:profile}:{}),limits:{...limits,maxRequestBytes:originalBytes}});
   await fixedError(await call(f.broker,content),413,'BYTES');
   assert.equal(f.calls.length,0);const receipt=await f.broker.closed;
   assert.equal(receipt.acceptedRequests,0);assert.equal(receipt.responseBytes,0);
@@ -186,6 +194,7 @@ test('strict constructors reject overrides, invalid limits/ids/credentials and p
 });
 
 for (const [name, content, status, code, path, method] of [
+  ['ordinary worker effort override', body(undefined, { output_config: { effort: 'low' } }), 400, 'MALFORMED'],
   ['wrong model', body('other'), 403, 'MODEL_REJECTED'],
   ['unknown root field', body(undefined, { secret: true }), 400, 'MALFORMED'],
   ['empty messages', body(undefined, { messages: [] }), 400, 'MALFORMED'],
