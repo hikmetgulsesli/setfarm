@@ -82,7 +82,7 @@ function envelopeHash(artifactType: string, payload: unknown): string {
   return hashCanonicalJson(semanticEnvelope(artifactType, payload));
 }
 
-function strictStitchProductSpec() {
+function strictStitchProductSpec(assertionOrder?: "canonical" | "noncanonical") {
   const compiled = compilePlanSemanticProposalV2({
     task: CONTAINED_GAME_TASK,
     proposal: containedGamePlanProposalV2(),
@@ -94,6 +94,15 @@ function strictStitchProductSpec() {
   action.input.fields = [{ name: "phase", valueType: "string", required: true }];
   action.evidenceScenario.targetInputValues = { phase: "playing" };
   action.stateDeltas[0]!.valueFrom = { kind: "input", field: "phase" };
+  if (assertionOrder) {
+    const control = action.observableEffects.find((effect: { selector: { kind: string } }) =>
+      effect.selector.kind === "control");
+    assert.ok(control);
+    const enabled = { phase: "after", property: "enabled", operator: "equals", expected: true };
+    const visible = { phase: "after", property: "visibility", operator: "equals", expected: true };
+    const text = { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" };
+    control.assertions = assertionOrder === "canonical" ? [enabled, visible, text] : [visible, enabled, text];
+  }
 
   const optionalEvidence = {
     id: "EVID_OPTIONAL_FAILURE",
@@ -114,8 +123,8 @@ function strictStitchProductSpec() {
   return ProductSpecV2Schema.parse(productSpec);
 }
 
-async function exactDesignFixture() {
-  const productSpec = strictStitchProductSpec();
+async function exactDesignFixture(assertionOrder?: "canonical" | "noncanonical") {
+  const productSpec = strictStitchProductSpec(assertionOrder);
   const targetsResult = produceDesignGenerationTargetsV2(productSpec);
   assert.equal(targetsResult.status, "produced", JSON.stringify(targetsResult));
   if (targetsResult.status !== "produced") throw new Error("unreachable");
@@ -575,8 +584,8 @@ function noDesignImplementationSourceMap(input: Readonly<{
   });
 }
 
-async function stitchCompilerFixture() {
-  const design = await exactDesignFixture();
+async function stitchCompilerFixture(assertionOrder?: "canonical" | "noncanonical") {
+  const design = await exactDesignFixture(assertionOrder);
   const buildTopology = stitchTopology(design.productSpec);
   const storyPlanResult = produceStoryPlanV2({
     productSpec: design.productSpec,
@@ -1045,6 +1054,50 @@ function recoveryDirective(input: any, options: Readonly<{
 }
 
 describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, () => {
+  it("accepts canonical graph assertion projection while preserving the original observable hash and content guards", async () => {
+    const ordered = await stitchCompilerFixture("canonical");
+    const canonical = compileOrThrow(ordered.input);
+    type Observable = NonNullable<typeof canonical.slice.contract.design>["observables"][number];
+    const tamperCases: ReadonlyArray<readonly [string, (observable: Observable) => void]> = [
+      ["original observable hash", observable => { observable.productObservableHash = "0".repeat(64); }],
+      ["assertion expected value", observable => { observable.assertions[0]!.expected = false; }],
+      ["assertion operator", observable => { observable.assertions[2]!.operator = "contains"; }],
+      ["missing assertion", observable => { observable.assertions.pop(); }],
+      ["extra assertion", observable => { observable.assertions.push({ phase: "before", property: "enabled", operator: "equals", expected: true }); }],
+    ];
+    for (const [label, tamper] of tamperCases) {
+      const forged = structuredClone(canonical.slice);
+      const observable = forged.contract.design!.observables.find(value => value.selector.kind === "control")!;
+      tamper(observable);
+      observable.assertionsHash = hashCanonicalJson(observable.assertions);
+      forged.authority.storyContractHash = hashCanonicalJson(forged.contract);
+      forged.authorityHash = implementationSliceAuthorityHashV2(forged.authority);
+      const parsed = ImplementationSliceV2Schema.safeParse(forged);
+      assert.equal(parsed.success, false, label);
+      if (!parsed.success) assert.ok(parsed.error.issues.some(issue =>
+        issue.path.join("/").startsWith("contract/design/observables/")
+        && issue.path.at(-1) === "productObservableHash"), label);
+    }
+    const value = await stitchCompilerFixture("noncanonical");
+    const originalInput = structuredClone(value.input);
+    const productObservable = value.productSpec.actions[0]!.observableEffects.find(effect => effect.selector.kind === "control")!;
+    const graphObservable = value.graph.observables.find(effect => effect.observableRef === productObservable.id)!;
+    const canonicalAssertions = [
+      { phase: "after", property: "enabled", operator: "equals", expected: true },
+      { phase: "after", property: "visibility", operator: "equals", expected: true },
+      { phase: "after", property: "visible_text", operator: "equals", expected: "Start Game" },
+    ];
+    assert.deepEqual(productObservable.assertions.map(assertion => assertion.property), ["visibility", "enabled", "visible_text"]);
+    assert.deepEqual(graphObservable.assertions, canonicalAssertions);
+    assert.equal(graphObservable.productObservableHash, hashCanonicalJson(productObservable));
+    assert.equal(graphObservable.assertionsHash, hashCanonicalJson(canonicalAssertions));
+    assert.notEqual(graphObservable.assertionsHash, hashCanonicalJson(productObservable.assertions));
+    const compiled = compileOrThrow(value.input);
+    assert.deepEqual(value.input, originalInput);
+    assert.deepEqual(compiled.slice.contract.product.actions[0]!.observableEffects, value.productSpec.actions[0]!.observableEffects);
+    assert.equal(verifyImplementationSliceV2({ compilerInput: value.input, slice: compiled.slice }).status, "verified");
+  });
+
   it("compiles one deterministic Stitch story closure with exact controls, inputs, files, build, runtime, and source closure", async () => {
     const value = await stitchCompilerFixture();
     const reversed: any = structuredClone(value.input);

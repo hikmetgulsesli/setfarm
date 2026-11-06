@@ -8,6 +8,7 @@ import { FindingSetV1Schema } from "../../findings/finding-set.js";
 import { ExpectedDeltaV1Schema } from "../../recovery/recovery-case.js";
 import { SourceRevisionV1Schema } from "../../execution/schemas/execution-attempt-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../canonical-json.js";
+import { canonicalizeObservableAssertionsV2 } from "../observable-assertion-identity-v2.js";
 import {
   BuildCapabilityV1Schema,
   BuildCommandV1Schema,
@@ -1327,7 +1328,7 @@ export const ImplementationSliceV2Schema = z.object({
         || canonicalJsonStringify(observable.selector)
           !== canonicalJsonStringify(productObservable.observable.selector)
         || canonicalJsonStringify(observable.assertions)
-          !== canonicalJsonStringify(productObservable.observable.assertions)
+          !== canonicalJsonStringify(canonicalizeObservableAssertionsV2(productObservable.observable.assertions))
         || observable.evidenceRef !== productObservable.observable.evidenceRef
       ) {
         context.addIssue({
