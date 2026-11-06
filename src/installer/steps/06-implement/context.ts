@@ -31,7 +31,7 @@ import { applyStackContractContext } from "../../stack-contract/context.js";
 import { applyLibraryPackContext } from "../../library-packs/context.js";
 import { assembleImplementContext } from "../../setup-handoff.js";
 import { buildStackMemory } from "../../stack-memory.js";
-import { applyScopedRetryPatchForStory, discardDirtyRetryWorktreeState, latestRetryPatchForStory, latestRetryStashPatchForStory } from "../../worktree-ops.js";
+import { writeStoryScopeSnapshot, NativeImplementationAssetError, applyScopedRetryPatchForStory, discardDirtyRetryWorktreeState, latestRetryPatchForStory, latestRetryStashPatchForStory } from "../../worktree-ops.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 12000;
 const STITCH_HTML_TOTAL_CHARS = 50000;
@@ -788,21 +788,20 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
         const scopeList = context["story_scope_files"].split(", ");
         const implicitFiles = IMPLICIT_STORY_SCOPE_FILES;
         const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
-        const scopeFilePath = path.join(context["story_workdir"], ".story-scope-files");
-        fs.writeFileSync(scopeFilePath, allAllowed.join("\n") + "\n");
-        try { fs.chmodSync(scopeFilePath, 0o664); } catch { /* best effort */ }
+        writeStoryScopeSnapshot(context["story_workdir"], allAllowed);
         cleanupOutOfScopeWorktreeFiles(
           context["story_workdir"],
           allAllowed,
           String(nextStory.story_id || nextStory.id || "story"),
           String(nextStory.run_id || ""),
         );
-      } catch (e) { logger.debug(`[scope-file] ${String(e).slice(0, 80)}`); }
+      } catch (e) { if (e instanceof NativeImplementationAssetError) throw e; logger.debug(`[scope-file] ${String(e).slice(0, 80)}`); }
     }
     if (context["story_scope_files"]) {
       context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.*, *.spec.*), src/test/setup.*, src/test/utils.*, src/setupTests.*, and Vitest/Jest-only config (vitest.config.*, jest.config.*) are allowed. src/types/*, domain model files, vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit shared exported types to fix only your screen; use local display/adaptor types inside scoped files. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
+    if (e instanceof NativeImplementationAssetError) throw e;
     if (isDesignImportBlockedError(e)) markDesignImportBlocked(context, e);
     logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);
   }

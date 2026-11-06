@@ -17,6 +17,7 @@ import { assertCleanupTargetOutsideBaselineV2 } from "./platform-cleanup-protect
 import { withDashboardCutoverLocalProducerSyncV2 } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
 import { pgGet } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
+import { resolveProductArtifactCapacity } from "../runtime-config.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { DesignGenerationTargetsV1Schema } from "../product-compiler/schemas/design-generation-targets-v1.js";
 import { StitchDirectResponseEvidenceV2Schema } from "../product-compiler/schemas/stitch-direct-response-evidence-v2.js";
@@ -642,7 +643,168 @@ export function syncBaseBranch(repo: string, baseBranch = "main"): boolean {
 
 // ── Stitch Asset Copy ───────────────────────────────────────────────
 
-type StoryWorktreeAssetMode = "full" | "implement";
+type StoryWorktreeAssetMode = "full" | "implement" | NativeImplementationAssets;
+
+export type NativeImplementationAssets = "native-implementation";
+export class NativeImplementationAssetError extends Error {
+  constructor(detail: string) { super(`NATIVE_IMPLEMENTATION_ASSETS_REFUSED:${detail}`); }
+}
+function nativeAssetRefused(detail: string): never { throw new NativeImplementationAssetError(detail); }
+function assetIdentity(stat: fs.Stats): string {
+  return [stat.dev, stat.ino, stat.uid, stat.mode, stat.nlink, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+}
+function assetDirectory(directory: string): void {
+  if (fs.realpathSync(directory) !== directory) nativeAssetRefused("directory alias");
+  for (let current = directory; current !== path.dirname(current); current = path.dirname(current)) {
+    const stat = fs.lstatSync(current);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || ![0, process.getuid!()].includes(stat.uid)
+      || ((stat.mode & 0o022) !== 0 && !(stat.uid === 0 && (stat.mode & 0o1000) !== 0))) nativeAssetRefused("directory ownership");
+  }
+}
+/** Only this platform-owned sidecar is replaced; scope decisions/bytes are unchanged. */
+export function writeStoryScopeSnapshot(worktree: string, allowed: readonly string[]): void {
+  try { writePrivateStoryScopeSnapshot(worktree, allowed); }
+  catch (error) { if (error instanceof NativeImplementationAssetError) throw error; nativeAssetRefused("scope publication"); }
+}
+function writePrivateStoryScopeSnapshot(worktree: string, allowed: readonly string[]): void {
+  assetDirectory(worktree);
+  const target = path.join(worktree, ".story-scope-files");
+  const fd = fs.openSync(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK, 0o600);
+  try {
+    const opened = fs.fstatSync(fd), named = fs.lstatSync(target);
+    if (!opened.isFile() || opened.nlink !== 1 || opened.uid !== process.getuid!()
+      || opened.dev !== named.dev || opened.ino !== named.ino) nativeAssetRefused("scope custody");
+    const bytes = Buffer.from(allowed.join("\n") + "\n");
+    fs.fchmodSync(fd, 0o600);
+    let offset = 0;
+    while (offset < bytes.length) { const n = fs.writeSync(fd, bytes, offset, bytes.length - offset, offset); if (!n) nativeAssetRefused("scope write"); offset += n; }
+    fs.ftruncateSync(fd, bytes.length); fs.fsyncSync(fd);
+    const after = fs.lstatSync(target);
+    if (after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1 || (after.mode & 0o7777) !== 0o600) nativeAssetRefused("scope changed");
+  } finally { fs.closeSync(fd); }
+}
+
+type DependencyNode = { relative: string; kind: "directory" | "file" | "link"; mode: number; identity: string; size: number; hash?: string; target?: string };
+const NATIVE_DEPENDENCY_CUSTODY = ".setfarm/native-dependency-custody.json";
+function dependencyDigest(file: string): string {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const before = fs.fstatSync(fd); if (!before.isFile() || before.uid !== process.getuid!()) nativeAssetRefused("source file");
+    const hash = createHash("sha256"), chunk = Buffer.alloc(65536); let offset = 0, count: number;
+    while ((count = fs.readSync(fd, chunk, 0, chunk.length, offset)) > 0) { hash.update(chunk.subarray(0, count)); offset += count; }
+    if (offset !== before.size || assetIdentity(before) !== assetIdentity(fs.fstatSync(fd)) || assetIdentity(before) !== assetIdentity(fs.lstatSync(file))) nativeAssetRefused("source changed");
+    return hash.digest("hex");
+  } finally { fs.closeSync(fd); }
+}
+function dependencyInventory(root: string, destination = false): DependencyNode[] {
+  assetDirectory(root); const nodes: DependencyNode[] = [];
+  const visit = (directory: string, depth: number): void => {
+    if (depth > 64) nativeAssetRefused("dependency depth");
+    const before = fs.lstatSync(directory);
+    for (const name of fs.readdirSync(directory).sort()) {
+      const file = path.join(directory, name), relative = path.relative(root, file);
+      if (++entries > 100000 || file.length > 1024 || /[\\\x00-\x1f\x7f]/.test(file)) nativeAssetRefused("dependency bounds");
+      const stat = fs.lstatSync(file), mode = stat.mode & 0o777 & ~0o022;
+      if (stat.uid !== process.getuid!()) nativeAssetRefused("dependency owner");
+      if (stat.isSymbolicLink()) {
+        const target = fs.readlinkSync(file), resolved = fs.realpathSync(file);
+        if (!/(?:^|\/)node_modules\/\.bin\/[^/]+$/.test(`node_modules/${relative}`) || path.isAbsolute(target) || !resolved.startsWith(root + path.sep)
+          || !fs.statSync(file).isFile()) nativeAssetRefused("dependency link");
+        nodes.push({relative, kind:"link", mode:0, identity:assetIdentity(stat), size:0, target});
+      } else if (stat.isDirectory()) {
+        if (destination && (stat.mode & 0o022)) nativeAssetRefused("destination directory mode");
+        nodes.push({relative, kind:"directory", mode, identity:assetIdentity(stat), size:0}); visit(file, depth + 1);
+      } else if (stat.isFile()) {
+        if (destination && (stat.nlink !== 1 || (stat.mode & 0o022))) nativeAssetRefused("destination file custody");
+        nodes.push({relative, kind:"file", mode, identity:assetIdentity(stat), size:stat.size, hash:dependencyDigest(file)});
+      } else nativeAssetRefused("dependency node kind");
+    }
+    if (assetIdentity(before) !== assetIdentity(fs.lstatSync(directory))) nativeAssetRefused("dependency directory changed");
+  };
+  let entries = 0; visit(root, 0); return nodes;
+}
+function dependencyRecipe(nodes: readonly DependencyNode[]): string {
+  return hashCanonicalJson(nodes.map(({identity: _identity, ...node}) => node));
+}
+/** Called only before a native implementation worker is dispatched, never by a reader. */
+export function prepareNativeImplementationDependencies(repo: string, worktree: string): void {
+  try { preparePrivateNativeDependencies(repo, worktree); }
+  catch (error) { if (error instanceof NativeImplementationAssetError) throw error; nativeAssetRefused("dependency publication"); }
+}
+function preparePrivateNativeDependencies(repo: string, worktree: string): void {
+  assetDirectory(repo); assetDirectory(worktree);
+  const source = path.join(repo, "node_modules"), target = path.join(worktree, "node_modules");
+  let sourceStat: fs.Stats;
+  try { sourceStat = fs.lstatSync(source); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    try { fs.lstatSync(target); nativeAssetRefused("destination without source"); }
+    catch (targetError) { if ((targetError as NodeJS.ErrnoException).code !== "ENOENT") throw targetError; }
+    return;
+  }
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) nativeAssetRefused("source dependency root");
+  const sourceNodes = dependencyInventory(source), recipe = dependencyRecipe(sourceNodes);
+  const directoryPin = (directory: string) => { const stat = fs.lstatSync(directory); return {path:directory,dev:stat.dev,ino:stat.ino,uid:stat.uid}; };
+  const repoPin = directoryPin(repo), worktreePin = directoryPin(worktree), sourceRoot = directoryPin(source);
+  const markerPath = path.join(worktree, NATIVE_DEPENDENCY_CUSTODY);
+  // Use the existing ignored control area, never a new untracked root artifact.
+  try { execFileSync("git", ["check-ignore", "--quiet", "--", NATIVE_DEPENDENCY_CUSTODY], {cwd:worktree,stdio:"pipe",timeout:5000}); }
+  catch { nativeAssetRefused("custody control path is not ignored"); }
+  const expectedMarker = (destination: fs.Stats) => ({schema:"setfarm.native-dependency-copy.v1",repo:repoPin,worktree:worktreePin,
+    source:sourceRoot,destination:{path:target,dev:destination.dev,ino:destination.ino,uid:destination.uid},recipe});
+  let existing: fs.Stats | undefined;
+  try { existing = fs.lstatSync(target); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  if (existing?.isDirectory()) {
+    assetDirectory(path.dirname(markerPath));
+    const stat = fs.lstatSync(markerPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== process.getuid!() || (stat.mode & 0o7777) !== 0o600 || stat.size > 4096) nativeAssetRefused("unknown destination");
+    const fd = fs.openSync(markerPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    let marker: unknown;
+    try { if (assetIdentity(stat) !== assetIdentity(fs.fstatSync(fd))) nativeAssetRefused("custody changed");
+      marker = JSON.parse(fs.readFileSync(fd,"utf8"));
+      if (assetIdentity(stat) !== assetIdentity(fs.fstatSync(fd)) || assetIdentity(stat) !== assetIdentity(fs.lstatSync(markerPath))) nativeAssetRefused("custody changed");
+    } finally { fs.closeSync(fd); }
+    const expected = expectedMarker(existing);
+    if (hashCanonicalJson(marker) !== hashCanonicalJson(expected) || dependencyRecipe(dependencyInventory(target,true)) !== recipe) nativeAssetRefused("destination drift");
+    if (JSON.stringify(sourceNodes) !== JSON.stringify(dependencyInventory(source))) nativeAssetRefused("source drift");
+    return;
+  }
+  if (existing && (!existing.isSymbolicLink() || fs.readlinkSync(target) !== source)) nativeAssetRefused("unknown destination");
+  const bytes = sourceNodes.reduce((total,node) => total + (node.kind === "file" ? Math.ceil(node.size / 4096) * 4096 : 4096), 0);
+  const capacity = fs.statfsSync(worktree, {bigint:true});
+  if (capacity.bavail * capacity.bsize - BigInt(bytes) < BigInt(resolveProductArtifactCapacity().minFreeBytes)) nativeAssetRefused("disk capacity");
+  // Create-only publication: never rename over a concurrently appeared directory.
+  if (fs.existsSync(markerPath)) nativeAssetRefused("orphan custody marker");
+  if (existing) {
+    if (assetIdentity(fs.lstatSync(target)) !== assetIdentity(existing) || fs.readlinkSync(target) !== source) nativeAssetRefused("destination changed");
+    fs.unlinkSync(target);
+  }
+  fs.mkdirSync(target,{mode:0o700}); const targetStat = fs.lstatSync(target);
+  let complete = false;
+  try {
+    for (const node of sourceNodes.filter(n=>n.kind!=="link")) {
+      const from = path.join(source,node.relative), to = path.join(target,node.relative);
+      if (assetIdentity(fs.lstatSync(from)) !== node.identity) nativeAssetRefused("source changed before copy");
+      if (node.kind === "directory") { fs.mkdirSync(to,{mode:node.mode}); fs.chmodSync(to,node.mode); }
+      else { fs.copyFileSync(from,to,fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE); fs.chmodSync(to,node.mode); }
+    }
+    for (const node of sourceNodes.filter(n=>n.kind==="link")) fs.symlinkSync(node.target!,path.join(target,node.relative));
+    if (dependencyRecipe(dependencyInventory(target,true)) !== recipe || JSON.stringify(sourceNodes) !== JSON.stringify(dependencyInventory(source))) nativeAssetRefused("copied bytes differ");
+    if (hashCanonicalJson(directoryPin(repo)) !== hashCanonicalJson(repoPin) || hashCanonicalJson(directoryPin(worktree)) !== hashCanonicalJson(worktreePin)
+      || hashCanonicalJson(directoryPin(source)) !== hashCanonicalJson(sourceRoot)) nativeAssetRefused("directory custody changed");
+    try { fs.mkdirSync(path.dirname(markerPath),{mode:0o700}); }
+    catch(error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    assetDirectory(path.dirname(markerPath));
+    fs.writeFileSync(markerPath,JSON.stringify(expectedMarker(targetStat))+"\n",{flag:"wx",mode:0o600});
+    complete = true;
+  } finally {
+    if (!complete && fs.existsSync(target)) {
+      const after = fs.lstatSync(target);
+      if (after.isDirectory() && after.dev === targetStat.dev && after.ino === targetStat.ino) fs.rmSync(target,{recursive:true,force:true});
+    }
+  }
+}
+
 
 const IMPLEMENT_REFERENCE_README = [
   "# Setfarm Implement Reference Policy",
@@ -1130,7 +1292,8 @@ fi
   }
 }
 
-export function createStoryWorktree(repo: string, storyId: string, baseBranch: string, agentId?: string): string {
+export function createStoryWorktree(repo: string, storyId: string, baseBranch: string, agentId?: string, assets?: NativeImplementationAssets): string {
+  if (assets !== undefined && assets !== "native-implementation") nativeAssetRefused("asset mode");
   // P2-03: Prune orphaned worktrees before creating new ones
   try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
   stashDirtyMainRepo(repo, storyId);
@@ -1219,7 +1382,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
           }
           if (fs.existsSync(worktreeDir)) {
             clearUnexpectedWorktreeIndexFlags(worktreeDir);
-            prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
+            prepareStoryWorktreeAssets(repo, worktreeDir, storyId, assets ?? "implement");
             logger.info(`[worktree] Reusing existing worktree ${worktreeDir} for ${storyId}`, {});
             return worktreeDir;
           }
@@ -1229,6 +1392,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
           saveAndRemoveWorktree(repo, worktreeDir, storyId.toLowerCase());
         }
       } catch (e) {
+        if (e instanceof NativeImplementationAssetError) throw e;
         logger.warn(`[worktree] Existing worktree ${worktreeDir} could not be validated: ${String(e).slice(0, 150)}; recreating`, {});
         saveAndRemoveWorktree(repo, worktreeDir, storyId.toLowerCase());
       }
@@ -1331,11 +1495,12 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
       }
     }
     clearUnexpectedWorktreeIndexFlags(worktreeDir);
-    prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
+    prepareStoryWorktreeAssets(repo, worktreeDir, storyId, assets ?? "implement");
 
     logger.info(`[worktree] Created ${worktreeDir} from ${baseBranch}`, {});
     return worktreeDir;
   } catch (err: any) {
+    if (err instanceof NativeImplementationAssetError) throw err;
     // Branch might already exist — try without -b
     try {
       try {
@@ -1350,10 +1515,11 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
         }
       }
       clearUnexpectedWorktreeIndexFlags(worktreeDir);
-      prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
+      prepareStoryWorktreeAssets(repo, worktreeDir, storyId, assets ?? "implement");
       logger.info(`[worktree] Created ${worktreeDir} (existing branch)`, {});
       return worktreeDir;
     } catch (err2: any) {
+      if (err2 instanceof NativeImplementationAssetError) throw err2;
       logger.warn(`[worktree] Failed to create worktree: ${(err2.message || "").slice(0, 100)}`, {});
       return "";
     }
@@ -1419,7 +1585,9 @@ function removeManagedWorktreePath(repo: string, worktreeDir: string, reason: st
 function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBranch: string, mode: StoryWorktreeAssetMode = "full"): void {
   const nmSrc = path.join(repo, "node_modules");
   const nmDst = path.join(worktreeDir, "node_modules");
-  if (fs.existsSync(nmSrc)) {
+  if (mode === "native-implementation") {
+    prepareNativeImplementationDependencies(repo, worktreeDir);
+  } else if (fs.existsSync(nmSrc)) {
     try {
       const stat = fs.lstatSync(nmDst);
       if (!stat.isSymbolicLink()) {
@@ -1431,7 +1599,7 @@ function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBran
     }
   }
   copyStitchToWorktree(repo, worktreeDir);
-  if (mode === "implement") {
+  if (mode === "implement" || mode === "native-implementation") {
     hardenImplementStoryAssets(worktreeDir);
   } else {
     ensureReferencesLink(repo, worktreeDir);
