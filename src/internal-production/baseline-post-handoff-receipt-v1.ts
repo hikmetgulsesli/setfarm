@@ -3227,6 +3227,29 @@ const EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1 = Object.freeze([
   Object.freeze({ locator: "records/pending-bootstrap-handoff-migrations/sha256/ce/ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133136424" }),
 ] as const);
 
+// Two exact physical snapshots, not a general device alias or reboot policy.
+// Keep historical proofs unchanged; new proofs record the actual mounted device.
+const EXACT_POISON_CURRENT_INVENTORY_HASH_V1 = "cc0c4e2548653752a8abf20ade992140b740cd2b8941cc022082a0cb72cb4842";
+const EXACT_POISON_CURRENT_DEVICE_V1 = "16777233";
+const EXACT_POISON_PHYSICAL_INVENTORY_PROFILES_V1 = Object.freeze([
+  Object.freeze({ inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1, predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1 }),
+  Object.freeze({
+    inventoryHash: EXACT_POISON_CURRENT_INVENTORY_HASH_V1,
+    predecessorFileIdentities: Object.freeze(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1.map((identity) => Object.freeze({ ...identity, deviceDecimal: EXACT_POISON_CURRENT_DEVICE_V1 }))),
+  }),
+]);
+
+function requireExactPoisonPhysicalInventoryProfileV1(
+  inventoryHash: unknown,
+  predecessorFileIdentities: unknown,
+): Readonly<{ inventoryHash: string; predecessorFileIdentities: readonly Readonly<{ locator: string; uidDecimal: string; deviceDecimal: string; inodeDecimal: string }>[] }> {
+  const profile = EXACT_POISON_PHYSICAL_INVENTORY_PROFILES_V1.find((candidate) =>
+    candidate.inventoryHash === inventoryHash
+    && canonicalComparable(candidate.predecessorFileIdentities) === canonicalComparable(predecessorFileIdentities));
+  if (!profile) currentEntryFail("exact-poison physical inventory profile is crossed");
+  return profile;
+}
+
 const EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1 = Object.freeze([
   Object.freeze({ repository: "setfarm", objectSha: "4fc67f20df0e935c703c4658a29dbbaa9aa0a956", objectType: "commit", state: "absent", networkAccess: "forbidden" }),
   Object.freeze({ repository: "mission-control", objectSha: "4ec5fc99a076453a87381c0c75e508d25dd8882d", objectType: "commit", state: "absent", networkAccess: "forbidden" }),
@@ -3419,10 +3442,9 @@ async function parseCurrentEntryStoreZeroEffectProofV1(value: unknown): Promise<
   requireExactPoisonPredecessorV1(parsed.value.predecessorOperation, "zero-effect proof");
   if (
     parsed.value.contaminationFingerprintHash !== EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1
-    || parsed.value.quarantinedInventoryHash !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
-    || canonicalComparable(parsed.value.predecessorFileIdentities) !== canonicalComparable(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1)
     || canonicalComparable(parsed.value.unavailableSyntheticGitObjects) !== canonicalComparable(EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1)
   ) currentEntryFail("zero-effect proof exact poison evidence is crossed");
+  requireExactPoisonPhysicalInventoryProfileV1(parsed.value.quarantinedInventoryHash, parsed.value.predecessorFileIdentities);
   const completeZeroEffectBracketHash = requireSha256(parsed.value.completeZeroEffectBracketHash, "complete zero-effect bracket hash");
   if (!isPlainRecord(parsed.value.successorOperation)) currentEntryFail("zero-effect proof successor operation is invalid");
   const successorPair = requireCurrentEntryStorePairFromRecordV1(
@@ -3560,12 +3582,13 @@ async function parseCurrentEntryStoreQuarantineDispositionV1(
   if (
     !isPlainRecord(inventory)
     || !hasExactKeys(inventory, ["inventoryBody", "inventoryHash"])
-    || inventory.inventoryHash !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
+    || typeof inventory.inventoryHash !== "string"
     || !isPlainRecord(inventory.inventoryBody)
-    || hashCanonicalJson(inventory.inventoryBody) !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
+    || hashCanonicalJson(inventory.inventoryBody) !== inventory.inventoryHash
   ) currentEntryFail("quarantined inventory is crossed");
   if (historyBearing) await parseExactPoisonHistoricalInventoryV1(parsed.value.historicalPrerequisiteInventory);
   const zeroEffectProof = await parseCurrentEntryStoreZeroEffectProofV1(parsed.value.zeroEffectProof);
+  if (inventory.inventoryHash !== zeroEffectProof.value.quarantinedInventoryHash) currentEntryFail("quarantined inventory and zero-effect proof profiles are crossed");
   const successorGenesis = parseCurrentEntryStoreSuccessorGenesisV1(parsed.value.successorGenesis, zeroEffectProof);
   return Object.freeze({ value: recursivelyFreeze(parsed.value), pair: parsed.pair, zeroEffectProof, successorGenesis });
 }
@@ -4016,8 +4039,8 @@ type ExactPoisonRecoveryNoWriteFenceV1 = Readonly<{
 
 type ExactPoisonRecoveryInventoryEvidenceV1 = Readonly<{
   inventoryBody: Record<string, unknown>;
-  inventoryHash: typeof EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1;
-  predecessorFileIdentities: typeof EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1;
+  inventoryHash: string;
+  predecessorFileIdentities: readonly Readonly<{ locator: string; uidDecimal: string; deviceDecimal: string; inodeDecimal: string }>[];
   currentPrerequisiteOverlay: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[];
   historicalPrerequisiteInventory?: Readonly<Record<string, unknown>>;
   assertStableOriginals: () => void;
@@ -4750,18 +4773,13 @@ function observeExactPoisonQuarantinedInventoryV1(
     schema: "setfarm.internal-production-current-entry-store-quarantine-inventory.v1",
     storeLocator: exactPoisonQuarantinedStoreLocatorV1(),
   });
-  if (hashCanonicalJson(inventoryBody) !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1) {
-    currentEntryFail("exact-poison quarantined inventory hash is crossed");
-  }
   const identities = Object.freeze(fileSnapshots.map(({ locator, snapshot }) => Object.freeze({
     locator,
     uidDecimal: snapshot.observed.stats.uid.toString(10),
     deviceDecimal: snapshot.observed.stats.dev.toString(10),
     inodeDecimal: snapshot.observed.stats.ino.toString(10),
   })));
-  if (canonicalComparable(identities) !== canonicalComparable(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1)) {
-    currentEntryFail("exact-poison predecessor file identities are crossed");
-  }
+  const profile = requireExactPoisonPhysicalInventoryProfileV1(hashCanonicalJson(inventoryBody), identities);
   const historicalPrerequisiteInventory = historicalPrerequisites.length === 0 ? undefined : buildExactPoisonHistoricalInventoryV1(
     historicalPrerequisites.map((candidate) => {
       const file = overlayFileSnapshots.find((entry) => entry.candidate.target === candidate.target);
@@ -4809,8 +4827,8 @@ function observeExactPoisonQuarantinedInventoryV1(
   assertStableOriginals();
   return Object.freeze({
     inventoryBody,
-    inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
-    predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
+    inventoryHash: profile.inventoryHash,
+    predecessorFileIdentities: profile.predecessorFileIdentities,
     currentPrerequisiteOverlay,
     ...(historicalPrerequisiteInventory === undefined ? {} : { historicalPrerequisiteInventory }),
     assertStableOriginals,
@@ -6489,10 +6507,10 @@ function openExactPoisonRecoveryPostVisibleOriginalsV1(
     !isPlainRecord(quarantinedInventory)
     || !hasExactKeys(quarantinedInventory, ["inventoryBody", "inventoryHash"])
     || !isPlainRecord(quarantinedInventory.inventoryBody)
-    || quarantinedInventory.inventoryHash !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
-    || hashCanonicalJson(quarantinedInventory.inventoryBody) !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
-    || canonicalComparable(predecessorFileIdentities) !== canonicalComparable(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1)
+    || typeof quarantinedInventory.inventoryHash !== "string"
+    || hashCanonicalJson(quarantinedInventory.inventoryBody) !== quarantinedInventory.inventoryHash
   ) currentEntryFail("post-visible original inventory evidence is crossed");
+  const profile = requireExactPoisonPhysicalInventoryProfileV1(quarantinedInventory.inventoryHash, predecessorFileIdentities);
   const inventoryBody = quarantinedInventory.inventoryBody;
   const orderedDirectories = inventoryBody.orderedDirectories;
   const orderedFiles = inventoryBody.orderedFiles;
@@ -6582,8 +6600,8 @@ function openExactPoisonRecoveryPostVisibleOriginalsV1(
       records: Object.freeze(filePins),
       evidence: Object.freeze({
         inventoryBody,
-        inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
-        predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
+        inventoryHash: profile.inventoryHash,
+        predecessorFileIdentities: profile.predecessorFileIdentities,
         currentPrerequisiteOverlay: Object.freeze([]),
         ...(historicalPrerequisiteInventory === undefined ? {} : { historicalPrerequisiteInventory: historicalPrerequisiteInventory as Readonly<Record<string, unknown>> }),
         assertStableOriginals,
