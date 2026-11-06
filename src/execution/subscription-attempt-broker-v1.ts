@@ -334,10 +334,10 @@ async function startCore(
         || value.max_tokens > limits.maxTotalOutputTokens - reservedTokens) { fail(res, 429, 'BUDGET'); return; }
       let upstreamBytes = bytes;
       if (modelRef === 'minimax/MiniMax-M3.1-Flash') {
-        // Map the owned SDK default medium to provider medium, not its omitted
-        // effort default max. PLAN deliberately retains low. Legacy thinking
-        // budgets cannot encode this model's effort; worker DATA grants no override.
-        const effort = requestProfile === 'plan-report-v1' ? 'low' : 'medium';
+        // Explicit bounded low-effort policy for every admitted MiniMax request;
+        // PLAN remains low. Legacy thinking budgets do not select provider effort,
+        // and worker DATA grants no override. Token and request limits are unchanged.
+        const effort = 'low';
         upstreamBytes = Buffer.from(JSON.stringify({ ...value, thinking: { type: 'adaptive' }, output_config: { effort } }));
         if (upstreamBytes.length > limits.maxRequestBytes) { fail(res, 413, 'BYTES'); return; }
       }
