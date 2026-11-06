@@ -367,7 +367,9 @@ export function createAcceptedCandidateRepository(input: Readonly<{
               const snapshot=nativeArtifacts.get(hash);
               if(!snapshot) fail("ACCEPTED_CANDIDATE_ARTIFACT_INVALID","native immutable preauthentication is absent");
               const metadata=await transaction.unsafe<Array<{artifact_type:string;byte_length:string|number;producer_metadata:unknown}>>(
-                "SELECT artifact_type,byte_length,producer_metadata FROM semantic_artifacts WHERE artifact_hash=$1 FOR SHARE",[hash]);
+                selectedFreshInstallationRootV1() !== null
+                  ? "SELECT artifact_type,byte_length,producer_metadata FROM semantic_artifacts WHERE artifact_hash=$1"
+                  : "SELECT artifact_type,byte_length,producer_metadata FROM semantic_artifacts WHERE artifact_hash=$1 FOR SHARE",[hash]);
               const indexed=metadata[0];
               if(metadata.length!==1||!indexed||indexed.artifact_type!==snapshot.indexed.artifactType
                 ||Number(indexed.byte_length)!==snapshot.indexed.byteLength

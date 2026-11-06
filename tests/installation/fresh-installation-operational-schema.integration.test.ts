@@ -9,16 +9,27 @@ import { createFreshInstallationTestFixtureV1 as create, freshTestAdminUrl } fro
 // SQL component coverage only: execute the exact current production argument
 // on real restricted PostgreSQL rows, without importing host cleanup/setup code
 // or presenting these seed rows as an admitted workflow/claim.
-function productionSql(relative: string, marker: string): string {
+function productionSql(relative: string, marker: string, freshInstallation?: boolean): string {
   const file=new URL("../../"+relative,import.meta.url),source=readFileSync(file,"utf8");
   const tree=ts.createSourceFile(file.pathname,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
   const matches:string[]=[];
   const visit=(node:ts.Node):void=>{
-    if(ts.isCallExpression(node)&&node.arguments[0]&&ts.isStringLiteralLike(node.arguments[0])) {
-      const callee=node.expression;
-      if(((ts.isIdentifier(callee)&&["pgRun","pgExec"].includes(callee.text))
-        ||(ts.isPropertyAccessExpression(callee)&&callee.name.text==="unsafe"))
-        &&node.arguments[0].text.includes(marker)) matches.push(node.arguments[0].text);
+    if(ts.isCallExpression(node)&&node.arguments[0]) {
+      const callee=node.expression,arg=node.arguments[0];
+      if((ts.isIdentifier(callee)&&["pgRun","pgExec"].includes(callee.text))
+        ||(ts.isPropertyAccessExpression(callee)&&callee.name.text==="unsafe")) {
+        if(ts.isStringLiteralLike(arg)&&arg.text.includes(marker)) matches.push(arg.text);
+        else if(ts.isConditionalExpression(arg)&&ts.isStringLiteralLike(arg.whenTrue)
+          &&ts.isStringLiteralLike(arg.whenFalse)&&arg.whenTrue.text.includes(marker)&&arg.whenFalse.text.includes(marker)) {
+          // Read only this exact fresh immutable-metadata SQL branch. No eval,
+          // imported selection, fabricated installation or production authority.
+          assert.equal(relative,"src/evidence/accepted-candidate-repository.ts");
+          assert.equal(marker,"SELECT artifact_type,byte_length,producer_metadata FROM semantic_artifacts");
+          assert.equal(arg.condition.getText(tree),"selectedFreshInstallationRootV1() !== null");
+          assert.equal(typeof freshInstallation,"boolean");
+          matches.push(freshInstallation?arg.whenTrue.text:arg.whenFalse.text);
+        }
+      }
     }
     ts.forEachChild(node,visit);
   };
@@ -80,6 +91,52 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
         NOW()-INTERVAL '2 minutes',NOW()-INTERVAL '1 minute',NOW()-INTERVAL '2 minutes','claimed','[]')`,
         [attemptId,Number(childClaim[0]!.id),oldFence,'3'.repeat(64),'4'.repeat(40),'5'.repeat(40)]);
 
+      await t.test("fresh runtime reads populated native acceptance artifact metadata without mutation or nonfresh lock authority",async()=>{
+        // Schema-valid index component rows only: no CAS/admission, owner,
+        // accepted candidate or final evidence qualification is asserted here.
+        const artifactHash="c1".repeat(32),artifactType="setfarm.implementation-slice.v2";
+        const producer={pass:"native-acceptance-metadata-component",codeSha:"a".repeat(40),toolVersions:{fixture:"1"}};
+        const identity=(await runtime`SELECT current_user AS name,rolcanlogin,rolsuper
+          FROM pg_roles WHERE rolname=current_user`)[0]!;
+        assert.equal(identity.name,installation.runtimeRole);assert.equal(identity.rolcanlogin,true);assert.equal(identity.rolsuper,false);
+        await runtime.unsafe(`INSERT INTO semantic_artifacts(artifact_hash,artifact_type,byte_length,producer_metadata)
+          VALUES ($1,$2,$3,$4::jsonb)`,[artifactHash,artifactType,123,producer]);
+        const before=(await runtime.unsafe("SELECT * FROM semantic_artifacts WHERE artifact_hash=$1",[artifactHash]))[0]!;
+        assert.equal(before.artifact_type,artifactType);assert.equal(Number(before.byte_length),123);
+        assert.deepEqual(before.producer_metadata,producer);
+        const privileges=(await runtime`SELECT
+          has_table_privilege(current_user,'public.semantic_artifacts','SELECT') AS can_select,
+          has_any_column_privilege(current_user,'public.semantic_artifacts','UPDATE') AS can_update,
+          has_table_privilege(current_user,'public.semantic_artifacts','DELETE') AS can_delete,
+          has_table_privilege(current_user,'public.semantic_artifacts','TRUNCATE') AS can_truncate`)[0]!;
+        assert.deepEqual({...privileges},{can_select:true,can_update:false,can_delete:false,can_truncate:false});
+        const source="src/evidence/accepted-candidate-repository.ts";
+        const marker="SELECT artifact_type,byte_length,producer_metadata FROM semantic_artifacts";
+        const nonfresh=productionSql(source,marker,false);
+        assert.match(nonfresh,/FOR SHARE$/);
+        await assert.rejects(runtime.unsafe(nonfresh,[artifactHash]),{code:"42501"});
+        for(const statement of [
+          "UPDATE semantic_artifacts SET byte_length=124 WHERE artifact_hash=$1",
+          "DELETE FROM semantic_artifacts WHERE artifact_hash=$1",
+        ]) await assert.rejects(runtime.unsafe(statement,[artifactHash]),{code:"42501"});
+        await assert.rejects(runtime.unsafe("TRUNCATE semantic_artifacts"),{code:"42501"});
+        // The original immutable trigger also rejects an actual owning-role
+        // UPDATE/DELETE, independently of restricted-role ACL denial.
+        for(const statement of [
+          "UPDATE semantic_artifacts SET byte_length=124 WHERE artifact_hash=$1",
+          "DELETE FROM semantic_artifacts WHERE artifact_hash=$1",
+        ]) await assert.rejects(owner.begin(async tx=>{
+          await tx.unsafe(`SET LOCAL ROLE ${quote(installation.ownerRole)}`);
+          await tx.unsafe(statement,[artifactHash]);
+        }),{code:"23514"});
+        assert.deepEqual((await runtime.unsafe("SELECT * FROM semantic_artifacts WHERE artifact_hash=$1",[artifactHash]))[0],before);
+        // Old Source reaches the exact real restricted-login 42501 here.
+        t.diagnostic('native metadata seed and denial controls passed; executing fresh production query');
+        const metadata=await runtime.begin(tx=>tx.unsafe(productionSql(source,marker,true),[artifactHash]));
+        assert.equal(metadata.length,1);assert.equal(metadata[0]!.artifact_type,artifactType);
+        assert.equal(Number(metadata[0]!.byte_length),123);assert.deepEqual(metadata[0]!.producer_metadata,producer);
+        assert.deepEqual((await runtime.unsafe("SELECT * FROM semantic_artifacts WHERE artifact_hash=$1",[artifactHash]))[0],before);
+      });
       await t.test("runtime executes exact setup handoff skeleton and implementation-contract update",async()=>{
         const statement=productionSql("src/installer/setup-handoff.ts","UPDATE stories SET scope_files = $1");
         const skeletons=JSON.stringify({"src/component.ts":"export const value = 1;"});
