@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import test from "node:test";
+import net from "node:net";
+import { spawn, type ChildProcess } from "node:child_process";
+import type { RuntimeSession } from "../src/installer/runtime-driver.js";
+import { V3_STATIC_SPA_PREVIEW_SOURCE } from "../src/product-compiler/stack-topology-catalog.js";
 import { renderRuntimeCommand, WebPreviewRuntimeDriver } from "../src/installer/web-runtime-driver.js";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -119,3 +123,71 @@ test("web runtime driver preserves one page per runtime session for interaction 
   assert.doesNotMatch(interactBlock, /chromium\.launch/);
   assert.doesNotMatch(captureBlock, /chromium\.launch/);
 });
+
+
+for (const method of ["GET", "HEAD"] as const) {
+  test(`web runtime readiness accepts catalog SPA extensionless HTML routes with ${method}`, { timeout: 10000 }, async (t) => {
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-html-readiness-"));
+    fs.mkdirSync(path.join(workdir, "dist"));
+    const html = "<!doctype html><main>owned readiness fixture</main>";
+    fs.writeFileSync(path.join(workdir, "dist", "index.html"), html);
+    const reservation = net.createServer();
+    let child: ChildProcess | undefined;
+    let closed: Promise<void> | undefined;
+    let stderr = "";
+    t.after(async () => {
+      if (reservation.listening) await new Promise<void>((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
+      if (child && closed) {
+        const original = child;
+        if (original.exitCode === null && original.signalCode === null) original.kill("SIGTERM");
+        const killTimer = setTimeout(() => {
+          if (original.exitCode === null && original.signalCode === null) original.kill("SIGKILL");
+        }, 1500);
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([closed, new Promise<never>((_resolve, reject) => {
+            deadline = setTimeout(() => reject(new Error("CATALOG_FIXTURE_ORIGINAL_CLOSE_TIMEOUT")), 3000);
+          })]);
+          assert.ok(original.exitCode !== null || original.signalCode !== null, "original child close must precede fixture cleanup");
+        } finally { clearTimeout(killTimer); if (deadline) clearTimeout(deadline); }
+      }
+      fs.rmSync(workdir, { recursive: true, force: true });
+    });
+    await new Promise<void>((resolve, reject) => {
+      reservation.once("error", reject); reservation.listen(0, "127.0.0.1", resolve);
+    });
+    const address = reservation.address();
+    assert.ok(address && typeof address !== "string");
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
+    child = spawn(process.execPath, ["-e", V3_STATIC_SPA_PREVIEW_SOURCE, "dist"], {
+      cwd: workdir, env: { HOST: "127.0.0.1", PORT: String(port) }, stdio: ["ignore", "ignore", "pipe"],
+    });
+    closed = new Promise<void>(resolve => child!.once("close", () => resolve()));
+    child.stderr?.on("data", chunk => { stderr = (stderr + String(chunk)).slice(-4096); });
+    await new Promise<void>((resolve, reject) => { child!.once("spawn", resolve); child!.once("error", reject); });
+    const url = `http://127.0.0.1:${port}`;
+    const startupDeadline = Date.now() + 3000;
+    let listening = false;
+    while (Date.now() < startupDeadline && child.exitCode === null && child.signalCode === null) {
+      try {
+        const response = await fetch(url + "/index.html", { signal: AbortSignal.timeout(200) });
+        listening = response.status === 200 && await response.text() === html;
+        if (listening) break;
+      } catch { /* Original child may not yet have bound its private listener. */ }
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(listening, true, `catalog fixture startup: ${stderr}`);
+    const session: RuntimeSession = { kind: "browser", sessionId: `readiness-${method}-${port}`, workdir,
+      host: "127.0.0.1", port, url, startedAt: new Date().toISOString() };
+    const withoutHtml = await fetch(url + "/status", { method, signal: AbortSignal.timeout(500) });
+    assert.equal(withoutHtml.status, 404); await withoutHtml.body?.cancel();
+    // Independent negatives run before the target assertion on old Source.
+    await assert.rejects(new WebPreviewRuntimeDriver({ readinessPath: "/assets/missing.js", readinessMethod: method,
+      readinessExpectedStatus: 200, timeoutMs: 50 }).waitReady(session), /HTTP 404; expected 200/);
+    await assert.rejects(new WebPreviewRuntimeDriver({ readinessPath: "/index.html", readinessMethod: method,
+      readinessExpectedStatus: 201, timeoutMs: 50 }).waitReady(session), /HTTP 200; expected 201/);
+    await new WebPreviewRuntimeDriver({ readinessPath: "/status", readinessMethod: method,
+      readinessExpectedStatus: 200, timeoutMs: 100 }).waitReady(session);
+  });
+}

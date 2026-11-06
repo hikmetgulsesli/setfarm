@@ -72,7 +72,7 @@ async function waitForHttpReady(
   let lastError = "";
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(url, { method });
+      const response = await fetch(url, { method, headers: { Accept: "text/html" } });
       const ready = expectedStatus === undefined
         ? response.status >= 200 && response.status < 500
         : response.status === expectedStatus;
