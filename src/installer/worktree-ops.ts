@@ -708,7 +708,7 @@ function dependencyInventory(root: string, destination = false): DependencyNode[
       if (stat.uid !== process.getuid!()) nativeAssetRefused("dependency owner");
       if (stat.isSymbolicLink()) {
         const target = fs.readlinkSync(file), resolved = fs.realpathSync(file);
-        if (!/^\.bin\/[^/]+$/.test(relative) || path.isAbsolute(target) || !resolved.startsWith(root + path.sep)
+        if (!/(?:^|\/)node_modules\/\.bin\/[^/]+$/.test(`node_modules/${relative}`) || path.isAbsolute(target) || !resolved.startsWith(root + path.sep)
           || !fs.statSync(file).isFile()) nativeAssetRefused("dependency link");
         nodes.push({relative, kind:"link", mode:0, identity:assetIdentity(stat), size:0, target});
       } else if (stat.isDirectory()) {

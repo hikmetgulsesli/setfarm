@@ -130,6 +130,11 @@ describe("worktree operations", () => {
       fs.linkSync(sourceFile, path.join(dependencies, "tiny", "alias.cjs"));
       fs.writeFileSync(path.join(dependencies, "tiny", "bin", "cli.cjs"), "#!/usr/bin/env node\n", { mode: 0o755 });
       fs.symlinkSync("../tiny/bin/cli.cjs", path.join(dependencies, ".bin", "tiny"));
+      const nestedModules = path.join(dependencies, "tiny", "node_modules");
+      fs.mkdirSync(path.join(nestedModules, "nested-tool", "bin"), { recursive: true });
+      fs.mkdirSync(path.join(nestedModules, ".bin"));
+      fs.writeFileSync(path.join(nestedModules, "nested-tool", "bin", "cli.cjs"), "#!/usr/bin/env node\n", { mode: 0o755 });
+      fs.symlinkSync("../nested-tool/bin/cli.cjs", path.join(nestedModules, ".bin", "nested-tool"));
       const sourceIdentity = fs.statSync(sourceFile);
       assert.equal(sourceIdentity.nlink, 2);
 
@@ -160,6 +165,9 @@ describe("worktree operations", () => {
       assert.equal(fs.readFileSync(copied, "utf8"), sourceBytes);
       assert.equal(fs.readlinkSync(path.join(nativeDependencies, ".bin", "tiny")), "../tiny/bin/cli.cjs");
       assert.equal(fs.statSync(path.join(nativeDependencies, "tiny", "bin", "cli.cjs")).mode & 0o111, 0o111);
+      const nestedLink = path.join(nativeDependencies, "tiny", "node_modules", ".bin", "nested-tool");
+      assert.equal(fs.readlinkSync(nestedLink), "../nested-tool/bin/cli.cjs");
+      assert.equal(fs.realpathSync(nestedLink), path.join(nativeDependencies, "tiny", "node_modules", "nested-tool", "bin", "cli.cjs"));
       const reused: string = Reflect.apply(createStoryWorktree, undefined,
         [repo, "native-assets", baseSha, undefined, "native-implementation"]);
       assert.equal(reused, native);

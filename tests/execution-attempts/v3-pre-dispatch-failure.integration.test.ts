@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -8,6 +8,7 @@ import { createAttemptRepository } from "../../src/execution/attempt-repository.
 import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { createV3PreparationClaimAuthorityV1 } from "../../src/execution/v3-preparation-claim-authority.js";
+import { NativeImplementationAssetError, writeStoryScopeSnapshot } from "../../src/installer/worktree-ops.js";
 import { exactProductReservation } from "./fixtures.js";
 import { seedCanonicalCompilerStoryAdmissionFixture } from "./helpers/compiler-story-english-admission-fixture.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
@@ -25,7 +26,7 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
     const { handleV3PreDispatchFailure } = await import("../../src/installer/v3-pre-dispatch-failure.js");
     const releaseSha = "a".repeat(40);
     const packetHash = "b".repeat(64);
-    const seedManagedOwner = async (suffix: string) => {
+    const seedPublishedOwner = async (suffix: string) => {
       const managedRunId = `run-v3-pre-dispatch-${suffix}`;
       const admission = await seedCanonicalCompilerStoryAdmissionFixture(database, {
         runId: managedRunId,
@@ -52,34 +53,13 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
       });
       assert.ok(publication?.runtime);
       const managedClaimId = publication.claimId;
-      const attempts = createAttemptRepository(database.sql, {
-        attemptId: () => `ATT_predispatch-${suffix}-owner`,
-        fenceToken: () => "f".repeat(64),
-      });
-      const attempt = await attempts.reserve(exactProductReservation({
-        claimId: managedClaimId,
-        runId: managedRunId,
-        stepId: "implement",
-        storyId: story.storyId,
-        agentId: "feature-dev_developer",
-        packetHash,
-        sourceBefore: { sha: "d".repeat(40), treeHash: "e".repeat(40) },
-        evidenceRefs: [`setfarm://claim-log/${managedClaimId}`],
-      }));
-      const sessions = createRuntimeSessionRepository(database.sql);
-      const runtime = await sessions.bindAttempt({
-        sessionId: publication.runtime.sessionId,
-        attemptId: attempt.attempt.attemptId,
-        ownerInstanceId: publication.runtime.ownerInstanceId,
-      });
       return {
         runId: managedRunId,
         stepDbId: admission.implementStepDbId,
         storyDbId: story.id,
         storyId: story.storyId,
         claimId: managedClaimId,
-        attemptId: attempt.attempt.attemptId,
-        runtime,
+        runtime: publication.runtime,
         authority: createV3PreparationClaimAuthorityV1({
           stateVersion: 1,
           runId: managedRunId,
@@ -92,6 +72,74 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
         }),
       };
     };
+
+    const seedManagedOwner = async (suffix: string) => {
+      const owner = await seedPublishedOwner(suffix);
+      const attempts = createAttemptRepository(database.sql, {
+        attemptId: () => `ATT_predispatch-${suffix}-owner`,
+        fenceToken: () => "f".repeat(64),
+      });
+      const attempt = await attempts.reserve(exactProductReservation({
+        claimId: owner.claimId, runId: owner.runId, stepId: "implement",
+        storyId: owner.storyId, agentId: "feature-dev_developer", packetHash,
+        sourceBefore: { sha: "d".repeat(40), treeHash: "e".repeat(40) },
+        evidenceRefs: [`setfarm://claim-log/${owner.claimId}`],
+      }));
+      const runtime = await createRuntimeSessionRepository(database.sql).bindAttempt({
+        sessionId: owner.runtime.sessionId, attemptId: attempt.attempt.attemptId,
+        ownerInstanceId: owner.runtime.ownerInstanceId,
+      });
+      return { ...owner, attemptId: attempt.attempt.attemptId, runtime };
+    };
+
+    // Compatibility control: actual producer refusal + existing owner handler.
+    // This does not substitute for reviewing the claimStep caller catch wiring.
+    const assetOwner = await seedPublishedOwner("asset-prebirth");
+    const assetRoot = await realpath(eventRoot);
+    const refusedWorktree = path.join(assetRoot, "refused-worktree");
+    await mkdir(refusedWorktree);
+    const sentinel = path.join(assetRoot, "retained-scope.txt");
+    await writeFile(sentinel, "unknown retained scope\n");
+    const sidecar = path.join(refusedWorktree, ".story-scope-files");
+    await symlink(sentinel, sidecar);
+    let assetError: unknown;
+    try { writeStoryScopeSnapshot(refusedWorktree, ["src/index.ts"]); }
+    catch (error) { assetError = error; }
+    assert.ok(assetError instanceof NativeImplementationAssetError);
+    const assetDisposition = await handleV3PreDispatchFailure({
+      step: { id: assetOwner.stepDbId, run_id: assetOwner.runId, step_id: "implement" },
+      story: { id: assetOwner.storyDbId, story_id: assetOwner.storyId },
+      agentId: "feature-dev_developer", claimId: assetOwner.claimId,
+      runtime: assetOwner.runtime, authority: assetOwner.authority,
+      phase: "source", error: assetError,
+      // No repo/storyBranch: refused filesystem custody must not be cleaned up.
+    });
+    assert.equal(assetDisposition.disposition, "terminal_contract");
+    const [assetState] = await database.sql<Array<{
+      run_status: string; step_status: string; current_story_id: string | null;
+      story_status: string; claimed_by: string | null; claim_outcome: string | null;
+      runtime_state: string; attempt_id: string | null; attempts: number; termination_state: string;
+    }>>`
+      SELECT run.status AS run_status, step.status AS step_status, step.current_story_id,
+             story.status AS story_status, story.claimed_by, claim.outcome AS claim_outcome,
+             runtime.state AS runtime_state, runtime.attempt_id,
+             (SELECT COUNT(*)::integer FROM execution_attempts WHERE run_id = run.id) AS attempts,
+             termination.state AS termination_state
+        FROM runs run
+        JOIN steps step ON step.id = ${assetOwner.stepDbId}
+        JOIN stories story ON story.id = ${assetOwner.storyDbId}
+        JOIN claim_log claim ON claim.id = ${assetOwner.claimId}
+        JOIN runtime_sessions runtime ON runtime.session_id = ${assetOwner.runtime.sessionId}
+        JOIN run_termination_requests termination ON termination.run_id = run.id
+       WHERE run.id = ${assetOwner.runId}
+    `;
+    assert.deepEqual({ ...assetState }, {
+      run_status: "failing", step_status: "failed", current_story_id: null,
+      story_status: "failed", claimed_by: null, claim_outcome: "failed",
+      runtime_state: "released", attempt_id: null, attempts: 0, termination_state: "requested",
+    });
+    assert.equal(await readlink(sidecar), sentinel);
+    assert.equal(await readFile(sentinel, "utf8"), "unknown retained scope\n");
 
     const transient = await seedManagedOwner("integration");
     const disposition = await handleV3PreDispatchFailure({

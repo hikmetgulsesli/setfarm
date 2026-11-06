@@ -5348,8 +5348,17 @@ async function claimV3RecoveryWork(
     return { found: false };
   }
   const storyBranch = recoveryBranchName(work);
-  const storyWorkdir = createStoryWorktree(repo, storyBranch, baseRef, agentId,
-    "implementationSourceMap" in recoveryPacket ? "native-implementation" : undefined);
+  let storyWorkdir: string;
+  try {
+    storyWorkdir = createStoryWorktree(repo, storyBranch, baseRef, agentId,
+      "implementationSourceMap" in recoveryPacket ? "native-implementation" : undefined);
+  } catch (error) {
+    if (!(error instanceof NativeImplementationAssetError)) throw error;
+    // No claim has been published. Retain the exact leased recovery delivery
+    // for its existing lifecycle reconciler; never delete unknown asset custody.
+    await recordRecoveryPreparationFailure(work, "V3_RECOVERY_WORKTREE_PREPARATION_FAILED", error.message);
+    return { found: false };
+  }
   if (!storyWorkdir) {
     await recordRecoveryPreparationFailure(
       work,
@@ -5439,7 +5448,15 @@ async function claimV3RecoveryWork(
     { storyId: story.story_id, dispatchId: handoff.dispatchId },
   );
 
-  await injectStoryContext(story, step, context);
+  try {
+    await injectStoryContext(story, step, context);
+  } catch (error) {
+    if (!(error instanceof NativeImplementationAssetError)) throw error;
+    await recordRecoveryPreparationFailure(work, "V3_RECOVERY_ATTEMPT_RESERVATION_FAILED", error.message);
+    // Same post-publication/pre-attempt window as reservation below. The
+    // recovery lifecycle reconciler owns closure; preserve refused asset custody.
+    return { found: false };
+  }
   let compiled: V3ImplementationAttemptResult;
   try {
     compiled = await reserveV3ImplementationAttempt({
@@ -8407,8 +8424,21 @@ export async function claimStep(
       if (runProtocol?.protocol !== "v3" && isPrEach && context["repo"]) {
         syncBaseBranch(context["repo"], "main");
       }
-      let storyWorkdir = createStoryWorktree(context["repo"], storyBranch, baseRef, agentId,
-        v3NativePreparationAuthority ? "native-implementation" : undefined);
+      let storyWorkdir: string;
+      try {
+        storyWorkdir = createStoryWorktree(context["repo"], storyBranch, baseRef, agentId,
+          v3NativePreparationAuthority ? "native-implementation" : undefined);
+      } catch (error) {
+        if (!(error instanceof NativeImplementationAssetError) || runProtocol?.protocol !== "v3") throw error;
+        await handleV3PreDispatchFailure({
+          step, story: nextStory, agentId, claimId: legacyClaimId,
+          runtime: claimRuntime, authority: v3PreparationAuthority!,
+          phase: "source", error,
+          preserveStoryOutput: Boolean(v3SupervisorRetryPreparationSource),
+          // Deliberately omit repo/storyBranch: refused custody must survive.
+        });
+        return { found: false };
+      }
       let worktreeFailureDetail = "";
       if (storyWorkdir && runProtocol?.protocol === "v3") {
         try {
@@ -8455,7 +8485,19 @@ export async function claimStep(
 
       // Native copies retain their producer custody; legacy callers retain the symlink repair.
       if (storyWorkdir && v3NativePreparationAuthority) {
-        prepareNativeImplementationDependencies(context["repo"], storyWorkdir);
+        try {
+          prepareNativeImplementationDependencies(context["repo"], storyWorkdir);
+        } catch (error) {
+          if (!(error instanceof NativeImplementationAssetError) || runProtocol?.protocol !== "v3") throw error;
+          await handleV3PreDispatchFailure({
+            step, story: nextStory, agentId, claimId: legacyClaimId,
+            runtime: claimRuntime, authority: v3PreparationAuthority!,
+            phase: "source", error,
+            preserveStoryOutput: Boolean(v3SupervisorRetryPreparationSource),
+            // Deliberately omit repo/storyBranch: refused custody must survive.
+          });
+          return { found: false };
+        }
       } else if (storyWorkdir) {
         const nmLink = path.join(storyWorkdir, "node_modules");
         const nmSource = path.join(context["repo"] || "", "node_modules");
@@ -8637,7 +8679,19 @@ export async function claimStep(
       context["claim_generation"] = String(nextStory.claim_generation ?? 0);
 
       // Inject story context (template vars, screen_map, optional vars, previous_failure)
-      await injectStoryContext(nextStory, step, context);
+      try {
+        await injectStoryContext(nextStory, step, context);
+      } catch (error) {
+        if (!(error instanceof NativeImplementationAssetError) || runProtocol?.protocol !== "v3") throw error;
+        await handleV3PreDispatchFailure({
+          step, story: nextStory, agentId, claimId: legacyClaimId,
+          runtime: claimRuntime, authority: v3PreparationAuthority!,
+          phase: "source", error,
+          preserveStoryOutput: Boolean(v3SupervisorRetryPreparationSource),
+          // Deliberately omit repo/storyBranch: refused custody must survive.
+        });
+        return { found: false };
+      }
 
       // Inject test generation prompt so agent writes tests alongside implementation
       if (step.step_id === "implement") {
