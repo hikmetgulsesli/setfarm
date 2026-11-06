@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { inspectSubscriptionCodingWorktreeV1 } from "../src/execution/subscription-coding-worker-v1.js";
 
-import { writeStoryScopeSnapshot, applyScopedRetryPatchForStory, copyStitchToWorktree, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
+import { ensureStoryBranchWorktree, NativeImplementationAssetError, writeStoryScopeSnapshot, applyScopedRetryPatchForStory, copyStitchToWorktree, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
 import { produceProductSpecV1 } from "../src/product-compiler/producers/product-spec.js";
 import { produceDesignGenerationTargetsV1 } from "../src/product-compiler/producers/design-targets.js";
 import {
@@ -106,6 +106,94 @@ function writeValidStitchV2Authority(repo: string): void {
 }
 
 describe("worktree operations", () => {
+
+  it("prepares native audit assets on the exact completed branch without replacing its committed corpus", () => {
+    const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-audit-assets-")));
+    const repo = path.join(tmp, "repo");
+    try {
+      fs.mkdirSync(repo);
+      git(repo, ["init", "--initial-branch=main"]);
+      git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+      git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\n.worktrees/\n.setfarm/\n");
+      fs.writeFileSync(path.join(repo, "app.txt"), "base\n");
+      for (const directory of ["references", "stitch"]) {
+        fs.mkdirSync(path.join(repo, directory));
+        fs.writeFileSync(path.join(repo, directory, "manual.txt"), "base corpus\n");
+      }
+      git(repo, ["add", "."]); git(repo, ["commit", "-m", "base"]);
+      const baseSha = git(repo, ["rev-parse", "HEAD"]);
+      git(repo, ["checkout", "-b", "audit-story"]);
+      fs.writeFileSync(path.join(repo, "app.txt"), "completed implementation\n");
+      for (const directory of ["references", "stitch"]) fs.writeFileSync(path.join(repo, directory, "manual.txt"), "committed story corpus\n");
+      git(repo, ["add", "."]); git(repo, ["commit", "-m", "completed story"]);
+      const storySha = git(repo, ["rev-parse", "HEAD"]);
+      assert.notEqual(storySha, baseSha);
+      git(repo, ["checkout", "main"]);
+      const dependencies = path.join(repo, "node_modules");
+      fs.mkdirSync(path.join(dependencies, "tiny"), { recursive: true });
+      fs.mkdirSync(path.join(dependencies, ".bin"));
+      const source = path.join(dependencies, "tiny", "tool.cjs");
+      fs.writeFileSync(source, "module.exports = 'source';\n");
+      fs.symlinkSync("../tiny/tool.cjs", path.join(dependencies, ".bin", "tiny"));
+
+      // The old producer ignores the fourth argument and creates root aliases:
+      // unchanged worker inspection is the genuine regression assertion.
+      const review: string = Reflect.apply(ensureStoryBranchWorktree, undefined, [repo, "audit-story", undefined, "native-audit"]);
+      assert.ok(review);
+      assert.doesNotThrow(() => inspectSubscriptionCodingWorktreeV1(review, []));
+      assert.equal(git(review, ["rev-parse", "HEAD"]), storySha);
+      assert.equal(fs.readFileSync(path.join(review, "app.txt"), "utf8"), "completed implementation\n");
+      for (const directory of ["references", "stitch"]) assert.equal(fs.readFileSync(path.join(review, directory, "manual.txt"), "utf8"), "committed story corpus\n");
+      const copied = path.join(review, "node_modules", "tiny", "tool.cjs");
+      assert.notEqual(fs.statSync(copied).ino, fs.statSync(source).ino);
+      assert.equal(fs.statSync(copied).nlink, 1);
+      assert.equal(fs.statSync(path.join(review, ".setfarm", "native-dependency-custody.json")).mode & 0o7777, 0o600);
+      const inode = fs.statSync(copied).ino;
+      assert.equal(Reflect.apply(ensureStoryBranchWorktree, undefined, [repo, "audit-story", undefined, "native-audit"]), review);
+      assert.equal(fs.statSync(copied).ino, inode);
+      assert.doesNotThrow(() => inspectSubscriptionCodingWorktreeV1(review, []));
+      assert.equal(git(review, ["status", "--porcelain"]), "");
+      fs.writeFileSync(copied, "private drift\n");
+      assert.throws(() => Reflect.apply(ensureStoryBranchWorktree, undefined, [repo, "audit-story", undefined, "native-audit"]), /NATIVE_IMPLEMENTATION_ASSETS_REFUSED/);
+      assert.equal(fs.readFileSync(copied, "utf8"), "private drift\n");
+      assert.equal(git(review, ["rev-parse", "HEAD"]), storySha);
+      assert.equal(fs.readFileSync(source, "utf8"), "module.exports = 'source';\n");
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("uses a preferred native audit worktree and preserves unknown assets on refusal while legacy links remain unchanged", () => {
+    const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-audit-preferred-")));
+    const repo = path.join(tmp, "repo"), preferred = path.join(tmp, "supervisor", "story-worktrees", "audit-story");
+    try {
+      fs.mkdirSync(repo);
+      git(repo, ["init", "--initial-branch=main"]);
+      git(repo, ["config", "user.email", "setfarm@example.invalid"]);git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\nreferences/\n.worktrees/\n.setfarm/\n");
+      fs.writeFileSync(path.join(repo, "app.txt"), "completed code\n");
+      git(repo, ["add", "."]);git(repo, ["commit", "-m", "base"]);
+      git(repo, ["branch", "audit-story"]);git(repo, ["branch", "legacy-story"]);
+      fs.mkdirSync(path.dirname(preferred), { recursive: true });git(repo, ["worktree", "add", preferred, "audit-story"]);
+      const sha = git(preferred, ["rev-parse", "HEAD"]);
+      fs.mkdirSync(path.join(repo, "node_modules", "tiny"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "node_modules", "tiny", "index.cjs"), "source dependency\n");
+      fs.mkdirSync(path.join(repo, "references"));fs.writeFileSync(path.join(repo, "references", "manual.txt"), "external manual\n");
+      const review: string = Reflect.apply(ensureStoryBranchWorktree, undefined, [repo, "audit-story", undefined, "native-audit", preferred]);
+      assert.equal(review, preferred);
+      assert.doesNotThrow(() => inspectSubscriptionCodingWorktreeV1(review, []));
+      assert.equal(fs.existsSync(path.join(review, "references")), false);
+      assert.equal(git(review, ["rev-parse", "HEAD"]), sha);
+      const legacy = ensureStoryBranchWorktree(repo, "legacy-story");
+      for (const name of ["node_modules", "references"]) assert.equal(fs.lstatSync(path.join(legacy, name)).isSymbolicLink(), true);
+      assert.throws(() => inspectSubscriptionCodingWorktreeV1(legacy, []));
+      fs.symlinkSync(path.join(repo, "references"), path.join(review, "references"));
+      const oldDependencyInode = fs.statSync(path.join(review, "node_modules")).ino;
+      assert.throws(() => Reflect.apply(ensureStoryBranchWorktree, undefined, [repo, "audit-story", undefined, "native-audit", preferred]), /NATIVE_IMPLEMENTATION_ASSETS_REFUSED/);
+      assert.equal(fs.readlinkSync(path.join(review, "references")), path.join(repo, "references"));
+      assert.equal(fs.statSync(path.join(review, "node_modules")).ino, oldDependencyInode);
+      assert.equal(git(review, ["rev-parse", "HEAD"]), sha);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
   it("prepares private native implementation dependencies for the unchanged worker inspector and preserves legacy assets", () => {
     const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-private-native-assets-")));
     const origin = path.join(tmp, "origin.git");
@@ -834,4 +922,115 @@ describe("worktree operations", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+});
+
+import ts from "typescript";
+
+function actualAuditHelperForTest(): (...args: any[]) => string {
+  const filename = path.join(process.cwd(), "src/installer/step-ops.ts");
+  const text = fs.readFileSync(filename, "utf8");
+  const tree = ts.createSourceFile(filename, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const names = ["stripSetfarmGitWrapperPath", "platformGitEnv", "execPlatformGit",
+    "storyWorkdirMatchesBranch", "ensureStoryAuditWorkdir"];
+  const declarations = names.map(name => {
+    const rows = tree.statements.filter((node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === name);
+    assert.equal(rows.length, 1, `actual private production function required: ${name}`);
+    return rows[0]!.getText(tree).replace(/^export\s+/, "");
+  });
+  const body = ts.transpileModule(declarations.join("\n"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  }).outputText;
+  // Only logger is a sink. Every Git/filesystem/producer port below is real.
+  const logger = { info() {}, warn() {}, error() {}, debug() {} };
+  return new Function("fs", "os", "path", "execFileSync", "ensureStoryBranchWorktree",
+    "NativeImplementationAssetError", "logger", body + ";return ensureStoryAuditWorkdir;")(
+      fs, os, path, execFileSync, ensureStoryBranchWorktree, NativeImplementationAssetError, logger);
+}
+
+it("native audit helper prepares the current matching worktree and preserves typed custody refusal", () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-audit-helper-current-")));
+  const repo = path.join(tmp, "repo");
+  const current = path.join(tmp, "supervisor", "story-worktrees", "audit-helper-story");
+  try {
+    fs.mkdirSync(repo);
+    git(repo, ["init", "--initial-branch=main"]);
+    git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+    git(repo, ["config", "user.name", "Setfarm Test"]);
+    fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\nreferences/\n.worktrees/\n.setfarm/\n");
+    fs.writeFileSync(path.join(repo, "app.txt"), "base\n");
+    git(repo, ["add", "."]); git(repo, ["commit", "-m", "base"]);
+    git(repo, ["checkout", "-b", "audit-helper-story"]);
+    fs.writeFileSync(path.join(repo, "app.txt"), "completed story\n");
+    git(repo, ["add", "app.txt"]); git(repo, ["commit", "-m", "completed story"]);
+    const storySha = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["checkout", "main"]);
+    fs.mkdirSync(path.dirname(current), { recursive: true });
+    git(repo, ["worktree", "add", current, "audit-helper-story"]);
+    const sourceDependencies = path.join(repo, "node_modules");
+    fs.mkdirSync(path.join(sourceDependencies, "tiny"), { recursive: true });
+    const sourceFile = path.join(sourceDependencies, "tiny", "index.cjs");
+    fs.writeFileSync(sourceFile, "module.exports = 'original dependency';\n");
+    fs.mkdirSync(path.join(repo, "references"));
+    fs.writeFileSync(path.join(repo, "references", "manual.txt"), "external corpus\n");
+    const context = { repo, story_workdir: current, story_branch: "audit-helper-story" };
+    const helper = actualAuditHelperForTest();
+
+    // Old helper ignores arg7 and returns current before actual asset production.
+    const selected = Reflect.apply(helper, undefined,
+      [context, "audit-helper-story", undefined, "run-component", "US-001", "supervise_each", "native-audit"]);
+    assert.equal(selected, current);
+    assert.equal(context.story_workdir, current);
+    const copiedFile = path.join(current, "node_modules", "tiny", "index.cjs");
+    assert.equal(fs.existsSync(copiedFile), true, "native current-path audit must prepare private dependencies");
+    assert.equal(fs.readFileSync(copiedFile, "utf8"), "module.exports = 'original dependency';\n");
+    assert.notEqual(fs.statSync(copiedFile).ino, fs.statSync(sourceFile).ino);
+    assert.equal(fs.statSync(copiedFile).nlink, 1);
+    assert.doesNotThrow(() => inspectSubscriptionCodingWorktreeV1(current, []));
+    assert.equal(git(current, ["rev-parse", "HEAD"]), storySha);
+    assert.equal(fs.readFileSync(path.join(current, "app.txt"), "utf8"), "completed story\n");
+
+    // A stale context on another branch is not a preferred audit worktree.
+    assert.equal(Reflect.apply(helper, undefined,
+      [{ ...context, story_workdir: repo }, "audit-helper-story", undefined, "run-component", "US-001", "supervise_each", "native-audit"]), current);
+
+    // Genuine custody drift, no mocked throw and no cleanup of changed bytes.
+    fs.writeFileSync(copiedFile, "private dependency drift\n");
+    const inode = fs.statSync(copiedFile).ino;
+    assert.throws(() => Reflect.apply(helper, undefined,
+      [context, "audit-helper-story", undefined, "run-component", "US-001", "supervise_each", "native-audit"]), NativeImplementationAssetError);
+    assert.equal(fs.readFileSync(copiedFile, "utf8"), "private dependency drift\n");
+    assert.equal(fs.statSync(copiedFile).ino, inode);
+    assert.equal(fs.readFileSync(sourceFile, "utf8"), "module.exports = 'original dependency';\n");
+    assert.equal(git(current, ["rev-parse", "HEAD"]), storySha);
+    // Legacy current-path reuse remains unchanged, without repairing the drift.
+    assert.equal(Reflect.apply(helper, undefined,
+      [context, "audit-helper-story", undefined, "run-component", "US-001", "supervise_each"]), current);
+    assert.equal(fs.readFileSync(copiedFile, "utf8"), "private dependency drift\n");
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+
+it("native audit refuses a foreign preferred repository with the same branch before publishing dependencies", () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-audit-foreign-")));
+  const repo = path.join(tmp, "repo"), foreign = path.join(tmp, "foreign");
+  try {
+    for (const directory of [repo, foreign]) {
+      fs.mkdirSync(directory);
+      git(directory, ["init", "--initial-branch=main"]);
+      git(directory, ["config", "user.email", "setfarm@example.invalid"]);git(directory, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(directory, ".gitignore"), "node_modules/\n.worktrees/\n.setfarm/\n");
+      fs.writeFileSync(path.join(directory, "app.txt"), "preserve original bytes\n");
+      git(directory, ["add", "."]);git(directory, ["commit", "-m", "base"]);
+      git(directory, ["branch", "audit-story"]);
+    }
+    git(foreign, ["checkout", "audit-story"]);
+    fs.mkdirSync(path.join(repo, "node_modules", "tiny"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "node_modules", "tiny", "index.cjs"), "dependency\n");
+    assert.throws(() => Reflect.apply(ensureStoryBranchWorktree, undefined,
+      [repo, "audit-story", undefined, "native-audit", foreign]), /NATIVE_IMPLEMENTATION_ASSETS_REFUSED/);
+    assert.equal(fs.existsSync(path.join(foreign, "node_modules")), false);
+    assert.equal(fs.existsSync(path.join(foreign, ".setfarm")), false);
+    assert.equal(fs.readFileSync(path.join(foreign, "app.txt"), "utf8"), "preserve original bytes\n");
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
