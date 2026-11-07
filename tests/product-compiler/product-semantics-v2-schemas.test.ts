@@ -6,6 +6,7 @@ import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requi
 import { PlanSemanticProposalV1Schema } from "../../src/product-compiler/schemas/plan-semantic-proposal-v1.js";
 import { PlanSemanticProposalV2Schema } from "../../src/product-compiler/schemas/plan-semantic-proposal-v2.js";
 import { ProductSpecV1Schema } from "../../src/product-compiler/schemas/product-spec-v1.js";
+import { genuineNodeCliProductSpecV2 } from "./fixtures/no-design-product-semantics-v2.js";
 import {
   ProductSpecV2EnglishWriteSchema,
   ProductSpecV2Schema,
@@ -371,6 +372,40 @@ function rejectionMessages(result: ReturnType<typeof PlanSemanticProposalV2Schem
   assert.equal(result.success, false);
   return result.success ? [] : result.error.issues.map((issue) => issue.message);
 }
+
+describe("browser rendered value admission", () => {
+  it("rejects a numeric expectation that can never equal the DOM string value", () => {
+    const value = productSpec();
+    value.actions[0].observableEffects[2].assertions = [
+      { phase: "after", property: "value", operator: "equals", expected: 0 },
+    ];
+    const parsed = ProductSpecV2Schema.safeParse(value);
+    assert.equal(parsed.success, false);
+    if (!parsed.success) assert.ok(parsed.error.issues.some(issue =>
+      issue.message.includes("PRODUCT_SPEC_V2_RENDERED_VALUE_EXPECTED_TYPE")
+      && issue.path.join("/") === "actions/0/observableEffects/2/assertions/0/expected"));
+  });
+
+  it("keeps DOM strings, null and changed-value assertions valid", () => {
+    for (const assertion of [
+      { phase: "after", property: "value", operator: "equals", expected: "0" },
+      { phase: "after", property: "value", operator: "equals", expected: null },
+      { phase: "after", property: "value", operator: "changed" },
+    ]) {
+      const value = productSpec();
+      value.actions[0].observableEffects[2].assertions = [assertion];
+      assert.equal(ProductSpecV2Schema.safeParse(value).success, true);
+    }
+  });
+
+  it("keeps a declared numeric invocation output as typed JSON", () => {
+    const value: any = genuineNodeCliProductSpecV2();
+    const observable = value.actions[0].observableEffects[0];
+    observable.selector.valueContract = { valueType: "number", expectedFrom: { kind: "literal", value: 0 } };
+    observable.assertions = [{ phase: "after", property: "value", operator: "equals", expected: 0 }];
+    assert.equal(ProductSpecV2Schema.safeParse(value).success, true);
+  });
+});
 
 describe("PlanSemanticProposalV2 schema authority", () => {
   it("parses the same three-surface product deterministically with only one physical control placement", () => {
