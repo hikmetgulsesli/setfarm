@@ -138,6 +138,44 @@ test('close revokes broker before stopping worker and shares one promise until a
   } finally { f.cleanup(); }
 });
 
+test('original broker refusal remains diagnosable after joint closure without exposing worker material', async t => {
+  const f = fixture(); const warnings: unknown[][] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => { warnings.push(args); });
+  try {
+    const owner = await required().acquireSubscriptionCodingRuntimeV1(f.input, f.port);
+    f.brokerClosure.resolve({ status: 'closed', reason: 'refused', terminalCode: 'QUOTA',
+      acceptedRequests: 1, responseBytes: 0, redactions: 0 });
+    f.workerClosure.resolve({ status: 'closed' }); f.originals();
+    assert.equal((await owner.closed).status, 'closed');
+    assert.equal(warnings.length, 1, 'the original broker refusal code was lost');
+    assert.equal(warnings[0].length, 1);
+    const line = warnings[0][0]; assert.equal(typeof line, 'string');
+    const prefix = '[subscription-runtime] SUBSCRIPTION_BROKER_TERMINAL ';
+    assert.ok((line as string).startsWith(prefix));
+    assert.deepEqual(JSON.parse((line as string).slice(prefix.length)), {
+      runtimeSessionId: 'RT_coding_1', claimId: 51, modelRef: 'minimax/MiniMax-M3.1-Flash',
+      reason: 'refused', terminalCode: 'QUOTA', acceptedRequests: 1, responseBytes: 0, redactions: 0,
+    });
+    assert.deepEqual(f.events.slice(-2), ['broker-revoke', 'worker-stop']);
+    for (const privateValue of ['A'.repeat(43), 'fence_token_1', f.input.prompt, f.input.root]) {
+      assert.equal((line as string).includes(privateValue), false);
+    }
+  } finally { f.finish(); f.cleanup(); }
+});
+
+test('diagnostic logger failure cannot interrupt original broker and worker closure', async t => {
+  const f = fixture();
+  t.mock.method(console, 'warn', () => { throw new Error('diagnostic sink unavailable'); });
+  try {
+    const owner = await required().acquireSubscriptionCodingRuntimeV1(f.input, f.port);
+    f.brokerClosure.resolve({ status: 'closed', reason: 'refused', terminalCode: 'UPSTREAM_REJECTED',
+      acceptedRequests: 1, responseBytes: 0, redactions: 0 });
+    f.workerClosure.resolve({ status: 'closed' }); f.originals();
+    assert.equal((await owner.closed).status, 'closed');
+    assert.deepEqual(f.events.slice(-2), ['broker-revoke', 'worker-stop']);
+  } finally { f.finish(); f.cleanup(); }
+});
+
 test('every acquired broker is retained when launch fails and startup Error.ownership retains uncertain worker', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = fixture(); try {

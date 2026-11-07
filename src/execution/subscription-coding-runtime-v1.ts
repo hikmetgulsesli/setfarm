@@ -246,7 +246,19 @@ export async function acquireSubscriptionCodingRuntimeV1(
     try {
       if (!value || typeof value.stop !== 'function' || !nativePromise(value.closed)) refuse();
       consume(value.closed, outcome => {
-        try { const r = receipt(outcome); brokerState = r.status; if (r.status !== 'closed') latch(); close(r.reason); }
+        try {
+          const r = receipt(outcome);
+          if (r.terminalCode !== null) {
+            // Retain only validated scalar mechanics; a diagnostic sink cannot
+            // interfere with the original broker/worker closure path.
+            try { console.warn('[subscription-runtime] SUBSCRIPTION_BROKER_TERMINAL ' + JSON.stringify({
+              runtimeSessionId: input.binding.runtimeSessionId, claimId: input.binding.claimId,
+              modelRef: input.binding.modelRef, reason: r.reason, terminalCode: r.terminalCode,
+              acceptedRequests: r.acceptedRequests, responseBytes: r.responseBytes, redactions: r.redactions,
+            })); } catch { /* Diagnostics are not closure authority. */ }
+          }
+          brokerState = r.status; if (r.status !== 'closed') latch(); close(r.reason);
+        }
         catch { brokerState = 'custody-uncertain'; latch(); close('refused'); }
         ready();
       }, () => { brokerState = 'custody-uncertain'; latch(); close('refused'); ready(); });
