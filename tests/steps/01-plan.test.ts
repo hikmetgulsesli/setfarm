@@ -175,6 +175,20 @@ describe("01-plan step module", () => {
     assert.match(prompt, /every planner-owned product name, semantic statement, visible label, message, and UI copy must be expressed in English\./);
   });
 
+  it("initial atomic PLAN guidance explains existing DOM value types and persistence witnesses", () => {
+    const prompt=planModule.buildPrompt({runId:"initial-atomic-guidance",task:"Show a fixed score of zero and persist it.",
+      context:{plan_protocol:"v3",product_semantics_version:"v2"}});
+    assert.ok(/property.?value.{0,100}string\|null/i.test(prompt),"required initial atomic guidance: "+/property.?value.{0,100}string\|null/i.source);
+    assert.ok(/visible_text.{0,60}string/i.test(prompt),"required initial atomic guidance: "+/visible_text.{0,60}string/i.source);
+    assert.ok(/expected:\s*"0"/.test(prompt),"required initial atomic guidance: "+/expected:\s*"0"/.source);
+    assert.ok(/invocation_output.{0,100}JSON/i.test(prompt),"required initial atomic guidance: "+/invocation_output.{0,100}JSON/i.source);
+    assert.ok(/persistence witness.{0,120}change/i.test(prompt),"required initial atomic guidance: "+/persistence witness.{0,120}change/i.source);
+    assert.ok(/task-consistent.{0,100}initially absent/i.test(prompt),"required initial atomic guidance: "+/task-consistent.{0,100}initially absent/i.source);
+    assert.ok(/score.{0,30}0.{0,100}initially absent|initially absent.{0,100}score.{0,30}0/i.test(prompt),"required initial atomic guidance: "+/score.{0,30}0.{0,100}initially absent|initially absent.{0,100}score.{0,30}0/i.source);
+    assert.ok(/Every individual observable needs an after assertion/.test(prompt),"required initial atomic guidance: "+/Every individual observable needs an after assertion/.source);
+    assert.ok(/\^\[A-Za-z\]\[A-Za-z0-9_\]\*\$/.test(prompt),"required initial atomic guidance: "+/\^\[A-Za-z\]\[A-Za-z0-9_\]\*\$/.source);
+  });
+
   it("rejects runtime-owned fields and screen tables", async () => {
     const result = await runModule(
       planModule,
