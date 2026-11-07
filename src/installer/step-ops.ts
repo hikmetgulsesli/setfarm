@@ -1,3 +1,5 @@
+import {selectedFreshRecoveryOwnerOperationsV1} from "../recovery/fresh-recovery-owner-operations-v1.js";
+import {assertOwnerRecoveryAccessV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
 import {readAuthenticatedSubscriptionSuperviseContractsV1} from "../execution/subscription-supervise-contracts-v1.js";
 import {currentRuntimeCompletionOwnerCapability} from "../execution/runtime-completion-owner-context.js";
 import {readDatabaseWallClock} from "../db/database-wall-clock.js";
@@ -4381,31 +4383,31 @@ function generateSrcTree(repoPath: string): string {
   if (!repoPath || !fs.existsSync(repoPath)) return "";
   const srcDir = path.join(repoPath, "src");
   if (!fs.existsSync(srcDir)) return "";
-  
+
   const lines: string[] = [];
   function walk(dir: string, prefix: string, depth: number) {
     if (depth > 4) return; // max 4 levels deep
     let entries: string[];
     try {
-      entries = fs.readdirSync(dir).filter(e => 
+      entries = fs.readdirSync(dir).filter(e =>
         !e.startsWith(".") && e !== "node_modules" && !e.endsWith(".test.tsx") && !e.endsWith(".test.ts")
       ).sort();
     } catch { return; }
-    
+
     const dirs = entries.filter(e => {
       try { return fs.statSync(path.join(dir, e)).isDirectory(); } catch { return false; }
     });
     const files = entries.filter(e => {
       try { return fs.statSync(path.join(dir, e)).isFile(); } catch { return false; }
     });
-    
+
     for (const f of files) lines.push(prefix + f);
     for (const d of dirs) {
       lines.push(prefix + d + "/");
       walk(path.join(dir, d), prefix + "  ", depth + 1);
     }
   }
-  
+
   walk(srcDir, "  ", 0);
   if (lines.length === 0) return "";
   if (lines.length > 80) {
@@ -5462,7 +5464,9 @@ async function claimV3RecoveryWork(
   }
   let compiled: V3ImplementationAttemptResult;
   try {
-    compiled = await reserveV3ImplementationAttempt({
+    compiled = await (selectedFreshInstallationRootV1()
+      ? selectedFreshRecoveryOwnerOperationsV1().reserveRecoveryAttempt
+      : reserveV3ImplementationAttempt)({
       runId: step.run_id,
       stepId: step.step_id,
       storyId: story.story_id,
@@ -7328,7 +7332,7 @@ export async function claimStep(
       storyId: string;
       proof: CompilerStoryEnglishAdmissionClaimProofV1;
     }> | undefined;
-    const recoveryWork = await createV3RecoveryWorkRouter(getSql(), {
+    const recoveryRouterAdmission: NonNullable<Parameters<typeof createV3RecoveryWorkRouter>[1]> = {
       admitCandidate: async (candidate) => {
         const authority = await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(
           getSql(),
@@ -7340,11 +7344,11 @@ export async function claimStep(
           proof: createCompilerStoryEnglishAdmissionClaimProofV1(authority),
         });
       },
-    }).acquireNext({
-      workflowId: workIntent.workflowId,
-      dispatchClass: workIntent.recoveryDispatchClass,
-      ownerInstanceId: runtimeIntent.ownerInstanceId,
-    });
+    };
+    const recoveryWorkInput={workflowId:workIntent.workflowId,dispatchClass:workIntent.recoveryDispatchClass,ownerInstanceId:runtimeIntent.ownerInstanceId};
+    const recoveryWork = selectedFreshInstallationRootV1()
+      ? await selectedFreshRecoveryOwnerOperationsV1().acquireNextRecoveryWork(recoveryWorkInput,recoveryRouterAdmission)
+      : await createV3RecoveryWorkRouter(getSql(),recoveryRouterAdmission).acquireNext(recoveryWorkInput);
     if (recoveryWork) {
       if (!admittedStory
         || admittedStory.runId !== recoveryWork.step.run_id
@@ -12997,10 +13001,15 @@ async function v3RefusalRecoveryLineageIsSettled(
 }
 
 async function settleV3RefusalRecoveryLineage(effect: V3RefusalCompletionEffect): Promise<void> {
+  if(selectedFreshInstallationRootV1())return selectedFreshRecoveryOwnerOperationsV1().settleRefusalRecoveryLineage(effect);
+  return settleV3RefusalRecoveryLineageWithOwnerV1(effect);
+}
+export async function settleV3RefusalRecoveryLineageWithOwnerV1(effect: V3RefusalCompletionEffect,owner?: OwnerRecoveryAccessV1): Promise<void> {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   if (await v3RefusalRecoveryLineageIsSettled(effect)) return;
   if (!effect.priorRecoveryDispatchId || !effect.priorRecoveryRevisionId) return;
-  const findings = createFindingRecoveryRepository(getSql());
-  const deliveries = createRecoveryDeliveryRepository(getSql());
+  const findings = createFindingRecoveryRepository(getSql(),owner);
+  const deliveries = createRecoveryDeliveryRepository(getSql(),owner);
   const dispatch = await deliveries.findDispatch(effect.priorRecoveryDispatchId);
   const delivery = await deliveries.findDelivery(effect.priorRecoveryDispatchId);
   if (!dispatch || !delivery) throw new Error("V3_REFUSAL_PRIOR_RECOVERY_IDENTITY_MISSING");

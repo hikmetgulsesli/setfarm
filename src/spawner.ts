@@ -1,3 +1,5 @@
+import {prepareFreshRecoveryOwnerOperationsV1,selectedFreshRecoveryOwnerOperationsV1} from "./recovery/fresh-recovery-owner-operations-v1.js";
+import type {FreshServiceCustodyV1} from "./server/fresh-installation-service-controls-v1.js";
 import {startSelectedSubscriptionCodingRuntimeV1,readClosedSelectedSubscriptionCodingRuntimeV1,type SelectedSubscriptionCodingRuntimeV1} from "./execution/subscription-coding-runtime-selected-v1.js";
 import {SubscriptionCodingRuntimeStartupErrorV1,type SubscriptionCodingRuntimeOwnershipV1} from "./execution/subscription-coding-runtime-v1.js";
 import {deriveSubscriptionCodingRuntimePathsV1,isSubscriptionRuntimePathV1,sameSubscriptionRuntimeDataV1,type SubscriptionCodingCanonicalAuthorityV1} from "./execution/subscription-coding-runtime-binding-v1.js";
@@ -358,7 +360,8 @@ const AGENT_TIMEOUT_SECONDS = 1800;
 const SELECTED_SPAWNER_V1 = freshInstallationSelectionV1;
 const SELECTED_RUNNER_V1 = process.env.SETFARM_AGENT_RUNTIME;
 let selectedSpawnerPolicyRefusedV1 = false;
-let selectedSpawnerLeaseV1: Readonly<{ release(): void; retainOnExit(): void }> | undefined;
+let selectedSpawnerLeaseV1: FreshServiceCustodyV1 | undefined;
+let selectedRecoveryOwnerV1: Awaited<ReturnType<typeof prepareFreshRecoveryOwnerOperationsV1>> | undefined;
 let selectedSpawnerListenerV1: FreshSpawnerListenerV1 | undefined;
 let selectedSpawnerListenerOpeningV1: Promise<FreshSpawnerListenerV1> | undefined;
 let selectedSpawnerShutdownV1: (() => Promise<number>) | undefined;
@@ -3133,7 +3136,7 @@ async function heartbeatRunningV3RecoveryOwner(active: ActiveProcess): Promise<b
     return false;
   }
   try {
-    const retained = await createV3RecoveryOwnerLeaseRepository(getSql()).heartbeat({
+    const retained = await (SELECTED_SPAWNER_V1?selectedFreshRecoveryOwnerOperationsV1().heartbeatRecoveryOwner:createV3RecoveryOwnerLeaseRepository(getSql()).heartbeat)({
       kind: "model_runtime",
       runId: active.runId,
       storyId: active.storyId,
@@ -4632,7 +4635,7 @@ async function relinquishV3RecoveryOwner(
   ) {
     throw new Error(`V3_RECOVERY_RELINQUISH_IDENTITY_INCOMPLETE:${owner.recoveryDispatchId}`);
   }
-  const result = await createV3RecoveryOwnerLeaseRepository(getSql()).relinquish({
+  const result = await (SELECTED_SPAWNER_V1?selectedFreshRecoveryOwnerOperationsV1().relinquishRecoveryOwner:createV3RecoveryOwnerLeaseRepository(getSql()).relinquish)({
     kind: "model_runtime",
     runId: owner.runId,
     storyId: owner.storyId,
@@ -4646,7 +4649,7 @@ async function relinquishV3RecoveryOwner(
     runtimeSessionId: owner.runtimeSessionId,
   });
   const reconcileExact = async (observedAt?: string): Promise<void> => {
-    const reconciler = createV3RecoveryLifecycleReconciler(getSql());
+    const reconciler = SELECTED_SPAWNER_V1?{reconcileActive:selectedFreshRecoveryOwnerOperationsV1().reconcileRecoveryLifecycle}:createV3RecoveryLifecycleReconciler(getSql());
     const first = await reconciler.reconcileActive({
       runId: owner.runId,
       dispatchId: owner.recoveryDispatchId,
@@ -7838,7 +7841,7 @@ async function startSelectedSubscriptionClaimV1(input:Readonly<{
     activeProcesses.set(input.key,active);
     const owned=runtime,retained=active;
     void owned.closed.then(()=>{retained.subscriptionOriginalClosed=true;}).catch(()=>{});
-    const published=await sessions.markRunning({sessionId:input.runtimeSessionId,ownerInstanceId:SPAWNER_INSTANCE_ID,envelope,
+    const published=await (input.recoveryFence?selectedFreshRecoveryOwnerOperationsV1().markRecoveryRuntimeRunning:sessions.markRunning)({sessionId:input.runtimeSessionId,ownerInstanceId:SPAWNER_INSTANCE_ID,envelope,
       runtimePath:paths.runtimePath,worktree:envelope.workdir,transcriptPath:paths.transcriptPath,
       pid:owned.worker.processIdentity.pid,processIdentity:owned.worker.processIdentity,sessionKey:input.sessionKey,recoveryFence:input.recoveryFence});
     if(published.status!=="running"||shuttingDown)throw Error("SUBSCRIPTION_RUNNING_PUBLICATION_REFUSED");
@@ -8520,7 +8523,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     if (!child.pid || !processIdentity) {
       throw new Error("RUNTIME_SESSION_PROCESS_IDENTITY_UNOBSERVED");
     }
-    const published = await runtimeSessions.markRunning({
+    const published = await (SELECTED_SPAWNER_V1&&claim.recoveryDispatchId?selectedFreshRecoveryOwnerOperationsV1().markRecoveryRuntimeRunning:runtimeSessions.markRunning)({
       sessionId: runtimeSessionId,
       ownerInstanceId: SPAWNER_INSTANCE_ID,
       pid: child.pid,
@@ -9358,7 +9361,9 @@ async function applyAndAcceptRuntimeCompletionEffects(
               effectKey: effect.effectKey,
               planHash: effectInput.planHash,
               assertLease,
-              coordinate: () => createPostgresV3RecoveryEffectHandler(getSql()).coordinate(effectInput.effect),
+              coordinate: () => SELECTED_SPAWNER_V1
+                ? selectedFreshRecoveryOwnerOperationsV1().coordinateCurrentEffect({requestId:request.requestId,effectKey:effect.effectKey,leaseToken:effect.leaseToken!})
+                : createPostgresV3RecoveryEffectHandler(getSql()).coordinate(effectInput.effect),
               resumeCanonicalContinuation: () => resumeRuntimeCompletionEffects({
                 protocol: request.claimEnvelope.protocol,
                 claimId: request.claimId,
@@ -9566,7 +9571,10 @@ async function runRuntimeCompletionProcessor(requestId?: string): Promise<number
 }
 
 async function runRunTerminationProcessor(requestId?: string): Promise<number> {
-  const terminations = createRunTerminationRepository(getSql());
+  const ordinaryTerminations=createRunTerminationRepository(getSql());
+  const ownerTerminations=SELECTED_SPAWNER_V1?selectedFreshRecoveryOwnerOperationsV1():undefined;
+  const terminations=ownerTerminations?{...ordinaryTerminations,
+    terminalize:ownerTerminations.transitionRunRecoveryTerminal}:ordinaryTerminations;
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   const candidates = requestId
     ? [await terminations.findById(requestId)].filter((value): value is RunTerminationRequest => Boolean(value))
@@ -9689,7 +9697,7 @@ async function reconcileV3RecoveryLifecycle(): Promise<void> {
   if (v3RecoveryLifecycleReconcileInFlight) return;
   v3RecoveryLifecycleReconcileInFlight = true;
   try {
-    const reconciler = createV3RecoveryLifecycleReconciler(getSql());
+    const reconciler = SELECTED_SPAWNER_V1?{reconcileActive:selectedFreshRecoveryOwnerOperationsV1().reconcileRecoveryLifecycle}:createV3RecoveryLifecycleReconciler(getSql());
     const reports = [await reconciler.reconcileActive({ limit: 100 })];
     const runtimeSessions = createRuntimeSessionRepository(getSql());
     const followUpRunIds = new Set<string>();
@@ -9769,7 +9777,7 @@ async function runV3EvidenceOnlyRecovery(): Promise<void> {
     );
     if (workflows.length === 0) return;
     const sql = getSql();
-    const worker = createV3EvidenceOnlyRecoveryWorker(
+    const worker = SELECTED_SPAWNER_V1?{runNext:selectedFreshRecoveryOwnerOperationsV1().runEvidenceOnlyRecovery}:createV3EvidenceOnlyRecoveryWorker(
       sql,
       createV3EvidenceOnlyRuntimeDependencies(sql),
     );
@@ -11641,6 +11649,8 @@ async function main() {
     assertSelectedSpawnerStartupContinuesV1();
     assertFreshInstallationPrivateAssetsV1(SELECTED_SPAWNER_V1.paths.root, SELECTED_SPAWNER_V1.state.origin.sourceSha);
     selectedSpawnerLeaseV1 = acquireFreshServiceProcessV1("spawner");
+    selectedRecoveryOwnerV1=await prepareFreshRecoveryOwnerOperationsV1(selectedSpawnerLeaseV1);
+    assertSelectedSpawnerStartupContinuesV1();
   } else {
     // Refusal-only preflight preserves any already-visible unsettled evidence.
     if (await runInternalProductionDirectSpawnerStartupV1()) return;
@@ -11823,6 +11833,7 @@ async function main() {
       const failed = results.filter((result) => result.status === "quarantined");
       const retained = results.filter((result) => result.status === "retained_for_recovery");
       await runRecoveryCoordinator.close();
+      await selectedRecoveryOwnerV1?.close();
       await pgClose();
       const exitCode = selectedSpawnerFailedV1 || failed.length > 0 || retained.length > 0
         || task6aV2UnboundPostClaimRefusals > 0
@@ -11838,6 +11849,7 @@ async function main() {
     })().catch(async (error) => {
       console.error(`[spawner] Shutdown failed closed: ${String(error).slice(0, 1_000)}`);
       process.exitCode = 1;
+      try { await selectedRecoveryOwnerV1?.close(); } catch {}
       try { await pgClose(); } catch {}
       if (SELECTED_SPAWNER_V1) selectedSpawnerLeaseV1?.retainOnExit();
       else releaseSpawnerProcessV1();
@@ -11963,7 +11975,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           // No runtime work begins before the drain closure is registered.
           shuttingDown = true;
           try { await selectedSpawnerListenerV1?.end(); } finally {
-            await pgClose(); // Failed startup retains evidence; no drain proof.
+            try { await selectedRecoveryOwnerV1?.close(); } finally {
+              await pgClose(); // Failed startup retains evidence; no drain proof.
+            }
           }
         }
       } catch { console.error("[spawner] Fresh startup owned cleanup remains unconfirmed"); }

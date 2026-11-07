@@ -4,6 +4,7 @@ import { lstatSync, mkdirSync, statfsSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 import { types } from "node:util";
+import { userInfo } from "node:os";
 import { parseFreshInstallationOriginV1,
   type FreshInstallationOriginV1 } from "./fresh-installation-origin-v1.js";
 import { readFreshInstallationCatalogHashV1 } from "./fresh-installation-catalog-v1.js";
@@ -26,10 +27,9 @@ export function requireFreshInstallationTransactionV1(transaction: unknown): Fre
 }
 
 export type FreshInstallationOptionsV1 = Readonly<{
-  adminUrl: string;
   baseDirectory: string;
   sourceSha: string;
-}>;
+} & ({adminUrl:string;adminTransport?:never}|{adminTransport:"local-unix-peer";adminUrl?:never})>;
 export type FreshInstallationV1 = Readonly<{
   installationId: string;
   directory: string;
@@ -76,11 +76,13 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
     throw new Error("FRESH_INSTALLATION_OPTIONS_INVALID");
   }
   const descriptors = Object.getOwnPropertyDescriptors(options);
-  const keys = ["adminUrl", "baseDirectory", "sourceSha"] as const;
+  const peer=Object.hasOwn(descriptors,"adminTransport");
+  const keys = [peer?"adminTransport":"adminUrl", "baseDirectory", "sourceSha"] as const;
   if (Reflect.ownKeys(options).length !== keys.length
     || keys.some(key => !descriptors[key]?.enumerable || !Object.hasOwn(descriptors[key]!, "value")
       || typeof descriptors[key]!.value !== "string")) throw new Error("FRESH_INSTALLATION_OPTIONS_INVALID");
-  const adminUrl = descriptors.adminUrl!.value as string;
+  if(peer&&(descriptors.adminTransport!.value!=="local-unix-peer"||userInfo().username!=="setrox"))throw Error("FRESH_INSTALLATION_ADMIN_ENDPOINT_INVALID");
+  const adminUrl = peer?"postgresql://setrox@127.0.0.1:5432/postgres":descriptors.adminUrl!.value as string;
   const baseDirectory = descriptors.baseDirectory!.value as string;
   const expectedSourceSha = descriptors.sourceSha!.value as string;
   const u = maintenanceUrl(adminUrl);
@@ -104,7 +106,8 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
   try { initializeFreshInstallationPrivateAssetsV1(directory, sourceSha); }
   catch (error) { throw redactedFailure(directory, "ASSETS", error); }
   const password = randomBytes(32).toString("hex");
-  const admin = postgres(u.href, { max: 1, connect_timeout: 5, idle_timeout: 2, onnotice() {} });
+  const admin = peer?postgres({host:"/tmp",port:5432,database:"postgres",username:"setrox",password:"",ssl:false,
+    max:1,connect_timeout:5,idle_timeout:2,onnotice(){}}):postgres(u.href, { max: 1, connect_timeout: 5, idle_timeout: 2, onnotice() {} });
   let ownerOid: number, runtimeOid: number, origin: FreshInstallationOriginV1;
   try {
     const collision = await admin<Array<{ name: string }>>`
@@ -138,7 +141,8 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
   const target = new URL(u); target.pathname = "/" + databaseName;
   const runtimeEndpoint = new URL(target); runtimeEndpoint.username = runtimeRole; runtimeEndpoint.password = password;
   recordPins["runtime-credentials.json"] = privateRecord(directory, "runtime-credentials.json", { runtimeUrl: runtimeEndpoint.href });
-  const sql = postgres(target.href, { max: 1, connect_timeout: 5, idle_timeout: 2, onnotice() {} });
+  const sql = peer?postgres({host:"/tmp",port:5432,database:databaseName,username:"setrox",password:"",ssl:false,
+    max:1,connect_timeout:5,idle_timeout:2,onnotice(){}}):postgres(target.href, { max: 1, connect_timeout: 5, idle_timeout: 2, onnotice() {} });
   let phase: "created" | "initializing" | "committed" | "unconfirmed" | "failed" | "closed" = "created";
   let catalogHash: string | undefined;
   let schemaPrepared = false;

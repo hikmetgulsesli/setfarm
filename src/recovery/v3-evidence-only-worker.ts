@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,pinOwnerRecoveryDeliveryLeaseV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import { randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
@@ -525,8 +526,12 @@ async function acquireCandidate(
   input: AcquireInput,
   candidate: CandidateRow,
   discoveredAt: Date,
+  owner?: OwnerRecoveryAccessV1,
 ): Promise<V3EvidenceOnlyLeaseV1 | undefined> {
-  return sql.begin(async (transaction: TransactionSql) => {
+  return (owner?.writeSql ?? sql).begin(async (transaction: TransactionSql) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
     try {
       await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
         runId: candidate.run_id,
@@ -557,7 +562,8 @@ async function acquireCandidate(
     );
     const leaseToken = randomBytes(32).toString("hex");
     const leaseExpiresAt = new Date(acquiredAt.getTime() + input.leaseMs);
-    const updated = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const updated = await transaction.unsafe<Array<{ dispatch_id: string }>>(
       `UPDATE recovery_dispatch_deliveries
           SET state = CASE WHEN attempt_id IS NULL THEN 'leased' ELSE state END,
               owner_instance_id = $2,
@@ -582,7 +588,11 @@ async function acquireCandidate(
     );
     if (updated.length !== 1) return undefined;
     return mapLease(row, input, leaseToken, leaseExpiresAt);
-  }) as Promise<V3EvidenceOnlyLeaseV1 | undefined>;
+
+})();
+if(ownerFence){if(ownerResult)await pinOwnerRecoveryDeliveryLeaseV1(transaction,ownerResult);await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);}
+return ownerResult;
+}) as Promise<V3EvidenceOnlyLeaseV1 | undefined>;
 }
 
 function expectedEvidenceRefs(plan: EvidencePlanV1 | EvidencePlanV2): string[] {
@@ -723,7 +733,7 @@ async function quarantineDelivery(input: Readonly<{
   lease: V3EvidenceOnlyLeaseV1;
   phase: string;
   error: unknown;
-}>): Promise<void> {
+}>, owner?: OwnerRecoveryAccessV1): Promise<void> {
   const diagnostic = compactDiagnostic(input.error);
   const diagnosticHash = hashCanonicalJson({ phase: input.phase, diagnostic });
   const decisionRef = hashCanonicalJson({
@@ -741,7 +751,10 @@ async function quarantineDelivery(input: Readonly<{
     diagnosticHash,
     decisionRef,
   };
-  await input.sql.begin(async (transaction: TransactionSql) => {
+  await (owner?.writeSql ?? input.sql).begin(async (transaction: TransactionSql) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
     await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
       runId: input.lease.runId,
       storyId: input.lease.storyId,
@@ -864,7 +877,8 @@ async function quarantineDelivery(input: Readonly<{
       ) {
         fail("V3_EVIDENCE_ONLY_QUARANTINE_LEASE_LOST", "expired owner cannot quarantine canonical recovery state");
       }
-      const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
         `UPDATE execution_attempts
             SET disposition = 'inconclusive',
                 heartbeat_at = $2,
@@ -878,7 +892,8 @@ async function quarantineDelivery(input: Readonly<{
       if (attempts.length !== 1) {
         fail("V3_EVIDENCE_ONLY_QUARANTINE_ATTEMPT_CAS_LOST", "active evidence attempt changed before quarantine");
       }
-      const closed = await transaction.unsafe<Array<{ id: string }>>(
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const closed = await transaction.unsafe<Array<{ id: string }>>(
         `UPDATE claim_log
             SET outcome = 'infra_retry',
                 abandoned_at = COALESCE(abandoned_at, $2),
@@ -903,11 +918,13 @@ async function quarantineDelivery(input: Readonly<{
         transaction as PgTransactionSql,
         { claimIdText: closed[0]!.id },
       );
-      await closeInternalProductionOwnerReservationV1(
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+await closeInternalProductionOwnerReservationV1(
         transaction as PgTransactionSql,
         attemptClose,
       );
-      await closeInternalProductionOwnerReservationV1(
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+await closeInternalProductionOwnerReservationV1(
         transaction as PgTransactionSql,
         claimClose,
       );
@@ -922,7 +939,8 @@ async function quarantineDelivery(input: Readonly<{
     ) {
       fail("V3_EVIDENCE_ONLY_QUARANTINE_LEASE_LOST", "expired owner cannot quarantine canonical recovery state");
     }
-    const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
       `UPDATE recovery_dispatch_deliveries
           SET state = 'blocked',
               terminal_result = $5::text::jsonb,
@@ -958,7 +976,8 @@ async function quarantineDelivery(input: Readonly<{
       reasonCode: "operator_required",
       evidenceBundleHashes: [],
     };
-    const blocked = await transaction.unsafe<Array<{ recovery_case_id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const blocked = await transaction.unsafe<Array<{ recovery_case_id: string }>>(
       `UPDATE recovery_cases
           SET status = 'blocked',
               terminal = $4::text::jsonb,
@@ -992,7 +1011,11 @@ async function quarantineDelivery(input: Readonly<{
         "quarantine lost the exact recovery-case state fence",
       );
     }
-  });
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+});
 }
 
 async function assertClaimClosed(sql: Sql, lease: V3EvidenceOnlyLeaseV1, attempt: ExecutionAttemptV1): Promise<void> {
@@ -1034,13 +1057,15 @@ export function createV3EvidenceOnlyRecoveryWorker(
   sql: Sql,
   dependencies: V3EvidenceOnlyWorkerDependencies,
   options: V3EvidenceOnlyWorkerOptions = {},
+  owner?: OwnerRecoveryAccessV1,
 ) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   const attempts = createAttemptRepository(sql);
-  const deliveries = createRecoveryDeliveryRepository(sql);
-  const findings = createFindingRecoveryRepository(sql);
-  const publication = createV3EvidenceOnlyPublication(sql);
-  const coordinator = createV3RecoveryCoordinator(sql);
-  const ownerLeases = createV3RecoveryOwnerLeaseRepository(sql);
+  const deliveries = createRecoveryDeliveryRepository(sql,owner);
+  const findings = createFindingRecoveryRepository(sql,owner);
+  const publication = createV3EvidenceOnlyPublication(sql,owner);
+  const coordinator = createV3RecoveryCoordinator(sql,owner);
+  const ownerLeases = createV3RecoveryOwnerLeaseRepository(sql,owner);
   const ownerHeartbeatIntervalMs = z.number().int().min(5).max(10 * 60_000)
     .parse(options.ownerHeartbeatIntervalMs ?? 30_000);
   const ownerLeaseMs = Math.max(
@@ -1124,7 +1149,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
       const candidate = await discoverCandidate(sql, input, discoveredAt, excludedDispatchIds);
       if (!candidate) return undefined;
       excludedDispatchIds.push(candidate.dispatch_id);
-      const lease = await acquireCandidate(sql, input, candidate, discoveredAt);
+      const lease = await acquireCandidate(sql, input, candidate, discoveredAt,owner);
       if (lease) return lease;
     }
   }
@@ -1294,7 +1319,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
       // quarantined as a blocked delivery; the worker never speculatively
       // repeats machine evidence on unchanged source.
       if (!terminal) {
-        await quarantineDelivery({ sql, lease, phase, error }).catch(() => undefined);
+        await quarantineDelivery({ sql, lease, phase, error },owner).catch(() => undefined);
       }
       if (error instanceof V3EvidenceOnlyWorkerError) throw error;
       fail("V3_EVIDENCE_ONLY_WORKER_FAILED", `${phase}:${compactDiagnostic(error)}`, error);

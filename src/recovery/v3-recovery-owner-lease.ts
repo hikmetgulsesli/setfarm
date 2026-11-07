@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,pinOwnerRecoveryDeliveryLeaseV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import { readNativeEvidenceOnlyTerminalAuthority } from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
@@ -321,7 +322,8 @@ async function lockDelivery(
   return row;
 }
 
-export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
+export function createV3RecoveryOwnerLeaseRepository(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   return Object.freeze({
     async heartbeat(
       raw: unknown,
@@ -333,7 +335,10 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
         .parse(options.leaseMs ?? 2 * 60_000);
       let retainedExpiresAt: Date | undefined;
       try {
-        await sql.begin(async (transaction) => {
+        await (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
           await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
             v3RecoveryStoryLockIdentity({ runId: input.runId, storyId: input.storyId }),
           ]);
@@ -354,10 +359,12 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
             !Number.isFinite(millis(delivery.lease_expires_at))
             || millis(delivery.lease_expires_at) <= wallClock.getTime()
           ) stale("V3_RECOVERY_OWNER_DELIVERY_FENCE_STALE");
+          await pinOwnerRecoveryDeliveryLeaseV1(transaction,{...input,attempt:input.attempt});
           const expiresAt = new Date(wallClock.getTime() + leaseMs);
 
           if (input.kind === "model_runtime") {
-            const runtimes = await transaction.unsafe<Array<{ session_id: string }>>(
+            await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const runtimes = await transaction.unsafe<Array<{ session_id: string }>>(
               `UPDATE runtime_sessions
                   SET heartbeat_at = $7, updated_at = $7
                 WHERE session_id = $1
@@ -381,7 +388,8 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
             if (runtimes.length !== 1) stale("V3_RECOVERY_OWNER_RUNTIME_HEARTBEAT_CAS_LOST");
           }
 
-          const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
             `UPDATE execution_attempts
                 SET heartbeat_at = $4, lease_expires_at = $5, updated_at = $4
               WHERE attempt_id = $1
@@ -406,7 +414,8 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
           );
           if (attempts.length !== 1) stale("V3_RECOVERY_OWNER_ATTEMPT_HEARTBEAT_CAS_LOST");
 
-          const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
             `UPDATE recovery_dispatch_deliveries
                 SET lease_expires_at = $9, updated_at = $8
               WHERE dispatch_id = $1
@@ -435,7 +444,11 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
           );
           if (deliveries.length !== 1) stale("V3_RECOVERY_OWNER_DELIVERY_HEARTBEAT_CAS_LOST");
           retainedExpiresAt = expiresAt;
-        });
+
+})();
+if(ownerFence){await pinOwnerRecoveryDeliveryLeaseV1(transaction,{...input,attempt:input.attempt});await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);}
+return ownerResult;
+});
         if (!retainedExpiresAt) throw new Error("V3_RECOVERY_OWNER_HEARTBEAT_TIME_UNAVAILABLE");
         return { status: "retained", expiresAt: retainedExpiresAt.toISOString() };
       } catch (error) {
@@ -457,7 +470,10 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
       if(options.now) validTime(options.now);
       const leaseMs=z.number().int().min(30_000).max(24*60*60*1_000).parse(options.leaseMs??2*60_000);
       try {
-        const expiresAt=await sql.begin(async transaction=>{
+        const expiresAt=await (owner?.writeSql ?? sql).begin(async transaction=>{
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
           await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[
             v3RecoveryStoryLockIdentity({runId:input.runId,storyId:input.storyId}),
           ]);
@@ -493,8 +509,10 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
             stale("V3_RECOVERY_TERMINAL_EVIDENCE_AUTHORITY_STALE");
           const observed=await readDatabaseWallClock(transaction,"V3_RECOVERY_OWNER_DB_TIME_UNAVAILABLE");
           if(millis(deliveries[0]!.lease_expires_at)<=observed.getTime()) stale("V3_RECOVERY_TERMINAL_EVIDENCE_LEASE_EXPIRED");
+          await pinOwnerRecoveryDeliveryLeaseV1(transaction,{dispatchId:input.dispatchId,revisionId:input.revisionId,ownerInstanceId:input.ownerInstanceId,leaseToken:input.leaseToken});
           const expiry=new Date(observed.getTime()+leaseMs);
-          const updated=await transaction.unsafe<Array<{dispatch_id:string}>>(`UPDATE recovery_dispatch_deliveries
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const updated=await transaction.unsafe<Array<{dispatch_id:string}>>(`UPDATE recovery_dispatch_deliveries
             SET lease_expires_at=$9,updated_at=$10
             WHERE dispatch_id=$1 AND revision_id=$2 AND run_id=$3 AND story_id=$4
               AND attempt_id=$5 AND claim_id=$6 AND owner_instance_id=$7 AND lease_token=$8
@@ -503,7 +521,11 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
               input.ownerInstanceId,input.leaseToken,expiry,observed]);
           if(updated.length!==1) stale("V3_RECOVERY_TERMINAL_EVIDENCE_HEARTBEAT_CAS_LOST");
           return expiry.toISOString();
-        });
+
+})();
+if(ownerFence){await pinOwnerRecoveryDeliveryLeaseV1(transaction,{dispatchId:input.dispatchId,revisionId:input.revisionId,ownerInstanceId:input.ownerInstanceId,leaseToken:input.leaseToken});await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);}
+return ownerResult;
+});
         return {status:"retained",expiresAt};
       } catch(error) {
         if(error instanceof StaleRecoveryOwnerFence) return {status:"stale_fence",reason:error.reason};
@@ -514,7 +536,10 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
     async relinquish(raw: unknown): Promise<V3RecoveryOwnerRelinquishResult> {
       const input = V3RecoveryOwnerHeartbeatInputV1Schema.parse(raw);
       try {
-        const relinquishedAt = await sql.begin(async (transaction) => {
+        const relinquishedAt = await (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
           await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
             v3RecoveryStoryLockIdentity({ runId: input.runId, storyId: input.storyId }),
           ]);
@@ -551,7 +576,8 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
           }
           const at = new Date(Math.max(wallClock.getTime(), acquiredAt.getTime()));
 
-          const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
             `UPDATE execution_attempts
                 SET lease_expires_at = $9, updated_at = $9
               WHERE attempt_id = $1
@@ -579,7 +605,8 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
           );
           if (attempts.length !== 1) stale("V3_RECOVERY_OWNER_ATTEMPT_RELINQUISH_CAS_LOST");
 
-          const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
             `UPDATE recovery_dispatch_deliveries
                 SET lease_expires_at = $10, updated_at = $10
               WHERE dispatch_id = $1
@@ -614,7 +641,11 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
           );
           if (deliveries.length !== 1) stale("V3_RECOVERY_OWNER_DELIVERY_RELINQUISH_CAS_LOST");
           return at;
-        }) as Date;
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+}) as Date;
         return { status: "relinquished", relinquishedAt: relinquishedAt.toISOString() };
       } catch (error) {
         if (error instanceof StaleRecoveryOwnerFence) {

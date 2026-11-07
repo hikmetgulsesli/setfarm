@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import { randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
@@ -193,6 +194,7 @@ async function one<T>(
   query: string,
   params: unknown[],
 ): Promise<T | undefined> {
+  if (/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(query)) await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
   const rows = await sql.unsafe<T[]>(query, params as never[]);
   return rows[0];
 }
@@ -349,7 +351,8 @@ async function readOrRehydrateCurrentRevision(
     }),
     { now: new Date(row.created_at) },
   );
-  await sql.unsafe(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+        await sql.unsafe(
     `INSERT INTO recovery_case_revisions (
        revision_id, recovery_case_id, revision_number, parent_revision_id,
        revision_identity_key, run_id, story_id, finding_set_hash, finding_ids,
@@ -382,7 +385,8 @@ async function readOrRehydrateCurrentRevision(
       compatibility.createdAt,
     ],
   );
-  const updated = await sql.unsafe<Array<{ current_revision_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+        const updated = await sql.unsafe<Array<{ current_revision_id: string }>>(
     `UPDATE recovery_cases
         SET current_revision_id = $3
       WHERE recovery_case_id = $1
@@ -675,7 +679,8 @@ async function transitionExactGithubReviewStoryForDispatch(
     if (!duplicate) throw new Error("RECOVERY_DISPATCH_GITHUB_STORY_ALREADY_FAILED");
     return;
   }
-  const transitioned = await transaction.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+        const transitioned = await transaction.unsafe<Array<{ id: string }>>(
     `UPDATE stories
         SET status = 'failed', claimed_by = NULL, claimed_at = NULL, updated_at = $4
       WHERE id = $1 AND run_id = $2 AND story_id = $3 AND status = 'done'
@@ -837,7 +842,8 @@ async function transitionExactDownstreamStoryForDispatch(
     throw new Error("RECOVERY_DISPATCH_DOWNSTREAM_AUTHORITY_MISMATCH");
   }
   if (story.status === "failed") return;
-  const transitioned = await transaction.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+        const transitioned = await transaction.unsafe<Array<{ id: string }>>(
     `UPDATE stories
         SET status = 'failed', claimed_by = NULL, claimed_at = NULL, updated_at = $4
       WHERE id = $1 AND run_id = $2 AND story_id = $3
@@ -885,7 +891,8 @@ export type RevisionDispatchResult =
   | Readonly<{ status: "budget_exhausted"; stateVersion: number }>
   | Readonly<{ status: "stale_version"; stateVersion: number }>;
 
-export function createRecoveryDeliveryRepository(sql: Sql) {
+export function createRecoveryDeliveryRepository(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   return {
     async findRevision(revisionId: string): Promise<RecoveryCaseRevisionV1 | undefined> {
       const row = await one<RevisionRow>(sql, "SELECT * FROM recovery_case_revisions WHERE revision_id = $1", [revisionId]);
@@ -893,6 +900,16 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
     },
 
     async findCurrentRevision(recoveryCaseId: string): Promise<RecoveryCaseRevisionV1 | undefined> {
+      if(owner){
+        assertOwnerRecoveryAccessV1(owner);
+        const rows=await sql.unsafe<RevisionRow[]>(`SELECT revision.* FROM recovery_cases current_case
+          JOIN recovery_case_revisions revision ON revision.revision_id=current_case.current_revision_id
+          AND revision.recovery_case_id=current_case.recovery_case_id WHERE current_case.recovery_case_id=$1`,[recoveryCaseId]);
+        if(rows[0])return mapRevision(rows[0]);
+        const existing=await sql.unsafe<Array<{recovery_case_id:string}>>("SELECT recovery_case_id FROM recovery_cases WHERE recovery_case_id=$1",[recoveryCaseId]);
+        if(existing.length)throw Error("RECOVERY_OWNER_LEGACY_REVISION_UNSUPPORTED");
+        return undefined;
+      }
       try {
         return await sql.begin((transaction) =>
           readOrRehydrateCurrentRevision(transaction, recoveryCaseId));
@@ -914,7 +931,9 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
         [input.recoveryCaseId],
       );
       if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
           runId: identity.run_id,
           storyId: identity.story_id,
@@ -996,6 +1015,7 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
         if (duplicate) {
           return { status: "duplicate" as const, revision: mapRevision(duplicate), stateVersion: currentCase.state_version };
         }
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         await transaction.unsafe(
           `INSERT INTO recovery_case_revisions (
              revision_id, recovery_case_id, revision_number, parent_revision_id,
@@ -1018,6 +1038,7 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
             revision.evidencePlanArtifactHash ?? null, revision.createdAt,
           ],
         );
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         const update = await transaction.unsafe<Array<{ state_version: number }>>(
           `UPDATE recovery_cases
               SET current_revision_id = $3,
@@ -1047,6 +1068,10 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
         );
         if (update.length !== 1) throw new Error("RECOVERY_REVISION_CAS_LOST");
         return { status: "advanced" as const, revision, stateVersion: update[0]!.state_version };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<RevisionAdvanceResult>;
     },
 
@@ -1057,7 +1082,9 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
       const input = AuthorizeInputSchema.parse(raw);
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DISPATCH_TIME_INVALID");
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const identity = await one<{ run_id: string; story_id: string }>(
           transaction,
           "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
@@ -1106,6 +1133,7 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
         if (!ownerAllowsDispatch(revision.owner, input.dispatchClass)) {
           throw new Error("RECOVERY_DISPATCH_OWNER_MISMATCH");
         }
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         await transitionExactDownstreamStoryForDispatch(
           transaction,
           input,
@@ -1183,6 +1211,7 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
           ...(revision.evidencePlanArtifactHash ? { evidencePlanArtifactHash: revision.evidencePlanArtifactHash } : {}),
           authorizedAt: now.toISOString(),
         });
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         await transaction.unsafe(
           `INSERT INTO recovery_revision_dispatches (
              dispatch_id, recovery_case_id, revision_id, dispatch_class, dispatch_dedupe_key,
@@ -1202,7 +1231,8 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
           ],
         );
         for (const finding of findingKeys) {
-          await transaction.unsafe(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+        await transaction.unsafe(
             `INSERT INTO recovery_revision_dispatch_findings (
                dispatch_id, finding_id, finding_dispatch_key, run_id, story_id,
                dispatch_class, source_tree_hash, packet_hash, contract_slice_hash, authorized_at
@@ -1226,6 +1256,7 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
         if (!deliveryRow) throw new Error("RECOVERY_DELIVERY_INSERT_FAILED");
         const nextStatus = input.dispatchClass === "evidence_only" ? "evidencing" : "repairing";
         RecoveryStatusV1Schema.parse(nextStatus);
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         const update = await transaction.unsafe<Array<{ state_version: number }>>(
           `UPDATE recovery_cases
               SET ${budget.used} = ${budget.used} + 1,
@@ -1243,6 +1274,10 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
           delivery: mapDelivery(deliveryRow),
           stateVersion: update[0]!.state_version,
         };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<RevisionDispatchResult>;
     },
 
@@ -1278,7 +1313,9 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DELIVERY_LEASE_TIME_INVALID");
       const leaseToken = randomBytes(32).toString("hex");
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const discovered = await one<{ dispatch_id: string; run_id: string; story_id: string }>(
           transaction,
           `SELECT dispatch_id, run_id, story_id
@@ -1348,6 +1385,10 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
           ],
         );
         return row ? mapDelivery(row) : undefined;
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<RecoveryDispatchDeliveryRecord | undefined>;
     },
 
@@ -1364,7 +1405,9 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
         [input.dispatchId],
       );
       if (!identity) return undefined;
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
           runId: identity.run_id,
           storyId: identity.story_id,
@@ -1379,6 +1422,10 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
           [input.dispatchId, input.revisionId, input.attemptId, authority.observedAt],
         );
         return row ? mapDelivery(row) : undefined;
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<RecoveryDispatchDeliveryRecord | undefined>;
     },
 
@@ -1392,7 +1439,9 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
         [input.dispatchId],
       );
       if (!identity) return undefined;
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
           runId: identity.run_id,
           storyId: identity.story_id,
@@ -1417,6 +1466,10 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
           ],
         );
         return row ? mapDelivery(row) : undefined;
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<RecoveryDispatchDeliveryRecord | undefined>;
     },
   };

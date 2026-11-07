@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 
@@ -140,7 +141,8 @@ async function terminalizeRunTerminationRequestInTransactionV1(
   sql: postgres.TransactionSql,
   input: Readonly<{ requestId: string; runId: string; transitionTime: Date }>,
 ): Promise<string> {
-  const rows = await sql.unsafe<Array<{ request_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const rows = await sql.unsafe<Array<{ request_id: string }>>(
     `UPDATE run_termination_requests
         SET state = 'terminalized',terminalized_at = $3,heartbeat_at = $3,updated_at = $3
       WHERE request_id = $1 AND run_id = $2 AND state = 'drained'
@@ -209,7 +211,8 @@ async function normalizeTask5TerminalCompletionContractInTransactionV1(
       runCompleted: input.runStatus === "completed",
       runFailed: input.runStatus === "failed",
     };
-    const appliedEffects = await sql.unsafe<Array<{ effect_key: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const appliedEffects = await sql.unsafe<Array<{ effect_key: string }>>(
       `UPDATE runtime_completion_effects
           SET state='applied',applied_at=$2,result=$3::text::jsonb,
               evidence=$4::text::jsonb,updated_at=$2
@@ -234,7 +237,8 @@ async function normalizeTask5TerminalCompletionContractInTransactionV1(
         sql as Parameters<typeof resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1>[0],
         { requestId: completion.request_id, effectKey: effect.effect_key },
       );
-      const closedEffect = await closeInternalProductionOwnerReservationV1(
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as postgres.TransactionSql);
+const closedEffect = await closeInternalProductionOwnerReservationV1(
         sql as Parameters<typeof closeInternalProductionOwnerReservationV1>[0],
         effectClose,
       );
@@ -251,7 +255,8 @@ async function normalizeTask5TerminalCompletionContractInTransactionV1(
       requestId: completion.request_id,
       requireSettledMandatoryEffects: true,
     });
-    const committedEffects = await sql.unsafe<Array<{ request_id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const committedEffects = await sql.unsafe<Array<{ request_id: string }>>(
       `UPDATE runtime_completion_requests
           SET apply_phase='effects_committed',effects_committed_at=$2,
               result=$3::text::jsonb,updated_at=$2
@@ -364,6 +369,7 @@ export async function transitionRunToTerminalInTransaction(
     drainedTerminationRequestId?: string;
     now?: Date;
   }>,
+  owner?: OwnerRecoveryAccessV1,
 ): Promise<RunTerminalTransitionResult> {
   if (input.now && !Number.isFinite(new Date(input.now).getTime())) {
     throw new Error("RUN_TERMINAL_TIME_INVALID");
@@ -794,7 +800,8 @@ export async function transitionRunToTerminalInTransaction(
     throw new Error("RUN_TERMINAL_EFFECT_STATE_INVALID");
   }
 
-  const recoverySettlement = run.protocol === "v3"
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as postgres.TransactionSql);
+const recoverySettlement = run.protocol === "v3"
     ? await settleV3TerminalRecoveryChainInTransaction(sql, {
         runId: input.runId,
         status: input.status,
@@ -808,7 +815,8 @@ export async function transitionRunToTerminalInTransaction(
   let closedClaims = 0;
   if (input.status !== "completed" && openClaims.length > 0) {
     const claimOutcome = input.status === "cancelled" ? "cancelled" : "failed";
-    const rows = await sql.unsafe<Array<{ id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const rows = await sql.unsafe<Array<{ id: string }>>(
       `UPDATE claim_log
           SET outcome = $2, abandoned_at = COALESCE(abandoned_at, $3),
               duration_ms = LEAST(
@@ -829,7 +837,8 @@ export async function transitionRunToTerminalInTransaction(
       `setfarm://run-terminal/${input.status}`,
     ])].sort();
     const disposition = input.status === "failed" ? "failed" : "inconclusive";
-    const updated = await sql.unsafe<Array<{ attempt_id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const updated = await sql.unsafe<Array<{ attempt_id: string }>>(
       `UPDATE execution_attempts
           SET disposition = $4,evidence_refs = $5,heartbeat_at = $6,updated_at = $6
         WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
@@ -872,7 +881,8 @@ export async function transitionRunToTerminalInTransaction(
   let changedSteps = 0;
   if (input.status !== "completed") {
     const storyStatus = input.status === "cancelled" ? "skipped" : "failed";
-    const stories = await sql.unsafe<Array<{ id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const stories = await sql.unsafe<Array<{ id: string }>>(
       `UPDATE stories SET status = $2,claimed_by = NULL,claimed_at = NULL,
               output = COALESCE(NULLIF(output, ''), $3),updated_at = $4
         WHERE run_id = $1 AND status IN ('pending','running') RETURNING id`,
@@ -880,7 +890,8 @@ export async function transitionRunToTerminalInTransaction(
     );
     changedStories = stories.length;
     const stepStatus = input.status === "cancelled" ? "cancelled" : "failed";
-    const steps = await sql.unsafe<Array<{ id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const steps = await sql.unsafe<Array<{ id: string }>>(
       `UPDATE steps SET status = $2,output = COALESCE(NULLIF(output, ''), $3),
               current_story_id = NULL,updated_at = $4
         WHERE run_id = $1 AND status IN ('waiting','pending','running') RETURNING id`,
@@ -905,7 +916,8 @@ export async function transitionRunToTerminalInTransaction(
     meta.terminal_reason = input.diagnostic.slice(0, 1_000);
   }
   if (!alreadyTerminal) {
-    const updatedRun = await sql.unsafe<Array<{ id: string; status: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const updatedRun = await sql.unsafe<Array<{ id: string; status: string }>>(
       `UPDATE runs
           SET status = $2,
               meta = $3,
@@ -993,7 +1005,8 @@ export async function transitionRunToTerminalInTransaction(
     ...completionCloses,
     ...terminationCloses,
   ]) {
-    const close = await closeInternalProductionOwnerReservationV1(ownerSql, closeInput);
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(ownerSql as postgres.TransactionSql);
+const close = await closeInternalProductionOwnerReservationV1(ownerSql, closeInput);
     const reopened = await resolveInternalProductionOwnerReservationCloseInTransactionV1(ownerSql, {
       closeRef: close.closeRef,
       closeHash: close.closeHash,
@@ -1004,7 +1017,8 @@ export async function transitionRunToTerminalInTransaction(
     ) throw new Error("RUN_TERMINAL_P3_OWNER_CLOSE_IDENTITY_INVALID");
   }
   if (terminalPair !== null) {
-    const runClose = await closeInternalProductionOwnerReservationV1(ownerSql, {
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(ownerSql as postgres.TransactionSql);
+const runClose = await closeInternalProductionOwnerReservationV1(ownerSql, {
       reservationRef: terminalPair.runOwnerReservationRef,
       reservationHash: terminalPair.runOwnerReservationHash,
       terminalAuthorityRef: terminalPair.terminalAuthorityRef,
@@ -1089,6 +1103,13 @@ export async function transitionRunToTerminal(
     drainedTerminationRequestId?: string;
     now?: Date;
   }>,
+  owner?: OwnerRecoveryAccessV1,
 ): Promise<RunTerminalTransitionResult> {
-  return sql.begin((transaction) => transitionRunToTerminalInTransaction(transaction as InternalProductionPgTransactionSql, input)) as Promise<RunTerminalTransitionResult>;
+  if(owner){assertOwnerRecoveryAccessV1(owner);if(input.status==="completed")throw Error("RECOVERY_OWNER_SUCCESS_TERMINAL_UNSUPPORTED");}
+  return (owner?.writeSql??sql).begin(async transaction=>{
+    const fence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+    const result=await transitionRunToTerminalInTransaction(transaction as InternalProductionPgTransactionSql,input);
+    if(fence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,fence);
+    return result;
+  }) as Promise<RunTerminalTransitionResult>;
 }

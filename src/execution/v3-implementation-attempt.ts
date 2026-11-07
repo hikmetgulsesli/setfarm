@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -1731,7 +1732,9 @@ function runtimeCompiler() {
 
 export async function reserveV3ImplementationAttempt(
   input: V3ImplementationAttemptInput,
+  owner?: OwnerRecoveryAccessV1,
 ): Promise<V3ImplementationAttemptResult> {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   const options = { sql: getSql(), artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() };
   const packet = await createRuntimeArtifactReader(options).readExactSealedPacket(input.runId);
   if (!("implementationSourceMap" in packet)) return runtimeCompiler().reserve(input);
@@ -1746,7 +1749,7 @@ export async function reserveV3ImplementationAttempt(
   if (input.recoveryDelivery) {
     if (!input.claimId || input.stepId !== "implement" || input.operationalRetry || input.supervisorRetry
       || input.evidenceOnlyLease || input.downstreamEvidenceAuthority) throw new Error("V3_NATIVE_RESERVATION_AUTHORITY_MISMATCH");
-    return createNativeV3ImplementationContextService(options).reserveRecovery({
+    return createNativeV3ImplementationContextService(options,owner).reserveRecovery({
       claimId: input.claimId, runId: input.runId, stepId: input.stepId, storyId: input.storyId,
       role: input.role, agentId: input.agentId, branch: input.branch, worktree: input.worktree,
       findingSetHash: input.findingSetHash, recoveryDelivery: input.recoveryDelivery,
@@ -1772,10 +1775,11 @@ export async function reserveV3EvidenceOnlyImplementationAttempt(input: Readonly
   lease: V3EvidenceOnlyPublicationLeaseV1;
   worktree: string;
   branch: string;
-}>): Promise<V3ImplementationAttemptResult> {
+}> , owner?: OwnerRecoveryAccessV1): Promise<V3ImplementationAttemptResult> {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   const options={sql:getSql(),artifactRoot:resolveProductArtifactDir(),artifactLimits:resolveProductArtifactCapacity()};
   const packet=await createRuntimeArtifactReader(options).readExactSealedPacket(input.lease.runId);
-  if("implementationSourceMap" in packet) return createNativeV3ImplementationContextService(options).reserveEvidenceOnly(input);
+  if("implementationSourceMap" in packet) return createNativeV3ImplementationContextService(options,owner).reserveEvidenceOnly(input);
   return runtimeCompiler().reserve({
     runId: input.lease.runId,
     stepId: "implement",

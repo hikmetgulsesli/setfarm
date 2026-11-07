@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 
 import { FindingSetV1Schema } from "./finding-set.js";
@@ -101,6 +102,7 @@ async function one<T>(
   query: string,
   params: unknown[],
 ): Promise<T | undefined> {
+  if (/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(query)) await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
   const rows = await sql.unsafe<T[]>(query, params as any[]);
   return rows[0];
 }
@@ -257,7 +259,8 @@ export type PutGithubReviewResolutionEvidenceResult =
   | Readonly<{ status: "inserted"; evidence: GithubReviewResolutionEvidenceV1 }>
   | Readonly<{ status: "duplicate"; evidence: GithubReviewResolutionEvidenceV1 }>;
 
-export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
+export function createGithubReviewResolutionEvidenceRepository(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   return Object.freeze({
     async findByHash(evidenceHash: string): Promise<GithubReviewResolutionEvidenceV1 | undefined> {
       const row = await one<ResolutionRow>(
@@ -270,7 +273,9 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
 
     async put(input: unknown): Promise<PutGithubReviewResolutionEvidenceResult> {
       const evidence = GithubReviewResolutionEvidenceV1Schema.parse(input);
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [evidence.evidenceHash]);
         const existing = await one<ResolutionRow>(
           transaction,
@@ -420,6 +425,10 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
         );
         if (!inserted) fail("GITHUB_REVIEW_RESOLUTION_INSERT_LOST", "Immutable evidence insertion returned no row");
         return { status: "inserted" as const, evidence: assertRowIdentity(inserted) };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<PutGithubReviewResolutionEvidenceResult>;
     },
 
@@ -434,7 +443,9 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
       if (!Number.isFinite(requestedTime.getTime())) {
         fail("GITHUB_REVIEW_RESOLUTION_TIME_INVALID", "Resolution commit time is invalid");
       }
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const discoveredRow = await one<ResolutionRow>(
           transaction,
           "SELECT * FROM github_review_resolution_evidence WHERE evidence_hash = $1",
@@ -533,7 +544,8 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
             fail("GITHUB_REVIEW_RESOLUTION_DELIVERY_CONFLICT", "Delivery already succeeded with different evidence");
           }
         } else if (["attempt_reserved", "running"].includes(row.delivery_state)) {
-          const deliveryRows = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+        const deliveryRows = await transaction.unsafe<Array<{ dispatch_id: string }>>(
             `UPDATE recovery_dispatch_deliveries
                 SET state = 'succeeded',
                     terminal_result = $5::text::jsonb,
@@ -580,6 +592,7 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
           // distinguishes this immutable review-resolution artifact.
           evidenceBundleHashes: [evidence.evidenceHash],
         };
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         const caseRows = await transaction.unsafe<Array<{ recovery_case_id: string }>>(
           `UPDATE recovery_cases
               SET status = 'resolved',
@@ -610,6 +623,10 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
           fail("GITHUB_REVIEW_RESOLUTION_CASE_CAS_LOST", "Recovery terminalization lost exact ownership");
         }
         return { status: "resolved" as const, evidence };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       });
     },
   });

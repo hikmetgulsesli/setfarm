@@ -1,5 +1,5 @@
 // Proposed tests/installation/fresh-installation-spawner-retention.test.ts.
-// Genuine source-body components with fake ports only; UNRUN candidate.
+// Genuine source-body components with inert ports only; no operational credit.
 // No module import, child, signals, DB, filesystem effects or operational credit.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -29,8 +29,9 @@ function localVariable(name:string):ts.VariableStatement {
 
 function leaseComponent() {
   const removed:string[]=[],written:string[]=[];
+  const pins=new Map<string,{file:string;bytes:Buffer;identity:object}>();
   const processPort=Object.assign(new EventEmitter(),{pid:12345,argv:["/node","/compiled/spawner.js"],exitCode:0});
-  const context={s:{directory:"/component-install",paths:{root:"/component"},state:{origin:{sourceSha:"a".repeat(40)}}},paths:{directory:"/component/services",lockFile:"/component/services/spawner.lock",pidFile:"/component/services/spawner.pid"},script:"/compiled/spawner.js",executable:"/node"};
+  const context={s:{assertUnchanged(){},directory:"/component-install",paths:{root:"/component"},state:{origin:{sourceSha:"a".repeat(40)}}},paths:{directory:"/component/services",lockFile:"/component/services/spawner.lock",pidFile:"/component/services/spawner.pid"},script:"/compiled/spawner.js",executable:"/node"};
   let source=whole(controls,"acquireFreshServiceProcessV1");
   const locator="fileURLToPath(import.meta.url)";
   assert.equal(source.split(locator).length-1,1);
@@ -38,21 +39,23 @@ function leaseComponent() {
   source=source.replace(locator,JSON.stringify("/component.js"));
   const ports={
     assertFreshInstallationOperationalEntryV1(){},currentContext:()=>context,
+    heldServiceCustodyV1:new WeakMap(),ownerState:()=>"alive",readPin:(file:string)=>pins.get(file)??null,
+    sameIdentity:(a:object,b:object)=>a===b,
     fs:{realpathSync:(value:string)=>value,mkdirSync(){}},privateDirectory(){},readPair:()=>null,
     observeProcessIdentity:(pid:number)=>({pid,processGroupId:pid,source:"observed_os"}),
-    writeExclusive(file:string,bytes:Buffer){written.push(file);return {file,bytes,identity:{}};},
+    writeExclusive(file:string,bytes:Buffer){written.push(file);const pin={file,bytes,identity:{}};pins.set(file,pin);return pin;},
     removeExact(pin:{file:string}){removed.push(pin.file);},
     refuse():never{throw Error("COMPONENT_REFUSED");},process:processPort,Buffer,
   };
-  const acquire=new Function(...Object.keys(ports),compile(source)+";return acquireFreshServiceProcessV1;")(...Object.values(ports)) as (service:"spawner")=>Readonly<{release():void;retainOnExit():void}>;
+  const acquire=new Function(...Object.keys(ports),compile(source)+";return acquireFreshServiceProcessV1;")(...Object.values(ports)) as (service:"spawner")=>Readonly<{release():void;retainOnExit():void;assertCurrent():void}>;
   return {lease:acquire("spawner"),removed,written,processPort};
 }
 
 test("actual service lease preserves default exit cleanup",()=>{
-  const c=leaseComponent();assert.equal(c.written.length,2);
+  const c=leaseComponent();assert.equal(c.written.length,2);c.lease.assertCurrent();
   c.processPort.emit("exit",0);
   assert.deepEqual(c.removed,["/component/services/spawner.pid","/component/services/spawner.lock"]);
-  c.lease.release();assert.equal(c.removed.length,2);
+  c.lease.release();assert.equal(c.removed.length,2);assert.throws(()=>c.lease.assertCurrent(),/COMPONENT_REFUSED/);
 });
 test("actual retained lease survives natural exit; explicit proven release remains possible",()=>{
   const c=leaseComponent();c.lease.retainOnExit();c.lease.retainOnExit();
@@ -69,7 +72,7 @@ function shutdownComponent(mode:DrainMode,listenerFailure=false,opening?:Promise
   const activeProcesses=new Map([[active.runtimeSessionId,active]]),drainingProcesses=new Map();
   const processPort={exitCode:0,exit(){calls.forcedExit++;throw Error("COMPONENT_FORCE_EXIT");}};
   const ports={
-    SELECTED_SPAWNER_V1:{},selectedSpawnerLeaseV1:{retainOnExit(){calls.retained++;},release(){calls.released++;}},
+    SELECTED_SPAWNER_V1:{},selectedRecoveryOwnerV1:undefined,selectedSpawnerLeaseV1:{retainOnExit(){calls.retained++;},release(){calls.released++;}},
     selectedSpawnerListenerV1:opening?undefined:{async end(){order.push("listener:end");if(listenerFailure)throw Error("COMPONENT_LISTENER_CLOSE");}},
     selectedSpawnerListenerOpeningV1:opening,legacySpawnerListenerV1:undefined,
     selectedSpawnerFailedV1:false,activeProcesses,drainingProcesses,inFlightSpawnPromises:new Set(),claimingSpawns:new Set(),

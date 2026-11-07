@@ -2010,7 +2010,7 @@ export async function quarantineExpiredRuntimeCompletionForRecoveryInTransaction
   return mapRequest(rows[0]!);
 }
 
-type LockedRuntimeCompletionChain = Readonly<{
+export type LockedRuntimeCompletionChain = Readonly<{
   request: RuntimeCompletionRow;
   runStatus: string;
   terminationRequestId?: string;
@@ -2018,7 +2018,7 @@ type LockedRuntimeCompletionChain = Readonly<{
   claimOutcome: string | null;
 }>;
 
-async function lockRuntimeCompletionChainInTransaction(
+export async function lockRuntimeCompletionChainInTransaction(
   transaction: TransactionSql,
   rawRequestId: string,
 ): Promise<LockedRuntimeCompletionChain | undefined> {

@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type { NativeImplementationContextV3 } from "../execution/v3-native-implementation-attempt.js";
 import type {PreparedNativeEvidenceMerge,NativeEvidenceOnlySettlementLease} from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
@@ -735,11 +736,12 @@ function initialCaseDraft(input: Readonly<{
   };
 }
 
-export function createV3RecoveryCoordinator(sql: Sql) {
-  const findings = createFindingRecoveryRepository(sql);
-  const deliveries = createRecoveryDeliveryRepository(sql);
+export function createV3RecoveryCoordinator(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
+  const findings = createFindingRecoveryRepository(sql,owner);
+  const deliveries = createRecoveryDeliveryRepository(sql,owner);
   const attempts = createAttemptRepository(sql);
-  const reviewResolutions = createGithubReviewResolutionEvidenceRepository(sql);
+  const reviewResolutions = createGithubReviewResolutionEvidenceRepository(sql,owner);
 
   async function loadRecoveryIdentity(query: Pick<Sql, "unsafe">, input: Readonly<{
     recoveryCaseId: string;

@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -209,7 +210,8 @@ export async function settleV3TerminalRecoveryChainInTransaction(
         executionSliceHash: delivery.execution_slice_hash,
       },
     };
-    const updated = await sql.unsafe<Array<{ dispatch_id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const updated = await sql.unsafe<Array<{ dispatch_id: string }>>(
       `UPDATE recovery_dispatch_deliveries
           SET state = $7,
               owner_instance_id = NULL,
@@ -259,7 +261,8 @@ export async function settleV3TerminalRecoveryChainInTransaction(
       ...stringArray(recoveryCase.decision_refs, "RUN_TERMINAL_RECOVERY_DECISION_REFS_INVALID"),
       decisionRef,
     ])].sort();
-    const updated = await sql.unsafe<Array<{ recovery_case_id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const updated = await sql.unsafe<Array<{ recovery_case_id: string }>>(
       `UPDATE recovery_cases
           SET status = $5,
               terminal = $6::text::jsonb,
