@@ -18,6 +18,7 @@ catch (error) {
 } finally { hooks.deregister(); }
 const codexPath = 'evals/suites/product-convergence-codex-v1.json';
 const annualPath = 'evals/suites/product-convergence-minimax-m31-flash-v1.json';
+const kimiPath = 'evals/suites/product-convergence-kimi-k31-pro-v1.json';
 const codex = { schema: 'setfarm.model-execution-profile.v1', providerId: 'codex', modelId: 'codex/gpt-6.1-sol', selection: 'primary' };
 const annual = { ...codex, providerId: 'minimax', modelId: 'minimax/MiniMax-M3.1-Flash' };
 const catalogue = [{ fixedSuiteRelativePath: codexPath, suiteHash: 'a'.repeat(64) },
@@ -28,7 +29,7 @@ test('pure selected convergence recipe capability is import-inert and genuine ca
   assert.equal(typeof api!.resolveFixedConvergenceSuitePathV1, 'function');
   assert.equal(typeof api!.captureSelectedConvergenceRecipeV1, 'function');
   assert.equal(api!.captureSelectedConvergenceRecipeV1.length, 0);
-  assert.deepEqual(api!.FIXED_CONVERGENCE_SUITE_PATHS_V1, [codexPath, annualPath]);
+  assert.deepEqual(api!.FIXED_CONVERGENCE_SUITE_PATHS_V1, [codexPath, annualPath, kimiPath]);
   assert.equal(selectedImports, 0);
 });
 
@@ -46,7 +47,7 @@ test('pure selected convergence recipe retains Codex and maps exact annual prima
 
 test('pure selected convergence recipe refuses fallback, foreign models and extra profile authority', () => {
   assert.ok(api);
-  for (const profile of [null, [], { ...annual, selection: 'fallback' }, { ...annual, providerId: 'kimi', modelId: 'kimi/k3.1-pro' },
+  for (const profile of [null, [], { ...annual, selection: 'fallback' }, { ...annual, providerId: 'kimi', modelId: 'kimi/other' },
     { ...annual, modelId: 'minimax/other' }, { ...annual, modelId: 'codex/gpt-6.1-sol' }, { ...codex, modelId: 'codex/invalid model' },
     { ...codex, providerId: 'gateway' }, { ...annual, approved: true }, { ...annual, credential: 'inert-test-value' }]) {
     assert.throws(() => api!.projectSelectedConvergenceRecipeV1(profile));
@@ -81,4 +82,19 @@ test('historical fixed recipe resolution refuses unknown hashes, ambiguous mater
     ['a'.repeat(64), [{ ...catalogue[0], fixedSuiteRelativePath: 'evals/suites/custom.json' }]],
     ['a'.repeat(64), [{ ...catalogue[0], approved: true }]],
   ] as const) assert.throws(() => api!.resolveFixedConvergenceSuitePathV1(hash, entries));
+});
+
+test('Kimi primary fixed recipe carries exact selector env and resolves among three pinned historical suites', () => {
+  assert.ok(api);
+  const profile = { ...annual, providerId: 'kimi', modelId: 'kimi/k3.1-pro' };
+  assert.deepEqual(api.projectSelectedConvergenceRecipeV1(profile), {
+    fixedSuiteRelativePath: kimiPath, executionProfile: profile,
+    workerEnv: { SETFARM_AGENT_RUNTIME: 'subscription', SETFARM_SUBSCRIPTION_PRIMARY_MODEL: 'kimi/k3.1-pro' },
+  });
+  const all = [...catalogue, { fixedSuiteRelativePath: kimiPath, suiteHash: 'c'.repeat(64) }];
+  assert.equal(api.resolveFixedConvergenceSuitePathV1('c'.repeat(64), all), kimiPath);
+  assert.equal(api.resolveFixedConvergenceSuitePathV1('a'.repeat(64), all), codexPath);
+  assert.equal(api.resolveFixedConvergenceSuitePathV1('b'.repeat(64), all), annualPath);
+  assert.throws(() => api!.resolveFixedConvergenceSuitePathV1('c'.repeat(64), [...all, all[2]]));
+  assert.throws(() => api!.resolveFixedConvergenceSuitePathV1('c'.repeat(64), [all[0], { ...all[1], suiteHash: 'c'.repeat(64) }, all[2]]));
 });

@@ -4,12 +4,14 @@ import type { ModelExecutionProfileV1 } from '../execution/operational-retry-dir
 export const FIXED_CONVERGENCE_SUITE_PATHS_V1 = Object.freeze([
   'evals/suites/product-convergence-codex-v1.json',
   'evals/suites/product-convergence-minimax-m31-flash-v1.json',
+  'evals/suites/product-convergence-kimi-k31-pro-v1.json',
 ] as const);
 export type FixedConvergenceSuitePathV1 = typeof FIXED_CONVERGENCE_SUITE_PATHS_V1[number];
 export type SelectedConvergenceRecipeDataV1 = Readonly<{
   fixedSuiteRelativePath: FixedConvergenceSuitePathV1;
   executionProfile: ModelExecutionProfileV1;
-  workerEnv: Readonly<{ SETFARM_AGENT_RUNTIME: 'codex' | 'subscription'; SETFARM_CODEX_MODEL?: string }>;
+  workerEnv: Readonly<{ SETFARM_AGENT_RUNTIME: 'codex' | 'subscription'; SETFARM_CODEX_MODEL?: string;
+    SETFARM_SUBSCRIPTION_PRIMARY_MODEL?: 'kimi/k3.1-pro' }>;
 }>;
 export type SelectedConvergenceRecipeV1 = SelectedConvergenceRecipeDataV1 & Readonly<{ assertUnchanged(): void }>;
 function refuse(): never { throw new Error('SELECTED_CONVERGENCE_RECIPE_REFUSED'); }
@@ -34,6 +36,9 @@ export function projectSelectedConvergenceRecipeV1(input: unknown): SelectedConv
   if (profile.providerId === 'minimax' && profile.modelId === 'minimax/MiniMax-M3.1-Flash') {
     fixedSuiteRelativePath = FIXED_CONVERGENCE_SUITE_PATHS_V1[1];
     workerEnv = Object.freeze({ SETFARM_AGENT_RUNTIME: 'subscription' });
+  } else if (profile.providerId === 'kimi' && profile.modelId === 'kimi/k3.1-pro') {
+    fixedSuiteRelativePath = FIXED_CONVERGENCE_SUITE_PATHS_V1[2];
+    workerEnv = Object.freeze({ SETFARM_AGENT_RUNTIME: 'subscription', SETFARM_SUBSCRIPTION_PRIMARY_MODEL: 'kimi/k3.1-pro' });
   } else if (profile.providerId === 'codex' && typeof profile.modelId === 'string'
     && profile.modelId.startsWith('codex/') && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,193}$/.test(profile.modelId.slice(6))) {
     fixedSuiteRelativePath = FIXED_CONVERGENCE_SUITE_PATHS_V1[0];
@@ -44,11 +49,11 @@ export function projectSelectedConvergenceRecipeV1(input: unknown): SelectedConv
     modelId: profile.modelId as string, selection: 'primary',
   }), workerEnv });
 }
-/** Resolve persisted suite identity from at most the two fixed pinned candidates.
+/** Resolve persisted suite identity from at most the three fixed pinned candidates.
  * A missing nonmatching historical recipe need not replace an old Codex release. */
 export function resolveFixedConvergenceSuitePathV1(suiteHash: unknown, input: unknown): FixedConvergenceSuitePathV1 {
   if (typeof suiteHash !== 'string' || !/^[a-f0-9]{64}$/.test(suiteHash)
-    || !Array.isArray(input) || types.isProxy(input) || input.length < 1 || input.length > 2) refuse();
+    || !Array.isArray(input) || types.isProxy(input) || input.length < 1 || input.length > 3) refuse();
   const ds = Object.getOwnPropertyDescriptors(input);
   if (Reflect.ownKeys(ds).length !== input.length + 1) refuse();
   const paths = new Set<unknown>(), matches: FixedConvergenceSuitePathV1[] = [];

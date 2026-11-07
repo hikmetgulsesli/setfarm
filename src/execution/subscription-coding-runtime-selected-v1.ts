@@ -152,8 +152,8 @@ export async function startSelectedSubscriptionCodingRuntimeV1(input: Readonly<{
   const requestProfile = authority.schema === "setfarm.v3-stage-claim-handoff.v1"
     && authority.context.workflow === "feature-dev" && authority.context.workflowStepId === "plan"
     && authority.context.role === "planner" && envelope.workflowStepId === "plan"
+    && binding.modelRef === "minimax/MiniMax-M3.1-Flash"
     ? "plan-report-v1" as const : undefined;
-  if (requestProfile && binding.modelRef !== "minimax/MiniMax-M3.1-Flash") subscriptionRuntimeRefusedV1();
   const parentIdentity = observeProcessIdentity(process.pid), activation = selected.activation;
   if (!parentIdentity || parentIdentity.source !== "observed_os" || !activation?.acknowledged || !activation.activatedPin) subscriptionRuntimeRefusedV1();
   const runtimeAuthority: SubscriptionRuntimeAuthorityV1 = Object.freeze({ sourceSha: binding.sourceSha,
