@@ -87,5 +87,7 @@ export async function readAuthenticatedSubscriptionSuperviseContractsV1(envelope
       ...(compiled.slice.recovery?{allowedPaths:compiled.slice.schema==="setfarm.implementation-slice.v2"
         ?compiled.slice.recovery.expectedSourceDelta.changes.map(change=>change.path):compiled.slice.recovery.allowedPaths}: {})});
   }
-  return frozen({subject:resolved.subject,rows:resolved.rows,contexts});
+  // The driver Result is an Array subclass; retain its authenticated row data,
+  // not the driver container/metadata, in the canonical contract seal.
+  return frozen({subject:resolved.subject,rows:Array.from(resolved.rows),contexts});
 }

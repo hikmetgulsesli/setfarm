@@ -34,3 +34,65 @@ it("missing ambiguous crossed generation or escaping scope DATA refuses",()=>{
     assert.throws(()=>project(value),/REFUSED|MISMATCH|INVALID|normalized|relative/);
   }
 });
+
+// Exercise the complete authenticated reader body, with only SQL/other owned
+// readers replaced by inert boundaries. The driver Result is real; no DB opens.
+async function authenticatedContractsFixture(options:Readonly<{duplicate?:boolean;customRow?:boolean}>= {}) {
+  const [{readFileSync},tsModule,driver]=await Promise.all([import("node:fs"),import("typescript"),
+    import(new URL("./result.js",import.meta.resolve("postgres")).href)]);
+  const ts=tsModule.default,Result=driver.default;
+  const file=new URL("../../src/execution/subscription-supervise-contracts-v1.ts",import.meta.url),source=readFileSync(file,"utf8");
+  const tree=ts.createSourceFile(file.pathname,source,ts.ScriptTarget.ESNext,true);
+  const functions=["frozen","refuse","readAuthenticatedSubscriptionSuperviseContractsV1"].map(name=>{
+    const node=tree.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);
+    assert.ok(node,"actual reader declaration exists");return node.getText(tree).replace(/^export\s+/,"");
+  }).join("\n");
+  const f=fixture(),subject=f.subject,slice=f.contexts[0]!.slice;
+  const rowData={story_db_id:"story-db-1",story_id:slice.storyId,story_claim_generation:4,attempt_id:"ATT_supervise-contract-fixture-01"};
+  const row=options.customRow?Object.assign(new class DriverUnrelatedRow{}(),rowData):rowData;
+  const rows=new Result();rows.push(row);if(options.duplicate)rows.push({...rowData});
+  const tx={unsafe:async(query:string,params:unknown[])=>{
+    const result=new Result();
+    if(query.includes("r.attempt_id\n      FROM v3_story_claim_runtime_bindings_v1")){
+      assert.deepEqual(params,["run-supervise",subject.storyDbId,21,"RTS_supervise-fixture"]);return rows;
+    }
+    if(query.includes("source_claim_id"))return result;
+    if(query.startsWith("SELECT id FROM stories")){result.push({id:"story-db-1"});return result;}
+    throw Error("UNEXPECTED_CONTRACT_READER_QUERY");
+  }};
+  const ports={getSql:()=>({begin:async(body:(value:unknown)=>Promise<unknown>)=>body(tx)}),
+    loadAndRevalidateV3StoryClaimRuntimeBindingV1:async()=>subject,
+    readNativeEvidenceOnlySuccessAuthority:async()=>{throw Error("UNEXPECTED_NATIVE_VERIFIER");},
+    loadV3ImplementationAttemptContext:async(input:unknown)=>{
+      assert.deepEqual(input,{runId:"run-supervise",storyId:slice.storyId,attemptId:rowData.attempt_id});
+      return {attempt:{disposition:"verified"},slice,sliceHash:"a".repeat(64)};
+    }};
+  const compiled=ts.transpileModule(functions,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+  const read=new Function(...Object.keys(ports),compiled+";return readAuthenticatedSubscriptionSuperviseContractsV1;")(...Object.values(ports));
+  const envelope={protocol:"v3",workflowStepId:"supervise",claimId:21,runId:"run-supervise",stepId:"step-supervise"};
+  return {read:()=>read(envelope,"RTS_supervise-fixture"),readForged:()=>read({...envelope,workflowStepId:"implement"},"RTS_supervise-fixture"),
+    rows,expected:{subject,rows:[rowData],contexts:[{storyDbId:"story-db-1",storyClaimGeneration:4,slice,sliceHash:"a".repeat(64)}]}};
+}
+
+it("authenticated PostgreSQL Result contracts seal as immutable canonical own-data arrays",async()=>{
+  const {hashCanonicalJson}=await import("../../src/product-compiler/canonical-json.js"),f=await authenticatedContractsFixture();
+  assert.notEqual(Object.getPrototypeOf(f.rows),Array.prototype,"fixture uses the genuine driver Result subclass");
+  const contracts=await f.read();
+  assert.equal(hashCanonicalJson(contracts),hashCanonicalJson(f.expected));
+  assert.equal(Object.getPrototypeOf(contracts.rows),Array.prototype);
+  assert.ok(Object.isFrozen(contracts)&&Object.isFrozen(contracts.rows)&&Object.isFrozen(contracts.rows[0]));
+  assert.throws(()=>contracts.rows.push({}),TypeError);
+});
+
+it("contract row conversion retains canonical rejection of custom row prototypes",async()=>{
+  const {hashCanonicalJson}=await import("../../src/product-compiler/canonical-json.js"),f=await authenticatedContractsFixture({customRow:true});
+  const contracts=await f.read();
+  assert.throws(()=>hashCanonicalJson(contracts),(error:any)=>error.code==="CANONICAL_JSON_UNSUPPORTED_PROTOTYPE"&&error.path==="$/rows/0");
+});
+
+it("authenticated contract reader still refuses duplicate membership and forged stage",async()=>{
+  const duplicate=await authenticatedContractsFixture({duplicate:true});
+  await assert.rejects(duplicate.read(),/SUBSCRIPTION_SUPERVISE_CONTRACTS_REFUSED/);
+  const valid=await authenticatedContractsFixture();
+  await assert.rejects(valid.readForged(),/SUBSCRIPTION_SUPERVISE_CONTRACTS_REFUSED/);
+});
