@@ -99,3 +99,32 @@ it("published worker identity requires original pid start group and complete obs
     assert.throws(() => join(crossed), /REFUSED/);
   }
 });
+
+it("Kimi primary projects a genuine stage while both fallback models remain forbidden for stages", () => {
+  const f = stage();
+  const kimi = { ...profile, providerId: "kimi", modelId: "kimi/k3.1-pro" };
+  assert.equal(required("projectSubscriptionCodingRuntimeBindingV1")({ ...f, selectedProfile: kimi }).modelRef, "kimi/k3.1-pro");
+  for (const selectedProfile of [kimi, profile].map(p => ({ ...p, selection: "fallback" })))
+    assert.throws(() => required("projectSubscriptionCodingRuntimeBindingV1")({ ...f, selectedProfile }), /REFUSED/);
+  assert.throws(() => required("projectSubscriptionCodingRuntimeBindingV1")({ ...f, selectedProfile: kimi,
+    envelope: { ...f.envelope, claimId: f.envelope.claimId + 1 } }), /REFUSED/);
+});
+
+it("implementation DATA retains exact handoff joins for all four closed annual model selection pairs", async () => {
+  const { hashCanonicalJson } = await import("../../src/product-compiler/canonical-json.js");
+  for (const [providerId, modelId] of [["minimax", "minimax/MiniMax-M3.1-Flash"], ["kimi", "kimi/k3.1-pro"]])
+    for (const selection of ["primary", "fallback"]) {
+      const f = stage(), selectedProfile = { ...profile, providerId, modelId, selection };
+      const envelope = { ...f.envelope, workflowStepId: "implement", storyId: "US-001", storyDbId: "story-db",
+        attempt: { attemptId: "ATT_00000000-0000-0000-0000-000000000901", generation: 1, fenceToken: "f".repeat(64) } };
+      const h = { runId: envelope.runId, stepId: envelope.stepId, workflowStepId: envelope.workflowStepId,
+        storyId: envelope.storyId, storyDbId: envelope.storyDbId, claimId: envelope.claimId,
+        attemptId: envelope.attempt.attemptId, attemptGeneration: 1, workdir: envelope.workdir, executionProfile: selectedProfile };
+      const authority = { schema: "setfarm.implementation-context.v3", handoff: h, handoffHash: hashCanonicalJson(h) };
+      assert.equal(required("projectSubscriptionCodingRuntimeBindingV1")({ ...f, envelope, authority, selectedProfile }).modelRef, modelId);
+      assert.throws(() => required("projectSubscriptionCodingRuntimeBindingV1")({ ...f, envelope, authority,
+        selectedProfile: { ...selectedProfile, selection: selection === "primary" ? "fallback" : "primary" } }), /REFUSED/);
+      assert.throws(() => required("projectSubscriptionCodingRuntimeBindingV1")({ ...f, envelope, authority,
+        selectedProfile: { ...selectedProfile, providerId: providerId === "kimi" ? "minimax" : "kimi" } }), /REFUSED/);
+    }
+});

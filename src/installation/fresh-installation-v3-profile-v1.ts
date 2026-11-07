@@ -7,6 +7,7 @@ import type { ModelExecutionProfileV1 } from "../execution/operational-retry-dir
 
 const capturedRunnerV1 = process.env.SETFARM_AGENT_RUNTIME;
 const capturedModelV1 = process.env.SETFARM_CODEX_MODEL;
+const capturedSubscriptionPrimaryModelV1 = process.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL;
 let profileRefusedV1 = false;
 
 function refuse(): never {
@@ -25,6 +26,7 @@ export function assertSelectedFreshExecutionProfileUnchangedV1(): void {
   if (!freshInstallationSelectionV1) return;
   if (profileRefusedV1 || process.env.SETFARM_AGENT_RUNTIME !== capturedRunnerV1
     || process.env.SETFARM_CODEX_MODEL !== capturedModelV1
+    || (capturedRunnerV1 === "subscription" && process.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL !== capturedSubscriptionPrimaryModelV1)
     || (capturedRunnerV1 !== "codex" && capturedRunnerV1 !== "subscription")) refuseExecutionProfile();
   freshInstallationSelectionV1.assertUnchanged();
 }
@@ -35,7 +37,8 @@ export function readSelectedFreshExecutionProfileV1(
   assertSelectedFreshExecutionProfileUnchangedV1();
   if (!freshInstallationSelectionV1) return null;
   try {
-    return projectSelectedModelExecutionProfileV1({ runtime: capturedRunnerV1, codexModel: capturedModelV1 }, selection);
+    return projectSelectedModelExecutionProfileV1({ runtime: capturedRunnerV1, codexModel: capturedModelV1,
+      subscriptionPrimaryModel: capturedSubscriptionPrimaryModelV1 }, selection);
   } catch (error) {
     // Unsupported Codex retry does not retarget or poison a valid primary profile.
     if (error instanceof Error && error.message === "FRESH_V3_FALLBACK_PROFILE_UNAVAILABLE") throw error;

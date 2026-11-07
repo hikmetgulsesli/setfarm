@@ -42,8 +42,9 @@ function compile(text: string): string {
     .outputText.replace(/^export /gm, "");
 }
 
-function profileModule(options: { selected?: boolean; runtime?: string; model?: string } = {}) {
-  const env: Record<string, string | undefined> = { SETFARM_AGENT_RUNTIME: options.runtime, SETFARM_CODEX_MODEL: options.model };
+function profileModule(options: { selected?: boolean; runtime?: string; model?: string; subscriptionPrimaryModel?: string } = {}) {
+  const env: Record<string, string | undefined> = { SETFARM_AGENT_RUNTIME: options.runtime, SETFARM_CODEX_MODEL: options.model,
+    ...(options.subscriptionPrimaryModel === undefined ? {} : { SETFARM_SUBSCRIPTION_PRIMARY_MODEL: options.subscriptionPrimaryModel }) };
   let selectionCalls = 0, recordCalls = 0, badSelection = false;
   const selected = options.selected === false ? null : { assertUnchanged() { recordCalls++; } };
   const { tree } = source("src/installation/fresh-installation-v3-profile-v1.ts");
@@ -222,4 +223,52 @@ test("actual selected convergence consumes generic subscription primary without 
     () => { throw Error("selected subscription must not read shared configuration"); },
   );
   assert.deepEqual(await invoke("DATA workflow"), { providerId: "minimax", modelId: "minimax/MiniMax-M3.1-Flash", agentCount: 1 });
+});
+
+test("actual subscription capture selects Kimi and permanently refuses raw selector drift including absence", () => {
+  const kimi = profileModule({ runtime: "subscription", subscriptionPrimaryModel: "kimi/k3.1-pro" });
+  assert.deepEqual(kimi.api.readSelectedFreshExecutionProfileV1(), { schema: "setfarm.model-execution-profile.v1",
+    providerId: "kimi", modelId: "kimi/k3.1-pro", selection: "primary" });
+  assert.deepEqual(kimi.api.readSelectedFreshExecutionProfileV1("fallback"), { schema: "setfarm.model-execution-profile.v1",
+    providerId: "minimax", modelId: "minimax/MiniMax-M3.1-Flash", selection: "fallback" });
+  for (const initial of [undefined, "minimax/MiniMax-M3.1-Flash", "kimi/k3.1-pro"]) {
+    const h = profileModule({ runtime: "subscription", subscriptionPrimaryModel: initial });
+    h.api.readSelectedFreshExecutionProfileV1();
+    if (initial === undefined) h.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL = "minimax/MiniMax-M3.1-Flash";
+    else delete h.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL;
+    assert.throws(() => h.api.assertSelectedFreshExecutionProfileUnchangedV1(), /FRESH_V3_EXECUTION_PROFILE_REFUSED/);
+    if (initial === undefined) delete h.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL;
+    else h.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL = initial;
+    assert.throws(() => h.api.readSelectedFreshExecutionProfileV1(), /FRESH_V3_EXECUTION_PROFILE_REFUSED/);
+  }
+});
+
+test("invalid initial subscription selector is sticky but Codex ignores subscription-only env", () => {
+  const invalid = profileModule({ runtime: "subscription", subscriptionPrimaryModel: "k3.1-pro" });
+  assert.throws(() => invalid.api.readSelectedFreshExecutionProfileV1(), /FRESH_V3_EXECUTION_PROFILE_REFUSED/);
+  invalid.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL = "kimi/k3.1-pro";
+  assert.throws(() => invalid.api.readSelectedFreshExecutionProfileV1(), /FRESH_V3_EXECUTION_PROFILE_REFUSED/);
+  const codex = profileModule({ runtime: "codex", model: "gpt-6.1-sol", subscriptionPrimaryModel: "foreign" });
+  const before = codex.api.readSelectedFreshCodexExecutionProfileV1();
+  codex.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL = "kimi/k3.1-pro";
+  assert.deepEqual(codex.api.readSelectedFreshExecutionProfileV1(), before);
+  assert.deepEqual(codex.api.selectedFreshCodexModelArgumentsV1(before), ["--model", "gpt-6.1-sol"]);
+});
+
+test("actual Kimi recipe capture carries selector env to the selected worker profile and guards later drift", async () => {
+  const recipe = await import("../../src/installation/selected-convergence-recipe-v1.js");
+  const projected = recipe.projectSelectedConvergenceRecipeV1({ schema: "setfarm.model-execution-profile.v1",
+    providerId: "kimi", modelId: "kimi/k3.1-pro", selection: "primary" });
+  const env = projected.workerEnv as Record<string, string>;
+  const h = profileModule({ runtime: env.SETFARM_AGENT_RUNTIME, subscriptionPrimaryModel: env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL });
+  const body = declaration("src/installation/selected-convergence-recipe-v1.ts", "captureSelectedConvergenceRecipeV1")
+    .replace("await import('./fresh-installation-v3-profile-v1.js')", "await Promise.resolve(selectedFacade)");
+  const capture = new Function("selectedFacade", "projectSelectedConvergenceRecipeV1", "refuse", compile(body)
+    + ";return captureSelectedConvergenceRecipeV1;")(h.api, recipe.projectSelectedConvergenceRecipeV1, () => { throw Error("RECIPE_REFUSED"); });
+  const held = await capture();
+  assert.deepEqual(held.executionProfile, { schema: "setfarm.model-execution-profile.v1", providerId: "kimi", modelId: "kimi/k3.1-pro", selection: "primary" });
+  assert.deepEqual(held.workerEnv, { SETFARM_AGENT_RUNTIME: "subscription", SETFARM_SUBSCRIPTION_PRIMARY_MODEL: "kimi/k3.1-pro" });
+  held.assertUnchanged();
+  delete h.env.SETFARM_SUBSCRIPTION_PRIMARY_MODEL;
+  assert.throws(() => held.assertUnchanged(), /FRESH_V3_EXECUTION_PROFILE_REFUSED/);
 });

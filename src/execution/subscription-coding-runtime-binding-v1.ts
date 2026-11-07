@@ -30,8 +30,9 @@ export function projectSubscriptionCodingRuntimeBindingV1(input: Readonly<{
   const envelope = ClaimEnvelopeV1Schema.parse(input.envelope), authority = input.authority;
   if (envelope.protocol !== "v3" || !isSubscriptionRuntimeCanonicalPathV1(envelope.workdir)) subscriptionRuntimeRefusedV1();
   const profile = input.selectedProfile;
-  if (!((profile.providerId === "minimax" && profile.modelId === "minimax/MiniMax-M3.1-Flash" && profile.selection === "primary")
-    || (profile.providerId === "kimi" && profile.modelId === "kimi/k3.1-pro" && profile.selection === "fallback"))) subscriptionRuntimeRefusedV1();
+  if (!((profile.providerId === "minimax" && profile.modelId === "minimax/MiniMax-M3.1-Flash")
+    || (profile.providerId === "kimi" && profile.modelId === "kimi/k3.1-pro"))
+    || (profile.selection !== "primary" && profile.selection !== "fallback")) subscriptionRuntimeRefusedV1();
   if (authority.schema === "setfarm.implementation-context.v3") {
     // Complete schema admission belongs to the genuine facade. Keep this DATA
     // projector off implementation schema's eager selected-profile import.

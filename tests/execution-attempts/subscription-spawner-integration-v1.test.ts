@@ -30,8 +30,9 @@ it("genuine selected facade derives fixed PLAN shaping only after authentic star
   // Disclosed module-locator DATA seam only; no selected graph/FS is imported.
   body=body.replace("import.meta.url",JSON.stringify("file:///component/selected-facade.js"));
   const compiled=ts.transpileModule(body,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
-  for(const mode of ["plan","stories","design","starting-refused","crossed-stage","profile-model-mismatch"]){
-    const step=mode==="stories"?"stories":mode==="design"?"design":"plan",role=step==="design"?"designer":"planner";
+  for(const mode of ["plan","stories","design","kimi-plan","kimi-design","kimi-starting-refused","starting-refused","crossed-stage","profile-model-mismatch"]){
+    const kimi=mode.startsWith("kimi-"),modelRef=kimi?"kimi/k3.1-pro":"minimax/MiniMax-M3.1-Flash";
+    const step=mode==="stories"?"stories":mode.endsWith("design")?"design":"plan",role=step==="design"?"designer":"planner";
     const f=fixture(),events:string[]=[];
     const envelope={...f.input.claimEnvelope,workflowStepId:step,claimAgentId:`feature-dev_${role}`,runtimeAgentId:role};
     const authority=createV3StageClaimHandoffV1({claimEnvelope:envelope,workflow:"feature-dev",role,workdir:envelope.workdir,
@@ -45,10 +46,10 @@ it("genuine selected facade derives fixed PLAN shaping only after authentic star
       assertFreshInstallationSelectionUnchangedV1(){},assertFreshInstallationOperationalEntryV1(){},freshInstallationSelectionV1:selected,
       planSubscriptionWorkflowHandoffV1,renderSubscriptionWorkflowPromptV1,projectSubscriptionCodingRuntimeBindingV1,
       deriveSubscriptionCodingRuntimePathsV1,sameSubscriptionRuntimeDataV1,subscriptionRuntimeRefusedV1,
-      readSelectedFreshExecutionProfileV1:()=>({schema:"setfarm.model-execution-profile.v1",providerId:mode==="profile-model-mismatch"?"kimi":"minimax",modelId:mode==="profile-model-mismatch"?"kimi/k3.1-pro":"minimax/MiniMax-M3.1-Flash",selection:"primary"}),
+      readSelectedFreshExecutionProfileV1:()=>({schema:"setfarm.model-execution-profile.v1",providerId:kimi?"kimi":"minimax",modelId:mode==="profile-model-mismatch"?"kimi/k3.1-pro":modelRef,selection:"primary"}),
       getSql:()=>({componentData:true}),createRuntimeSessionRepository:()=>({async readAuthenticatedStartingClaim(actual:any){
         events.push("authenticated-starting");assert.deepEqual(actual.envelope,envelope);
-        if(mode==="starting-refused")throw Error("COMPONENT_STARTING_REFUSED");return{};
+        if(mode==="starting-refused"||mode==="kimi-starting-refused")throw Error("COMPONENT_STARTING_REFUSED");return{};
       }}),observeProcessIdentity:()=>observed,hash:(bytes:string|Buffer)=>createHash("sha256").update(bytes).digest("hex"),
       ownedBytes:()=>Buffer.from("component-owned-policy"),fileURLToPath,URL,join:path.join,SUBSCRIPTION_CODING_WORKER_PRELOAD_V1:"component-preload",
       // Scope/FS effects are finite DATA ports. They confer no production grant
@@ -64,7 +65,7 @@ it("genuine selected facade derives fixed PLAN shaping only after authentic star
       },
       subscriptionRuntimePreparationHashV1,readSubscriptionRuntimeAttachmentV1:()=>prepared,
       withSelectedSubscriptionCredentialV1:async(model:string,use:(credential:string)=>Promise<unknown>)=>{
-        assert.ok(events.includes("authenticated-starting"));assert.equal(model,"minimax/MiniMax-M3.1-Flash");events.push("credential-data");
+        assert.ok(events.includes("authenticated-starting"));assert.equal(model,modelRef);events.push("credential-data");
         return use("component-synthetic-plan-credential");
       },
       startSubscriptionAttemptBrokerV1:async(input:any)=>{capturedBroker=input;events.push("broker-data");throw Error("COMPONENT_ACQUIRE_BOUNDARY");},
@@ -74,15 +75,15 @@ it("genuine selected facade derives fixed PLAN shaping only after authentic star
     const input={envelope:mode==="crossed-stage"?{...envelope,workflowStepId:"stories"}:envelope,authority,
       runtimeSessionId:f.input.runtimeSessionId,ownerInstanceId:f.ownerInstanceId,signal:new AbortController().signal};
     Object.defineProperty(input,"requestProfile",{get(){throw Error("CALLER_SHAPING_AUTHORITY_READ");}});
-    if(mode==="starting-refused"||mode==="crossed-stage"||mode==="profile-model-mismatch"){
+    if(mode==="starting-refused"||mode==="kimi-starting-refused"||mode==="crossed-stage"||mode==="profile-model-mismatch"){
       await assert.rejects(start(input),/COMPONENT_STARTING_REFUSED|REFUSED/);
       assert.equal(captured,undefined);assert.equal(events.includes("materialize"),false);
       assert.equal(events.includes("credential-data"),false);assert.equal(capturedBroker,undefined);
     }else{
       await assert.rejects(start(input),/COMPONENT_ACQUIRE_BOUNDARY/);
-      assert.equal(captured.requestProfile,step==="plan"?"plan-report-v1":undefined);
-      assert.equal(capturedBroker.requestProfile,step==="plan"?"plan-report-v1":undefined,"broker receives the same authenticated fixed profile");
-      if(step!=="plan")for(const value of [captured,capturedBroker])assert.equal(Object.hasOwn(value,"requestProfile"),false,"other roles omit the profile entirely");
+      assert.equal(captured.requestProfile,step==="plan"&&!kimi?"plan-report-v1":undefined);
+      assert.equal(capturedBroker.requestProfile,step==="plan"&&!kimi?"plan-report-v1":undefined,"broker receives the same authenticated fixed profile");
+      if(step!=="plan"||kimi)for(const value of [captured,capturedBroker])assert.equal(Object.hasOwn(value,"requestProfile"),false,"other roles omit the profile entirely");
     }
   }
   const tree=ts.createSourceFile(file,body,ts.ScriptTarget.Latest,true),choices:number[]=[],reads:number[]=[];

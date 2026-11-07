@@ -52,3 +52,27 @@ test("missing or unknown runtime and invalid selection cannot choose a hidden pr
   assert.throws(() => project!({ runtime: "subscription", codexModel: undefined }, "other" as never),
     { message: "FRESH_V3_EXECUTION_PROFILE_REFUSED" });
 });
+
+test("exact annual selector chooses Kimi primary and MiniMax fallback while absence retains the existing pair", () => {
+  assert.ok(project);
+  assert.deepEqual(project!({ runtime: "subscription", codexModel: undefined,
+    subscriptionPrimaryModel: "kimi/k3.1-pro" } as never), {
+    schema: "setfarm.model-execution-profile.v1", providerId: "kimi", modelId: "kimi/k3.1-pro", selection: "primary",
+  });
+  assert.deepEqual(project!({ runtime: "subscription", codexModel: undefined,
+    subscriptionPrimaryModel: "kimi/k3.1-pro" } as never, "fallback"), {
+    schema: "setfarm.model-execution-profile.v1", providerId: "minimax", modelId: "minimax/MiniMax-M3.1-Flash", selection: "fallback",
+  });
+  for (const selection of ["primary", "fallback"] as const) assert.deepEqual(
+    project!({ runtime: "subscription", codexModel: undefined, subscriptionPrimaryModel: "minimax/MiniMax-M3.1-Flash" } as never, selection),
+    project!({ runtime: "subscription", codexModel: undefined }, selection));
+});
+
+test("subscription primary selector refuses partial foreign blank and normalized aliases", () => {
+  for (const subscriptionPrimaryModel of [null, "", "kimi", "k3.1-pro", "kimi/K3.1-Pro", " kimi/k3.1-pro", "kimi/k3.1-pro ", "minimax/other", "codex/gpt-6.1-sol"])
+    assert.throws(() => project!({ runtime: "subscription", codexModel: undefined, subscriptionPrimaryModel } as never),
+      { message: "FRESH_V3_EXECUTION_PROFILE_REFUSED" });
+  assert.deepEqual(project!({ runtime: "codex", codexModel: "gpt-6.1-sol", subscriptionPrimaryModel: "ignored-foreign-selector" } as never), {
+    schema: "setfarm.model-execution-profile.v1", providerId: "codex", modelId: "codex/gpt-6.1-sol", selection: "primary",
+  });
+});
