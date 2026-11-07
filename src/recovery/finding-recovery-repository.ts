@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type {PreparedNativeEvidenceMerge,NativeEvidenceOnlySettlementLease} from "./v3-evidence-only-publication.js";
 import type postgres from "postgres";
 import { z } from "zod";
@@ -248,6 +249,7 @@ async function one<T>(
   query: string,
   params: unknown[],
 ): Promise<T | undefined> {
+  if (/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(query)) await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
   const rows = await sql.unsafe<T[]>(query, params as any[]);
   return rows[0];
 }
@@ -327,10 +329,12 @@ async function publishFindingSetWithOwnerInTransactionV1(
     && beforeOwners[0]?.producer_implementation_id !== "a-finding-recovery-repository-v1"
   ) {
     if (beforeOwners[0]?.state !== "closed") throw new Error("FINDING_OWNER_ADOPTION_INVALID");
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
     const terminalClose = await resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
       transaction as PgTransactionSql,
       { findingSetHash: findingSet.findingSetHash },
     );
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
     await closeInternalProductionOwnerReservationV1(
       transaction as PgTransactionSql,
       terminalClose,
@@ -338,6 +342,7 @@ async function publishFindingSetWithOwnerInTransactionV1(
     return "duplicate";
   }
 
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
   const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,
     {
@@ -346,7 +351,8 @@ async function publishFindingSetWithOwnerInTransactionV1(
     },
   );
   if (!adopting) {
-    await transaction.unsafe(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+        await transaction.unsafe(
       `INSERT INTO finding_sets (
          finding_set_hash, finding_set_id, run_id, story_id, packet_hash, slice_hash,
          source_sha, source_tree_hash, finding_ids, payload
@@ -365,7 +371,8 @@ async function publishFindingSetWithOwnerInTransactionV1(
       ],
     );
     for (const finding of findingSet.findings) {
-      await transaction.unsafe(
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+        await transaction.unsafe(
         `INSERT INTO findings (
            finding_set_hash, finding_id, origin, classification, invariant_ref,
            status, source_fingerprint, payload
@@ -407,6 +414,7 @@ async function publishFindingSetWithOwnerInTransactionV1(
     || !parents[0]
     || !exactFindingPublicationMatches(parents[0], children, findingSet)
   ) throw new Error("FINDING_OWNER_REREAD_INVALID");
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
   const bound = await bindInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,
     {
@@ -420,10 +428,12 @@ async function publishFindingSetWithOwnerInTransactionV1(
     || bound.reservationRef !== reservation.reservationRef
     || bound.reservationHash !== reservation.reservationHash
   ) throw new Error("FINDING_OWNER_BINDING_INVALID");
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
   const terminalClose = await resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
     transaction as PgTransactionSql,
     { findingSetHash: findingSet.findingSetHash },
   );
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
   await closeInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,
     terminalClose,
@@ -487,13 +497,20 @@ export type RecoveryDispatchResult =
   | Readonly<{ status: "stale_version"; recoveryCase: RecoveryCaseV1 }>
   | Readonly<{ status: "budget_exhausted"; recoveryCase: RecoveryCaseV1 }>;
 
-export function createFindingRecoveryRepository(sql: Sql) {
+export function createFindingRecoveryRepository(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   return {
     async putFindingSet(input: unknown): Promise<PutImmutableResult<FindingSetV1>> {
       const findingSet = FindingSetV1Schema.parse(input);
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const status = await publishFindingSetWithOwnerInTransactionV1(transaction, findingSet);
         return { status, value: findingSet };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<PutImmutableResult<FindingSetV1>>;
     },
 
@@ -510,7 +527,9 @@ export function createFindingRecoveryRepository(sql: Sql) {
     async putEvidenceBundle(input: unknown): Promise<PutImmutableResult<EvidenceBundleV2> & { bundleHash: string }> {
       const bundle = EvidenceBundleV2Schema.parse(input);
       const bundleHash = computeEvidenceBundleHash(bundle);
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [bundleHash]);
         if (bundle.attemptId) {
           const attempt = await one<EvidenceAttemptIdentityRow>(
@@ -547,6 +566,7 @@ export function createFindingRecoveryRepository(sql: Sql) {
           if (!canonicalEqual(value, bundle)) throw new Error("EVIDENCE_BUNDLE_HASH_COLLISION");
           return { status: "duplicate" as const, value, bundleHash };
         }
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         await transaction.unsafe(
           `INSERT INTO evidence_bundles (
              evidence_bundle_hash, evidence_id, run_id, story_id, packet_hash, slice_hash,
@@ -567,6 +587,10 @@ export function createFindingRecoveryRepository(sql: Sql) {
           ],
         );
         return { status: "inserted" as const, value: bundle, bundleHash };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<PutImmutableResult<EvidenceBundleV2> & { bundleHash: string }>;
     },
 
@@ -590,7 +614,9 @@ export function createFindingRecoveryRepository(sql: Sql) {
       // Validate the complete draft before touching operational authority;
       // the DB clock below is the only timestamp that can be persisted.
       const validated = createRecoveryCaseV1(input, options);
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
           runId: validated.runId,
           storyId: validated.storyId,
@@ -724,6 +750,7 @@ export function createFindingRecoveryRepository(sql: Sql) {
             ? { evidencePlanArtifactHash: options.evidencePlanArtifactHash }
             : {}),
         }, { now: new Date(recoveryCase.createdAt) });
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         await transaction.unsafe(
           `INSERT INTO recovery_case_revisions (
              revision_id, recovery_case_id, revision_number, parent_revision_id,
@@ -758,6 +785,7 @@ export function createFindingRecoveryRepository(sql: Sql) {
             revision.createdAt,
           ],
         );
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         await transaction.unsafe(
           `UPDATE recovery_cases
               SET current_revision_id = $2
@@ -765,6 +793,10 @@ export function createFindingRecoveryRepository(sql: Sql) {
           [recoveryCase.recoveryCaseId, revision.revisionId],
         );
         return { status: "opened" as const, recoveryCase: mapRecoveryCase(row) };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<OpenRecoveryCaseResult>;
     },
 
@@ -784,7 +816,9 @@ export function createFindingRecoveryRepository(sql: Sql) {
       const transition = RecoveryTransitionInputSchema.parse(input);
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_TRANSITION_TIME_INVALID");
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const identity = await one<{ run_id: string; story_id: string }>(
           transaction,
           "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
@@ -835,7 +869,8 @@ export function createFindingRecoveryRepository(sql: Sql) {
               if(native.length>1) throw new Error("V3_NATIVE_EVIDENCE_SUCCESS_SETTLEMENT_AMBIGUOUS");
               if(native.length===1) {
                 const {settleNativeEvidenceOnlySuccessInTransaction}=await import("./v3-evidence-only-publication.js");
-                await settleNativeEvidenceOnlySuccessInTransaction(transaction,{
+                await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+        await settleNativeEvidenceOnlySuccessInTransaction(transaction,{
                   ...transition.recoveryEvidence,runId:current.runId,storyId:current.storyId,recoveryCaseId:current.recoveryCaseId,
                 },options.nativeEvidenceLease);
               }
@@ -1034,6 +1069,10 @@ export function createFindingRecoveryRepository(sql: Sql) {
           }
         }
         return { status: "transitioned" as const, recoveryCase: mapRecoveryCase(row) };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<RecoveryTransitionResult>;
     },
 
@@ -1044,7 +1083,9 @@ export function createFindingRecoveryRepository(sql: Sql) {
       const request = DispatchInputSchema.parse(input);
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DISPATCH_TIME_INVALID");
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+        const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+        const ownerResult=await(async()=>{
         const identity = await one<{ run_id: string; story_id: string }>(
           transaction,
           "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
@@ -1146,6 +1187,7 @@ export function createFindingRecoveryRepository(sql: Sql) {
           evidencePlan: current.evidencePlan,
           authorizedAt: now.toISOString(),
         } satisfies RecoveryDispatchAuthorizationV1;
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
         await transaction.unsafe(
           `INSERT INTO recovery_dispatches (
              dispatch_id, recovery_case_id, dispatch_class, dispatch_dedupe_key,
@@ -1168,7 +1210,8 @@ export function createFindingRecoveryRepository(sql: Sql) {
           ],
         );
         for (const finding of findingDispatchKeys) {
-          await transaction.unsafe(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+        await transaction.unsafe(
             `INSERT INTO recovery_dispatch_findings (
                dispatch_id, finding_id, finding_dispatch_key, run_id, story_id,
                dispatch_class, source_tree_hash, packet_hash, slice_hash, authorized_at
@@ -1205,6 +1248,10 @@ export function createFindingRecoveryRepository(sql: Sql) {
           authorization,
           recoveryCase: mapRecoveryCase(updatedRow),
         };
+
+        })();
+        if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+        return ownerResult;
       }) as Promise<RecoveryDispatchResult>;
     },
   };

@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -392,10 +393,11 @@ export async function coordinateV3RecoveryEffect(
   return dependencies.coordinate({ kind: "initial_evidence", ...common });
 }
 
-export function createPostgresV3RecoveryEffectHandler(sql: Sql) {
-  const findings = createFindingRecoveryRepository(sql);
-  const coordinator = createV3RecoveryCoordinator(sql);
-  const reviewResolutions = createGithubReviewResolutionEvidenceRepository(sql);
+export function createPostgresV3RecoveryEffectHandler(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
+  const findings = createFindingRecoveryRepository(sql,owner);
+  const coordinator = createV3RecoveryCoordinator(sql,owner);
+  const reviewResolutions = createGithubReviewResolutionEvidenceRepository(sql,owner);
   const github = createGithubReviewSource(createDefaultGithubReviewSourcePort());
   return Object.freeze({
     coordinate: (payload: unknown) => coordinateV3RecoveryEffect(payload, {

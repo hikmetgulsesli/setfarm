@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,pinOwnerRecoveryDeliveryLeaseV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import { randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
@@ -281,6 +282,7 @@ async function one<T>(
   query: string,
   params: unknown[],
 ): Promise<T | undefined> {
+  if (/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(query)) await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
   const rows = await sql.unsafe<T[]>(query, params as never[]);
   return rows[0];
 }
@@ -614,7 +616,8 @@ function handoff(input: Readonly<{
   });
 }
 
-export function createV3RecoveryClaimAuthority(sql: Sql) {
+export function createV3RecoveryClaimAuthority(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   return {
     async withNormalClaimAuthority<T>(
       raw: unknown,
@@ -640,7 +643,10 @@ export function createV3RecoveryClaimAuthority(sql: Sql) {
       if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
         fail("V3_RECOVERY_AUTHORITY_TIME_INVALID", "claim time is invalid");
       }
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
         await lockStory(transaction, input);
         const run = await assertV3Run(transaction, input);
         const active = await activeDeliveryRows(transaction, input);
@@ -743,7 +749,15 @@ export function createV3RecoveryClaimAuthority(sql: Sql) {
         if (!updated) fail("V3_RECOVERY_LEASE_CAS_LOST", "delivery lease transition did not converge");
         delivery = mapDelivery(updated);
         return handoff({ status: "lease_acquired", ...chain, dispatch, delivery });
-      }) as Promise<V3RecoveryClaimHandoffV1>;
+
+})();
+if(ownerFence){
+  await pinOwnerRecoveryDeliveryLeaseV1(transaction,{dispatchId:ownerResult.dispatchId,revisionId:ownerResult.revisionId,
+    ownerInstanceId:ownerResult.lease.ownerInstanceId,leaseToken:ownerResult.lease.leaseToken});
+  await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+}
+return ownerResult;
+}) as Promise<V3RecoveryClaimHandoffV1>;
     },
   };
 }

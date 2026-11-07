@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -923,7 +924,8 @@ async function resetExpiredLease(
   delivery: DeliveryRow,
   now: Date,
 ): Promise<void> {
-  const rows = await sql.unsafe<Array<{ dispatch_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const rows = await sql.unsafe<Array<{ dispatch_id: string }>>(
     `UPDATE recovery_dispatch_deliveries
         SET state = 'authorized',
             owner_instance_id = NULL,
@@ -993,7 +995,8 @@ async function rollbackUnreservedPublication(
       treeHash: input.chain.source_tree_hash,
     },
   });
-  const closed = await sql.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const closed = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE claim_log
         SET outcome = 'infra_retry',
             abandoned_at = COALESCE(abandoned_at, $7),
@@ -1024,7 +1027,8 @@ async function rollbackUnreservedPublication(
   if (closed.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_CLAIM_CAS_LOST", "open publication claim changed before exact close");
   }
-  const runtimeRows = await sql.unsafe<Array<{ session_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const runtimeRows = await sql.unsafe<Array<{ session_id: string }>>(
     `UPDATE runtime_sessions
         SET state = 'released',
             drained_at = $5,
@@ -1068,7 +1072,8 @@ async function rollbackUnreservedPublication(
   await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, claimClose);
   await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, runtimeClose);
 
-  const stories = await sql.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const stories = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE stories
         SET status = 'failed',
             claimed_by = NULL,
@@ -1099,7 +1104,8 @@ async function rollbackUnreservedPublication(
   // Publication does not durably record whether the loop step was pending or
   // running before it claimed the failed story. Keep the proven running state;
   // only clear the exact story pointer instead of inventing a pending state.
-  const steps = await sql.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const steps = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE steps
         SET current_story_id = NULL,
             updated_at = $4
@@ -1124,7 +1130,8 @@ async function rollbackUnreservedPublication(
     runtimeSessionId: input.runtime.session_id,
     decisionRef,
   };
-  const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
     `UPDATE recovery_dispatch_deliveries
         SET state = 'blocked',
             terminal_result = $10::text::jsonb,
@@ -1172,7 +1179,8 @@ async function rollbackUnreservedPublication(
     reasonCode: "operator_required",
     evidenceBundleHashes: [],
   };
-  const cases = await sql.unsafe<Array<{ recovery_case_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const cases = await sql.unsafe<Array<{ recovery_case_id: string }>>(
     `UPDATE recovery_cases
         SET status = 'blocked',
             terminal = $5::text::jsonb,
@@ -1211,7 +1219,8 @@ async function advanceDeliveryRunning(
   delivery: DeliveryRow,
   now: Date,
 ): Promise<void> {
-  const rows = await sql.unsafe<Array<{ dispatch_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const rows = await sql.unsafe<Array<{ dispatch_id: string }>>(
     `UPDATE recovery_dispatch_deliveries
         SET state = 'running', updated_at = $13
       WHERE dispatch_id = $1
@@ -1278,7 +1287,8 @@ async function blockExpiredEvidenceAttempt(
       treeHash: input.chain.source_tree_hash,
     },
   });
-  const attempts = await sql.unsafe<Array<{ attempt_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const attempts = await sql.unsafe<Array<{ attempt_id: string }>>(
     `UPDATE execution_attempts
         SET disposition = 'inconclusive',
             heartbeat_at = $5,
@@ -1300,7 +1310,8 @@ async function blockExpiredEvidenceAttempt(
   if (attempts.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_EVIDENCE_ATTEMPT_CAS_LOST", "expired evidence attempt changed before bounded terminalization");
   }
-  const claims = await sql.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const claims = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE claim_log
         SET outcome = 'infra_retry',
             abandoned_at = COALESCE(abandoned_at, $6),
@@ -1347,7 +1358,8 @@ async function blockExpiredEvidenceAttempt(
     attemptId: input.attempt.attempt_id,
     decisionRef,
   };
-  const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
     `UPDATE recovery_dispatch_deliveries
         SET state = 'blocked',
             terminal_result = $13::text::jsonb,
@@ -1394,7 +1406,8 @@ async function blockExpiredEvidenceAttempt(
     reasonCode: "operator_required",
     evidenceBundleHashes: [],
   };
-  const cases = await sql.unsafe<Array<{ recovery_case_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const cases = await sql.unsafe<Array<{ recovery_case_id: string }>>(
     `UPDATE recovery_cases
         SET status = 'blocked',
             terminal = $4::text::jsonb,
@@ -1450,7 +1463,8 @@ async function requestExpiredModelRuntimeDrain(
     );
   }
   const diagnostic = "V3 recovery model owner lease expired; exact runtime drain is required before terminalization";
-  const rows = await sql.unsafe<Array<{ session_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const rows = await sql.unsafe<Array<{ session_id: string }>>(
     `UPDATE runtime_sessions
         SET state = 'drain_requested',
             drain_requested_at = COALESCE(drain_requested_at, $9),
@@ -1529,7 +1543,8 @@ async function blockExpiredModelAttempt(
     },
   });
 
-  const attempts = await sql.unsafe<Array<{ attempt_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const attempts = await sql.unsafe<Array<{ attempt_id: string }>>(
     `UPDATE execution_attempts
         SET disposition = 'inconclusive',
             heartbeat_at = $6,
@@ -1554,7 +1569,8 @@ async function blockExpiredModelAttempt(
     mutationFail("V3_RECOVERY_LIFECYCLE_MODEL_ATTEMPT_CAS_LOST", "expired model attempt changed before bounded terminalization");
   }
 
-  const claims = await sql.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const claims = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE claim_log
         SET outcome = 'infra_retry',
             abandoned_at = COALESCE(abandoned_at, $6),
@@ -1619,7 +1635,8 @@ async function blockExpiredModelAttempt(
     );
   }
 
-  const stories = await sql.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const stories = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE stories
         SET status = 'failed',
             claimed_by = NULL,
@@ -1646,7 +1663,8 @@ async function blockExpiredModelAttempt(
   if (stories.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_MODEL_STORY_CAS_LOST", "expired model story changed before bounded failure");
   }
-  const steps = await sql.unsafe<Array<{ id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const steps = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE steps
         SET current_story_id = NULL,
             updated_at = $4
@@ -1672,7 +1690,8 @@ async function blockExpiredModelAttempt(
     runtimeState: input.runtime.state,
     decisionRef,
   };
-  const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
     `UPDATE recovery_dispatch_deliveries
         SET state = 'blocked',
             terminal_result = $13::text::jsonb,
@@ -1720,7 +1739,8 @@ async function blockExpiredModelAttempt(
     reasonCode: "operator_required",
     evidenceBundleHashes: [],
   };
-  const cases = await sql.unsafe<Array<{ recovery_case_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const cases = await sql.unsafe<Array<{ recovery_case_id: string }>>(
     `UPDATE recovery_cases
         SET status = 'blocked',
             terminal = $5::text::jsonb,
@@ -2264,9 +2284,14 @@ async function lockAttemptBoundAuthorityChain(
 async function reconcileCandidate(
   sql: Sql,
   candidate: CandidateRow,
+  owner?: OwnerRecoveryAccessV1,
 ): Promise<V3RecoveryLifecycleReconciliationEventV1> {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   try {
-    return await (sql.begin(async (transaction) => {
+    return await ((owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
       const result = await (async (): Promise<V3RecoveryLifecycleReconciliationEventV1> => {
       await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
         v3RecoveryStoryLockIdentity({ runId: candidate.run_id, storyId: candidate.story_id }),
@@ -2336,10 +2361,17 @@ async function reconcileCandidate(
       );
       await enqueueLifecycleEvidence(transaction, result, committedAt);
       return result;
-    }) as Promise<V3RecoveryLifecycleReconciliationEventV1>);
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+}) as Promise<V3RecoveryLifecycleReconciliationEventV1>);
   } catch (error) {
     if (error instanceof V3RecoveryLifecycleMutationError) {
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
         const committedAt = await readDatabaseWallClock(
           transaction,
           "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE",
@@ -2353,13 +2385,18 @@ async function reconcileCandidate(
         );
         await enqueueLifecycleEvidence(transaction, rejected, committedAt);
         return rejected;
-      }) as Promise<V3RecoveryLifecycleReconciliationEventV1>;
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+}) as Promise<V3RecoveryLifecycleReconciliationEventV1>;
     }
     throw error;
   }
 }
 
-export function createV3RecoveryLifecycleReconciler(sql: Sql) {
+export function createV3RecoveryLifecycleReconciler(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   return Object.freeze({
     async reconcileActive(
       raw: unknown = {},
@@ -2385,7 +2422,7 @@ export function createV3RecoveryLifecycleReconciler(sql: Sql) {
       const events: V3RecoveryLifecycleReconciliationEventV1[] = [];
       for (const candidate of candidates) {
         ActiveDeliveryStateSchema.parse(candidate.state);
-        events.push(await reconcileCandidate(sql, candidate));
+        events.push(await reconcileCandidate(sql, candidate,owner));
       }
       const resetExpiredLeases = events.filter((item) => item.action === "reset_expired_lease").length;
       const rolledBackPublications = events.filter((item) => item.action === "rollback_unreserved_publication").length;

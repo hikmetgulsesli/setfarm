@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,pinOwnerRecoveryDeliveryLeaseV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
 import { randomUUID } from "node:crypto";
 
 import type postgres from "postgres";
@@ -39,7 +40,8 @@ async function closeInternalProductionRuntimeSessionOwnerAfterTerminalMutationV1
     sql as PgTransactionSql,
     { sessionId },
   );
-  await closeInternalProductionOwnerReservationV1(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
+await closeInternalProductionOwnerReservationV1(
     sql as PgTransactionSql,
     terminalClose,
   );
@@ -390,7 +392,8 @@ async function authenticateRuntimeInTransaction(sql: TransactionSql, row: Runtim
     return row;
   }
   if (state !== "starting") subscriptionRuntimeRefusedV1();
-  const updated = await sql.unsafe<RuntimeSessionRow[]>(`UPDATE runtime_sessions
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const updated = await sql.unsafe<RuntimeSessionRow[]>(`UPDATE runtime_sessions
     SET drain_evidence=$3::text::jsonb,state_version=state_version+1,updated_at=clock_timestamp()
     WHERE session_id=$1 AND state_version=$2 AND state='starting' RETURNING *`,
   [row.session_id, row.state_version, JSON.stringify({ ...runtimeEvidence(row), subscriptionStart: seed })]);
@@ -591,7 +594,8 @@ async function markBoundAttemptRuntimeRunningInTransaction(
 ): Promise<void> {
   if (!session.attempt_id) return;
 
-  const attempts = await sql.unsafe<Array<{
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const attempts = await sql.unsafe<Array<{
     attempt_id: string;
     claim_id: string;
     run_id: string;
@@ -635,7 +639,8 @@ async function markBoundAttemptRuntimeRunningInTransaction(
     throw new Error("RUNTIME_SESSION_RECOVERY_ATTEMPT_IDENTITY_INCOMPLETE");
   }
 
-  const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
     `UPDATE recovery_dispatch_deliveries delivery
         SET state = 'running', updated_at = $8
       WHERE delivery.dispatch_id = $1
@@ -779,7 +784,8 @@ export async function reserveRuntimeSessionInTransaction(
   const identity = createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1({
     sessionId: input.sessionId,
   });
-  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
+const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
     sql as PgTransactionSql,
     {
       producerImplementationId: "a-runtime-session-v1",
@@ -808,7 +814,8 @@ export async function reserveRuntimeSessionInTransaction(
     || !["pending", "bound"].includes(sidecar.state)
   ) throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
 
-  const inserted = await sql.unsafe<RuntimeSessionRow[]>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const inserted = await sql.unsafe<RuntimeSessionRow[]>(
     `INSERT INTO runtime_sessions (
        session_id, run_id, step_db_id, workflow_step_id, story_db_id, story_id,
        claim_id, attempt_id, claim_agent_id, runtime_agent_id, runtime_kind,
@@ -897,7 +904,8 @@ export async function reserveRuntimeSessionInTransaction(
     || !emptyObject(stored.drain_evidence)
     || new Date(stored.updated_at).getTime() !== birthTime
   ) throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
-  const bound = await bindInternalProductionOwnerReservationV1(sql as PgTransactionSql, {
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
+const bound = await bindInternalProductionOwnerReservationV1(sql as PgTransactionSql, {
     reservationRef: reservation.reservationRef,
     reservationHash: reservation.reservationHash,
     canonicalOwnerIdentity: identity,
@@ -917,7 +925,8 @@ export async function bindRuntimeSessionAttemptInTransaction(
 ): Promise<ClaimRuntimeSession> {
   const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
   validTime(input.now);
-  const rows = await sql.unsafe<RuntimeSessionRow[]>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const rows = await sql.unsafe<RuntimeSessionRow[]>(
     `UPDATE runtime_sessions rs
         SET attempt_id = $2, state_version = state_version + 1, updated_at = clock_timestamp()
       WHERE rs.session_id = $1
@@ -940,7 +949,8 @@ export async function bindRuntimeSessionAttemptInTransaction(
   return mapRuntimeSession(rows[0]!);
 }
 
-export function createRuntimeSessionRepository(sql: Sql) {
+export function createRuntimeSessionRepository(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   const findById = async (sessionId: string): Promise<ClaimRuntimeSession | undefined> => {
     const rows = await sql.unsafe<RuntimeSessionRow[]>(
       "SELECT * FROM runtime_sessions WHERE session_id = $1 LIMIT 1",
@@ -1001,7 +1011,8 @@ export function createRuntimeSessionRepository(sql: Sql) {
           transaction,
           "RUNTIME_SESSION_START_DATABASE_TIME_UNAVAILABLE",
         );
-        const updated = await transaction.unsafe<RuntimeSessionRow[]>(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const updated = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'starting', session_key = COALESCE($4, session_key),
                   worktree = COALESCE($5, worktree),
@@ -1039,6 +1050,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
       recoveryFence?: RecoveryRuntimeLeaseFence;
       now?: Date;
     }>): Promise<Readonly<{ status: "running" | "drain_requested"; session: ClaimRuntimeSession }>> {
+      if(owner&&!input.recoveryFence)throw Error("RECOVERY_OWNER_RUNNING_RECOVERY_FENCE_REQUIRED");
       validTime(input.now);
       const processIdentity = input.processIdentity
         ? ProcessIdentityV1Schema.parse(input.processIdentity)
@@ -1057,7 +1069,10 @@ export function createRuntimeSessionRepository(sql: Sql) {
         : input.processStartedAt
           ? validTime(input.processStartedAt)
           : undefined;
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
         const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
         const locked = await lockRuntimeStartAuthorityInTransaction(
           transaction,
@@ -1077,12 +1092,14 @@ export function createRuntimeSessionRepository(sql: Sql) {
           if (hasSubscriptionRuntime(locked) && !subscriptionSeed(locked)) subscriptionRuntimeRefusedV1();
         }
         await assertBoundRecoveryLeaseLiveInTransaction(transaction, locked, input.recoveryFence);
+        if(input.recoveryFence)await pinOwnerRecoveryDeliveryLeaseV1(transaction,{...input.recoveryFence,ownerInstanceId:input.ownerInstanceId});
         const now = await readDatabaseWallClock(
           transaction,
           "RUNTIME_SESSION_RUNNING_DATABASE_TIME_UNAVAILABLE",
         );
         const processStartedAt = explicitProcessStartedAt ?? now;
-        const updated = await transaction.unsafe<RuntimeSessionRow[]>(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const updated = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'running', pid = $3, session_key = $4,
                   process_started_at = $5, started_at = COALESCE(started_at, $6),
@@ -1143,7 +1160,11 @@ export function createRuntimeSessionRepository(sql: Sql) {
           return { status: "running" as const, session: mapped };
         }
         throw new Error(`RUNTIME_SESSION_RUNNING_CAS_LOST:${current.state}`);
-      }) as Promise<Readonly<{ status: "running" | "drain_requested"; session: ClaimRuntimeSession }>>;
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+}) as Promise<Readonly<{ status: "running" | "drain_requested"; session: ClaimRuntimeSession }>>;
     },
     async heartbeat(input: Readonly<{ sessionId: string; ownerInstanceId: string; now?: Date }>): Promise<boolean> {
       validTime(input.now);
@@ -1241,7 +1262,8 @@ export function createRuntimeSessionRepository(sql: Sql) {
           transaction,
           "RUNTIME_SESSION_DRAIN_DATABASE_TIME_UNAVAILABLE",
         );
-        const rows = await transaction.unsafe<RuntimeSessionRow[]>(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const rows = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'drained', drained_at = $3,
                   drain_evidence = $2::text::jsonb,
@@ -1338,7 +1360,8 @@ export function createRuntimeSessionRepository(sql: Sql) {
           throw new Error(`RUNTIME_SESSION_TERMINATION_RECOVERY_CAS_LOST:${current.state}`);
         }
         await authenticateSubscriptionDrain(transaction, current, evidence, original);
-        const rows = await transaction.unsafe<RuntimeSessionRow[]>(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const rows = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'drained',
                   drained_at = COALESCE(drained_at, $4),
@@ -1407,7 +1430,8 @@ export function createRuntimeSessionRepository(sql: Sql) {
           transaction,
           "RUNTIME_SESSION_QUARANTINE_DATABASE_TIME_UNAVAILABLE",
         );
-        const rows = await transaction.unsafe<RuntimeSessionRow[]>(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const rows = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'quarantined', diagnostic = $2,
                   drain_evidence = CASE
@@ -1508,7 +1532,8 @@ export async function releaseReservedRuntimeSessionInTransaction(
     sql,
     "RUNTIME_SESSION_RESERVED_RELEASE_DATABASE_TIME_UNAVAILABLE",
   );
-  const updated = await sql.unsafe<RuntimeSessionRow[]>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const updated = await sql.unsafe<RuntimeSessionRow[]>(
     `UPDATE runtime_sessions
         SET state = 'released', drained_at = $4, released_at = $4,
             diagnostic = $5,
@@ -1572,7 +1597,8 @@ export async function releaseDrainedRuntimeSessionsInTransaction(
   );
   let released = 0;
   for (const owner of owners) {
-    const rows = await sql.unsafe<Array<{ session_id: string }>>(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const rows = await sql.unsafe<Array<{ session_id: string }>>(
       `UPDATE runtime_sessions
           SET state = 'released', released_at = $2,
               state_version = state_version + 1, updated_at = $2
@@ -1598,7 +1624,8 @@ export async function releaseRuntimeSessionForTerminalRunInTransactionV1(
   if (!input.runId.trim() || !Number.isFinite(input.transitionTime.getTime())) {
     throw new Error("RUN_TERMINAL_RUNTIME_INPUT_INVALID");
   }
-  const rows = await sql.unsafe<RuntimeSessionRow[]>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const rows = await sql.unsafe<RuntimeSessionRow[]>(
     `UPDATE runtime_sessions
         SET state = 'released', released_at = COALESCE(released_at, $3),
             state_version = state_version + 1, updated_at = $3
@@ -1659,7 +1686,8 @@ export async function releaseDrainedRuntimeSessionInTransaction(
     sql,
     "RUNTIME_SESSION_DRAINED_RELEASE_DATABASE_TIME_UNAVAILABLE",
   );
-  const updated = await sql.unsafe<RuntimeSessionRow[]>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql);
+const updated = await sql.unsafe<RuntimeSessionRow[]>(
     `UPDATE runtime_sessions
         SET state = 'released', released_at = $4,
             state_version = state_version + 1, updated_at = $4

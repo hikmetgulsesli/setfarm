@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,pinOwnerRecoveryDeliveryLeaseV1,pinOwnerRecoveryOriginalLeaseDeadlinesV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import { createHash } from "node:crypto";
 import { currentRuntimeCompletionOwnerCapability, type RuntimeCompletionOwnerCapability } from "../execution/runtime-completion-owner-context.js";
@@ -211,7 +212,8 @@ async function putEvidenceBundleInTransaction(
 ): Promise<string> {
   const bundleHash = computeEvidenceBundleHash(bundle);
   await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [bundleHash]);
-  const inserted = await transaction.unsafe<Array<{ evidence_bundle_hash: string }>>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const inserted = await transaction.unsafe<Array<{ evidence_bundle_hash: string }>>(
     `INSERT INTO evidence_bundles (
        evidence_bundle_hash, evidence_id, run_id, story_id, packet_hash, slice_hash,
        source_sha, source_tree_hash, attempt_id, aggregate_verdict, payload
@@ -323,15 +325,18 @@ async function putFindingSetInTransaction(
       transaction as PgTransactionSql,
       { findingSetHash: findingSet.findingSetHash },
     );
-    await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, closeInput);
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, closeInput);
     return;
   }
-  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,
     { producerImplementationId: "a-finding-v3-evidence-only-v1", ownerKey: identity.ownerKey },
   );
   if (!adopting) {
-    await transaction.unsafe(
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+await transaction.unsafe(
       `INSERT INTO finding_sets (
          finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
          source_sha,source_tree_hash,finding_ids,payload
@@ -344,7 +349,8 @@ async function putFindingSetInTransaction(
       ],
     );
     for (const finding of findingSet.findings) {
-      await transaction.unsafe(
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+await transaction.unsafe(
         `INSERT INTO findings (
            finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::text::jsonb)`,
@@ -361,7 +367,8 @@ async function putFindingSetInTransaction(
   if (parent.length !== 1 || !parentMatches(parent[0]) || !childrenMatch(children)) {
     fail("V3_EVIDENCE_ONLY_FINDING_OWNER_REREAD_INVALID", "stored finding publication is not byte exact");
   }
-  await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
     reservationRef: reservation.reservationRef,
     reservationHash: reservation.reservationHash,
     canonicalOwnerIdentity: identity,
@@ -370,7 +377,8 @@ async function putFindingSetInTransaction(
     transaction as PgTransactionSql,
     { findingSetHash: findingSet.findingSetHash },
   );
-  await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, closeInput);
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, closeInput);
 }
 
 async function lockStory(
@@ -1333,12 +1341,14 @@ export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
     fail("V3_NATIVE_EVIDENCE_STORY_PROJECTION_OWNER_CHANGED","another owner or story state prevents acceptance");
   }
   const output=success.acceptanceOutput;
-  const stories=await transaction.unsafe<Array<{id:string}>>(`
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const stories=await transaction.unsafe<Array<{id:string}>>(`
     UPDATE stories SET status=$7,merge_status=CASE WHEN $7='verified' THEN 'merged' ELSE merge_status END,output=$4,updated_at=$5
     WHERE id=$1 AND run_id=$2 AND story_id=$3 AND status='failed'
       AND claim_generation=$6 AND claimed_by IS NULL AND claimed_at IS NULL RETURNING id
   `,[success.storyDbId,input.runId,input.storyId,output,fence.observedAt,success.storyClaimGeneration,direct?"verified":"done"]);
-  const steps=await transaction.unsafe<Array<{id:string}>>(`
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const steps=await transaction.unsafe<Array<{id:string}>>(`
     UPDATE steps SET status=$6,current_story_id=NULL,output=$3,updated_at=$4
     WHERE id=$1 AND run_id=$2 AND step_id='implement' AND type='loop'
       AND status IN ('pending','running') AND (current_story_id IS NULL OR current_story_id=$5)
@@ -1355,7 +1365,8 @@ export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
   for(const key of ["pr_url","story_branch","current_story_id","current_story_title","current_story","story_base_ref","verify_feedback","previous_failure"])
     delete context[key];
   if(routed) {
-    const target=await transaction.unsafe<Array<{id:string}>>(`UPDATE steps
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const target=await transaction.unsafe<Array<{id:string}>>(`UPDATE steps
       SET status='pending',current_story_id=$4,updated_at=$5
       WHERE id=$1 AND run_id=$2 AND step_id=$3 AND status IN ('waiting','done','pending') RETURNING id`,
       [route.targetStepDbId!,input.runId,route.targetStepId!,route.type==="story_route_supervise"?success.storyDbId:null,fence.observedAt]);
@@ -1371,7 +1382,8 @@ export async function projectNativeEvidenceOnlyStorySuccessInTransaction(
     }
   }
   if(lastDirect&&preparedMerge?.receipt.prUrl) context.final_pr=preparedMerge.receipt.prUrl;
-  await transaction.unsafe("UPDATE runs SET context=$2,updated_at=$3 WHERE id=$1",[input.runId,JSON.stringify(context),fence.observedAt]);
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+await transaction.unsafe("UPDATE runs SET context=$2,updated_at=$3 WHERE id=$1",[input.runId,JSON.stringify(context),fence.observedAt]);
 }
 
 /** A read snapshot carries the observed owner, never authority by itself.
@@ -1414,10 +1426,10 @@ export async function settleNativeEvidenceOnlySuccessInTransaction(
 ): Promise<boolean> {
   const rows=await transaction.unsafe<Array<{packet_hash:string;slice_hash:string;finding_set_hash:string;
     source_sha:string;source_tree_hash:string;output_hash:string;plan_hash:string;bundle:unknown;
-    evidence_plan:unknown;delivery_state:string;terminal_result:unknown}>>(`
+    evidence_plan:unknown;delivery_state:string;terminal_result:unknown;delivery_lease_expires_at:Date|string|null}>>(`
     SELECT a.packet_hash,a.slice_hash,a.finding_set_hash,a.source_after_sha AS source_sha,
       a.source_after_tree_hash AS source_tree_hash,a.output_hash,revision.evidence_plan_artifact_hash AS plan_hash,
-      bundle.payload AS bundle,revision.evidence_plan,delivery.state AS delivery_state,delivery.terminal_result
+      bundle.payload AS bundle,revision.evidence_plan,delivery.state AS delivery_state,delivery.terminal_result,delivery.lease_expires_at AS delivery_lease_expires_at
     FROM execution_attempts a
     JOIN semantic_artifacts packet ON packet.artifact_hash=a.packet_hash AND packet.artifact_type='setfarm.product-build-packet.v3'
     JOIN recovery_dispatch_deliveries delivery ON delivery.attempt_id=a.attempt_id AND delivery.claim_id=a.claim_id
@@ -1475,8 +1487,10 @@ export async function settleNativeEvidenceOnlySuccessInTransaction(
   if(!lease||lease.runId!==input.runId||lease.storyId!==input.storyId||lease.attemptId!==input.attemptId
     ||lease.revisionId!==input.revisionId||lease.dispatchId!==input.dispatchId||lease.recoveryCaseId!==input.recoveryCaseId)
     fail("V3_NATIVE_EVIDENCE_SETTLEMENT_LEASE_INVALID","pending settlement requires its observed exact owner");
+  await pinOwnerRecoveryOriginalLeaseDeadlinesV1(transaction,[row.delivery_lease_expires_at]);
   const now=await readDatabaseWallClock(transaction,"V3_EVIDENCE_ONLY_PUBLICATION_DATABASE_TIME_UNAVAILABLE");
-  const updated=await transaction.unsafe<Array<{dispatch_id:string}>>(`UPDATE recovery_dispatch_deliveries
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const updated=await transaction.unsafe<Array<{dispatch_id:string}>>(`UPDATE recovery_dispatch_deliveries
     SET state='succeeded',terminal_result=$4::text::jsonb,terminal_at=$5,updated_at=$5
     WHERE dispatch_id=$1 AND revision_id=$2 AND attempt_id=$3 AND state=$6
       AND claim_id=$7 AND owner_instance_id=$8 AND lease_token=$9
@@ -1489,7 +1503,8 @@ export async function settleNativeEvidenceOnlySuccessInTransaction(
 }
 
 
-export function createV3EvidenceOnlyPublication(sql: Sql) {
+export function createV3EvidenceOnlyPublication(sql: Sql, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   return Object.freeze({
     async reserve(
       lease: V3EvidenceOnlyPublicationLeaseV1,
@@ -1511,9 +1526,13 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           "evidence refresh must republish the exact clean contract slice and its exact derived evidence plan",
         );
       }
-      return sql.begin(async (transaction) => {
+      return (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
         await lockStory(transaction, lease);
         const row = await loadExactPublication(transaction, lease);
+        await pinOwnerRecoveryDeliveryLeaseV1(transaction,lease);
         const terminations = await transaction.unsafe<Array<{ request_id: string }>>(
           `SELECT request_id
              FROM run_termination_requests
@@ -1586,7 +1605,8 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           storyId: lease.storyId,
           dispatchId: lease.dispatchId,
         });
-        const reserved: AttemptReservationResult = await reserveAttemptInTransaction(transaction, {
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+const reserved: AttemptReservationResult = await reserveAttemptInTransaction(transaction, {
           claimId,
           runId: lease.runId,
           stepId: "implement",
@@ -1631,7 +1651,11 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           fail("V3_EVIDENCE_ONLY_PUBLICATION_BINDING_MISMATCH", "claim, attempt and delivery did not bind the exact prepared evidence identity");
         }
         return reserved.attempt;
-      }) as Promise<ExecutionAttemptV1>;
+
+})();
+if(ownerFence){await pinOwnerRecoveryDeliveryLeaseV1(transaction,{...lease,attempt:ownerResult});await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);}
+return ownerResult;
+}) as Promise<ExecutionAttemptV1>;
     },
 
     async markRunning(input: Readonly<{
@@ -1640,10 +1664,14 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
       now?: Date;
     }>): Promise<void> {
       validTime(input.now);
-      await sql.begin(async (transaction) => {
+      await (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
         await lockStory(transaction, input.lease);
         const row = await loadBoundEvidenceAttempt(transaction, input.lease, input.attempt);
         assertBoundEvidenceAttempt(row, input.lease, input.attempt);
+        await pinOwnerRecoveryDeliveryLeaseV1(transaction,{...input.lease,attempt:input.attempt});
         const now = await readDatabaseWallClock(
           transaction,
           "V3_EVIDENCE_ONLY_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
@@ -1658,7 +1686,8 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           fail("V3_EVIDENCE_ONLY_RUNNING_OWNER_INVALID", "only one live exact claim/attempt/delivery owner may enter running");
         }
         if (row.attempt_disposition === "claimed") {
-          const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
             `UPDATE execution_attempts
                 SET disposition = 'running', heartbeat_at = $4, updated_at = $4
               WHERE attempt_id = $1
@@ -1674,7 +1703,8 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           }
         }
         if (row.delivery_state === "attempt_reserved") {
-          const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+          await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
             `UPDATE recovery_dispatch_deliveries
                 SET state = 'running', updated_at = $6
               WHERE dispatch_id = $1
@@ -1698,7 +1728,11 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
             fail("V3_EVIDENCE_ONLY_RUNNING_DELIVERY_CAS_LOST", "delivery changed before atomic running publication");
           }
         }
-      });
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+});
     },
 
     async completeAttempt(input: Readonly<{
@@ -1740,7 +1774,10 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
       )) {
         fail("V3_EVIDENCE_ONLY_TERMINAL_FINDING_MISMATCH", "typed finding set differs from its canonical evidence bundle fence");
       }
-      await sql.begin(async (transaction) => {
+      await (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
         await lockStory(transaction, input.lease);
         const row = await loadBoundEvidenceAttempt(transaction, input.lease, input.attempt);
         assertBoundEvidenceAttempt(row, input.lease, input.attempt);
@@ -1764,13 +1801,15 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         ) {
           fail("V3_EVIDENCE_ONLY_TERMINAL_OWNER_INVALID", "only the exact active unchanged-source owner may publish terminal evidence");
         }
+        await pinOwnerRecoveryOriginalLeaseDeadlinesV1(transaction,[row.delivery_lease_expires_at,row.attempt_lease_expires_at]);
         await putEvidenceBundleInTransaction(transaction, bundle);
         if (findingSet) await putFindingSetInTransaction(transaction, findingSet);
         const evidenceRefs = [
           `setfarm://evidence-bundle/${bundleHash}`,
           ...(findingSet ? [`setfarm://finding-set/${findingSet.findingSetHash}`] : []),
         ];
-        const completed = await transaction.unsafe<Array<{ attempt_id: string }>>(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const completed = await transaction.unsafe<Array<{ attempt_id: string }>>(
           `UPDATE execution_attempts
               SET disposition = $4,
                   source_after_sha = $5,
@@ -1816,11 +1855,16 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           transaction as PgTransactionSql,
           { attemptId: completed[0]!.attempt_id },
         );
-        await closeInternalProductionOwnerReservationV1(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+await closeInternalProductionOwnerReservationV1(
           transaction as PgTransactionSql,
           terminalClose,
         );
-      });
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+});
     },
 
     async completeClaim(input: Readonly<{
@@ -1837,7 +1881,10 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
       if (!attemptAgentId) {
         fail("V3_EVIDENCE_ONLY_CLAIM_AGENT_MISSING", "terminal evidence attempt has no operational claim agent identity");
       }
-      await sql.begin(async (transaction) => {
+      await (owner?.writeSql ?? sql).begin(async (transaction) => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
         await lockStory(transaction, input.lease);
         const rows = await transaction.unsafe<Array<{
           disposition: string;
@@ -1918,13 +1965,15 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         ) {
           fail("V3_EVIDENCE_ONLY_CLAIM_COMPLETION_MISMATCH", "claim close requires the exact terminal evidence-only attempt and delivery binding");
         }
+        await pinOwnerRecoveryOriginalLeaseDeadlinesV1(transaction,[row.delivery_lease_expires_at]);
         if (row.outcome !== null) {
           if (row.outcome !== "completed") {
             fail("V3_EVIDENCE_ONLY_CLAIM_OUTCOME_CONFLICT", `operational claim is already ${row.outcome}`);
           }
           return;
         }
-        const closed = await transaction.unsafe<Array<{ id: string }>>(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const closed = await transaction.unsafe<Array<{ id: string }>>(
           `UPDATE claim_log
               SET outcome = 'completed',
                   duration_ms = LEAST(
@@ -1943,8 +1992,13 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         }
         const claimClosePorts = await import("../db-pg.js");
         const terminalClose = await claimClosePorts.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(transaction as PgTransactionSql, { claimIdText: closed[0]!.id });
-        await claimClosePorts.closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, terminalClose);
-      });
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+await claimClosePorts.closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, terminalClose);
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+});
     },
   });
 }

@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import {execFileSync} from "node:child_process";
 import {resolveV3GitRevision} from "../execution/v3-git-revision.js";
@@ -209,8 +210,11 @@ export async function resolveExactPriorSourceOwner(
  */
 export function createV3EvidenceOnlyRuntimeDependencies(
   sql: Sql = getSql(),
+  owner?: OwnerRecoveryAccessV1,
 ): V3EvidenceOnlyWorkerDependencies {
-  const publication = createV3EvidenceOnlyPublication(sql);
+  if(owner)assertOwnerRecoveryAccessV1(owner);
+  const ownerAccess=owner;
+  const publication = createV3EvidenceOnlyPublication(sql,ownerAccess);
   const nativeSources=new Map<string,NativeImplementationContextV3>();
   const nativeWorktrees=new Map<string,NativeEvidenceWorktreeCustody>();
   return Object.freeze({
@@ -227,7 +231,7 @@ export function createV3EvidenceOnlyRuntimeDependencies(
           lease: publicationLease(lease),
           worktree: owner.worktree,
           branch: owner.branch,
-        });
+        }, ownerAccess);
         if(compiled.kind==="native-dispatch-ready") nativeSources.set(owner.worktree,compiled);
         return {
           attempt: compiled.attempt,

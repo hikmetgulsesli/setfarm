@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -726,6 +727,7 @@ function mapAttempt(row: AttemptRow): ExecutionAttemptV1 {
 }
 
 async function one(sql: Pick<Sql, "unsafe">, query: string, params: any[]): Promise<AttemptRow | undefined> {
+  if (/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(query)) await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
   const rows = await sql.unsafe<AttemptRow[]>(query, params);
   return rows[0];
 }
@@ -755,7 +757,8 @@ async function adoptExactExistingAttemptOwnerInTransaction(
   const identity = createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1({
     attemptId: expected.attempt_id,
   });
-  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,
     {
       producerImplementationId: "a-execution-attempt-v1",
@@ -780,7 +783,8 @@ async function adoptExactExistingAttemptOwnerInTransaction(
     || !reread
     || rereadBytes !== expectedBytes
   ) throw new Error("INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_ADOPTION_INVALID");
-  const bound = await bindInternalProductionOwnerReservationV1(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+const bound = await bindInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,
     {
       reservationRef: reservation.reservationRef,
@@ -1102,7 +1106,8 @@ export async function reserveAttemptInTransaction(
   const identity = createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1({
     attemptId,
   });
-  const ownerReservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+const ownerReservation = await beginOrAdoptInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,
     {
       producerImplementationId: "a-execution-attempt-v1",
@@ -1130,7 +1135,8 @@ export async function reserveAttemptInTransaction(
     || sidecar.reservation_hash !== ownerReservation.reservationHash
     || !["pending", "bound"].includes(sidecar.state)
   ) throw new Error("INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_ADOPTION_INVALID");
-  const insertedRows = await transaction.unsafe<AttemptRow[]>(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const insertedRows = await transaction.unsafe<AttemptRow[]>(
     `INSERT INTO execution_attempts (
        attempt_id, claim_id, run_id, step_id, story_id, generation, fence_token,
        attempt_class, packet_hash, compilation_report_hash, slice_hash,
@@ -1222,7 +1228,8 @@ export async function reserveAttemptInTransaction(
     || timestamp(inserted.created_at) !== lease.acquiredAt.toISOString()
     || timestamp(inserted.updated_at) !== lease.acquiredAt.toISOString()
   ) throw new Error("INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_ADOPTION_INVALID");
-  const bound = await bindInternalProductionOwnerReservationV1(
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+const bound = await bindInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,
     {
       reservationRef: ownerReservation.reservationRef,
@@ -1237,7 +1244,8 @@ export async function reserveAttemptInTransaction(
     || bound.canonicalOwnerIdentity.ownerKey !== attemptId
   ) throw new Error("INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_BINDING_INVALID");
   if (reservation.recoveryDispatchId) {
-    const deliveryRows = await transaction.unsafe<Array<{
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+const deliveryRows = await transaction.unsafe<Array<{
       dispatch_id: string;
       claim_id: string;
       attempt_id: string;
@@ -1541,7 +1549,8 @@ export function createAttemptRepository(
           transaction as PgTransactionSql,
           { attemptId: completed.attempt_id },
         );
-        await closeInternalProductionOwnerReservationV1(
+        await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction as TransactionSql);
+await closeInternalProductionOwnerReservationV1(
           transaction as PgTransactionSql,
           terminalClose,
         );

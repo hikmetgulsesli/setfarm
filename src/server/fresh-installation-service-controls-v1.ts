@@ -11,6 +11,14 @@ import { observeProcessIdentity, signalProcessIfIdentityMatches } from "../execu
 import { ProcessIdentityV1Schema, sameProcessIdentity, type ProcessIdentityV1 } from "../execution/schemas/process-identity-v1.js";
 
 export type FreshServiceV1 = "dashboard" | "spawner";
+export type FreshServiceCustodyV1 = Readonly<{ release(): void; retainOnExit(): void; assertCurrent(): void }>;
+const heldServiceCustodyV1 = new WeakMap<object, { service: FreshServiceV1; assertCurrent(): void }>();
+/** Actual held object only; a caller-supplied assertCurrent callback is not custody. */
+export function assertHeldFreshServiceCurrentV1(value: unknown, service: FreshServiceV1): void {
+  const held = value && typeof value === "object" ? heldServiceCustodyV1.get(value) : undefined;
+  if (!held || held.service !== service) refuse();
+  held.assertCurrent();
+}
 type RecordV1 = Readonly<{ schema:"setfarm.fresh-service-process.v1"; service:FreshServiceV1; installationDirectory:string; sourceSha:string; executable:string; script:string; ownerIdentity:ProcessIdentityV1 }>;
 type PinV1 = Readonly<{ file:string; bytes:Buffer; identity:fs.BigIntStats }>;
 type PairV1 = Readonly<{ record:RecordV1; pid:PinV1; lock:PinV1 }>;
@@ -108,7 +116,7 @@ function writeExclusive(file:string,bytes:Buffer):PinV1 {
   // blocks adoption; never remove an unproved name or retry/overwrite it.
   if(primary!==undefined)throw primary;if(!result)refuse();return result;
 }
-export function acquireFreshServiceProcessV1(service:FreshServiceV1):Readonly<{release():void;retainOnExit():void}> {
+export function acquireFreshServiceProcessV1(service:FreshServiceV1):FreshServiceCustodyV1 {
   assertFreshInstallationOperationalEntryV1();
   const context=currentContext(service),{s,paths}=context;
   if(!fileURLToPath(import.meta.url).endsWith(".js")||!process.argv[1]||fs.realpathSync(process.argv[1])!==context.script)refuse();
@@ -136,7 +144,16 @@ export function acquireFreshServiceProcessV1(service:FreshServiceV1):Readonly<{r
     pins.push(writeExclusive(paths.lockFile,Buffer.from(JSON.stringify(record)+"\n")));
     pins.push(writeExclusive(paths.pidFile,Buffer.from(String(process.pid))));
     assertFreshInstallationOperationalEntryV1();
-    return Object.freeze({release,retainOnExit});
+    const assertCurrent=():void=>{
+      if(released)refuse();
+      assertFreshInstallationOperationalEntryV1();s.assertUnchanged();
+      const current=currentContext(service);
+      if(current.script!==record.script||current.executable!==record.executable||ownerState(record.ownerIdentity)!=="alive")refuse();
+      for(const pin of pins){const actual=readPin(pin.file,pin.bytes.length);if(!actual||!sameIdentity(actual.identity,pin.identity)||!actual.bytes.equals(pin.bytes))refuse();}
+    };
+    const custody=Object.freeze({release,retainOnExit,assertCurrent});
+    heldServiceCustodyV1.set(custody,{service,assertCurrent});
+    assertCurrent();return custody;
   }catch(error){try{release();}catch{/* Original failure and residue remain. */}throw error;}
 }
 function plainPrivateLog(stat:fs.BigIntStats):boolean {return stat.isFile()&&!stat.isSymbolicLink()&&stat.uid===BigInt(process.getuid!())&&stat.nlink===1n&&(stat.mode&0o777n)===0o600n&&stat.size>=0n&&stat.size<=67108864n;}

@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,assertOwnerRecoveryMutationLiveIfOwnedV1,pinOwnerRecoveryDeliveryLeaseV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import { currentRuntimeCompletionOwnerCapability } from "./runtime-completion-owner-context.js";
 import { execFileSync } from "node:child_process";
@@ -275,7 +276,8 @@ export function createNativeV3ImplementationAttemptService(options: V3NativePrep
           `setfarm://preparation-authority-v2/${authority.authorityHash}`, gitCustody.evidenceRef],
       });
       if (reserved.status !== "reserved") throw new Error("V3_NATIVE_RESERVATION_CONFLICT");
-      await transaction.unsafe(
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+await transaction.unsafe(
         `INSERT INTO run_artifact_refs(run_id,ref_key,artifact_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
         [input.runId, assembled.sliceRefKey, assembled.sliceHash]);
       const refs = await transaction.unsafe<Array<{ artifact_hash: string }>>(
@@ -364,7 +366,8 @@ export function createNativeV3ImplementationAttemptHandoff(input: Readonly<{
 
 /** Publication/readback layer over Task9's unchanged raw initial reservation.
  * Loading never republishes or reads mutable source as original authority. */
-export function createNativeV3ImplementationContextService(options: V3NativePreparationArtifacts & Readonly<{ sql: postgres.Sql }>) {
+export function createNativeV3ImplementationContextService(options: V3NativePreparationArtifacts & Readonly<{ sql: postgres.Sql }>, owner?: OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   const preparedService = createNativeV3ImplementationAttemptService(options);
   const publicationAuthority = resolveArtifactStorePublicationAuthorityMode();
   const capacityLeaseProvider = publicationAuthority === "hybrid-required"
@@ -375,8 +378,8 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
   const publisher = new IndexedArtifactPublisher({ index: reader.index, store: reader.store,
     publicationAuthority, ownerInstanceId: `native-context:${process.pid}` });
 
-  const recoveryDeliveries = createRecoveryDeliveryRepository(options.sql);
-  const recoveryFindings = createFindingRecoveryRepository(options.sql);
+  const recoveryDeliveries = createRecoveryDeliveryRepository(options.sql,owner);
+  const recoveryFindings = createFindingRecoveryRepository(options.sql,owner);
   const attempts = createAttemptRepository(options.sql);
 
   // Read actual publication and immutable rows before constructing any recovery
@@ -753,7 +756,7 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
   async function reserveRecovery(raw: unknown): Promise<NativeImplementationContextV3> {
     const input = RecoveryReserveInputSchema.parse(raw);
     const authority = await recoveryInputs(input);
-    const held = await createV3RecoveryClaimAuthority(options.sql).acquireRecoveryClaim({
+    const held = await createV3RecoveryClaimAuthority(options.sql,owner).acquireRecoveryClaim({
       runId: input.runId, storyId: input.storyId, ownerInstanceId: input.recoveryDelivery.ownerInstanceId,
       continuation: authority.delivery.attemptId ? { kind: "attempt", attemptId: authority.delivery.attemptId }
         : { kind: "unreserved_lease", leaseToken: input.recoveryDelivery.leaseToken },
@@ -796,9 +799,14 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     }
     const published = await publisher.put(assembled.envelope);
     if (published.hash !== assembled.sliceHash) throw new Error("V3_NATIVE_SLICE_PUBLICATION_MISMATCH");
-    const reservation = await options.sql.begin(async transaction => {
+    const reservation = await (owner?.writeSql ?? options.sql).begin(async transaction => {
+const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
+const ownerResult=await(async()=>{
+
       await lockAttemptReservationOwnerInTransaction(transaction, input);
       await recheckNativeGitCustodyInTransaction(transaction, gitCustody);
+      await pinOwnerRecoveryDeliveryLeaseV1(transaction,{dispatchId:input.recoveryDelivery.dispatchId,revisionId:input.recoveryDelivery.revisionId,
+        ownerInstanceId:held.lease.ownerInstanceId,leaseToken:held.lease.leaseToken});
       const result = await reserveAttemptInTransaction(transaction, {
         claimId: input.claimId, runId: input.runId, stepId: input.stepId, storyId: input.storyId,
         attemptClass: authority.handoff.dispatchClass, packetHash: authority.origin.packetHash,
@@ -816,13 +824,20 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
           ...authority.predecessor.evidenceRefs.filter(ref => ref.startsWith("setfarm://native-git-custody-v1/"))],
       });
       if (result.status !== "reserved") throw new Error("V3_NATIVE_RESERVATION_CONFLICT");
-      await transaction.unsafe("INSERT INTO run_artifact_refs(run_id,ref_key,artifact_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+      await pinOwnerRecoveryDeliveryLeaseV1(transaction,{dispatchId:input.recoveryDelivery.dispatchId,revisionId:input.recoveryDelivery.revisionId,
+        ownerInstanceId:held.lease.ownerInstanceId,leaseToken:held.lease.leaseToken,attempt:result.attempt});
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
+await transaction.unsafe("INSERT INTO run_artifact_refs(run_id,ref_key,artifact_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
         [input.runId, assembled.sliceRefKey, assembled.sliceHash]);
       const refs = await transaction.unsafe<Array<{ artifact_hash: string }>>(
         "SELECT artifact_hash FROM run_artifact_refs WHERE run_id=$1 AND ref_key=$2", [input.runId, assembled.sliceRefKey]);
       if (refs[0]?.artifact_hash !== assembled.sliceHash) throw new Error("V3_NATIVE_RESERVATION_REFERENCE_CONFLICT");
       return result.attempt;
-    });
+
+})();
+if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
+return ownerResult;
+});
     const compiled = await compileContext(await loadRecoveryPrepared(reservation));
     await publishContext(input, compiled);
     return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: reservation.attemptId });
@@ -965,7 +980,7 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     if(input.worktree!==source.worktree||input.branch!==source.branch) throw Error("V3_NATIVE_EVIDENCE_ONLY_SOURCE_MISMATCH");
     const head=resolveV3GitRevision({repo:input.worktree,requestedRef:"HEAD",expectedSha:input.lease.sourceRevision.sha});
     if(!same(head,input.lease.sourceRevision)) throw Error("V3_NATIVE_EVIDENCE_ONLY_SOURCE_MISMATCH");
-    const attempt=await createV3EvidenceOnlyPublication(options.sql).reserve(input.lease,{
+    const attempt=await createV3EvidenceOnlyPublication(options.sql,owner).reserve(input.lease,{
       compilationReportHash:compiled.compilationReportHash,sliceHash:compiled.sliceHash,sliceRefKey:compiled.sliceRefKey,
       evidencePlanArtifactHash:compiled.evidencePlanArtifactHash,evidencePlanRefKey:compiled.evidencePlanRefKey,
       worktree:input.worktree,branch:input.branch,role:"evidence-orchestrator",agentId:"setfarm-evidence-orchestrator",

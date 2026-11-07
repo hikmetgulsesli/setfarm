@@ -2,6 +2,7 @@
 import postgres from "postgres";
 import { fileURLToPath } from "node:url";
 import { types } from "node:util";
+import { userInfo } from "node:os";
 import { statfsSync } from "node:fs";
 import {
   readFreshInstallationPreparedStateV1, readFreshInstallationActivationStateV1,
@@ -74,13 +75,15 @@ export function verifyFreshInstallationActivationV1(directory:string) {return in
 /** Recovery only publishes an absent ack after complete actual restricted verification. */
 export function reconcileFreshInstallationActivationV1(directory:string) {return inspect(directory,true);}
 
-export async function activateFreshInstallationManifestAV1(options:Readonly<{directory:string;adminUrl:string}>):Promise<FreshInstallationActivationVerificationV1> {
+export async function activateFreshInstallationManifestAV1(options:Readonly<{directory:string}&({adminUrl:string;adminTransport?:never}|{adminTransport:"local-unix-peer";adminUrl?:never})>):Promise<FreshInstallationActivationVerificationV1> {
   try {
     requireCompiled(); // Before filesystem, getter invocation, connection or effects.
     if (!options || typeof options!=="object" || types.isProxy(options) || Object.getPrototypeOf(options)!==Object.prototype) refuse();
     const d=Object.getOwnPropertyDescriptors(options);
-    if (Reflect.ownKeys(options).length!==2 || ["directory","adminUrl"].some(k=>!d[k]?.enumerable || !Object.hasOwn(d[k]!,"value") || typeof d[k]!.value!=="string")) refuse();
-    const directory=d.directory!.value as string,adminUrl=d.adminUrl!.value as string;
+    const peer=Object.hasOwn(d,"adminTransport");
+    if (Reflect.ownKeys(options).length!==2 || ["directory",peer?"adminTransport":"adminUrl"].some(k=>!d[k]?.enumerable || !Object.hasOwn(d[k]!,"value") || typeof d[k]!.value!=="string")) refuse();
+    if(peer&&(d.adminTransport!.value!=="local-unix-peer"||userInfo().username!=="setrox"))refuse();
+    const directory=d.directory!.value as string,adminUrl=peer?"postgresql://setrox@127.0.0.1:5432/postgres":d.adminUrl!.value as string;
     const endpoint=new URL(adminUrl);
     if (!["postgres:","postgresql:"].includes(endpoint.protocol) || !["localhost","127.0.0.1","[::1]"].includes(endpoint.hostname)
       || endpoint.pathname!=="/postgres" || !endpoint.username || endpoint.hash || endpoint.search) refuse();
@@ -98,7 +101,8 @@ export async function activateFreshInstallationManifestAV1(options:Readonly<{dir
     } finally {await restricted.end({timeout:5});}
     base.assertUnchanged();absent();
     const target=new URL(endpoint);target.pathname="/"+base.origin.databaseName;
-    const owner=postgres(target.href,{max:1,connect_timeout:5,idle_timeout:2,onnotice(){}});
+    const owner=peer?postgres({host:"/tmp",port:5432,database:base.origin.databaseName,username:"setrox",password:"",ssl:false,
+      max:1,connect_timeout:5,idle_timeout:2,onnotice(){}}):postgres(target.href,{max:1,connect_timeout:5,idle_timeout:2,onnotice(){}});
     let prepared:ReturnType<typeof readFreshInstallationActivationStateV1>=null;
     try {
       await owner.begin("isolation level serializable",async tx=>{

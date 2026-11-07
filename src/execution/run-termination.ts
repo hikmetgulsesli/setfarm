@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
 import { randomUUID } from "node:crypto";
 
 import type postgres from "postgres";
@@ -475,7 +476,8 @@ export async function processRunTerminationBatch(input: Readonly<{
   return processed;
 }
 
-export function createRunTerminationRepository(sql: postgres.Sql) {
+export function createRunTerminationRepository(sql: postgres.Sql,owner?:OwnerRecoveryAccessV1) {
+  if(owner)assertOwnerRecoveryAccessV1(owner);
   return Object.freeze({
     async findById(requestId: string): Promise<RunTerminationRequest | undefined> {
       const rows = await sql.unsafe<RequestRow[]>(
@@ -792,7 +794,7 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
           diagnostic: input.diagnostic ?? request.diagnostic,
           drainedTerminationRequestId: request.requestId,
           now: input.now,
-        });
+        },owner);
       }
       if (request.state !== "drained") throw new Error("RUN_TERMINATION_REQUEST_NOT_DRAINED");
       return transitionRunToTerminal(sql, {
@@ -804,7 +806,7 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
           : {}),
         drainedTerminationRequestId: request.requestId,
         now: input.now,
-      });
+      },owner);
     },
   });
 }

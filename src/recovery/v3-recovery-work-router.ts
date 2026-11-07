@@ -1,3 +1,4 @@
+import {assertOwnerRecoveryAccessV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -468,8 +469,10 @@ export function createV3RecoveryWorkRouter(
       dispatchId: string;
     }>) => Promise<void>;
   }> = {},
+  owner?: OwnerRecoveryAccessV1,
 ) {
-  const authority = createV3RecoveryClaimAuthority(sql);
+  if(owner)assertOwnerRecoveryAccessV1(owner);
+  const authority = createV3RecoveryClaimAuthority(sql,owner);
   return Object.freeze({
     async acquireNext(raw: unknown): Promise<V3RecoveryRoutedWork | undefined> {
       const input = AcquireNextInputSchema.parse(raw);
