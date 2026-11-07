@@ -1732,70 +1732,61 @@ export function ensureStoryBranchWorktree(
 }
 
 /**
- * Wave 13b: Single source of truth for worktree removal.
- * ALWAYS auto-saves uncommitted work (commit + push) before destroying anything.
- * Every code path that removes a worktree MUST call this function.
- *
- * Why push: agent timeout kills the process before it commits. Uncommitted files
- * stay in the worktree dir. If we only commit (no push), the next createStoryWorktree
- * resets the branch to origin (which has no commit) → work lost. Push ensures the
- * next claim's `git fetch origin storyBranch` finds the saved work.
+ * Save and push story work before removing its linked worktree.
+ * Any failure to confirm preservation leaves the directory and dependencies intact.
+ * A clean worktree must push too: local commits may never have reached origin.
  */
 export function saveAndRemoveWorktree(repo: string, worktreeDir: string, storyBranch: string): void {
   if (!fs.existsSync(worktreeDir)) return;
 
-  // 1. Auto-save uncommitted work (commit + push)
-  let pushed = false;
   try {
-    const gitFile = path.join(worktreeDir, ".git");
-    if (fs.existsSync(gitFile)) {
-      const status = execFileSync("git", ["status", "--porcelain"], {
-        cwd: worktreeDir, timeout: 5000, stdio: "pipe",
-      }).toString().trim();
-      if (status) {
-        const fileCount = status.split("\n").length;
-        execFileSync("git", ["add", "-A"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" });
-        execFileSync("git", ["commit", "-m", `wip: auto-save ${fileCount} file(s) before worktree removal`], {
-          cwd: worktreeDir, timeout: 10000, stdio: "pipe",
-        });
-        try {
-          execFileSync("git", ["push", "-u", "origin", storyBranch.toLowerCase()], {
-            cwd: worktreeDir, timeout: 15000, stdio: "pipe",
-          });
-          pushed = true;
-          logger.info(`[worktree] Auto-saved + pushed ${fileCount} uncommitted file(s) for ${storyBranch}`, {});
-        } catch (pushErr) {
-          logger.warn(`[worktree] Auto-save committed but push failed for ${storyBranch}: ${String(pushErr).slice(0, 150)}`, {});
-        }
-      }
+    const branch = safeManagedStoryBranch(storyBranch);
+    const git = (cwd: string, args: string[], timeout = 5000): string => execFileSync("git", args, {
+      cwd, encoding: "utf-8", timeout, stdio: "pipe",
+    }).trim();
+    // Do not let Git discover a parent repository when this target has lost its
+    // marker, or let removal fall back to deleting an unrelated/primary repo.
+    if (!fs.lstatSync(path.join(worktreeDir, ".git")).isFile()) {
+      throw new Error("target is not a linked Git worktree");
     }
-  } catch (saveErr) {
-    logger.warn(`[worktree] Auto-save failed for ${storyBranch}: ${String(saveErr).slice(0, 150)}`, {});
+    const root = git(worktreeDir, ["rev-parse", "--show-toplevel"]);
+    const commonDir = git(worktreeDir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const gitDir = git(worktreeDir, ["rev-parse", "--absolute-git-dir"]);
+    // A primary created with --separate-git-dir also has a regular .git file.
+    if (sameFilesystemPath(gitDir, commonDir)) {
+      throw new Error("target is a primary repository, not a linked worktree");
+    }
+    const repoCommonDir = git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    if (!sameFilesystemPath(root, worktreeDir) || !sameFilesystemPath(commonDir, repoCommonDir)) {
+      throw new Error("target does not belong to the supplied repository");
+    }
+    if (git(worktreeDir, ["branch", "--show-current"]) !== branch) {
+      throw new Error("target branch does not match the story branch");
+    }
+
+    const status = git(worktreeDir, ["status", "--porcelain"]);
+    if (status) {
+      const fileCount = status.split("\n").length;
+      git(worktreeDir, ["add", "-A"]);
+      git(worktreeDir, ["commit", "-m", `wip: auto-save ${fileCount} file(s) before worktree removal`], 10000);
+    }
+    const savedHead = git(worktreeDir, ["rev-parse", "--verify", "HEAD"]);
+    git(worktreeDir, ["push", "-u", "origin", branch], 15000);
+
+    // Hooks or another writer can change local work while push runs. Refuse
+    // cleanup if the checked-out state no longer matches what was just saved.
+    if (git(worktreeDir, ["branch", "--show-current"]) !== branch
+      || git(worktreeDir, ["rev-parse", "--verify", "HEAD"]) !== savedHead
+      || git(worktreeDir, ["status", "--porcelain"])) {
+      throw new Error("worktree changed during preservation");
+    }
+    logger.info(`[worktree] Saved + pushed ${storyBranch} before worktree removal`, {});
+  } catch (error) {
+    throw new Error(`WORKTREE_PRESERVATION_FAILED: ${String(error).slice(0, 180)}`);
   }
 
-  // Preserve already-committed local WIP too. A killed agent can leave a clean
-  // worktree with commits that were never pushed; removing the worktree without
-  // this push loses useful retry context.
-  if (!pushed) {
-    try {
-      const branch = execFileSync("git", ["branch", "--show-current"], {
-        cwd: worktreeDir, timeout: 5000, stdio: "pipe",
-      }).toString().trim();
-      if (branch && branch.toLowerCase() === storyBranch.toLowerCase()) {
-        execFileSync("git", ["push", "-u", "origin", storyBranch.toLowerCase()], {
-          cwd: worktreeDir, timeout: 15000, stdio: "pipe",
-        });
-        logger.info(`[worktree] Pushed existing local commits for ${storyBranch} before worktree removal`, {});
-      }
-    } catch (pushErr) {
-      logger.warn(`[worktree] Existing-commit push skipped/failed for ${storyBranch}: ${String(pushErr).slice(0, 150)}`, {});
-    }
-  }
-
-  // 2. Remove node_modules symlink (git worktree remove can't handle symlinks)
+  // Preservation is confirmed before unlinking dependencies or removing/pruning.
   try { fs.unlinkSync(path.join(worktreeDir, "node_modules")); } catch {}
-
-  // 3. Remove worktree + prune
   removeManagedWorktreePath(repo, worktreeDir, "save-and-remove");
 }
 

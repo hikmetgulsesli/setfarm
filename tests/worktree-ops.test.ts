@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { inspectSubscriptionCodingWorktreeV1 } from "../src/execution/subscription-coding-worker-v1.js";
 
-import { ensureStoryBranchWorktree, NativeImplementationAssetError, writeStoryScopeSnapshot, applyScopedRetryPatchForStory, copyStitchToWorktree, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
+import { ensureStoryBranchWorktree, saveAndRemoveWorktree, NativeImplementationAssetError, writeStoryScopeSnapshot, applyScopedRetryPatchForStory, copyStitchToWorktree, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
 import { produceProductSpecV1 } from "../src/product-compiler/producers/product-spec.js";
 import { produceDesignGenerationTargetsV1 } from "../src/product-compiler/producers/design-targets.js";
 import {
@@ -1033,4 +1033,220 @@ it("native audit refuses a foreign preferred repository with the same branch bef
     assert.equal(fs.existsSync(path.join(foreign, ".setfarm")), false);
     assert.equal(fs.readFileSync(path.join(foreign, "app.txt"), "utf8"), "preserve original bytes\n");
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+
+// Real Git fixtures: swallowing a failed commit/push must never remove these bytes.
+function savedWorktreeFixture() {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-save-worktree-")));
+  const repo = path.join(tmp, "repo");
+  const origin = path.join(tmp, "origin.git");
+  const worktree = path.join(repo, ".worktrees", "save-story");
+  fs.mkdirSync(repo);
+  git(repo, ["init", "--initial-branch=main"]);
+  git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+  git(repo, ["config", "user.name", "Setfarm Test"]);
+  git(repo, ["config", "commit.gpgsign", "false"]);
+  const hooks = path.join(tmp, "hooks");
+  fs.mkdirSync(hooks);
+  git(repo, ["config", "core.hooksPath", hooks]);
+  fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules\n.worktrees/\n");
+  fs.writeFileSync(path.join(repo, "app.txt"), "base source\n");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-m", "base"]);
+  git(tmp, ["init", "--bare", origin]);
+  git(repo, ["remote", "add", "origin", origin]);
+  git(repo, ["worktree", "add", "-b", "save-story", worktree]);
+  const dependencies = path.join(tmp, "dependencies");
+  fs.mkdirSync(dependencies);
+  fs.writeFileSync(path.join(dependencies, "retained.txt"), "shared dependency\n");
+  fs.symlinkSync(dependencies, path.join(worktree, "node_modules"));
+  return { tmp, repo, origin, worktree, dependencies, hooks };
+}
+
+function assertSavedWorktreeRetained(fixture: ReturnType<typeof savedWorktreeFixture>, source: string): void {
+  assert.equal(fs.existsSync(fixture.worktree), true, "worktree must survive failed preservation");
+  assert.equal(fs.readFileSync(path.join(fixture.worktree, "app.txt"), "utf8"), source);
+  const link = path.join(fixture.worktree, "node_modules");
+  assert.equal(fs.lstatSync(link).isSymbolicLink(), true, "dependency link must survive failed preservation");
+  assert.equal(fs.readlinkSync(link), fixture.dependencies);
+  assert.equal(fs.readFileSync(path.join(link, "retained.txt"), "utf8"), "shared dependency\n");
+}
+
+describe("save-and-remove preservation", () => {
+  it("preserves dirty worktree and dependency link when commit hook rejects save", () => {
+    const fixture = savedWorktreeFixture();
+    try {
+      fs.writeFileSync(path.join(fixture.worktree, "app.txt"), "unique unsaved source\n");
+      fs.writeFileSync(path.join(fixture.hooks, "pre-commit"), "#!/bin/sh\necho fixture-commit-rejected >&2\nexit 1\n", { mode: 0o755 });
+      let failure: unknown;
+      try { saveAndRemoveWorktree(fixture.repo, fixture.worktree, "save-story"); } catch (error) { failure = error; }
+      assertSavedWorktreeRetained(fixture, "unique unsaved source\n");
+      assert.ok(failure instanceof Error, "failed preservation must be reported to the caller");
+    } finally { fs.rmSync(fixture.tmp, { recursive: true, force: true }); }
+  });
+
+  it("preserves committed worktree and dependency link when remote rejects saved push", () => {
+    const fixture = savedWorktreeFixture();
+    try {
+      fs.writeFileSync(path.join(fixture.worktree, "app.txt"), "unique saved source\n");
+      fs.writeFileSync(path.join(fixture.origin, "hooks", "pre-receive"), "#!/bin/sh\necho fixture-push-rejected >&2\nexit 1\n", { mode: 0o755 });
+      let failure: unknown;
+      try { saveAndRemoveWorktree(fixture.repo, fixture.worktree, "save-story"); } catch (error) { failure = error; }
+      assertSavedWorktreeRetained(fixture, "unique saved source\n");
+      assert.equal(git(fixture.worktree, ["status", "--porcelain"]), "");
+      assert.equal(git(fixture.worktree, ["show", "HEAD:app.txt"]), "unique saved source");
+      assert.ok(failure instanceof Error, "failed preservation must be reported to the caller");
+    } finally { fs.rmSync(fixture.tmp, { recursive: true, force: true }); }
+  });
+
+  it("preserves clean worktree with local commits when remote rejects push", () => {
+    const fixture = savedWorktreeFixture();
+    try {
+      fs.writeFileSync(path.join(fixture.worktree, "app.txt"), "committed local source\n");
+      git(fixture.worktree, ["add", "app.txt"]);
+      git(fixture.worktree, ["commit", "-m", "local source"]);
+      const savedHead = git(fixture.worktree, ["rev-parse", "HEAD"]);
+      fs.writeFileSync(path.join(fixture.origin, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      assert.throws(() => saveAndRemoveWorktree(fixture.repo, fixture.worktree, "save-story"));
+      assertSavedWorktreeRetained(fixture, "committed local source\n");
+      assert.equal(git(fixture.worktree, ["rev-parse", "HEAD"]), savedHead);
+    } finally { fs.rmSync(fixture.tmp, { recursive: true, force: true }); }
+  });
+
+  for (const invalid of ["missing", "broken", "branch mismatch", "case mismatch", "detached", "index locked", "status failure"] as const) {
+    it(`preserves worktree with ${invalid} Git state`, () => {
+      const fixture = savedWorktreeFixture();
+      try {
+        fs.writeFileSync(path.join(fixture.worktree, "app.txt"), "retained invalid-state source\n");
+        const marker = path.join(fixture.worktree, ".git");
+        const gitDir = git(fixture.worktree, ["rev-parse", "--absolute-git-dir"]);
+        if (invalid === "missing") fs.unlinkSync(marker);
+        if (invalid === "broken") fs.writeFileSync(marker, "gitdir: /nonexistent/setfarm-test-gitdir\n");
+        if (invalid === "branch mismatch") git(fixture.worktree, ["switch", "-c", "another-story"]);
+        if (invalid === "case mismatch") {
+          git(fixture.worktree, ["branch", "-m", "temporary-case-rename"]);
+          git(fixture.worktree, ["branch", "-m", "Save-Story"]);
+        }
+        if (invalid === "detached") git(fixture.worktree, ["checkout", "--detach"]);
+        if (invalid === "index locked") fs.writeFileSync(path.join(gitDir, "index.lock"), "fixture lock\n");
+        if (invalid === "status failure") fs.writeFileSync(path.join(gitDir, "index"), "invalid index\n");
+        assert.throws(() => saveAndRemoveWorktree(fixture.repo, fixture.worktree, "save-story"));
+        assertSavedWorktreeRetained(fixture, "retained invalid-state source\n");
+        assert.throws(() => git(fixture.repo, ["ls-remote", "--exit-code", "origin", "refs/heads/save-story"]), "invalid identity/state must not push");
+      } finally { fs.rmSync(fixture.tmp, { recursive: true, force: true }); }
+    });
+  }
+
+  it("preserves foreign linked worktree even when its branch matches", () => {
+    const fixture = savedWorktreeFixture();
+    const foreign = savedWorktreeFixture();
+    try {
+      assert.throws(() => saveAndRemoveWorktree(fixture.repo, foreign.worktree, "save-story"));
+      assertSavedWorktreeRetained(foreign, "base source\n");
+      assert.throws(() => git(foreign.repo, ["ls-remote", "--exit-code", "origin", "refs/heads/save-story"]));
+    } finally {
+      fs.rmSync(fixture.tmp, { recursive: true, force: true });
+      fs.rmSync(foreign.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves supplied primary repository instead of treating it as a linked worktree", () => {
+    const fixture = savedWorktreeFixture();
+    try {
+      git(fixture.repo, ["switch", "-c", "primary-story"]);
+      assert.throws(() => saveAndRemoveWorktree(fixture.repo, fixture.repo, "primary-story"));
+      assert.equal(fs.readFileSync(path.join(fixture.repo, "app.txt"), "utf8"), "base source\n");
+      assert.equal(fs.statSync(path.join(fixture.repo, ".git")).isDirectory(), true);
+    } finally { fs.rmSync(fixture.tmp, { recursive: true, force: true }); }
+  });
+
+  it("preserves separate-git-dir primary under a managed path without saving or pushing", () => {
+    const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-separate-primary-")));
+    const primary = path.join(tmp, ".worktrees", "save-story");
+    const metadata = path.join(tmp, "primary.git");
+    const origin = path.join(tmp, "origin.git");
+    const dependencies = path.join(tmp, "dependencies");
+    try {
+      fs.mkdirSync(primary, { recursive: true });
+      git(primary, ["init", "--initial-branch=save-story", "--separate-git-dir", metadata]);
+      git(primary, ["config", "user.email", "setfarm@example.invalid"]);
+      git(primary, ["config", "user.name", "Setfarm Test"]);
+      git(primary, ["config", "commit.gpgsign", "false"]);
+      git(primary, ["config", "core.hooksPath", path.join(tmp, "empty-hooks")]);
+      fs.writeFileSync(path.join(primary, ".gitignore"), "node_modules\n");
+      fs.writeFileSync(path.join(primary, "app.txt"), "base primary source\n");
+      git(primary, ["add", "."]);
+      git(primary, ["commit", "-m", "base primary"]);
+      const originalHead = git(primary, ["rev-parse", "HEAD"]);
+      git(tmp, ["init", "--bare", origin]);
+      git(primary, ["remote", "add", "origin", origin]);
+      fs.mkdirSync(dependencies);
+      fs.symlinkSync(dependencies, path.join(primary, "node_modules"));
+      fs.writeFileSync(path.join(primary, "app.txt"), "unique primary source\n");
+      let failure: unknown;
+      try { saveAndRemoveWorktree(primary, primary, "save-story"); } catch (error) { failure = error; }
+      assert.equal(fs.existsSync(primary), true, "separate-git-dir primary must survive cleanup");
+      assert.equal(fs.readFileSync(path.join(primary, "app.txt"), "utf8"), "unique primary source\n");
+      assert.equal(fs.lstatSync(path.join(primary, "node_modules")).isSymbolicLink(), true);
+      assert.equal(fs.readlinkSync(path.join(primary, "node_modules")), dependencies);
+      assert.ok(failure instanceof Error, "primary must be refused before preservation mutates Git");
+      assert.equal(git(primary, ["rev-parse", "HEAD"]), originalHead, "primary must not be auto-committed");
+      assert.equal(git(primary, ["diff", "--cached", "--name-only"]), "", "primary must not be staged");
+      assert.equal(git(origin, ["for-each-ref", "--format=%(refname)"]), "", "primary must not be pushed");
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  for (const change of ["dirty source", "new HEAD", "changed branch"] as const) {
+    it(`preserves worktree when successful push leaves ${change}`, () => {
+      const fixture = savedWorktreeFixture();
+      try {
+        const savedHead = git(fixture.worktree, ["rev-parse", "HEAD"]);
+        const mutation = change === "changed branch"
+          ? "git switch -c another-story"
+          : "printf 'source changed during push\\n' > app.txt" + (change === "new HEAD"
+            ? "\ngit add app.txt\ngit commit -m hook-local-commit" : "");
+        fs.writeFileSync(path.join(fixture.hooks, "pre-push"), `#!/bin/sh\nset -e\n${mutation}\n`, { mode: 0o755 });
+        assert.throws(() => saveAndRemoveWorktree(fixture.repo, fixture.worktree, "save-story"));
+        assertSavedWorktreeRetained(fixture, change === "changed branch" ? "base source\n" : "source changed during push\n");
+        assert.equal(git(fixture.repo, ["ls-remote", "origin", "refs/heads/save-story"]).split(/\s/)[0], savedHead, "push must actually succeed before the post-push refusal");
+        if (change === "new HEAD") assert.notEqual(git(fixture.worktree, ["rev-parse", "HEAD"]), savedHead);
+        if (change === "changed branch") assert.equal(git(fixture.worktree, ["branch", "--show-current"]), "another-story");
+      } finally { fs.rmSync(fixture.tmp, { recursive: true, force: true }); }
+    });
+  }
+
+  it("save-and-remove pushes saved source before removing a worktree", () => {
+    const fixture = savedWorktreeFixture();
+    try {
+      fs.writeFileSync(path.join(fixture.worktree, "app.txt"), "remote preserved source\n");
+      saveAndRemoveWorktree(fixture.repo, fixture.worktree, "SAVE-STORY");
+      assert.equal(fs.existsSync(fixture.worktree), false);
+      assert.equal(git(fixture.origin, ["show", "refs/heads/save-story:app.txt"]), "remote preserved source");
+      assert.equal(git(fixture.origin, ["rev-parse", "refs/heads/save-story"]), git(fixture.repo, ["rev-parse", "save-story"]));
+      assert.equal(fs.readFileSync(path.join(fixture.dependencies, "retained.txt"), "utf8"), "shared dependency\n");
+      assert.equal(git(fixture.repo, ["worktree", "list", "--porcelain"]).includes(fixture.worktree), false);
+    } finally { fs.rmSync(fixture.tmp, { recursive: true, force: true }); }
+  });
+
+  it("save-and-remove pushes clean local commits before removal", () => {
+    const fixture = savedWorktreeFixture();
+    try {
+      fs.writeFileSync(path.join(fixture.worktree, "app.txt"), "clean committed source\n");
+      git(fixture.worktree, ["add", "app.txt"]);
+      git(fixture.worktree, ["commit", "-m", "clean local source"]);
+      const savedHead = git(fixture.worktree, ["rev-parse", "HEAD"]);
+      saveAndRemoveWorktree(fixture.repo, fixture.worktree, "save-story");
+      assert.equal(fs.existsSync(fixture.worktree), false);
+      assert.equal(git(fixture.origin, ["rev-parse", "refs/heads/save-story"]), savedHead);
+      assert.equal(git(fixture.origin, ["show", "refs/heads/save-story:app.txt"]), "clean committed source");
+    } finally { fs.rmSync(fixture.tmp, { recursive: true, force: true }); }
+  });
+
+  it("save-and-remove absent target is idempotent without a Git repository", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-save-absent-"));
+    try { assert.doesNotThrow(() => saveAndRemoveWorktree(tmp, path.join(tmp, "absent"), "save-story")); }
+    finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
 });
