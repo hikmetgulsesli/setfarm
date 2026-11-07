@@ -1,4 +1,4 @@
-import {assertOwnerRecoveryAccessV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
+import {assertOwnerRecoveryAccessV1,enterOwnerRecoveryTransactionV1,assertOwnerRecoveryTransactionBeforeCommitV1,pinOwnerRecoveryDeliveryLeaseV1,type OwnerRecoveryAccessV1} from "./v3-owner-recovery-authority-v1.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -328,8 +328,11 @@ async function loadExactRoutedWork(
   input: AcquireNextInput,
   candidate: CandidateIdentityRow,
   handoff: V3RecoveryClaimHandoffV1,
+  owner?: OwnerRecoveryAccessV1,
 ): Promise<RoutedWorkRow | undefined> {
-  return sql.begin(async (transaction: TransactionSql) => {
+  return (owner?.writeSql ?? sql).begin(async (transaction: TransactionSql) => {
+    const ownerFence = owner ? await enterOwnerRecoveryTransactionV1(transaction, owner) : undefined;
+    const result = await (async () => {
     const rows = await transaction.unsafe<RoutedWorkRow[]>(
       `SELECT ${ROUTED_WORK_COLUMNS}
          ${exactWorkJoins()}
@@ -384,7 +387,15 @@ async function loadExactRoutedWork(
       transaction,
       "V3_RECOVERY_WORK_ROUTER_DATABASE_TIME_UNAVAILABLE",
     );
-    return Date.parse(handoff.lease.expiresAt) > wallClock.getTime() ? rows[0] : undefined;
+    if (!(Date.parse(handoff.lease.expiresAt) > wallClock.getTime())) return undefined;
+    if (ownerFence) await pinOwnerRecoveryDeliveryLeaseV1(transaction, {
+      dispatchId: handoff.dispatchId, revisionId: handoff.revisionId,
+      ownerInstanceId: handoff.lease.ownerInstanceId, leaseToken: handoff.lease.leaseToken,
+    });
+    return rows[0];
+    })();
+    if (ownerFence) await assertOwnerRecoveryTransactionBeforeCommitV1(transaction, ownerFence);
+    return result;
   }) as Promise<RoutedWorkRow | undefined>;
 }
 
@@ -516,7 +527,7 @@ export function createV3RecoveryWorkRouter(
           fail("V3_RECOVERY_WORK_ROUTER_HANDOFF_MISMATCH", "authority returned a different candidate identity");
         }
 
-        const row = await loadExactRoutedWork(sql, input, candidate, handoff);
+        const row = await loadExactRoutedWork(sql, input, candidate, handoff, owner);
         if (!row) {
           fail("V3_RECOVERY_WORK_ROUTER_POST_LEASE_IDENTITY_MISMATCH", "step, story or recovery chain changed after lease");
         }

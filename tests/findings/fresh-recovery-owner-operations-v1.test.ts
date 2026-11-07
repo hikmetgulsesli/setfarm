@@ -303,3 +303,134 @@ it("fresh producer admission revalidates a registered owner lease after the veri
   await assert.rejects(admission.run(),/RECOVERY_OWNER_AUTHORITY_REFUSED/);
   assert.deepEqual(admission.modes,["owner"]);
 });
+
+// Mutation caught: acquireNext leases as owner, then its exact joined row-lock
+// read escapes back to the restricted client and cannot hand work to the caller.
+async function routedWorkOwnerFixture(options: Readonly<{
+  ordinary?: boolean; missing?: boolean; wrongHandoff?: boolean; expired?: boolean;
+  closeAfterRowWait?: boolean; loseLeaseBeforeCommit?: boolean;
+}> = {}) {
+  const f = await ownerRepositoryFixture("claim");
+  const claimModule = await import("../../src/recovery/v3-recovery-claim-authority.js");
+  const candidate = { run_id: "unit-owner-run", story_id: "US-001", story_db_id: "story-db",
+    step_db_id: "step-db", dispatch_id: "RDISP_" + "1".repeat(64) };
+  const handoff = claimModule.V3RecoveryClaimHandoffV1Schema.parse({
+    schema: "setfarm.v3-recovery-claim-handoff.v1", status: "lease_acquired",
+    runId: candidate.run_id, storyId: candidate.story_id, recoveryCaseId: "RCV_" + "2".repeat(64),
+    revisionId: "RREV_" + "3".repeat(64), dispatchId: candidate.dispatch_id,
+    dispatchClass: "product_implementation", recoveryOwner: "implement",
+    lease: { ownerInstanceId: "unit-spawner", leaseToken: "owned-nonsecret-fixture-token", expiresAt: "2026-11-07T00:10:00.000Z" },
+    directive: { packetHash: "a".repeat(64), contractSliceHash: "b".repeat(64),
+      sourceRevision: { sha: "1".repeat(40), treeHash: "2".repeat(40) }, findingSetHash: "c".repeat(64),
+      findingIds: ["FIND_" + "d".repeat(64)], expectedDelta: { kind: "source_change", invariantRefs: ["INV_UNIT_OBSERVABLE"], requiredPaths: ["src/App.tsx"] },
+      allowedPaths: ["src/App.tsx"], evidencePlan: ["EVID_UNIT_OBSERVABLE"] },
+    reservationBoundary: { leaseAndAttemptAtomicInThisModule: false, state: "lease_acquired_attempt_not_reserved",
+      reconcileRequired: true, requiredNextOperation: "attempt_repository.reserve_exact_recovery_handoff" },
+  });
+  const row = { ...candidate, step_workflow_id: "implement", step_agent_id: "feature-dev_developer", step_index: 5,
+    step_input_template: "owned input", step_type: "loop", step_loop_config: null, step_status: "running",
+    step_current_story_id: null, step_retry_count: 0, step_output: null,
+    story_index: 0, story_title: "Owned story", story_description: "Owned description", story_acceptance_criteria: "[]",
+    story_status: "failed", story_output: "canonical failure", story_retry_count: 0, story_max_retries: 2,
+    story_abandoned_count: 0, story_claimed_by: null, story_claimed_at: null, story_claim_generation: 1,
+    story_started_at: null, story_depends_on: null, story_scope_files: "[]", story_shared_files: null,
+    story_scope_targets: null, story_requested_dependencies: null, story_shared_edit_requests: null,
+    story_resolved_scope_files: null, story_scope_description: null, story_file_skeletons: null,
+    story_implementation_contract: null, story_screens: null, story_branch: null, story_pr_url: null,
+    story_merge_status: null, story_quality_failure_fingerprint: null,
+    story_created_at: "2026-11-07T00:00:00.000Z", story_updated_at: "2026-11-07T00:00:00.000Z" };
+  let acquired = false, admitted = false, exactReads = 0, leaseChecks = 0;
+  const readRoles: string[] = [];
+  f.setSqlHook((query, values) => {
+    if (query.includes("FOR UPDATE OF delivery SKIP LOCKED")) {
+      assert.equal(f.role, "sf_runtime_fixture", "discovery keeps the restricted client");
+      return [candidate];
+    }
+    if (query.includes("FOR KEY SHARE OF run_row, story_row, step_row, recovery_case, revision, dispatch, delivery")) {
+      exactReads++; readRoles.push(f.role);
+      assert.ok(acquired && admitted);
+      assert.deepEqual(values, ["feature-dev", candidate.run_id, candidate.story_db_id, candidate.story_id,
+        candidate.step_db_id, "product_implementation", candidate.dispatch_id, handoff.lease.ownerInstanceId,
+        handoff.lease.leaseToken, handoff.lease.expiresAt]);
+      if (!options.ordinary && f.role !== "sf_owner_fixture") throw Error("permission denied for table recovery_revision_dispatches");
+      if (options.closeAfterRowWait) f.authority.closeOwnerRecoveryAccessV1(f.access);
+      return options.missing ? [] : [row];
+    }
+    if (query.includes("AS valid") && query.includes("delivery.lease_expires_at")) {
+      leaseChecks++;
+      if (options.loseLeaseBeforeCommit && leaseChecks === 2) return [{ valid: false }];
+    }
+    if (options.expired && query.includes("SELECT clock_timestamp()")) return [{ wall_clock: new Date("2026-11-07T00:11:00.000Z") }];
+    return undefined;
+  });
+  const routerModule = await component("../../src/recovery/v3-recovery-work-router.ts", {
+    "./v3-owner-recovery-authority-v1.js": f.authority,
+    "./v3-recovery-claim-authority.js": { ...claimModule,
+      createV3RecoveryClaimAuthority: (_sql: unknown, access: unknown) => ({ acquireRecoveryClaim: async () => {
+        assert.ok(admitted);
+        assert.equal(access, options.ordinary ? undefined : f.access);
+        if (!options.ordinary) await f.writer.begin(async (tx: unknown) => {
+          const fence = await f.authority.enterOwnerRecoveryTransactionV1(tx, f.access);
+          await f.authority.assertOwnerRecoveryTransactionBeforeCommitV1(tx, fence);
+        });
+        acquired = true;
+        return options.wrongHandoff ? { ...handoff, dispatchId: "RDISP_" + "9".repeat(64) } : handoff;
+      } }),
+    },
+  });
+  const router = routerModule.createV3RecoveryWorkRouter(f.restricted, { admitCandidate: async (value: unknown) => {
+    assert.deepEqual(value, { runId: candidate.run_id, storyId: candidate.story_id, storyDbId: candidate.story_db_id,
+      stepDbId: candidate.step_db_id, dispatchId: candidate.dispatch_id });
+    assert.equal(f.role, "setrox", "candidate policy runs after discovery and before owner BEGIN"); admitted = true;
+  } }, options.ordinary ? undefined : f.access);
+  return { f, handoff, readRoles, get acquired() { return acquired; }, get exactReads() { return exactReads; },
+    get leaseChecks() { return leaseChecks; }, run: () => router.acquireNext({
+      workflowId: "feature-dev", dispatchClass: "product_implementation", ownerInstanceId: "unit-spawner" }) };
+}
+
+it("router retains owner transaction for exact routed work after its acquired owner lease", async () => {
+  const f = await routedWorkOwnerFixture();
+  const work = await f.run();
+  assert.deepEqual(work.handoff, f.handoff);
+  assert.equal(work.story.id, "story-db");
+  assert.deepEqual(f.readRoles, ["sf_owner_fixture"]);
+  assert.equal(f.leaseChecks, 2, "exact lease is pinned and revalidated before commit");
+  assert.equal(f.f.role, "setrox");
+});
+
+it("unselected router keeps its ordinary exact routed-work transaction", async () => {
+  const f = await routedWorkOwnerFixture({ ordinary: true });
+  assert.deepEqual((await f.run()).handoff, f.handoff);
+  assert.deepEqual(f.readRoles, ["sf_runtime_fixture"]);
+  assert.equal(f.f.commits, 0);
+});
+
+it("router rejects a different acquired handoff before reading routed work", async () => {
+  const f = await routedWorkOwnerFixture({ wrongHandoff: true });
+  await assert.rejects(f.run(), /V3_RECOVERY_WORK_ROUTER_HANDOFF_MISMATCH/);
+  assert.equal(f.acquired, true);
+  assert.equal(f.exactReads, 0);
+});
+
+it("router refuses missing exact rows after lease acquisition", async () => {
+  const f = await routedWorkOwnerFixture({ missing: true });
+  await assert.rejects(f.run(), /V3_RECOVERY_WORK_ROUTER_POST_LEASE_IDENTITY_MISMATCH/);
+  assert.equal(f.leaseChecks, 0);
+});
+
+it("router refuses a handoff expired at its canonical post-lock database clock", async () => {
+  const f = await routedWorkOwnerFixture({ expired: true });
+  await assert.rejects(f.run(), /V3_RECOVERY_WORK_ROUTER_POST_LEASE_IDENTITY_MISMATCH/);
+  assert.equal(f.leaseChecks, 0);
+});
+
+it("router refuses owner access closed during the exact row-lock wait", async () => {
+  const f = await routedWorkOwnerFixture({ closeAfterRowWait: true });
+  await assert.rejects(f.run(), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+});
+
+it("router refuses its pinned delivery lease lost before post-lock transaction commit", async () => {
+  const f = await routedWorkOwnerFixture({ loseLeaseBeforeCommit: true });
+  await assert.rejects(f.run(), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  assert.equal(f.leaseChecks, 2);
+});
