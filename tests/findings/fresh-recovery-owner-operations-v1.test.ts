@@ -242,3 +242,64 @@ it("actual terminal evidence claim body rolls back when its original delivery le
   }}),/RECOVERY_OWNER_AUTHORITY_REFUSED/);
   assert.equal(f.commits,0);assert.equal(f.role,"setrox");
 });
+
+async function freshProducerAdmissionFixture(f:Awaited<ReturnType<typeof ownerRepositoryFixture>>,afterVerification?:()=>void) {
+  const [{readFileSync},ts]=await Promise.all([import("node:fs"),import("typescript")]);
+  const file=new URL("../../src/db-pg.ts",import.meta.url),source=readFileSync(file,"utf8");
+  const tree=ts.default.createSourceFile(file.pathname,source,ts.default.ScriptTarget.ESNext,true);
+  const declaration=tree.statements.find(n=>ts.default.isFunctionDeclaration(n)&&n.name?.text==="requireWorkflowRunAdmissionReadyV1");
+  assert.ok(declaration);
+  const hash="a".repeat(64),node={receipt:{phase:"A",orderedPlans:["A"],orderedManifestHashes:[hash]},head:{headRef:"fixture-head"}};
+  const resolution={nodes:[node],current:{receipt:node.receipt,head:node.head}};
+  const selected={activation:{prepared:{current:resolution.current}},state:{},assertUnchanged(){}};
+  const modes:string[]=[];
+  const ports={freshInstallationSelectionV1:selected,requireSelectedFreshDatabaseV1(){},
+    WORKFLOW_RUN_MANIFEST_A_HASH_V1:hash,INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1:{manifestHash:hash},
+    sameJsonValueV1:(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b),ownerAuthority:f.authority,
+    verifier:{verifyFreshInstallationActivatedDatabaseOnTransactionV1:async(_tx:unknown,_activation:unknown,_base:unknown,mode:string)=>{
+      modes.push(mode);
+      if(mode!==(f.role==="sf_owner_fixture"?"owner":"runtime"))throw Error("FRESH_INSTALLATION_ACTIVATED_DATABASE_UNVERIFIED");
+      await Promise.resolve();afterVerification?.();
+    }}};
+  // Fixed dynamic module imports are the disclosed external verifier/authority
+  // boundaries. The actual admission function and actual WeakMaps execute.
+  const body=declaration.getText(tree)
+    .replace('await import("./installation/fresh-installation-activation-verifier-v1.js")','await Promise.resolve(verifier)')
+    .replace('await import("./recovery/v3-owner-recovery-authority-v1.js")','await Promise.resolve(ownerAuthority)');
+  const compiled=ts.default.transpileModule(body,{compilerOptions:{module:ts.default.ModuleKind.ESNext,target:ts.default.ScriptTarget.ES2022}}).outputText;
+  const requireAdmission=new Function(...Object.keys(ports),compiled+";return requireWorkflowRunAdmissionReadyV1;")(...Object.values(ports));
+  return {run:()=>requireAdmission(f.transaction,resolution),modes};
+}
+
+it("fresh producer admission verifies an actually entered owner transaction as owner",async()=>{
+  const f=await ownerRepositoryFixture("terminal"),admission=await freshProducerAdmissionFixture(f);
+  await f.authority.enterOwnerRecoveryTransactionV1(f.transaction,f.access);
+  await admission.run();
+  assert.deepEqual(admission.modes,["owner"]);
+});
+
+it("fresh producer admission keeps unowned runtime and forged owner-like transactions on runtime verification",async()=>{
+  const ordinary=await ownerRepositoryFixture("terminal"),runtime=await freshProducerAdmissionFixture(ordinary);
+  await ordinary.restricted.begin(()=>runtime.run());assert.deepEqual(runtime.modes,["runtime"]);
+  const forged=await ownerRepositoryFixture("terminal"),admission=await freshProducerAdmissionFixture(forged);
+  Object.assign(forged.transaction,{owner:true,ownerRecoveryFence:Object.freeze({})});
+  await forged.transaction.unsafe('SET LOCAL ROLE "sf_owner_fixture"');
+  await assert.rejects(admission.run(),/FRESH_INSTALLATION_ACTIVATED_DATABASE_UNVERIFIED/);
+  assert.deepEqual(admission.modes,["runtime"]);
+});
+
+it("fresh producer admission refuses a closed registered owner rather than falling back to runtime",async()=>{
+  const f=await ownerRepositoryFixture("terminal"),admission=await freshProducerAdmissionFixture(f);
+  await f.authority.enterOwnerRecoveryTransactionV1(f.transaction,f.access);
+  f.authority.closeOwnerRecoveryAccessV1(f.access);
+  await assert.rejects(admission.run(),/RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  assert.deepEqual(admission.modes,[]);
+});
+
+it("fresh producer admission revalidates a registered owner lease after the verifier await",async()=>{
+  const f=await ownerRepositoryFixture("heartbeat"),admission=await freshProducerAdmissionFixture(f,()=>f.expireLease());
+  await f.authority.enterOwnerRecoveryTransactionV1(f.transaction,f.access);
+  await f.authority.pinOwnerRecoveryDeliveryLeaseV1(f.transaction,{dispatchId:"unit-dispatch",revisionId:"unit-revision",ownerInstanceId:"unit-owner",leaseToken:"unit-token"});
+  await assert.rejects(admission.run(),/RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  assert.deepEqual(admission.modes,["owner"]);
+});

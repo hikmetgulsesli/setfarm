@@ -1905,7 +1905,10 @@ async function requireWorkflowRunAdmissionReadyV1(
       throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
     }
     const { verifyFreshInstallationActivatedDatabaseOnTransactionV1 } = await import("./installation/fresh-installation-activation-verifier-v1.js");
-    await verifyFreshInstallationActivatedDatabaseOnTransactionV1(sql, selected.activation, selected.state, "runtime");
+    const { freshRecoveryTransactionVerifierModeV1 } = await import("./recovery/v3-owner-recovery-authority-v1.js");
+    const mode = await freshRecoveryTransactionVerifierModeV1(sql);
+    await verifyFreshInstallationActivatedDatabaseOnTransactionV1(sql, selected.activation, selected.state, mode);
+    await freshRecoveryTransactionVerifierModeV1(sql);
     selected.assertUnchanged();
     return;
   }

@@ -116,6 +116,10 @@ function buildV3Prompt(ctx: PromptContext): string {
     "- Declare an input only when a state valueFrom or a CLI/HTTP fieldBinding consumes it. Fixed outcomes use literal deltas and no synthetic input.",
     "- Every declared state must have an action precondition, delta, or value-source owner. An all-CLI/HTTP product may be stateless; do not invent fake state, busy/loading state, or UI state unless exact behavior owns it.",
     "- Every action needs at least one observable. Every individual observable needs an after assertion. Durable writes additionally need a reload assertion.",
+    ...(atomicBuildProposal ? [
+      '- Rendered property:value equality assertions compare DOM string|null; visible_text assertions still require a string. Use expected:"0" for rendered zero. Typed invocation_output retains its declared JSON type.',
+      "- A persistence witness must demonstrate a change: unchanged before/after values cannot prove persistence. Use a task-consistent, initially absent persisted value when permitted (for example, absent score written as 0), or a prerequisite/input producing the requested change; never invent an input or alter the requested outcome just to satisfy evidence.",
+    ] : []),
     "- Rendered observables bind the owning control or an exact action surface/accessibility role and name. CLI/HTTP observables use only typed invocation_output selectors. Setfarm generates observable and evidence identities.",
     "- Use an empty or RFC 6901 path beginning with '/'; escape '~' as '~0' and '/' within a token as '~1'.",
     "- If primary semantics are ambiguous, contradictory, missing, or outside activated product classes, emit the typed rejection instead of guessing.",

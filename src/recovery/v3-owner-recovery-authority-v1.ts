@@ -107,6 +107,15 @@ export async function assertOwnerRecoveryTransactionLiveV1(transaction: postgres
   if(held.originalLeaseDeadlines.some(deadline=>deadline<=now.getTime()))refuse();
   return now;
 }
+/** Only an actual entered transaction can select owner verification. Unknown
+ * callers retain runtime checks; a revoked registered fence never falls back. */
+export async function freshRecoveryTransactionVerifierModeV1(transaction:unknown):Promise<"owner"|"runtime"> {
+  if((typeof transaction!=="object"||transaction===null)&&typeof transaction!=="function")return "runtime";
+  const fence=ownedTransactions.get(transaction as object);if(!fence)return "runtime";
+  const held=transactions.get(fence);if(!held||held.transaction!==transaction)refuse();
+  await assertOwnerRecoveryTransactionLiveV1(held.transaction,fence);
+  return "owner";
+}
 export async function assertOwnerRecoveryTransactionBeforeCommitV1(transaction: postgres.TransactionSql, fence: OwnerRecoveryTransactionFenceV1): Promise<void> {
   await assertOwnerRecoveryTransactionLiveV1(transaction,fence);
 }
