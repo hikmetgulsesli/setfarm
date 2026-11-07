@@ -458,6 +458,18 @@ function findPrerequisiteCycleV2(actions: readonly ProductActionV2[]): string[] 
   return null;
 }
 
+function presentInitialValueV2(initial: unknown, pointer: string): { value: unknown } | undefined {
+  let current = initial;
+  if (pointer === "") return { value: current };
+  for (const encoded of pointer.slice(1).split("/")) {
+    const key = encoded.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (current === null || typeof current !== "object" || !Object.hasOwn(current, key)) return undefined;
+    if (Array.isArray(current) && !/^(0|[1-9][0-9]*)$/.test(key)) return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return { value: current };
+}
+
 /**
  * Product semantics v2 authority. Physical controls are declared only by
  * control slots; affected surfaces never imply a rendered control.
@@ -583,6 +595,8 @@ export const ProductSpecV2Schema = z.object({
     });
   });
   const stateIds = new Set(value.states.map((state) => state.id));
+  const stateById = new Map(value.states.map((state) => [state.id, state] as const));
+  const browserDelivery = ["web", "game"].includes(value.delivery.platform);
   const persistenceIds = new Set(value.persistencePolicies.map((policy) => policy.id));
   const actionIds = new Set(value.actions.map((action) => action.id));
   const evidenceIds = new Set(value.evidencePredicates.map((predicate) => predicate.id));
@@ -1045,6 +1059,33 @@ export const ProductSpecV2Schema = z.object({
           message: `PRODUCT_SPEC_V2_ACTION_INPUT_UNRESOLVED: ${field}`,
         });
       });
+      const policy = persistenceById.get(effect.policyRef);
+      if (browserDelivery && policy?.kind === "local_storage" && policy.durability === "reload"
+        && policy.rehydration.kind === "initialization" && effect.operation === "write"
+        && action.input.fields.length === 0 && action.preconditions.length === 0
+        && action.evidenceScenario.prerequisiteSteps.length === 0
+        && action.persistenceEffects.filter(candidate => candidate.operation !== "read").length === 1
+        && effect.statePaths.length === 1) {
+        const target = effect.statePaths[0]!;
+        const overlapping = action.stateDeltas.filter(delta => delta.stateRef === target.stateRef
+          && (delta.path === target.path || delta.path === "" || target.path === ""
+            || delta.path.startsWith(`${target.path}/`) || target.path.startsWith(`${delta.path}/`)));
+        const delta = overlapping.length === 1 ? overlapping[0] : undefined;
+        if (delta?.operation === "set" && delta.path === target.path) {
+          const targetState = stateById.get(target.stateRef);
+          const before = targetState ? presentInitialValueV2(targetState.initialValue, target.path) : undefined;
+          const source = delta.valueFrom;
+          const sourceState = source.kind === "state" ? stateById.get(source.stateRef) : undefined;
+          const expected = source.kind === "literal" ? { value: source.value }
+            : source.kind === "state" && sourceState ? presentInitialValueV2(sourceState.initialValue, source.path) : undefined;
+          if (before && expected && hashCanonicalJson(before.value) === hashCanonicalJson(expected.value)) {
+            context.addIssue({ code: "custom",
+              path: ["actions", actionIndex, "persistenceEffects", effectIndex, "statePaths", 0],
+              message: `PRODUCT_SPEC_V2_PERSISTENCE_SCENARIO_NO_CHANGE: ${target.stateRef}${target.path} is unchanged by this scenario's persisted set. Declare a task-consistent initial witness (such as an initially absent persisted value), or prerequisite/input producing a change; unchanged values cannot prove persistence.`,
+            });
+          }
+        }
+      }
     });
 
     const durableWrite = action.persistenceEffects.some((effect) => {
@@ -1225,6 +1266,17 @@ export const ProductSpecV2Schema = z.object({
         });
       }
       const selector = effect.selector;
+      if (browserDelivery && selector.kind !== "invocation_output") {
+        effect.assertions.forEach((assertion, assertionIndex) => {
+          if (assertion.property === "value" && assertion.operator === "equals"
+            && assertion.expected !== undefined && assertion.expected !== null && typeof assertion.expected !== "string") {
+            context.addIssue({ code: "custom",
+              path: ["actions", actionIndex, "observableEffects", effectIndex, "assertions", assertionIndex, "expected"],
+              message: 'PRODUCT_SPEC_V2_RENDERED_VALUE_EXPECTED_TYPE: Rendered value assertions compare DOM string|null. Use expected:"0" for rendered zero; invocation output retains its declared JSON type.',
+            });
+          }
+        });
+      }
       if (selector.kind === "control") {
         if (!ownedSlotRefs.has(selector.controlSlotRef)) {
           const owner = slotOwnerById.get(selector.controlSlotRef);

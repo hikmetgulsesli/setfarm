@@ -9,7 +9,56 @@ import {
   containedGamePlanProposalV2,
 } from "./fixtures/product-semantics-v2.js";
 
+function persistedInitialScoreProposal(): any {
+  const proposal: any = containedGamePlanProposalV2();
+  const action = proposal.actions[0];
+  proposal.states[0].initialValue = { phase: "ready", score: 0, persisted_score: 0 };
+  proposal.persistencePolicies.push({ key: "score_local", kind: "local_storage", entityKeys: [],
+    rehydration: { kind: "initialization" }, requirementRefs: action.requirementRefs });
+  action.stateDeltas.push({ key: "persist_score", stateKey: "game_phase", operation: "set", path: "/persisted_score",
+    valueFrom: { kind: "state", stateKey: "game_phase", path: "/score" } });
+  action.persistenceIntents.push({ policyKey: "score_local", operation: "write", stateDeltaKeys: ["persist_score"] });
+  action.observables[0].assertions.push({ phase: "reload", property: "visibility", operator: "equals", expected: true });
+  return proposal;
+}
+
 describe("plan semantic proposal v2 compiler", () => {
+  it("returns precise rendered-value type feedback to the PLAN model", () => {
+    const proposal = containedGamePlanProposalV2();
+    proposal.actions[0].observables[2].assertions = [
+      { phase: "after", property: "value", operator: "equals", expected: 0 },
+    ];
+    const result = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
+    assert.equal(result.status, "rejected");
+    if (result.status === "rejected") assert.ok(result.diagnostics.some(issue =>
+      issue.message.includes("PRODUCT_SPEC_V2_RENDERED_VALUE_EXPECTED_TYPE")
+      && issue.path === "/actions/0/observableEffects/2/assertions/0/expected"));
+  });
+
+  it("rejects persistence with no changed target despite another state delta changing", () => {
+    const result = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal: persistedInitialScoreProposal() });
+    assert.equal(result.status, "rejected");
+    if (result.status === "rejected") assert.ok(result.diagnostics.some(issue =>
+      issue.message.includes("PRODUCT_SPEC_V2_PERSISTENCE_SCENARIO_NO_CHANGE")
+      && issue.path === "/actions/0/persistenceEffects/0/statePaths/0"));
+  });
+
+  it("accepts an initially absent persisted value becoming the actual zero score", () => {
+    const proposal = persistedInitialScoreProposal();
+    proposal.states[0].initialValue.persisted_score = null;
+    const result = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
+    assert.equal(result.status, "canonicalized", result.status === "rejected" ? JSON.stringify(result.diagnostics) : undefined);
+  });
+
+  it("applies the same no-op check to a literal persisted set", () => {
+    const proposal = persistedInitialScoreProposal();
+    proposal.actions[0].stateDeltas[1].valueFrom = { kind: "literal", value: 0 };
+    const result = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
+    assert.equal(result.status, "rejected");
+    if (result.status === "rejected") assert.ok(result.diagnostics.some(issue =>
+      issue.message.includes("PRODUCT_SPEC_V2_PERSISTENCE_SCENARIO_NO_CHANGE")));
+  });
+
   it("preserves exact placement, containment, effect scope, and traceability", () => {
     const proposal = containedGamePlanProposalV2();
     const first = compilePlanSemanticProposalV2({
