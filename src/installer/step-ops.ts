@@ -13378,7 +13378,7 @@ export async function resumeRuntimeCompletionEffects(
     await settleV3RefusalRecoveryLineage(refusalEffect);
     return { advanced: false, runCompleted: false };
   }
-  if (input.storyId && input.storyDbId) {
+  if (step.type === "loop" && input.storyId && input.storyDbId) {
     const story = await pgGet<{
       id: string;
       story_id: string;
