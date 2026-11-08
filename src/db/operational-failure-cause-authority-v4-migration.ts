@@ -100,7 +100,7 @@ export async function verifyOperationalFailureCauseAuthorityV4Constraint(sql: Sq
   ];
   for (const item of cases) {
     const result = await sql.unsafe<Array<{ accepted: boolean }>>(`SELECT (${OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V4_CONSTRAINT_EXPRESSION}) IS TRUE AS accepted
-      FROM (SELECT $1::text AS requested_by,'failed'::text AS target_status,jsonb_build_object('operationalFailureCause',$2::jsonb) AS evidence) candidate`,
+      FROM (SELECT $1::text AS requested_by,'failed'::text AS target_status,jsonb_build_object('operationalFailureCause',$2::text::jsonb) AS evidence) candidate`,
       [item.requester, JSON.stringify(item.cause)]);
     if (result.length !== 1 || result[0]?.accepted !== item.expected) refuse("OPERATIONAL_FAILURE_CAUSE_V4_BEHAVIOR_MISMATCH");
   }
