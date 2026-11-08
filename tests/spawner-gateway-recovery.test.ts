@@ -308,6 +308,7 @@ describe("spawner gateway recovery wiring", () => {
     // Keep the actual exported finalizer, drain and cancel branches. Only the
     // external DB/provider/process boundaries are disposable in-memory doubles.
     const code = transformSync(`
+      import { isSubscriptionRuntimePathV1 } from ${JSON.stringify(new URL("../src/execution/subscription-coding-runtime-binding-v1.ts", import.meta.url).href)};
       let CODEX_CLI,OPENCLAW_CLI,KIMI_CLI,OPENCODE_CLI,AGENT_RUNTIME,MAX_CONCURRENT,AGENT_STARTUP_SILENCE_MS;
       let agentRuntimeInitializedV1=false;const SELECTED_SPAWNER_V1=null;
       const process={env:{}};
@@ -316,7 +317,7 @@ describe("spawner gateway recovery wiring", () => {
       const resolveAgentRuntime=()=>"openclaw";
       const commands=[];
       const session={sessionId:"session-exact",claimId:7,ownerInstanceId:"owner-exact",
-        state:"running",runtimeKind:"openclaw_session",sessionKey:"lookup-exact"};
+        state:"running",runtimeKind:"openclaw_session",sessionKey:"lookup-exact",drainEvidence:{}};
       const pgGet=async()=>({claim_outcome:null,runtime_state:"running",
         active_attempt_count:0,active_delivery_count:0,active_completion_count:0,
         quarantined_completion_count:0,active_termination_count:0});
