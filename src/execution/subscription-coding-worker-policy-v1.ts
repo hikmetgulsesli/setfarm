@@ -325,9 +325,9 @@ export function createSubscriptionCodingTranscriptCloserV1(fd: number, operation
 }
 
 export type SubscriptionCodingProbeProtocolV1 = Readonly<{
-  readonly state: 'awaiting-proof' | 'ready' | 'gate-sent' | 'open' | 'failed';
+  readonly state: 'awaiting-proof' | 'ready' | 'admission-wait-sent' | 'admission-waiting' | 'gate-sent' | 'open' | 'failed';
   readonly proofHash: string | null; readonly binding: SubscriptionCodingProbeBindingV1;
-  accept(chunk: Buffer): void; end(): void; openGate(): string;
+  accept(chunk: Buffer): void; end(): void; waitForOwnerAdmission(): string; openGate(): string;
 }>;
 const protocols = new WeakSet<object>();
 export function createSubscriptionCodingProbeProtocolV1(input: SubscriptionCodingProbeBindingV1): SubscriptionCodingProbeProtocolV1 {
@@ -340,9 +340,10 @@ export function createSubscriptionCodingProbeProtocolV1(input: SubscriptionCodin
     || !['kimi/k3.1-pro', 'minimax/MiniMax-M3.1-Flash'].includes(i.modelRef as string)) refuse();
   const binding = freeze(value);
   let state: SubscriptionCodingProbeProtocolV1['state'] = 'awaiting-proof', proofHash: string | null = null;
-  let pending = Buffer.alloc(0), size = 0, ended = false;
+  let pending = Buffer.alloc(0), size = 0, ended = false, frames = 0;
   const fail = (): never => { state = 'failed'; pending = Buffer.alloc(0); refuse(); };
   function frame(bytes: Buffer): void {
+    if (++frames > 3) fail();
     let parsed: Record<string, unknown>;
     try {
       const text = bytes.toString('utf8'); parsed = JSON.parse(text);
@@ -358,7 +359,8 @@ export function createSubscriptionCodingProbeProtocolV1(input: SubscriptionCodin
         if (results.brokerConnect !== 'connected' || Object.entries(results).some(([key, result]) =>
           key !== 'brokerConnect' && result !== 'EACCES' && result !== 'EPERM')) fail();
         proofHash = subscriptionCodingHashV1(bytes); state = 'ready';
-      } else if (type === 'opened' && state === 'gate-sent') state = 'open';
+      } else if (type === 'owner-admission-waiting' && state === 'admission-wait-sent') state = 'admission-waiting';
+      else if (type === 'opened' && state === 'gate-sent') state = 'open';
       else fail();
     } catch { fail(); }
   }
@@ -373,8 +375,13 @@ export function createSubscriptionCodingProbeProtocolV1(input: SubscriptionCodin
       }
     },
     end() { if (ended) return; ended = true; if (pending.length || state !== 'open') fail(); },
+    waitForOwnerAdmission() {
+      if (ended || pending.length || state !== 'ready') fail();
+      state = 'admission-wait-sent';
+      return JSON.stringify({ schema: 'setfarm.subscription-coding-gate.v1', type: 'owner-admission-wait', ...binding }) + '\n';
+    },
     openGate() {
-      if (ended || state !== 'ready') fail();
+      if (ended || pending.length || (state !== 'ready' && state !== 'admission-waiting')) fail();
       state = 'gate-sent';
       return JSON.stringify({ schema: 'setfarm.subscription-coding-gate.v1', type: 'open', ...binding }) + '\n';
     },
@@ -398,7 +405,7 @@ export function createSubscriptionCodingCustodyTrackerV1(identity: ProcessIdenti
       if ([...events].some(event => event.endsWith('error') || event === 'deadline') || protocol.state === 'failed') return 'custody-uncertain';
       if (!['child-exit', 'child-close', 'stdout-end', 'stdout-close', 'stderr-end', 'stderr-close']
         .every(event => events.has(event as SubscriptionCodingCustodyEventV1))) return 'pending';
-      return protocol.proofHash && ['ready', 'gate-sent', 'open'].includes(protocol.state) ? 'closed' : 'custody-uncertain';
+      return protocol.proofHash && ['ready', 'admission-wait-sent', 'admission-waiting', 'gate-sent', 'open'].includes(protocol.state) ? 'closed' : 'custody-uncertain';
     },
     canSignal(observed: ProcessIdentityV1 | null): boolean {
       return !events.has('child-exit') && !events.has('child-close') && observed !== null

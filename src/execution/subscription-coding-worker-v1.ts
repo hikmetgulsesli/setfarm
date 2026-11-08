@@ -29,6 +29,7 @@ const SDK_ROOT = '/opt/homebrew/lib/node_modules/openclaw';
 const SANDBOX = '/usr/bin/sandbox-exec';
 const OUTPUT_LIMIT = 1048576;
 const STARTUP_MS = 10000;
+const OWNER_ADMISSION_MS = 120000;
 const DRAIN_MS = 2500;
 const uid = () => { if (!process.getuid) refuse(); return BigInt(process.getuid()); };
 
@@ -41,7 +42,7 @@ export type SubscriptionCodingWorkerOutputV1 = Readonly<{
   proofHash: string | null; isolationHash: string; materialHash: string;
 }>;
 export type SubscriptionCodingOwnedWorkerV1 = SubscriptionOwnedWorkerV1 & Readonly<{
-  child: ChildProcess; processIdentity: ProcessIdentityV1; openGate(): void; isolationHash: string;
+  child: ChildProcess; processIdentity: ProcessIdentityV1; waitForOwnerAdmission(): Promise<void>; openGate(): void; isolationHash: string;
   isolation: Readonly<{ materialHash: string; policyHash: string; preloadHash: string;
     proofHash: string; isolationHash: string }>;
   output: Promise<SubscriptionCodingWorkerOutputV1>;
@@ -420,13 +421,15 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
 
     // From this point onward every original process and stream event is retained
     // before the first await. No later refusal discards the acquired child.
-    let child!: ChildProcess, startupDeadline = 0;
+    let child!: ChildProcess, startupDeadline = 0, lifetimeDeadline = 0, admissionDeadline = 0;
     const events = new Set<SubscriptionCodingCustodyEventV1>();
     let originalIdentity: ProcessIdentityV1 | undefined;
     let protocol: SubscriptionCodingProbeProtocolV1 | undefined;
     let tracker: ReturnType<typeof createSubscriptionCodingCustodyTrackerV1> | undefined;
     let exitCode: number | null = null, signal: NodeJS.Signals | null = null, isolationHash = '';
     let settled = false, stopping: Promise<void> | undefined, proofReady = false;
+    let waitResolve: (() => void) | undefined, waitReject: (() => void) | undefined;
+    const rejectWait = () => { const reject = waitReject; waitResolve = undefined; waitReject = undefined; reject?.(); };
     let startupResolve!: () => void, startupReject!: () => void;
     const startup = new Promise<void>((yes, no) => { startupResolve = yes; startupReject = () => no(new Error('SUBSCRIPTION_CODING_WORKER_REFUSED')); });
     // Attach a rejection consumer immediately, including synchronous startup failure.
@@ -449,7 +452,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     const allOriginalClosed = () => ['child-exit', 'child-close', 'stdout-end', 'stdout-close', 'stderr-end', 'stderr-close']
       .every(event => events.has(event as SubscriptionCodingCustodyEventV1));
     const finish = (status: SubscriptionWorkerClosureV1['status']) => {
-      if (settled) return; settled = true;
+      if (settled) return; settled = true; rejectWait();
       for (const timer of [killTimer, drainTimer, startupTimer, lifetimeTimer]) if (timer) clearTimeout(timer);
       for (const capture of Object.values(captures)) if (!capture.finished) { capture.redactor.discard(); capture.finished = true; }
       if (transcriptCloser?.close() !== 'closed') status = 'custody-uncertain';
@@ -483,6 +486,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
       try { process.kill(originalIdentity.pid, requested); } catch {}
     };
     const stop = (_reason: SubscriptionAttemptBrokerStopV1): Promise<void> => {
+      rejectWait();
       if (stopping) return stopping;
       stopping = (async () => {
         try { gate?.destroy(); } catch {}
@@ -538,6 +542,7 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     child = spawn(SANDBOX, ['-f', profilePath, nodePath, '--import', preloadPath, entryPath, ...material.argv],
       { shell: false, cwd: material.cwd, env: { ...material.env }, stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'] });
     startupDeadline = performance.now() + STARTUP_MS;
+    lifetimeDeadline = performance.now() + 1800000;
     stdout = child.stdout; stderr = child.stderr;
     gate = child.stdio[3] as Writable | null; proof = child.stdio[4] as Readable | null;
     partial = Object.freeze({ identity: material.identity, child, closed, originalClosed, output, stop,
@@ -554,9 +559,17 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
     if (!gate || !proof || !child.pid) fault();
     proof?.on('data', (chunk: Buffer) => {
       try {
-        if (!protocol) refuse();
+        if (!protocol || stopping || settled || performance.now() >= lifetimeDeadline
+          || (protocol.state !== 'open' && performance.now() >= startupDeadline)) refuse();
         protocol.accept(chunk);
         if (protocol.state === 'ready') { proofReady = true; startupResolve(); }
+        if (protocol.state === 'admission-waiting' && waitResolve) {
+          if (performance.now() >= admissionDeadline) refuse();
+          clearTimeout(startupTimer);
+          startupDeadline = admissionDeadline;
+          startupTimer = setTimeout(fault, Math.max(0, startupDeadline - performance.now()));
+          const resolve = waitResolve; waitResolve = undefined; waitReject = undefined; resolve();
+        }
         if (protocol.state === 'open' && startupTimer !== undefined) {
           clearTimeout(startupTimer); startupTimer = undefined;
         }
@@ -606,11 +619,37 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
       identity: material.identity, child, processIdentity: Object.freeze({ ...originalIdentity }), closed, originalClosed, output,
       isolationHash, isolation: Object.freeze({ materialHash, policyHash, preloadHash,
         proofHash: protocol.proofHash!, isolationHash }), stop,
+      waitForOwnerAdmission() {
+        try {
+          stableCheck();
+          if (stopping || settled || performance.now() >= startupDeadline || performance.now() >= lifetimeDeadline
+            || !tracker!.canSignal(observeProcessIdentity(child.pid!) ?? null)) refuse();
+          // OS identity observation may block past either original deadline.
+          if (performance.now() >= startupDeadline || performance.now() >= lifetimeDeadline) refuse();
+          const frame = protocol!.waitForOwnerAdmission();
+          const pending = new Promise<void>((resolve, reject) => {
+            waitResolve = resolve; waitReject = () => reject(new Error('SUBSCRIPTION_CODING_WORKER_REFUSED'));
+          });
+          void pending.catch(() => {});
+          // Emission anchors the nonrenewable budget; ACK latency cannot renew it.
+          admissionDeadline = performance.now() + OWNER_ADMISSION_MS;
+          gate.write(frame, error => { if (error) fault(); });
+          return pending;
+        } catch { fault(); return Promise.reject(new Error('SUBSCRIPTION_CODING_WORKER_REFUSED')); }
+      },
       openGate() {
         try {
           stableCheck();
-          if (stopping || performance.now() >= startupDeadline || !tracker!.canSignal(observeProcessIdentity(child.pid!) ?? null)) refuse();
-          gate.write(protocol!.openGate(), error => { if (error) fault(); });
+          if (stopping || settled || performance.now() >= startupDeadline || performance.now() >= lifetimeDeadline || !tracker!.canSignal(observeProcessIdentity(child.pid!) ?? null)) refuse();
+          // Recheck after the synchronous OS observation before renewing OPENED.
+          if (performance.now() >= startupDeadline || performance.now() >= lifetimeDeadline) refuse();
+          const waiting = protocol!.state === 'admission-waiting';
+          const frame = protocol!.openGate();
+          if (waiting) {
+            startupDeadline = performance.now() + STARTUP_MS;
+            clearTimeout(startupTimer); startupTimer = setTimeout(fault, STARTUP_MS);
+          }
+          gate.write(frame, error => { if (error) fault(); });
         } catch { fault(); refuse(); }
       },
     });

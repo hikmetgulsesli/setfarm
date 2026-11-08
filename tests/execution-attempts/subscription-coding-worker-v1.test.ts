@@ -647,9 +647,10 @@ function openedStartupCallback(){
   visit(tree);assert.equal(callbacks.length,1,'actual private proof data callback must remain unique');
   let clock=0,faults=0,ready=0;const recorded:string[]=[],cleared:number[]=[],timers=new Map<number,{due:number;call:()=>void}>();
   const timer=73;timers.set(timer,{due:10000,call:()=>{faults++;}});
-  const ports={protocol,startupResolve:()=>{ready++;},record:(event:string)=>recorded.push(event),fault:()=>{faults++;},
+  const ports={protocol,stopping:false,settled:false,performance:{now:()=>clock},lifetimeDeadline:1800000,admissionDeadline:120000,
+    setTimeout:()=>74,startupResolve:()=>{ready++;},record:(event:string)=>recorded.push(event),fault:()=>{faults++;},
     clearTimeout:(id:number)=>{cleared.push(id);timers.delete(id);}};
-  const code='function fixture(){let proofReady=false;let startupTimer='+timer+';const accept='+callbacks[0]!.getText(tree)
+  const code='function fixture(){let proofReady=false;let startupDeadline=10000;let waitResolve,waitReject;let startupTimer='+timer+';const accept='+callbacks[0]!.getText(tree)
     +';return {accept,get proofReady(){return proofReady;},get startupTimer(){return startupTimer;}};}';
   const js=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
   const observed=new Function(...Object.keys(ports),js+';return fixture();')(...Object.values(ports));
@@ -876,4 +877,378 @@ test('pinned Node operations never adopt an EXCL race and refuse write or close 
         'close-error may leave candidate bytes but must never produce a success result');
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// Exercise the actual launcher after filesystem preparation and the complete
+// fixed preload. Only OS, filesystem, clocks and transport effects are inert.
+// A blanket startup clock increase or early SDK admission breaks these tests.
+function actualWorkerClockRealm(seed = material()) {
+  assert.ok(api);
+  const tree = workerTree();
+  let statements: readonly ts.Statement[] | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isBlock(node) && node.statements.some(item => ts.isVariableStatement(item)
+      && item.declarationList.declarations.some(d => d.name.getText(tree) === 'startup'))) statements = node.statements;
+    ts.forEachChild(node, visit);
+  };
+  visit(tree); assert.ok(statements);
+  const start = statements.findIndex(node => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(d => d.name.getText(tree) === 'child'));
+  const end = statements.findIndex(node => ts.isReturnStatement(node) && node.expression?.getText(tree) === 'owned');
+  assert.ok(start >= 0 && end > start);
+  const constants = tree.statements.filter(node => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(d => ['STARTUP_MS', 'OWNER_ADMISSION_MS', 'DRAIN_MS', 'OUTPUT_LIMIT', 'SANDBOX'].includes(d.name.getText(tree))))
+    .map(node => node.getText(tree)).join('\n');
+  const body = constants + '\n' + statements.slice(start, end + 1).map(node => node.getText(tree)).join('\n');
+  let now = 0, serial = 0, sdk = false, dead = false, stale = false, materialStale = false, observationDelay = 0;
+  const timers = new Map<number, { due: number; call: () => void }>();
+  const external = (call: () => void) => { try { call(); } catch (error) { if (!(error instanceof Error) || !/^INERT_EXIT_/.test(error.message)) throw error; } };
+  const setTimer = (call: () => void, ms: number) => { const id = ++serial; timers.set(id, { due: now + ms, call: () => external(call) }); return id; };
+  const clearTimer = (id: number) => { timers.delete(id); };
+  const streams = [new EventEmitter(), new EventEmitter()];
+  const proof = Object.assign(new EventEmitter(), { destroy() {} });
+  const channel = Object.assign(new EventEmitter(), { unref() {} });
+  const connections: string[] = [];
+  const signals: string[] = [], exits: number[] = [], outbound: Record<string, unknown>[] = [];
+  let suppressAck = false, suppressOpened = false, holdProof = false, openedWriteDelay = 0;
+  const held: Buffer[] = [], parentFrames: Record<string, unknown>[] = [];
+  const child = Object.assign(new EventEmitter(), { pid: identity.pid, stdout: streams[0], stderr: streams[1], stdio: [] as unknown[] });
+  function death(code: number) {
+    if (dead) return; dead = true; exits.push(code);
+    child.emit('exit', code, null); child.emit('close');
+    for (const stream of streams) { stream.emit('end'); stream.emit('close'); }
+    proof.emit('end');
+  }
+  const gate = Object.assign(new EventEmitter(), {
+    write(bytes: string, callback: (error?: Error) => void) {
+      parentFrames.push(JSON.parse(bytes));
+      queueMicrotask(() => external(() => { if (!dead) channel.emit('data', Buffer.from(bytes)); callback(); })); return true;
+    },
+    destroy() { queueMicrotask(() => external(() => { channel.emit('end'); })); },
+  });
+  child.stdio = [null, ...streams, gate, proof];
+  const checked = api.narrowSubscriptionCodingWorkerMaterialV1({ material: seed, writeGrants: [], readOnlyControlPaths: [] });
+  const p = paths(), preloadPath = p.preloadPath, profilePath = p.profilePath, entryPath = p.openclawRoot + '/openclaw.mjs';
+  const preload = ownedFs.readFileSync(new URL('../../src/execution/subscription-coding-worker-preload-v1.ts', import.meta.url), 'utf8');
+  const preloadTree = ts.createSourceFile('preload.ts', preload, ts.ScriptTarget.Latest, true);
+  const declaration = (preloadTree.statements.find(ts.isVariableStatement)!).declarationList.declarations[0]!;
+  assert.ok(declaration.initializer && ts.isTaggedTemplateExpression(declaration.initializer));
+  const program = (declaration.initializer.template as ts.NoSubstitutionTemplateLiteral).rawText!;
+  const hash = api.subscriptionCodingHashV1, policy = 'inert pinned policy';
+  const files = new Map<string, string>([[preloadPath, program], [profilePath, policy], ...checked.material.files.map(f => [f.path, f.contents] as [string, string])]);
+  const processPort = { pid: identity.pid, execPath: p.nodePath, argv: [p.nodePath, entryPath, ...checked.material.argv], env: checked.material.env,
+    exit(code: number): never { death(code); throw Error('INERT_EXIT_' + code); } };
+  const denied = () => Object.assign(Error('inert denial'), { code: 'EPERM' });
+  const childPorts = { Buffer, performance: { now: () => now }, setTimeout: setTimer, clearTimeout: clearTimer,
+    process: processPort, crypto: { createHash }, fileURLToPath: () => preloadPath,
+    fs: { constants: ownedFs.constants, readFileSync: (path: string) => { assert.ok(files.has(path)); return files.get(path); },
+      openSync: () => { throw denied(); }, closeSync: () => {},
+      writeSync(_fd: number, bytes: Buffer, offset: number, length: number) {
+        const chunk = bytes.subarray(offset, offset + length), frame = JSON.parse(chunk.toString()); outbound.push(frame);
+        if (frame.type === 'opened') now += openedWriteDelay;
+        if (holdProof && frame.type === 'proof') held.push(chunk);
+        else if (!(suppressAck && frame.type === 'owner-admission-waiting') && !(suppressOpened && frame.type === 'opened')) proof.emit('data', chunk);
+        return length;
+      } },
+    net: { Socket: function() { return channel; }, createConnection(options: { host: string; port: number }) {
+      connections.push(options.host + ':' + options.port);
+      const socket = Object.assign(new EventEmitter(), { destroy() {} });
+      queueMicrotask(() => options.port === 49157 ? socket.emit('connect') : socket.emit('error', denied())); return socket;
+    } },
+    spawn: () => { const process = new EventEmitter(); queueMicrotask(() => process.emit('error', denied())); return process; },
+  };
+  const childCode = program.replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', '"inert-preload-url"');
+  const runChild = new Function(...Object.keys(childPorts), 'return (async()=>{' + childCode + '\n})()');
+  let actualProtocol: import('../../src/execution/subscription-coding-worker-policy-v1.js').SubscriptionCodingProbeProtocolV1 | undefined;
+  const parentPorts = { ...api, createSubscriptionCodingProbeProtocolV1: (b: Parameters<typeof api.createSubscriptionCodingProbeProtocolV1>[0]) => {
+    actualProtocol = api!.createSubscriptionCodingProbeProtocolV1(b); return actualProtocol;
+  }, Buffer, performance: { now: () => now }, setTimeout: setTimer, clearTimeout: clearTimer,
+    material: checked.material, checked, capability: 'A'.repeat(43), materialHash: checked.materialHash,
+    policyHash: hash(policy), preloadHash: hash(program), profilePath, preloadPath, nodePath: p.nodePath, entryPath,
+    brokerPort: 49157, authorityRoots: p.authorityRoots, fd: 7,
+    transcriptCloser: { close: () => 'closed' }, closePublicAncestors: () => true,
+    nodeLibraries: { closureHash: 'a'.repeat(64), close: () => 'closed' },
+    publicPins: [], controlPins: [], publicAncestors: [],
+    stableCheck: () => { if (materialStale) api!.subscriptionCodingWorkerRefusedV1(); },
+    inspectSubscriptionCodingWorktreeV1() {}, randomBytes: () => Buffer.from('1'.repeat(64), 'hex'),
+    observeProcessIdentity: () => {
+      now += observationDelay; observationDelay = 0;
+      return stale ? { ...identity, processStartedAt: '2026-11-05T00:00:00.000Z' } : identity;
+    },
+    process: { kill: (_pid: number, signal: string) => { signals.push(signal); death(97); } },
+    spawn: () => { void (runChild(...Object.values(childPorts)) as Promise<void>).then(() => { if (!dead) sdk = true; }).catch(() => {}); return child; },
+    createSubscriptionCredentialRedactorV1: () => ({ discard() {}, push: (b: Buffer) => b, finish: () => Buffer.alloc(0) }),
+    refuse: api.subscriptionCodingWorkerRefusedV1,
+  };
+  const code = ts.transpileModule('async function run(){let partial,owned; ' + body + '}', {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  const acquire = () => new Function(...Object.keys(parentPorts), code + ';return run();')(...Object.values(parentPorts)) as Promise<import('../../src/execution/subscription-coding-worker-v1.js').SubscriptionCodingOwnedWorkerV1>;
+  async function flushClock() { for (let n = 0; n < 100; n++) await Promise.resolve(); }
+  return { acquire, checked, exits, signals, outbound, parentFrames, proof, channel, connections,
+    delayOpenedWrite: (ms: number) => { openedWriteDelay = ms; },
+    delayNextObservation: (ms: number) => { observationDelay = ms; },
+    injectChild: (bytes: Buffer) => external(() => { channel.emit('data', bytes); }),
+    injectEOF: () => external(() => { channel.emit('end'); }),
+    holdProof: () => { holdProof = true; }, releaseProof: () => { held.splice(0).forEach(b => proof.emit('data', b)); },
+    state: () => actualProtocol?.state,
+    sdk: () => sdk, dead: () => dead, now: () => now, flush: flushClock,
+    staleIdentity: () => { stale = true; }, staleMaterial: () => { materialStale = true; },
+    suppressAck: () => { suppressAck = true; }, suppressOpened: () => { suppressOpened = true; },
+    jump: (target: number) => { now = target; },
+    async advance(target: number) {
+      for (;;) {
+        const due = [...timers].filter(([, t]) => t.due <= target).sort((a, b) => a[1].due - b[1].due)[0];
+        if (!due) break; now = due[1].due; timers.delete(due[0]); due[1].call(); await flushClock();
+      }
+      now = target; await flushClock();
+    },
+    death: () => death(0),
+  };
+}
+
+test('actual runtime bound worker survives owner publication at 16s before exact OPENED and SDK entry', async () => {
+  const runtime = await import('../../src/execution/subscription-coding-runtime-v1.js');
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'sf-owner-clock-'))); chmodSync(root, 0o700);
+  const worktree = join(root, 'worktree'); mkdirSync(worktree, { mode: 0o700 });
+  const b = { kind: 'execution-attempt' as const, runtimeSessionId: 'RT_clock', claimId: 51,
+    ownerInstanceId: 'host.local:43100:12345678-1234-4234-8234-123456789abc', modelRef: 'minimax/MiniMax-M3.1-Flash' as const,
+    sourceSha: 'a'.repeat(40), worktree, attemptId: 'ATT_worker_1', generation: 7, fenceToken: 'fence_clock' };
+  let f: ReturnType<typeof actualWorkerClockRealm> | undefined;
+  let finishBroker!: () => void;
+  const brokerClosed = new Promise<any>(resolve => { finishBroker = () => resolve({ status: 'closed', reason: 'completed', acceptedRequests: 0, responseBytes: 0, redactions: 0, terminalCode: null }); });
+  let owner: Awaited<ReturnType<typeof runtime.acquireSubscriptionCodingRuntimeV1>> | undefined;
+  try {
+    const pending = runtime.acquireSubscriptionCodingRuntimeV1({ binding: b, root: join(root, 'worker'), runtimePath: join(root, 'journal'),
+      prompt: 'Inert owner admission regression.', transcriptPath: join(root, 'output'), signal: new AbortController().signal,
+      authorityRoots: [join(root, 'authority')], writeGrants: [], readOnlyControlPaths: [] }, {
+      async deriveAuthority() { return { activationPreparedHash: 'b'.repeat(64), activationAcknowledgedHash: 'c'.repeat(64),
+        sourceSha: b.sourceSha, policySourceHash: 'd'.repeat(64), preloadHash: api!.subscriptionCodingHashV1((await import('../../src/execution/subscription-coding-worker-preload-v1.js')).SUBSCRIPTION_CODING_WORKER_PRELOAD_V1), parentIdentity: identity }; },
+      async acquireBroker({ identity: id }) { return { worker: { ...id, providerId: 'minimax', modelId: 'MiniMax-M3.1-Flash', baseUrl: 'http://127.0.0.1:49157/v1', api: 'anthropic-messages', apiKey: 'A'.repeat(43), auth: 'api-key', authHeader: true },
+        closed: brokerClosed, stop: async () => { finishBroker(); return brokerClosed; } }; },
+      async launchWorker({ material: seed }) { f = actualWorkerClockRealm(seed); return f.acquire(); },
+    });
+    owner = await pending;
+    assert.ok(f); assert.equal(ownedFs.existsSync(join(root, 'journal/worker-bound.json')), true);
+    assert.equal(f.outbound[0]?.type, 'proof'); assert.equal(f.sdk(), false);
+    await f.advance(16000);
+    assert.deepEqual(f.connections, ['192.0.2.1:443', '127.0.0.1:9', '127.0.0.1:49157'], 'only the unchanged TCP isolation probes run before publication');
+    assert.equal(f.sdk(), false, 'SDK must remain blocked until owner publication');
+    let refusal: unknown; try { owner.openGate(); } catch (error) { refusal = error; }
+    assert.equal(refusal, undefined, 'valid 16s owner publication lost original worker to startup clock; exits=' + JSON.stringify(f.exits));
+    await f.flush(); assert.equal(f.outbound.at(-1)?.type, 'opened'); assert.equal(f.state(), 'open'); assert.equal(f.sdk(), true); assert.deepEqual(f.signals, []);
+  } finally {
+    f?.death(); finishBroker(); if (owner) await owner.close('completed'); rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function waitAckFrame() { return { ...openedFrame(), type: 'owner-admission-waiting' }; }
+test('one authenticated optional wait rejects early, foreign, malformed, duplicate, replay and partial transitions', () => {
+  assert.ok(api);
+  for (const bad of [waitAckFrame(), { ...waitAckFrame(), nonce: 'f'.repeat(64) },
+    { ...waitAckFrame(), extra: true }, openedFrame(), proofFrame()]) {
+    const p = api.createSubscriptionCodingProbeProtocolV1(binding());
+    p.accept(line(proofFrame()));
+    if (bad.type !== 'owner-admission-waiting') p.waitForOwnerAdmission();
+    assert.throws(() => p.accept(line(bad)), /SUBSCRIPTION_CODING_WORKER_REFUSED/);
+    assert.equal(p.state, 'failed');
+  }
+  for (const bad of [{ ...waitAckFrame(), nonce: 'f'.repeat(64) }, { ...waitAckFrame(), extra: true },
+    { ...waitAckFrame(), identity: { ...binding().identity, generationId: 'foreign' } }]) {
+    const p = api.createSubscriptionCodingProbeProtocolV1(binding()); p.accept(line(proofFrame())); p.waitForOwnerAdmission();
+    assert.throws(() => p.accept(line(bad))); assert.equal(p.state, 'failed');
+  }
+  for (const outgoing of ['waitForOwnerAdmission', 'openGate'] as const) {
+    const p = api.createSubscriptionCodingProbeProtocolV1(binding()); p.accept(Buffer.concat([line(proofFrame()), Buffer.from('{')]));
+    assert.throws(() => p[outgoing](), /SUBSCRIPTION_CODING_WORKER_REFUSED/);
+  }
+  for (const duplicate of ['request', 'ack', 'replay', 'partial-open'] as const) {
+    const p = api.createSubscriptionCodingProbeProtocolV1(binding()); p.accept(line(proofFrame()));
+    assert.deepEqual(JSON.parse(p.waitForOwnerAdmission()), { schema: 'setfarm.subscription-coding-gate.v1', type: 'owner-admission-wait', ...binding() });
+    if (duplicate === 'request') { assert.throws(() => p.waitForOwnerAdmission()); continue; }
+    p.accept(line(waitAckFrame()));
+    if (duplicate === 'ack') assert.throws(() => p.accept(line(waitAckFrame())));
+    else if (duplicate === 'partial-open') { p.accept(Buffer.from('{')); assert.throws(() => p.openGate()); }
+    else { p.openGate(); p.accept(line(openedFrame())); assert.throws(() => p.accept(line(waitAckFrame()))); }
+    assert.equal(p.state, 'failed');
+  }
+});
+
+test('wait ACK alone never certifies closure and all original events remain necessary', () => {
+  assert.ok(api);
+  for (const phase of ['admission-wait-sent', 'admission-waiting']) {
+    const p = api.createSubscriptionCodingProbeProtocolV1(binding()), tracker = api.createSubscriptionCodingCustodyTrackerV1(identity, p);
+    p.accept(line(proofFrame())); p.waitForOwnerAdmission(); if (phase === 'admission-waiting') p.accept(line(waitAckFrame()));
+    assert.equal(tracker.status, 'pending'); assert.equal(tracker.canSignal(identity), true);
+    for (const event of ['child-exit', 'child-close', 'stdout-end', 'stdout-close', 'stderr-end'] as const) tracker.observe(event);
+    assert.equal(tracker.status, 'pending'); tracker.observe('stderr-close'); assert.equal(tracker.status, 'closed');
+    assert.throws(() => p.end()); assert.equal(tracker.status, 'custody-uncertain', 'pre-OPEN proof EOF remains a fault');
+  }
+});
+
+test('actual bodies retain READY and direct OPEN original short clocks', async () => {
+  for (const phase of ['ready', 'direct-open', 'slow-proof']) {
+    const f = actualWorkerClockRealm(); if (phase === 'slow-proof') f.holdProof();
+    const acquiring = f.acquire(); void acquiring.catch(() => {}); await f.flush();
+    if (phase === 'slow-proof') { await f.advance(9000); f.releaseProof(); await assert.rejects(acquiring); }
+    else {
+      const worker = await acquiring;
+      if (phase === 'direct-open') { worker.openGate(); await f.flush(); assert.equal(f.sdk(), true); }
+      await f.advance(8999); assert.equal(f.dead(), false);
+      await f.advance(9000); assert.equal(f.dead(), phase === 'ready');
+      if (phase === 'direct-open') { await f.advance(20000); assert.equal(f.dead(), false); }
+      f.death(); await worker.originalClosed;
+    }
+    assert.equal(f.sdk(), phase === 'direct-open');
+  }
+});
+
+test('actual wait request without ACK retains parent 10s bound and rejects its pending promise', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire(); f.suppressAck();
+  const waiting = worker.waitForOwnerAdmission(); const refused = assert.rejects(waiting, /SUBSCRIPTION_CODING_WORKER_REFUSED/);
+  await f.flush(); assert.equal(f.outbound.at(-1)?.type, 'owner-admission-waiting');
+  await f.advance(9999); assert.equal(f.dead(), false); assert.equal(f.sdk(), false);
+  await f.advance(10000); await refused; assert.equal(f.dead(), true); assert.deepEqual(f.signals, ['SIGTERM']);
+});
+
+test('actual ACK wait expires once at fixed 120s and cannot renew or enter SDK', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire();
+  await f.advance(1000); await worker.waitForOwnerAdmission(); await f.flush();
+  await f.advance(120999); assert.equal(f.dead(), false); assert.equal(f.sdk(), false);
+  await f.advance(121000); assert.equal(f.dead(), true); assert.equal(f.sdk(), false);
+  assert.throws(() => worker.openGate()); await assert.rejects(worker.waitForOwnerAdmission());
+});
+
+test('actual waited OPEN without delivered OPENED retains fresh parent 10s bound', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire(); await worker.waitForOwnerAdmission();
+  await f.advance(16000); f.suppressOpened(); worker.openGate(); await f.flush();
+  assert.equal(f.outbound.at(-1)?.type, 'opened');
+  await f.advance(25999); assert.equal(f.dead(), false);
+  await f.advance(26000); assert.equal(f.dead(), true); assert.deepEqual(f.signals, ['SIGTERM']);
+});
+
+test('actual parent checks monotonic deadlines even when timer callbacks have not run', async () => {
+  for (const transition of ['request', 'ack', 'open-wait', 'open-direct', 'opened', 'whole-lifetime']) {
+    const f = actualWorkerClockRealm(), worker = await f.acquire();
+    if (transition === 'ack') {
+      f.suppressAck(); const pending = worker.waitForOwnerAdmission(); const refused = assert.rejects(pending);
+      await f.flush(); f.jump(10000); f.proof.emit('data', line(f.outbound.at(-1))); await refused;
+    } else if (transition === 'request') { f.jump(10000); await assert.rejects(worker.waitForOwnerAdmission()); }
+    else if (transition === 'open-direct') { f.jump(10000); assert.throws(() => worker.openGate()); }
+    else {
+      await worker.waitForOwnerAdmission();
+      if (transition === 'opened') {
+        f.suppressOpened(); f.jump(16000); worker.openGate(); await f.flush();
+        f.jump(26000); f.proof.emit('data', line(f.outbound.at(-1)));
+      } else { f.jump(transition === 'whole-lifetime' ? 1800000 : 120000); assert.throws(() => worker.openGate()); }
+    }
+    await f.flush(); assert.equal(f.dead(), true, transition); if (transition !== 'opened') assert.equal(f.sdk(), false);
+  }
+});
+
+test('actual wait binds deadline to request emission rather than delayed ACK arrival', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire(); f.suppressAck();
+  const waiting = worker.waitForOwnerAdmission(); await f.flush(); await f.advance(8000);
+  f.proof.emit('data', line(f.outbound.at(-1))); await waiting;
+  await f.advance(119999); assert.equal(f.dead(), false);
+  await f.advance(120000); assert.equal(f.dead(), true); assert.equal(f.sdk(), false);
+});
+
+test('actual identity/material changes, EOF, original death and stop refuse pending or acknowledged wait', async () => {
+  for (const phase of ['before-request', 'pending', 'acknowledged']) for (const failure of ['identity', 'material', 'EOF', 'death', 'stop']) {
+    const f = actualWorkerClockRealm(), worker = await f.acquire();
+    let refusal: Promise<void> | undefined;
+    if (phase === 'pending') { f.suppressAck(); refusal = assert.rejects(worker.waitForOwnerAdmission()); await f.flush(); }
+    if (phase === 'acknowledged') await worker.waitForOwnerAdmission();
+    if (failure === 'identity') f.staleIdentity();
+    if (failure === 'material') f.staleMaterial();
+    if (failure === 'EOF') f.injectEOF();
+    if (failure === 'death') f.death();
+    if (failure === 'stop') void worker.stop('owner-abort');
+    if (phase === 'before-request') await assert.rejects(worker.waitForOwnerAdmission());
+    else if (failure === 'identity' || failure === 'material') assert.throws(() => worker.openGate());
+    await f.flush(); if (refusal) await refusal;
+    assert.equal(f.sdk(), false); f.death(); await worker.originalClosed;
+  }
+});
+
+test('actual wait and OPEN never restart the original worker lifetime', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire(); await f.advance(5000); await worker.waitForOwnerAdmission();
+  await f.advance(16000); worker.openGate(); await f.flush(); assert.equal(f.sdk(), true);
+  await f.advance(1799999); assert.equal(f.dead(), false);
+  await f.advance(1800000); assert.equal(f.dead(), true); assert.deepEqual(f.signals, ['SIGTERM']);
+});
+
+test('actual preload rejects foreign, duplicate, queued and partial phase frames before SDK entry', async () => {
+  for (const failure of ['foreign-wait', 'duplicate-wait', 'foreign-open', 'queued-open', 'partial-open', 'late-open']) {
+    const f = actualWorkerClockRealm();
+    const acquisition = f.acquire(); void acquisition.catch(() => {}); await f.flush();
+    const challenge = f.parentFrames[0]!, bind = Object.fromEntries(['nonce', 'pid', 'identity', 'materialHash', 'policyHash', 'preloadHash'].map(k => [k, challenge[k]]));
+    const wait = { schema: 'setfarm.subscription-coding-gate.v1', type: 'owner-admission-wait', ...bind };
+    const open = { ...wait, type: 'open' };
+    const worker = await acquisition;
+    if (failure === 'foreign-open') { await worker.waitForOwnerAdmission(); f.injectChild(line({ ...open, nonce: 'f'.repeat(64) })); }
+    if (failure === 'foreign-wait') f.injectChild(line({ ...wait, nonce: 'f'.repeat(64) }));
+    if (failure === 'queued-open') f.injectChild(Buffer.concat([line(wait), line(open)]));
+    if (failure === 'partial-open') f.injectChild(Buffer.concat([line(wait), Buffer.from('{')]));
+    if (failure === 'duplicate-wait') { await worker.waitForOwnerAdmission(); f.injectChild(line(wait)); }
+    if (failure === 'late-open') { await worker.waitForOwnerAdmission(); f.jump(120000); f.injectChild(line(open)); }
+    await f.flush(); assert.equal(f.dead(), true, failure); assert.equal(f.sdk(), false); f.death();
+  }
+});
+
+test('actual child rejects startup and waited OPENED at monotonic 9s even before timer callbacks', async () => {
+  const lateProof = actualWorkerClockRealm();
+  const acquiring = lateProof.acquire(); const refused = assert.rejects(acquiring);
+  lateProof.jump(9000); await lateProof.flush(); await refused;
+  assert.equal(lateProof.sdk(), false); assert.equal(lateProof.outbound.length, 0);
+  const f = actualWorkerClockRealm(), worker = await f.acquire();
+  await worker.waitForOwnerAdmission(); await f.advance(16000); f.delayOpenedWrite(9000);
+  worker.openGate(); await f.flush(); assert.equal(f.dead(), true); assert.equal(f.sdk(), false);
+});
+
+test('actual child refuses queued or partial data after the direct OPENED transition', async () => {
+  for (const bytes of [Buffer.from('{'), line({ type: 'replay' })]) {
+    const f = actualWorkerClockRealm(), worker = await f.acquire(); worker.openGate(); await f.flush();
+    assert.equal(f.sdk(), true); f.injectChild(bytes); await f.flush(); assert.equal(f.dead(), true);
+  }
+});
+
+
+test('actual waited OPEN refuses when synchronous process observation crosses parent admission deadline', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire();
+  try {
+    const waiting = worker.waitForOwnerAdmission();
+    // Parent emitted at t=0; child accepts at t=100, so its bound is still
+    // valid when observation later returns after the parent's t=120000 bound.
+    f.jump(100); await waiting;
+    f.jump(119990); f.delayNextObservation(30);
+    let refusal: unknown; try { worker.openGate(); } catch (error) { refusal = error; }
+    await f.flush();
+    assert.ok(refusal instanceof Error, 'late valid process observation must refuse before renewing the parent OPENED clock');
+    assert.equal(f.parentFrames.some(frame => frame.type === 'open'), false, 'expired parent admission cannot emit OPEN');
+    assert.equal(f.sdk(), false);
+  } finally { f.death(); await worker.originalClosed; }
+});
+
+test('actual wait request refuses when synchronous process observation crosses original startup deadline', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire();
+  try {
+    f.jump(9990); f.delayNextObservation(30);
+    const waiting = worker.waitForOwnerAdmission(); const refused = assert.rejects(waiting, /SUBSCRIPTION_CODING_WORKER_REFUSED/);
+    await f.flush(); await refused;
+    assert.equal(f.parentFrames.some(frame => frame.type === 'owner-admission-wait'), false, 'expired startup cannot emit owner wait');
+    assert.equal(f.sdk(), false);
+  } finally { f.death(); await worker.originalClosed; }
+});
+
+test('actual direct OPEN refuses when synchronous process observation crosses original startup deadline', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire();
+  try {
+    f.jump(9990); f.delayNextObservation(30);
+    let refusal: unknown; try { worker.openGate(); } catch (error) { refusal = error; }
+    await f.flush();
+    assert.ok(refusal instanceof Error, 'late valid process observation must refuse direct OPEN');
+    assert.equal(f.parentFrames.some(frame => frame.type === 'open'), false, 'expired direct path cannot emit OPEN');
+    assert.equal(f.sdk(), false);
+  } finally { f.death(); await worker.originalClosed; }
 });

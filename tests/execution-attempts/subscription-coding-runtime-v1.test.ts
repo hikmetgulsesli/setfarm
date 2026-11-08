@@ -59,6 +59,10 @@ function fixture(kind: 'execution-attempt' | 'stage-claim' = 'execution-attempt'
   const worker = { identity, child: new EventEmitter() as ChildProcess, processIdentity: { ...parentIdentity, pid: 43200 },
     isolationHash: isolation.isolationHash, isolation, closed: workerClosure.promise, originalClosed: originalClosure.promise,
     output: output.promise, stop: async (_reason: string) => { events.push('worker-stop'); },
+    async waitForOwnerAdmission() {
+      assert.equal(existsSync(join(input.runtimePath, 'worker-bound.json')), true, 'wait preceded durable binding');
+      events.push('owner-wait');
+    },
     openGate() {
       assert.equal(existsSync(join(input.runtimePath, 'worker-bound.json')), true, 'gate preceded durable binding');
       events.push('gate-open');
@@ -97,7 +101,7 @@ function fixture(kind: 'execution-attempt' | 'stage-claim' = 'execution-attempt'
 test('joint owner publishes preparation before acquisition and binds original proof before exposing gate', async () => {
   const f = fixture(); try {
     const owner = await required().acquireSubscriptionCodingRuntimeV1(f.input, f.port);
-    assert.deepEqual(f.events, ['derive-authority', 'acquire-broker', 'launch-worker']);
+    assert.deepEqual(f.events, ['derive-authority', 'acquire-broker', 'launch-worker', 'owner-wait']);
     assert.equal(owner.worker, f.worker);
     assert.match(owner.attachmentHash, /^[a-f0-9]{64}$/);
     const prepared = readFileSync(join(f.input.runtimePath, 'prepared.json'), 'utf8');
@@ -312,4 +316,56 @@ test('late startup rejection retains actual Error.ownership after abort observat
     assert.equal((error.ownership.worker as typeof f.worker).originalClosed, f.originalClosure.promise);
     f.finish(); await flush(); assert.equal((await error.ownership.closed).status, 'custody-uncertain');
   } finally { f.cleanup(); }
+});
+
+test('runtime waits for the original physical ACK after durable binding before exposing owner gate', async () => {
+  const f = fixture(); const ack = deferred<void>();
+  try {
+    f.worker.waitForOwnerAdmission = () => {
+      assert.equal(existsSync(join(f.input.runtimePath, 'worker-bound.json')), true);
+      f.events.push('wait-pending'); return ack.promise;
+    };
+    let returned = false;
+    const pending = required().acquireSubscriptionCodingRuntimeV1(f.input, f.port).then(value => { returned = true; return value; });
+    await flush(); assert.equal(returned, false); assert.equal(f.events.at(-1), 'wait-pending');
+    assert.equal(f.events.includes('gate-open'), false);
+    ack.resolve(); const owner = await pending; assert.equal(returned, true);
+    owner.openGate(); assert.equal(f.events.at(-1), 'gate-open');
+    f.finish(); assert.equal((await owner.closed).status, 'closed');
+  } finally { f.finish(); f.cleanup(); }
+});
+
+test('runtime refuses missing, malformed or rejecting physical wait and retains all acquired owners', async () => {
+  for (const method of [undefined, () => ({ then() {} }), () => Promise.reject(Error('physical wait refused'))]) {
+    const f = fixture(); try {
+      Object.assign(f.worker, { waitForOwnerAdmission: method });
+      const refused = required().acquireSubscriptionCodingRuntimeV1(f.input, f.port).then(
+        () => assert.fail('invalid physical wait admitted'), error => error);
+      await flush(); const error = await refused;
+      assert.equal(error.message, 'SUBSCRIPTION_CODING_RUNTIME_REFUSED');
+      assert.equal(error.ownership.worker, f.worker); assert.equal(error.ownership.broker, f.broker);
+      assert.equal(f.events.includes('gate-open'), false); assert.deepEqual(f.events.slice(-2), ['broker-revoke', 'worker-stop']);
+      f.finish(); assert.equal((await error.ownership.closed).status, 'custody-uncertain');
+    } finally { f.cleanup(); }
+  }
+});
+
+test('abort, original closure and original lifetime race a never-settling wait ACK without releasing custody', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const failure of ['abort', 'original', 'lifetime']) {
+    const f = fixture(); try {
+      f.worker.waitForOwnerAdmission = () => new Promise<void>(() => {});
+      const refused = required().acquireSubscriptionCodingRuntimeV1(f.input, f.port).then(
+        () => assert.fail('closed physical wait admitted'), error => error);
+      await flush(); assert.equal(existsSync(join(f.input.runtimePath, 'worker-bound.json')), true);
+      if (failure === 'abort') f.controller.abort();
+      if (failure === 'original') f.originals();
+      if (failure === 'lifetime') { t.mock.timers.tick(1799999); await flush(); assert.equal(f.events.includes('broker-revoke'), false); t.mock.timers.tick(1); }
+      await flush(); t.mock.timers.tick(2500); await flush();
+      const error = await refused;
+      assert.equal(error.ownership.worker, f.worker); assert.equal(error.ownership.worker.originalClosed, f.originalClosure.promise);
+      assert.equal((await error.ownership.closed).status, 'custody-uncertain');
+      assert.equal(f.events.includes('gate-open'), false); f.finish();
+    } finally { f.cleanup(); }
+  }
 });
