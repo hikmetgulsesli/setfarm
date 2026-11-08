@@ -301,6 +301,108 @@ async function nativeAttemptGitLocator(query: NativeGitQuery, input: Readonly<{
           && success.operationalRetry.priorClaimId===claimId(row.claim_id);
       }
     }
+    if (!acceptedCustody && custody.length === 1 && row.attempt_class === "product_implementation") {
+      // A failed accepted model successor can preserve original source custody;
+      // it never grants the successful story/dependency authority above.
+      const origins = refs.filter((ref: string) => ref.startsWith("setfarm://preparation-authority-v2/"));
+      if (origins.length === 1 && /^[a-f0-9]{64}$/.test(origins[0]!.slice("setfarm://preparation-authority-v2/".length))) {
+        const authorityHash = origins[0]!.slice("setfarm://preparation-authority-v2/".length);
+        const successors = await query.unsafe<Array<{ attempt_id: string; prior_claim_id: string;
+          prior_generation: number; prior_slice_hash: string; compilation_report_hash: string;
+          branch: string; worktree: string }>>(`
+          SELECT successor.attempt_id,prior.claim_id::text AS prior_claim_id,prior.generation AS prior_generation,
+            prior.slice_hash AS prior_slice_hash,prior.compilation_report_hash,successor.branch,successor.worktree
+          FROM execution_attempts successor
+          JOIN execution_attempts prior ON prior.attempt_id=$5 AND prior.run_id=successor.run_id
+            AND prior.step_id=successor.step_id AND prior.story_id=successor.story_id
+            AND prior.packet_hash=successor.packet_hash AND prior.compilation_report_hash=successor.compilation_report_hash
+            AND successor.generation=prior.generation+1 AND successor.slice_hash=prior.slice_hash
+            AND successor.source_before_sha=prior.source_before_sha AND successor.source_before_tree_hash=prior.source_before_tree_hash
+            AND prior.attempt_class='product_implementation' AND prior.role='developer' AND prior.disposition='inconclusive'
+            AND prior.recovery_dispatch_id IS NULL AND prior.recovery_case_revision_id IS NULL
+          JOIN runtime_completion_requests q ON q.attempt_id=successor.attempt_id AND q.claim_id=successor.claim_id
+            AND q.run_id=successor.run_id AND q.workflow_step_id=successor.step_id AND q.story_id=successor.story_id
+            AND q.output_hash=successor.output_hash AND q.state='accepted' AND q.apply_phase='effects_committed'
+            AND q.claim_outcome IN ('completed','failed')
+          JOIN claim_log current_claim ON current_claim.id=successor.claim_id AND current_claim.run_id=successor.run_id
+            AND current_claim.step_id=successor.step_id AND current_claim.story_id=successor.story_id
+            AND current_claim.agent_id=successor.agent_id AND current_claim.outcome=q.claim_outcome
+          JOIN runtime_sessions runtime ON runtime.session_id=q.runtime_session_id AND runtime.claim_id=successor.claim_id
+            AND runtime.attempt_id=successor.attempt_id AND runtime.run_id=successor.run_id
+            AND runtime.workflow_step_id=successor.step_id AND runtime.step_db_id=q.step_db_id
+            AND runtime.story_id=successor.story_id AND runtime.claim_agent_id=successor.agent_id AND runtime.state='released'
+          JOIN v3_story_claim_runtime_bindings_v1 current_binding ON current_binding.claim_id=successor.claim_id
+            AND current_binding.runtime_session_id=runtime.session_id AND current_binding.run_id=successor.run_id
+            AND current_binding.step_db_id=q.step_db_id AND current_binding.workflow_step_id='implement'
+            AND current_binding.subject_kind='story_member' AND current_binding.story_id=successor.story_id
+            AND current_binding.story_db_id=runtime.story_db_id
+          JOIN claim_log prior_claim ON prior_claim.id=prior.claim_id AND prior_claim.run_id=prior.run_id
+            AND prior_claim.step_id=prior.step_id AND prior_claim.story_id=prior.story_id
+            AND prior_claim.agent_id=prior.agent_id AND prior_claim.outcome='infra_retry'
+          JOIN runtime_sessions prior_runtime ON prior_runtime.claim_id=prior.claim_id AND prior_runtime.attempt_id=prior.attempt_id
+            AND prior_runtime.run_id=prior.run_id AND prior_runtime.workflow_step_id=prior.step_id
+            AND prior_runtime.story_id=prior.story_id AND prior_runtime.story_db_id=current_binding.story_db_id
+            AND prior_runtime.step_db_id=current_binding.step_db_id AND prior_runtime.claim_agent_id=prior.agent_id
+            AND prior_runtime.state='released'
+          JOIN v3_story_claim_runtime_bindings_v1 prior_binding ON prior_binding.claim_id=prior.claim_id
+            AND prior_binding.runtime_session_id=prior_runtime.session_id AND prior_binding.run_id=successor.run_id
+            AND prior_binding.workflow_step_id='implement' AND prior_binding.subject_kind='story_member'
+            AND prior_binding.step_db_id=prior_runtime.step_db_id AND prior_binding.story_db_id=current_binding.story_db_id
+            AND prior_binding.story_id=successor.story_id AND prior_binding.story_index=current_binding.story_index
+            AND prior_binding.story_claim_generation+1=current_binding.story_claim_generation
+            AND prior_binding.story_admission_receipt_hash=current_binding.story_admission_receipt_hash
+            AND prior_binding.story_admission_subject_hash=current_binding.story_admission_subject_hash
+          JOIN v3_preparation_authority_attempts_v2 binding ON binding.attempt_id=prior.attempt_id
+            AND binding.claim_id=prior.claim_id AND binding.slice_hash=prior.slice_hash AND binding.authority_hash=$6
+          JOIN v3_preparation_authorities_v2 authority ON authority.authority_hash=binding.authority_hash
+            AND authority.run_id=successor.run_id AND authority.step_id=successor.step_id AND authority.story_id=successor.story_id
+            AND authority.packet_hash=successor.packet_hash AND authority.compilation_report_hash=successor.compilation_report_hash
+            AND authority.base_source_sha=prior.source_before_sha AND authority.base_source_tree_hash=prior.source_before_tree_hash
+          WHERE successor.run_id=$1 AND successor.step_id=$2 AND successor.story_id=$3 AND successor.packet_hash=$4
+            AND successor.step_id='implement' AND successor.attempt_class='infrastructure_retry'
+            AND successor.role='developer' AND successor.disposition='failed' AND successor.claim_id<>prior.claim_id
+            AND successor.recovery_dispatch_id IS NULL AND successor.recovery_case_revision_id IS NULL
+            AND NOT EXISTS(SELECT 1 FROM v3_preparation_authority_attempts_v2 own_binding
+              WHERE own_binding.attempt_id=successor.attempt_id OR own_binding.claim_id=successor.claim_id)
+        `, [input.runId,row.step_id,row.story_id,row.packet_hash,input.attemptId,authorityHash]);
+        if (successors.length === 1) {
+          const successor = successors[0]!;
+          const source = await readNativeAcceptedModelSourceAuthority(query, { runId: input.runId,
+            storyId: row.story_id, packetHash: row.packet_hash, attemptId: successor.attempt_id });
+          const sourceRefs: string[] = JSON.parse(source.evidence_refs);
+          const retryHashes = sourceRefs.filter(ref => ref.startsWith("setfarm://operational-retry/"))
+            .map(ref => ref.slice("setfarm://operational-retry/".length));
+          const retryArtifacts = sourceRefs.filter(ref => ref.startsWith("setfarm://operational-retry-artifact/"))
+            .map(ref => ref.slice("setfarm://operational-retry-artifact/".length));
+          if (source.attempt_id === successor.attempt_id && source.initial_attempt_id === input.attemptId
+            && source.initial_claim_id === row.claim_id && successor.prior_claim_id === row.claim_id
+            && Number.isSafeInteger(successor.prior_generation) && source.generation === successor.prior_generation + 1
+            && source.slice_hash === successor.prior_slice_hash && source.compilation_report_hash === successor.compilation_report_hash
+            && source.authority_hash === authorityHash && source.claim_id !== row.claim_id
+            && source.initial_branch === row.branch && source.initial_worktree === row.worktree
+            && source.branch === successor.branch && source.worktree === successor.worktree
+            && source.initial_sha === sourceBefore.sha && source.initial_tree_hash === sourceBefore.treeHash
+            && source.source_before_sha === sourceBefore.sha && source.source_before_tree_hash === sourceBefore.treeHash
+            && canonicalJsonStringify(JSON.parse(source.initial_evidence_refs).filter((ref: string) =>
+              ref.startsWith(NATIVE_GIT_CUSTODY_REF_PREFIX) || ref.startsWith("setfarm://preparation-authority-v2/")))
+              === canonicalJsonStringify(refs.filter((ref: string) =>
+                ref.startsWith(NATIVE_GIT_CUSTODY_REF_PREFIX) || ref.startsWith("setfarm://preparation-authority-v2/")))
+            && retryHashes.length === 1 && /^[a-f0-9]{64}$/.test(retryHashes[0]!)
+            && retryArtifacts.length === 1 && /^[a-f0-9]{64}$/.test(retryArtifacts[0]!)
+            && sourceRefs.includes(`setfarm://artifact/${source.slice_hash}`)
+            && sourceRefs.includes(`setfarm://artifact/${retryArtifacts[0]!}`)) {
+            const indexed = await query.unsafe<Array<{ artifact_hash: string; artifact_type: string }>>(`
+              SELECT a.artifact_hash,a.artifact_type FROM semantic_artifacts a
+              WHERE a.artifact_hash=$1 AND a.artifact_type='setfarm.operational-retry-directive.v1'
+                AND EXISTS(SELECT 1 FROM run_artifact_refs ref WHERE ref.run_id=$2
+                  AND ref.artifact_hash=a.artifact_hash AND ref.ref_key=$3)
+            `, [retryArtifacts[0]!,input.runId,`OPERATIONAL_RETRY_${retryHashes[0]!.slice(0,16).toUpperCase()}`]);
+            acceptedCustody = indexed.length === 1 && indexed[0]!.artifact_hash === retryArtifacts[0]
+              && indexed[0]!.artifact_type === "setfarm.operational-retry-directive.v1";
+          }
+        }
+      }
+    }
     if(!acceptedCustody&&custody.length===1) {
       // A released accepted model RCR may own an inconclusive candidate. That
       // is sufficient immutable-source custody, never successful story status.
