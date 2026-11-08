@@ -10090,6 +10090,7 @@ async function autoVerifyMergedPrEachStories() {
        FROM runs r
        JOIN steps loop_step ON loop_step.run_id = r.id
        WHERE r.status = 'running'
+         AND r.protocol <> 'v3'
          AND loop_step.type = 'loop'
          AND COALESCE(loop_step.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
          AND NOT EXISTS (

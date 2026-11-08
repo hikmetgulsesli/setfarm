@@ -1,5 +1,9 @@
+import {EvidenceBundleV2Schema,computeEvidenceBundleHash} from "../evidence/evidence-bundle-v2.js";
+import {EvidencePlanV1Schema} from "../evidence/evidence-plan-v1.js";
+import {EvidencePlanV2Schema} from "../evidence/evidence-plan-v2.js";
+import {canonicalJsonStringify} from "../product-compiler/canonical-json.js";
 import {getSql} from "../db-pg.js";
-import {readNativeEvidenceOnlySuccessAuthority} from "../recovery/v3-evidence-only-publication.js";
+import {readNativeAcceptedModelSourceAuthority,readNativeEvidenceOnlySuccessAuthority} from "../recovery/v3-evidence-only-publication.js";
 import type {ClaimEnvelopeV1} from "./schemas/claim-envelope-v1.js";
 import {loadAndRevalidateV3StoryClaimRuntimeBindingV1} from "./v3-story-claim-runtime-binding-v1.js";
 import {loadV3ImplementationAttemptContext} from "./v3-implementation-attempt.js";
@@ -90,4 +94,131 @@ export async function readAuthenticatedSubscriptionSuperviseContractsV1(envelope
   // The driver Result is an Array subclass; retain its authenticated row data,
   // not the driver container/metadata, in the canonical contract seal.
   return frozen({subject:resolved.subject,rows:Array.from(resolved.rows),contexts});
+}
+
+/** Prior Setfarm-owned checks, bound to the authenticated subject and candidate.
+ * Separate DATA projection: never changes the original write-scope contract seal. */
+export async function readAuthenticatedSubscriptionSuperviseEvidenceV1(envelope:ClaimEnvelopeV1,runtimeSessionId:string) {
+  const contracts=await readAuthenticatedSubscriptionSuperviseContractsV1(envelope,runtimeSessionId);
+  const compiledRows=await Promise.all(contracts.rows.map(async row=>({row,
+    compiled:await loadV3ImplementationAttemptContext({runId:envelope.runId,storyId:row.story_id,attemptId:row.attempt_id})})));
+  // The authenticated loader preserves packet-v1/v2 contexts without a kind;
+  // only packet-v3 preparation produces native-dispatch-ready. Legacy packets
+  // have no native custody and retain their existing supervisor input bytes.
+  const families=compiledRows.map(({compiled})=>compiled.kind==="native-dispatch-ready"
+    &&compiled.slice.schema==="setfarm.implementation-slice.v2"&&compiled.evidencePlan.schema==="setfarm.evidence-plan.v2"?"native"
+    :compiled.kind===undefined&&compiled.slice.schema==="setfarm.implementation-slice.v1"
+      &&compiled.evidencePlan.schema==="setfarm.evidence-plan.v1"?"legacy":refuse());
+  if(new Set(families).size!==1)refuse(); // Never publish a partial final-product snapshot.
+  if(families[0]==="legacy")return undefined;
+  const members=[];
+  for(const {row,compiled} of compiledRows) {
+    const attempt=compiled.attempt;
+    const context=contracts.contexts.find(value=>value.storyDbId===row.story_db_id);
+    const plan=compiled.evidencePlan.schema==="setfarm.evidence-plan.v2"
+      ?EvidencePlanV2Schema.parse(compiled.evidencePlan):EvidencePlanV1Schema.parse(compiled.evidencePlan);
+    if(!context||context.storyClaimGeneration!==row.story_claim_generation
+      ||context.sliceHash!==compiled.sliceHash||canonicalJsonStringify(context.slice)!==canonicalJsonStringify(compiled.slice)
+      ||attempt.attemptId!==row.attempt_id||attempt.runId!==envelope.runId||attempt.storyId!==row.story_id
+      ||attempt.stepId!=="implement"||attempt.packetHash!==compiled.packetHash||attempt.sliceHash!==compiled.sliceHash
+      ||!attempt.sourceAfter||plan.packetHash!==compiled.packetHash||plan.sliceHash!==compiled.sliceHash
+      ||plan.storyId!==row.story_id)refuse();
+    const member=await getSql().begin(async tx=>{
+      const subject=await loadAndRevalidateV3StoryClaimRuntimeBindingV1(tx,{claimId:envelope.claimId,runtimeSessionId,
+        runId:envelope.runId,stepDbId:envelope.stepId,workflowStepId:"supervise"});
+      if(canonicalJsonStringify(subject)!==canonicalJsonStringify(contracts.subject))refuse();
+      const locator={runId:envelope.runId,storyId:row.story_id,attemptId:row.attempt_id,packetHash:compiled.packetHash};
+      // Model custody is not PASS. The evidence and actual story acceptance
+      // below must independently reproduce this exact candidate and result.
+      const authority=attempt.attemptClass==="evidence_only"
+        ?await readNativeEvidenceOnlySuccessAuthority(tx,{...locator,stepId:"implement"})
+        :await readNativeAcceptedModelSourceAuthority(tx,locator);
+      const stored=await tx.unsafe<Array<{evidence_bundle_hash:string;evidence_id:string;run_id:string;story_id:string;
+        attempt_id:string;packet_hash:string;slice_hash:string;source_sha:string;source_tree_hash:string;
+        aggregate_verdict:string;payload:unknown;story_db_id:string;story_claim_generation:number;story_output:string;
+        claim_id:string;generation:number}>>(`
+        SELECT bundle.*,s.id AS story_db_id,s.claim_generation AS story_claim_generation,s.output AS story_output,
+          a.claim_id::text,a.generation
+        FROM evidence_bundles bundle
+        JOIN execution_attempts a ON a.attempt_id=bundle.attempt_id AND a.run_id=bundle.run_id
+          AND a.story_id=bundle.story_id AND a.packet_hash=bundle.packet_hash AND a.slice_hash=bundle.slice_hash
+          AND a.source_after_sha=bundle.source_sha AND a.source_after_tree_hash=bundle.source_tree_hash
+          AND a.evidence_refs::jsonb ? ('setfarm://evidence-bundle/' || bundle.evidence_bundle_hash)
+        JOIN stories s ON s.id=$4 AND s.run_id=a.run_id AND s.story_id=a.story_id AND s.claim_generation=$5
+          AND s.status IN ('done','verified')
+        WHERE bundle.run_id=$1 AND bundle.story_id=$2 AND bundle.attempt_id=$3
+      `,[envelope.runId,row.story_id,row.attempt_id,row.story_db_id,row.story_claim_generation]);
+      if(stored.length!==1)refuse();
+      const data=stored[0]!,bundle=EvidenceBundleV2Schema.parse(data.payload),bundleHash=computeEvidenceBundleHash(bundle);
+      const source=attempt.sourceAfter!,refs=attempt.evidenceRefs.filter(ref=>ref.startsWith("setfarm://evidence-bundle/"));
+      if(data.evidence_bundle_hash!==bundleHash||data.evidence_id!==bundle.evidenceId
+        ||data.run_id!==envelope.runId||bundle.runId!==envelope.runId
+        ||data.story_id!==row.story_id||bundle.storyId!==row.story_id
+        ||data.story_db_id!==row.story_db_id||data.story_claim_generation!==row.story_claim_generation
+        ||data.attempt_id!==attempt.attemptId||bundle.attemptId!==attempt.attemptId
+        ||Number(data.claim_id)!==attempt.claimId||data.generation!==attempt.generation
+        ||data.packet_hash!==compiled.packetHash||bundle.packetHash!==compiled.packetHash
+        ||data.slice_hash!==compiled.sliceHash||bundle.sliceHash!==compiled.sliceHash
+        ||data.source_sha!==source.sha||data.source_tree_hash!==source.treeHash
+        ||canonicalJsonStringify(bundle.sourceRevision)!==canonicalJsonStringify(source)
+        ||data.aggregate_verdict!==bundle.aggregateVerdict||bundle.aggregateVerdict!=="pass"
+        ||canonicalJsonStringify(refs)!==canonicalJsonStringify([`setfarm://evidence-bundle/${bundleHash}`]))refuse();
+      const required=compiled.slice.schema==="setfarm.implementation-slice.v2"
+        ?compiled.slice.contract.product.evidencePredicates.filter(predicate=>predicate.required&&compiled.slice.story.evidenceRefs.includes(predicate.id))
+        :compiled.slice.requiredEvidence;
+      const requiredRefs=[...plan.predicateRefs,...plan.commands.map(command=>`EVID_COMMAND_${command.commandRef}`)];
+      for(const predicateRef of plan.predicateRefs) {
+        const predicate=required.find(value=>value.id===predicateRef),flows=plan.flows.filter(flow=>flow.predicateRefs.includes(predicateRef));
+        const actionRefs=[...new Set(flows.map(flow=>flow.actionRef))],controlRefs=[...new Set(flows.map(flow=>flow.controlRef))];
+        // The native runner aggregates one result across all physical flows.
+        // Ambiguous physical identity is omitted there, never invented here.
+        const actionRef=plan.schema==="setfarm.evidence-plan.v2"?(actionRefs.length===1?actionRefs[0]:undefined):flows[0]?.actionRef;
+        const controlRef=plan.schema==="setfarm.evidence-plan.v2"?(controlRefs.length===1?controlRefs[0]:undefined):flows[0]?.controlRef;
+        const results=bundle.predicates.filter(value=>value.predicateRef===predicateRef);
+        if(!predicate||results.length!==1||!results[0]!.required||results[0]!.verdict!=="pass"
+          ||results[0]!.invariantRef!==`INV_${predicate.kind.toUpperCase()}`
+          ||results[0]!.actionRef!==actionRef||results[0]!.controlRef!==controlRef)refuse();
+      }
+      for(const command of plan.commands) {
+        const results=bundle.predicates.filter(value=>value.predicateRef===`EVID_COMMAND_${command.commandRef}`);
+        if(results.length!==1||!results[0]!.required||results[0]!.verdict!=="pass"
+          ||results[0]!.invariantRef!==`INV_COMMAND_${command.kind.toUpperCase()}`
+          ||!results[0]!.observationRefs.some(ref=>bundle.observations.some(observation=>observation.observationRef===ref
+            &&observation.kind==="command"&&observation.commandRef===command.commandRef&&observation.exitCode===0)))refuse();
+      }
+      if(bundle.predicates.some(predicate=>predicate.required&&!requiredRefs.includes(predicate.predicateRef)))refuse();
+      const acceptance=JSON.parse(data.story_output);
+      if(acceptance.schema!=="setfarm.v3-story-acceptance-record.v1"||acceptance.storyId!==row.story_id
+        ||acceptance.attemptId!==attempt.attemptId||acceptance.packetHash!==compiled.packetHash
+        ||acceptance.sliceHash!==compiled.sliceHash||canonicalJsonStringify(acceptance.sourceRevision)!==canonicalJsonStringify(source)
+        ||acceptance.evidenceBundleRef!==`setfarm://evidence-bundle/${bundleHash}`||acceptance.aggregateVerdict!==bundle.aggregateVerdict
+        ||acceptance.findingSetRef!==null||acceptance.failureClass!==null)refuse();
+      let provenance;
+      if("sourceOwner" in authority) {
+        if(authority.attemptId!==attempt.attemptId||authority.claimId!==attempt.claimId||authority.generation!==attempt.generation
+          ||authority.storyDbId!==row.story_db_id||authority.storyClaimGeneration!==row.story_claim_generation
+          ||authority.sliceHash!==compiled.sliceHash||authority.outputHash!==bundleHash
+          ||canonicalJsonStringify(authority.sourceAfter)!==canonicalJsonStringify(source)
+          ||authority.storyOutput!==data.story_output||authority.acceptanceOutput!==data.story_output)refuse();
+        provenance={kind:"native_evidence_refresh",claimId:authority.claimId,sourceOwnerAttemptId:authority.sourceOwner.attemptId,
+          sourceOwnerClaimId:authority.sourceOwner.claimId,evidenceRefresh:authority.evidenceRefresh};
+      }else{
+        if(authority.attempt_id!==attempt.attemptId||Number(authority.claim_id)!==attempt.claimId
+          ||authority.generation!==attempt.generation||authority.story_db_id!==row.story_db_id
+          ||authority.slice_hash!==compiled.sliceHash||authority.source_after_sha!==source.sha
+          ||authority.source_after_tree_hash!==source.treeHash||authority.output_hash!==attempt.outputHash
+          ||acceptance.agentOutputHash!==authority.output_hash
+          ||canonicalJsonStringify(JSON.parse(authority.evidence_refs))!==canonicalJsonStringify(attempt.evidenceRefs))refuse();
+        provenance={kind:"accepted_model",requestId:authority.request_id,claimId:attempt.claimId,
+          outputHash:authority.output_hash,completionPlanHash:authority.completion_plan_hash};
+      }
+      return {storyDbId:row.story_db_id,storyId:row.story_id,storyClaimGeneration:row.story_claim_generation,
+        attemptId:attempt.attemptId,attemptGeneration:attempt.generation,authority:provenance,
+        evidenceBundleHash:bundleHash,requiredPredicateRefs:requiredRefs,bundle};
+    });
+    members.push(member);
+  }
+  // Canonical serialization rejects driver/custom prototypes; a JSON roundtrip
+  // returns own DATA only, with no driver containers or authority capabilities.
+  return frozen(JSON.parse(canonicalJsonStringify({subject:contracts.subject,members})));
 }
