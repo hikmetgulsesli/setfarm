@@ -58,3 +58,7 @@ The section explains that these are prior Setfarm-owned checks for precisely the
 - `tests/execution-attempts/subscription-workflow-transport-v1.test.ts`: actual final-input assembly and existing canonical/readable transport integration.
 
 Verification must first fail on the existing input assembly omitting accepted evidence, not on a missing new symbol. Exercise genuine production reader/schema/hash/source-authority code with inert external store/effect boundaries; never stub a positive authority oracle. Be explicit that component fixtures are not live DB authority qualification. The next real run supplies that qualification.
+
+## External-review packet compatibility refinement
+
+PR366 comment4507890023 distinguishes compiled packet family from semantic-version admission. The sealed loader still has explicit legacy product-build-packet v1/v2 paths without native prep-v2/custody. Preserve those paths: authenticate existing contracts and load the actual compiled context, then project new evidence only for the native-dispatch-ready family. An explicit supported all-legacy family returns no new section and retains prior input byte behavior. Unknown or mixed incompatible families refuse; a native family with missing/tampered material still refuses. Never catch provenance errors to downgrade. This does not add legacy authority or upgrade historical pinned runs. Tests must use genuine native and legacy compiled contexts instead of a V1 slice with synthetic native provenance.

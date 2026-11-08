@@ -170,8 +170,8 @@ it("exact nested owned file parents are prepared without files or symlink traver
 // schemas; importing this test module also keeps its contract regressions active.
 import { superviseEvidenceComponentFixture } from './subscription-supervise-scope-v1.test.js';
 
-async function assembleSupervisorInput(options:Readonly<{runtime?:string;protocol?:string;stepId?:string;missingPair?:boolean;modulePrompt?:string}>= {}) {
-  const f=await superviseEvidenceComponentFixture(),ts=f.ts;
+async function assembleSupervisorInput(options:Readonly<{runtime?:string;protocol?:string;stepId?:string;missingPair?:boolean;modulePrompt?:string;legacyPacketVersion?:1|2}>= {}) {
+  const f=await superviseEvidenceComponentFixture(options.legacyPacketVersion?{legacyPacketVersion:options.legacyPacketVersion}:undefined),ts=f.ts;
   const file=new URL('../../src/installer/step-ops.ts',import.meta.url),source=readFileSync(file,'utf8');
   const tree=ts.createSourceFile(file.pathname,source,ts.ScriptTarget.ESNext,true);
   const candidates:any[]=[];
@@ -237,4 +237,12 @@ it('accepted evidence remains intact when complete assembly exceeds existing sta
   const {input,f}=await assembleSupervisorInput({modulePrompt:'\t'.repeat(2*1024*1024)});
   assert.ok(input.includes(f.bundleHash));assert.ok(input.includes(f.completionPlan.requestId));
   assert.throws(()=>required('planSubscriptionWorkflowHandoffV1')(stage('supervise','supervisor','/nonexistent-supervisor-capacity',input)),/CAPACITY/);
+});
+
+for(const version of [1,2] as const)it(`accepted legacy packet v${version} final assembly keeps exact previous input bytes`,async()=>{
+  const expected=(await assembleSupervisorInput({runtime:'codex',legacyPacketVersion:version})).input;
+  const actual=await assembleSupervisorInput({legacyPacketVersion:version});
+  assert.equal(actual.input,expected);assert.equal(actual.reads,1);
+  assert.equal(actual.f.state.nativeAuthorityQueries,0);
+  assert.ok(!actual.input.includes('SETFARM_ACCEPTED_IMPLEMENTATION_EVIDENCE'));
 });

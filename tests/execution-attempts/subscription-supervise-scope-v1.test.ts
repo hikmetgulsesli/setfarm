@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { it } from "node:test";
+import { after, it } from "node:test";
 import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 let api: Record<string,any>|undefined;
@@ -97,17 +97,26 @@ it("authenticated contract reader still refuses duplicate membership and forged 
   await assert.rejects(valid.readForged(),/SUBSCRIPTION_SUPERVISE_CONTRACTS_REFUSED/);
 });
 
+let nativeComponentFixture:Promise<any>|undefined;
+async function defaultNativeComponentFixture() {
+  nativeComponentFixture??=import('../evidence/native-packet-v3-evidence-fixture.js').then(api=>api.nativeBrowserFixture());
+  return nativeComponentFixture;
+}
+after(async()=>{if(nativeComponentFixture)(await nativeComponentFixture).cleanup();});
+
 /** Component boundary: genuine readers/schema/hash/plan, inert SQL and artifact
  * storage. This proves projection integrity, not live database join authority. */
-export async function superviseEvidenceComponentFixture(native?:{slice:any;sliceHash:string}) {
+export async function superviseEvidenceComponentFixture(native?:{slice?:any;sliceHash?:string;compilerInput?:any;legacyPacketVersion?:1|2}) {
   const [{readFileSync},tsModule,crypto,canonical,bundles,plans,modelAuthority,promptContracts,contextOps]=await Promise.all([
     import('node:fs'),import('typescript'),import('node:crypto'),import('../../src/product-compiler/canonical-json.js'),
     import('../../src/evidence/evidence-bundle-v2.js'),import('../../src/evidence/evidence-plan-v1.js'),
     import('../../src/recovery/v3-evidence-only-publication.js'),import('../../src/installer/prompt-contracts.js'),
     import('../../src/installer/context-ops.js')]);
   const digest=(text:string)=>crypto.createHash('sha256').update(text).digest('hex');
-  const f=fixture(),slice=native?.slice??f.contexts[0]!.slice,runId='run-supervise',attemptId='ATT_supervise-evidence-00001';
-  const sliceHash=native?.sliceHash??'a'.repeat(64),packetHash=slice.packetHash;
+  const legacy=native?.legacyPacketVersion?await legacyCompiledSuperviseContext(native.legacyPacketVersion):undefined;
+  if(!legacy&&!native?.slice)native=await defaultNativeComponentFixture();
+  const f=fixture(),slice=legacy?.compiled.slice??native?.slice??f.contexts[0]!.slice,runId='run-supervise',attemptId='ATT_supervise-evidence-00001';
+  const sliceHash=legacy?.compiled.sliceHash??native?.sliceHash??'a'.repeat(64),packetHash=slice.packetHash;
   const plansV2=await import('../../src/evidence/evidence-plan-v2.js');
   const evidencePlan=slice.schema==='setfarm.implementation-slice.v2'?plansV2.compileEvidencePlanV2({slice,sliceHash}):plans.compileEvidencePlanV1({slice,sliceHash});
   const sourceBefore={sha:'1'.repeat(40),treeHash:'2'.repeat(40)},sourceAfter={sha:'3'.repeat(40),treeHash:'4'.repeat(40)};
@@ -159,12 +168,15 @@ export async function superviseEvidenceComponentFixture(native?:{slice:any;slice
     aggregate_verdict:'pass',payload:bundle,story_db_id:f.subject.storyDbId,story_claim_generation:4,
     story_output:canonical.canonicalJsonStringify(acceptance),claim_id:'11',generation:1};
   const state={subject:f.subject as any,members:[member],bundles:[stored],model,attempt,acceptance,
-    rcrState:'accepted',applyPhase:'effects_committed',runtimeState:'released',compiled:{attempt,slice,sliceHash,packetHash,evidencePlan},
-    nativeRow:undefined as any,nativeSource:undefined as any,nativeCandidate:undefined as any};
+    rcrState:'accepted',applyPhase:'effects_committed',runtimeState:'released',compiled:{kind:'native-dispatch-ready',attempt,slice,sliceHash,packetHash,evidencePlan},
+    nativeRow:undefined as any,nativeSource:undefined as any,nativeCandidate:undefined as any,nativeAuthorityQueries:0,compiledByAttempt:undefined as Map<string,any>|undefined};
+  if(legacy){state.compiled=legacy.compiled as any;state.model.evidence_refs=JSON.stringify(legacy.compiled.attempt.evidenceRefs);
+    state.model.initial_evidence_refs=state.model.evidence_refs;}
   const tx={unsafe:async(query:string,params:unknown[])=>{
     if(query.includes('bundle.payload AS bundle_payload')&&query.includes('delivery.terminal_result'))return state.nativeRow?[state.nativeRow]:[];
     if(query.includes('WITH RECURSIVE source_revision_history'))return state.nativeSource?[state.nativeSource]:[];
     if(query.includes('initial.attempt_id AS initial_attempt_id')) {
+      state.nativeAuthorityQueries++;
       assert.deepEqual(params.slice(0,4),[attemptId,runId,slice.storyId,packetHash]);
       return state.rcrState==='accepted'&&state.applyPhase==='effects_committed'&&state.runtimeState==='released'?[state.model]:[];
     }
@@ -178,7 +190,7 @@ export async function superviseEvidenceComponentFixture(native?:{slice:any;slice
   const tree=ts.createSourceFile('contracts.ts',source,ts.ScriptTarget.ESNext,true);
   const functions=tree.statements.filter(ts.isFunctionDeclaration).map(node=>node.getText(tree).replace(/^export\s+/, '')).join('\n');
   const ports={getSql:()=>({begin:async(body:any)=>body(tx)}),loadAndRevalidateV3StoryClaimRuntimeBindingV1:async()=>state.subject,
-    loadV3ImplementationAttemptContext:async()=>state.compiled,...canonical,...bundles,...plans,...plansV2,
+    loadV3ImplementationAttemptContext:async(input:any)=>state.compiledByAttempt?.get(input.attemptId)??state.compiled,...canonical,...bundles,...plans,...plansV2,
     readNativeAcceptedModelSourceAuthority:modelAuthority.readNativeAcceptedModelSourceAuthority,
     readNativeEvidenceOnlySuccessAuthority:modelAuthority.readNativeEvidenceOnlySuccessAuthority};
   const compiled=ts.transpileModule(functions,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
@@ -236,7 +248,7 @@ export async function superviseEvidenceComponentFixture(native?:{slice:any;slice
       payload:verified,claim_id:'22',generation:2,story_output:storyOutput}];
     return {verifierId,verifiedHash};
   }
-  return {state,readers,envelope,enableNativeVerifier,read:()=>readers.evidence(envelope,'RTS_supervise-fixture'),bundle,bundleHash,completionPlan,sourceAfter,
+  return {state,readers,envelope,enableNativeVerifier,legacyPacket:legacy?.packet,nativePacket:native?.compilerInput?.packet,read:()=>readers.evidence(envelope,'RTS_supervise-fixture'),bundle,bundleHash,completionPlan,sourceAfter,
     canonical,bundles,ports,promptContracts,contextOps,ts};
 }
 
@@ -349,4 +361,64 @@ it('canonical passing bundles cannot omit required coverage or cross predicate i
     f.state.model.evidence_refs=JSON.stringify(f.state.attempt.evidenceRefs);
     await assert.rejects(f.read(),/REFUSED/,change);
   }
+});
+
+/** Actual legacy context loader with inert packet/artifact/attempt storage. The
+ * sealed packet port is schema-checked; no native preparation/custody exists. */
+async function legacyCompiledSuperviseContext(version:1|2,storyId='US-001',attemptId='ATT_supervise-evidence-00001') {
+  const [api,canonical,planApi,v1,v2]=await Promise.all([import('../../src/execution/v3-implementation-attempt.js'),
+    import('../../src/product-compiler/canonical-json.js'),import('../../src/evidence/evidence-plan-v1.js'),
+    import('../../src/product-compiler/schemas/product-build-packet-v1.js'),import('../../src/product-compiler/schemas/product-build-packet-v2.js')]);
+  const values=buildMinimalValidContracts(),producer={pass:'legacy-packet-compiler',codeSha:'5840ae3',toolVersions:{}};
+  const packet=version===1?v1.ProductBuildPacketV1Schema.parse(values.packet):v2.ProductBuildPacketV2Schema.parse({
+    ...values.packet,schema:'setfarm.product-build-packet.v2',packetVersion:2,designSourceClosureHash:'8'.repeat(64)});
+  const packetHash=canonical.hashCanonicalJson({schema:'setfarm.semantic-artifact-envelope.v1',artifactType:packet.schema,producer,payload:packet});
+  const slice=ImplementationSliceV1Schema.parse({...values.implementationSlice,packetHash,storyId,story:{...values.implementationSlice.story,id:storyId}});
+  const sliceEnvelope={schema:'setfarm.semantic-artifact-envelope.v1',artifactType:slice.schema,producer,payload:slice};
+  const sliceHash=canonical.hashCanonicalJson(sliceEnvelope),plan=planApi.compileEvidencePlanV1({slice,sliceHash});
+  const planEnvelope={schema:'setfarm.semantic-artifact-envelope.v1',artifactType:plan.schema,producer,payload:plan};
+  const planHash=canonical.hashCanonicalJson(planEnvelope),now='2026-11-08T20:00:00.000Z';
+  const {ExecutionAttemptV1Schema}=await import('../../src/execution/schemas/execution-attempt-v1.js');
+  const attempt=ExecutionAttemptV1Schema.parse({schema:'setfarm.execution-attempt.v1',attemptId,claimId:11,
+    runId:'run-supervise',stepId:'implement',storyId:slice.storyId,generation:1,fenceToken:'1'.repeat(64),attemptClass:'product_implementation',
+    packetHash,compilationReportHash:'7'.repeat(64),sliceHash,sourceBefore:{sha:'1'.repeat(40),treeHash:'2'.repeat(40)},
+    sourceAfter:{sha:'3'.repeat(40),treeHash:'4'.repeat(40)},role:'developer',agentId:'feature-dev_developer',branch:'fixture-branch',
+    worktree:'/project/fixture',lease:{acquiredAt:now,expiresAt:now,heartbeatAt:now},disposition:'produced_delta',
+    outputHash:'9'.repeat(64),evidenceRefs:['setfarm://claim-log/11',`setfarm://artifact/${sliceHash}`,`setfarm://artifact/${planHash}`],createdAt:now,updatedAt:now});
+  const sealed={runId:attempt.runId,packetHash,producer,packet,productSpec:values.productSpec,designGraph:values.designGraph,
+    buildTopology:values.buildTopology,storyPlan:values.storyPlan,refs:{compilationReport:attempt.compilationReportHash}};
+  const compiler=api.createV3ImplementationAttemptCompiler({readPacket:async()=>sealed,findAttempt:async()=>attempt,
+    readArtifact:async(hash:string)=>{if(hash===sliceHash)return sliceEnvelope;if(hash===planHash)return planEnvelope;throw Error('UNEXPECTED_LEGACY_ARTIFACT');},
+    publish:async()=>{throw Error('UNEXPECTED_LEGACY_PUBLICATION');},addRunRef:async()=>{throw Error('UNEXPECTED_LEGACY_REF');},
+    reserveAttempt:async()=>{throw Error('UNEXPECTED_LEGACY_RESERVATION');},captureSource:async()=>{throw Error('UNEXPECTED_LEGACY_SOURCE');},
+    readDependencies:async()=>{throw Error('UNEXPECTED_LEGACY_DEPENDENCIES');}} as any);
+  const compiled=await compiler.loadAttemptContext({runId:attempt.runId,storyId:attempt.storyId,attemptId:attempt.attemptId});
+  assert.equal(compiled.kind,undefined);assert.equal(compiled.slice.schema,'setfarm.implementation-slice.v1');
+  assert.equal(compiled.attempt.evidenceRefs.some(ref=>ref.includes('native-git-custody')||ref.includes('preparation-authority-v2')),false);
+  return {packet,compiled};
+}
+
+for(const version of [1,2] as const)it(`accepted legacy packet v${version} preserves supervisor input compatibility without native custody`,async()=>{
+  const f=await superviseEvidenceComponentFixture({legacyPacketVersion:version});
+  assert.equal(f.legacyPacket?.schema,`setfarm.product-build-packet.v${version}`);
+  const old=await f.readers.contracts(f.envelope,'RTS_supervise-fixture');
+  assert.equal(old.rows.length,1,'existing authenticated membership accepts this legacy lane');
+  assert.equal(await f.read(),undefined,'supported legacy context has no new native evidence snapshot');
+  assert.equal(f.state.nativeAuthorityQueries,0,'legacy family must not invoke native-only accepted-source authority');
+});
+
+it('native packet missing custody or tampered preparation family still refuses without compatibility fallback',async()=>{
+  for(const mutate of [(f:any)=>{f.state.model.initial_evidence_refs='[]';},
+    (f:any)=>{f.state.model.authority_hash='9'.repeat(64);},(f:any)=>{delete f.state.compiled.kind;}]){
+    const f=await superviseEvidenceComponentFixture();assert.equal(f.nativePacket.schema,'setfarm.product-build-packet.v3');
+    mutate(f);await assert.rejects(f.read(),/PROVENANCE_INVALID|REFUSED/);
+  }
+});
+it('final product refuses mixed native and legacy compiled members without a partial evidence snapshot',async()=>{
+  const f=await superviseEvidenceComponentFixture(),legacy=await legacyCompiledSuperviseContext(2,'US-002','ATT_legacy-second-member-00001');
+  f.state.subject={kind:'final_product'};
+  f.state.members.push({story_db_id:'story-db-2',story_id:'US-002',story_claim_generation:4,attempt_id:legacy.compiled.attempt.attemptId});
+  f.state.compiledByAttempt=new Map([[f.state.compiled.attempt.attemptId,f.state.compiled],[legacy.compiled.attempt.attemptId,legacy.compiled]]);
+  await assert.rejects(f.read(),/SUBSCRIPTION_SUPERVISE_CONTRACTS_REFUSED/);
+  assert.equal(f.state.nativeAuthorityQueries,0,'mixed-family preflight refuses before selecting partial native evidence');
 });

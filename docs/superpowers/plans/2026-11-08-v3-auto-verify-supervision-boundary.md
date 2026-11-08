@@ -84,3 +84,10 @@ resolvedInput += "\n\nSETFARM_ACCEPTED_IMPLEMENTATION_EVIDENCE\n"
 ## Combined delivery boundary
 
 Both confirmed causes belong to the same observed supervisor failure: the model lacked accepted evidence, and publishing its valid retry then met an invalid state created by the background producer. Keep one scoped branch/review/clean-main build/next rollout. Task2 is not authority to change model behavior, require extra speculative checks, or manually rescue the current generated project.
+
+### External review fix wave: compiled-family compatibility
+
+- [x] Genuine RED: real legacy compiler.loadAttemptContext fixtures for packet v1 and v2 show the existing new reader incorrectly calling native-only provenance and refusing. Assert no new native-authority call/refusal and unchanged final input.
+- [x] Select from authenticated sealed compiled discriminator: native-dispatch-ready gets full validated evidence; explicitly supported all-legacy gets no new section; unknown/mixed incompatible context refuses. Native missing/tampered authority never downgrades.
+- [x] Upgrade default component fixtures to genuine native compiler output. Preserve exact old contract seal and all prior native/negative/assembly/materialization controls.
+- [x] Run the same two focused files and noEmit, freeze fix range, then one scoped independent re-review before delivery. No Task1 rerun, new authority framework or live effects.

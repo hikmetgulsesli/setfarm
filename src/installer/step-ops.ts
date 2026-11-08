@@ -7109,7 +7109,7 @@ async function claimSingleStep(
   if (process.env.SETFARM_AGENT_RUNTIME === "subscription" && runProtocol?.protocol === "v3" && step.step_id === "supervise") {
     if (!singleStepClaimEnvelope || !singleStepRuntime) throw new Error("SUBSCRIPTION_SUPERVISE_EVIDENCE_CLAIM_REQUIRED");
     const evidence = await readAuthenticatedSubscriptionSuperviseEvidenceV1(singleStepClaimEnvelope, singleStepRuntime.sessionId);
-    resolvedInput += "\n\nSETFARM_ACCEPTED_IMPLEMENTATION_EVIDENCE\n"
+    if (evidence !== undefined) resolvedInput += "\n\nSETFARM_ACCEPTED_IMPLEMENTATION_EVIDENCE\n"
       + "Prior Setfarm-owned checks apply only to the listed candidate and predicates. Assess new findings independently.\n"
       + canonicalJsonStringify(evidence);
   }

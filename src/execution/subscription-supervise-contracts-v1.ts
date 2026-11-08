@@ -100,9 +100,19 @@ export async function readAuthenticatedSubscriptionSuperviseContractsV1(envelope
  * Separate DATA projection: never changes the original write-scope contract seal. */
 export async function readAuthenticatedSubscriptionSuperviseEvidenceV1(envelope:ClaimEnvelopeV1,runtimeSessionId:string) {
   const contracts=await readAuthenticatedSubscriptionSuperviseContractsV1(envelope,runtimeSessionId);
+  const compiledRows=await Promise.all(contracts.rows.map(async row=>({row,
+    compiled:await loadV3ImplementationAttemptContext({runId:envelope.runId,storyId:row.story_id,attemptId:row.attempt_id})})));
+  // The authenticated loader preserves packet-v1/v2 contexts without a kind;
+  // only packet-v3 preparation produces native-dispatch-ready. Legacy packets
+  // have no native custody and retain their existing supervisor input bytes.
+  const families=compiledRows.map(({compiled})=>compiled.kind==="native-dispatch-ready"
+    &&compiled.slice.schema==="setfarm.implementation-slice.v2"&&compiled.evidencePlan.schema==="setfarm.evidence-plan.v2"?"native"
+    :compiled.kind===undefined&&compiled.slice.schema==="setfarm.implementation-slice.v1"
+      &&compiled.evidencePlan.schema==="setfarm.evidence-plan.v1"?"legacy":refuse());
+  if(new Set(families).size!==1)refuse(); // Never publish a partial final-product snapshot.
+  if(families[0]==="legacy")return undefined;
   const members=[];
-  for(const row of contracts.rows) {
-    const compiled=await loadV3ImplementationAttemptContext({runId:envelope.runId,storyId:row.story_id,attemptId:row.attempt_id});
+  for(const {row,compiled} of compiledRows) {
     const attempt=compiled.attempt;
     const context=contracts.contexts.find(value=>value.storyDbId===row.story_db_id);
     const plan=compiled.evidencePlan.schema==="setfarm.evidence-plan.v2"
