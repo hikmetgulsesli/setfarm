@@ -426,12 +426,32 @@ function projectStorySourceMap(
     const fileByRef = new Map(files.map((file) => [file.pathRef, file] as const));
     for (const screen of parsed.data.screens) {
       const file = fileByRef.get(screen.pathRef);
+      // The screen remains the sealed design witness. Only an exact generated
+      // repair may bind different current bytes for that same owned path.
+      const recovery = input.recovery;
+      const delta = recovery?.expectedSourceDelta;
+      const change = delta?.changes.find(candidate =>
+        candidate.pathRef === screen.pathRef && candidate.path === screen.path);
+      const currentRecoveryFile = Boolean(
+        file && recovery && delta && "mode" in delta && delta.mode === "generated_repair"
+        && delta.allowedPaths.includes(screen.path)
+        && change?.before.presence === "present" && change.before.contentHash === file.contentHash
+        && recovery.sourceRevision.sha === input.sourceRevision.sha
+        && recovery.sourceRevision.treeHash === input.sourceRevision.treeHash
+        && recovery.findingSet.packetHash === input.packetHash
+        && recovery.findingSet.storyId === input.storyId
+        && recovery.findingSet.sourceRevision.sha === input.sourceRevision.sha
+        && recovery.findingSet.sourceRevision.treeHash === input.sourceRevision.treeHash
+        && recovery.findingSet.findings.some(finding => finding.status === "open"
+          && finding.sourceLocators.some(locator =>
+            locator.path === screen.path && locator.contentHash === file.contentHash)),
+      );
       if (
         !file
         || file.role !== "owned"
         || file.path !== screen.path
         || file.presence !== "present"
-        || file.contentHash !== screen.contentHash
+        || (file.contentHash !== screen.contentHash && !currentRecoveryFile)
       ) {
         diagnostics.push(diagnostic(
           "SLICE_V2_STORY_SOURCE_MAP_INVALID",
