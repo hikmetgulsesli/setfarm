@@ -1623,7 +1623,7 @@ describe("single-step claim_log lifecycle", () => {
     const verifySource = injectVerifyContextSource();
     const noPrGuard = verifySource.indexOf("if (!nextUnverified.pr_url && context[\"auto_pr_create_failed\"])");
     const supervisedCheck = verifySource.indexOf("if (isStorySupervised(context, nextUnverified.story_id))", noPrGuard);
-    const clearFailure = verifySource.indexOf("clearVerifiedStoryFailureContext(context)", supervisedCheck);
+    const clearFailure = verifySource.indexOf("clearStoryFailureContext(context)", supervisedCheck);
     const outputParse = verifySource.indexOf("if (nextUnverified.output)", clearFailure);
 
     assert.ok(noPrGuard >= 0, "verify claim no-PR guard not found");
@@ -1811,10 +1811,11 @@ describe("single-step claim_log lifecycle", () => {
     const helper = source.indexOf("async function fastForwardMechanicallySatisfiedPrReviewRetry");
     const call = source.indexOf("fastForwardMechanicallySatisfiedPrReviewRetry(step, nextStory, context)");
     const publication = source.indexOf("const publication = await publishLoopClaimAndRuntime", call);
-    const worktree = source.indexOf("let storyWorkdir = createStoryWorktree", call);
+    const worktree = source.indexOf("storyWorkdir = createStoryWorktree(", call);
 
     assert.notEqual(helper, -1, "PR review retry fast-forward helper missing");
     assert.notEqual(call, -1, "PR review retry fast-forward call missing");
+    assert.notEqual(worktree, -1, "story worktree provisioning call missing");
     assert.ok(call > helper, "claim path should call the helper");
     assert.ok(publication > call, "fast-forward must run before atomic claim/runtime publication");
     assert.ok(worktree > publication, "worktree provisioning must remain after durable publication");

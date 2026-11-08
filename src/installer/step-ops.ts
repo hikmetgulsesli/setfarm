@@ -4953,7 +4953,7 @@ async function injectVerifyContext(
   }
 
   if (isStorySupervised(context, nextUnverified.story_id)) {
-    clearVerifiedStoryFailureContext(context);
+    clearStoryFailureContext(context);
   }
 
   if (nextUnverified.output) {
@@ -15356,13 +15356,17 @@ async function handleVerifyEachCompletion(
 
 const MAX_AUTO_VERIFY_ITERATIONS = 5;
 
-function clearVerifiedStoryFailureContext(context: Record<string, string>): void {
+function clearStoryFailureContext(context: Record<string, string>): void {
   delete context["verify_feedback"];
   delete context["previous_failure"];
   delete context["failure_category"];
   delete context["failure_suggestion"];
   delete context["verify_infra_retry"];
   delete context["verify_visual_scope_deferred"];
+}
+
+function clearVerifiedStoryFailureContext(context: Record<string, string>): void {
+  clearStoryFailureContext(context);
   delete context["verify_pending_pr_url"];
   delete context["verify_pending_since"];
 }
