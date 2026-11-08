@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { SubscriptionModelRefV1 } from '../../src/execution/subscription-coding-policy-v1.js';
 import { buildSubscriptionAttemptLaunchMaterialV1 as buildReadonly } from '../../src/execution/subscription-attempt-launch-material-v1.js';
 import type { SubscriptionAttemptBrokerWorkerV1 } from '../../src/execution/subscription-attempt-broker-v1.js';
+import { validateSubscriptionCodingWorkerMaterialV1 } from '../../src/execution/subscription-coding-worker-policy-v1.js';
 
 let api: typeof import('../../src/execution/subscription-coding-policy-v1.js') | undefined;
 try {
@@ -33,6 +34,30 @@ function frozen(value: unknown): void {
     for (const child of Object.values(value)) frozen(child);
   }
 }
+
+test('Kimi coding enables low thinking while MiniMax and readonly controls omit the default', () => {
+  const input = fixture();
+  const kimi = build(input), minimax = build(fixture('minimax/MiniMax-M3.1-Flash'));
+  assert.equal(JSON.parse(kimi.files[0].contents).agents.defaults.thinkingDefault, 'low');
+  assert.equal(Object.hasOwn(JSON.parse(minimax.files[0].contents).agents.defaults, 'thinkingDefault'), false);
+  for (const modelRef of ['kimi/k3.1-pro', 'minimax/MiniMax-M3.1-Flash'] as const) {
+    const control = buildReadonly(readonlyInput(fixture(modelRef)));
+    assert.equal(Object.hasOwn(JSON.parse(control.files[0].contents).agents.defaults, 'thinkingDefault'), false);
+  }
+});
+
+test('worker reconstruction accepts emitted Kimi material and refuses disabled thinking tampering', () => {
+  const material = build(fixture());
+  const checked = validateSubscriptionCodingWorkerMaterialV1(material);
+  assert.deepEqual(checked.material, material);
+  assert.notEqual(checked.material, material);
+  const tampered = JSON.parse(JSON.stringify(material));
+  const config = JSON.parse(tampered.files[0].contents);
+  config.agents.defaults.thinkingDefault = 'off';
+  tampered.files[0].contents = JSON.stringify(config, null, 2) + '\n';
+  assert.throws(() => validateSubscriptionCodingWorkerMaterialV1(tampered),
+    { message: 'SUBSCRIPTION_CODING_WORKER_REFUSED' });
+});
 
 test('fixed PLAN report DATA profile requests low thinking without changing model, limits or other launch material', () => {
   const input=fixture('minimax/MiniMax-M3.1-Flash'),normal=build(input);
