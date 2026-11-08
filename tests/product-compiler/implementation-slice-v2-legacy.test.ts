@@ -1053,6 +1053,49 @@ function recoveryDirective(input: any, options: Readonly<{
   };
 }
 
+// Keep sealed design-screen provenance distinct from a failed candidate's bytes.
+async function mappedScreenRecoveryFixture() {
+  const value = await stitchCompilerFixture();
+  const prior = compileOrThrow(value.input);
+  const input: any = structuredClone(value.input);
+  input.sourceRevision = { sha: "7".repeat(40), treeHash: "8".repeat(40) };
+  const currentHash = sha("edited-failed-mapped-screen");
+  input.currentFiles.find((file: any) => file.pathRef === "PATH_PLAY_PAGE")!.contentHash = currentHash;
+  const exact = recoveryDirective(input, {
+    pathRef: "PATH_PLAY_PAGE", currentHash,
+    afterHash: sha("unused-future-mapped-screen"), priorSliceHash: prior.sliceHash,
+  });
+  const { after: _futureBytes, ...before } = exact.expectedSourceDelta.changes[0]!;
+  input.recovery = { ...exact, expectedSourceDelta: {
+    schema: "setfarm.implementation-source-delta.v2", mode: "generated_repair",
+    expectedDelta: { kind: "source_change", invariantRefs: ["INV_IMPLEMENTATION_BEHAVIOR"],
+      requiredPaths: [GENERATED_SCREEN_PATH] },
+    allowedPaths: [GENERATED_SCREEN_PATH], changes: [before],
+  } };
+  // Independently assemble the public-schema candidate, not a compiler double.
+  const candidate: any = structuredClone(prior.slice);
+  candidate.sourceRevision = structuredClone(input.sourceRevision);
+  candidate.files.find((file: any) => file.pathRef === "PATH_PLAY_PAGE")!.contentHash = currentHash;
+  candidate.recovery = structuredClone(input.recovery);
+  rehashMappedRecoveryCandidate(candidate);
+  return { input, prior, candidate, currentHash };
+}
+
+function rehashMappedRecoveryCandidate(candidate: any): void {
+  if (candidate.recovery) {
+    const set = candidate.recovery.findingSet;
+    candidate.recovery.findingSet = createFindingSetV1({
+      runId: set.runId, storyId: set.storyId, packetHash: set.packetHash,
+      sliceHash: set.sliceHash, sourceRevision: set.sourceRevision,
+      findings: set.findings.map(({ findingId: _id, ...draft }: any) => draft),
+    });
+  }
+  candidate.authority.sourceRevisionHash = hashCanonicalJson(candidate.sourceRevision);
+  candidate.authority.filesHash = implementationFilesHashV2(candidate.files);
+  candidate.authority.recoveryHash = candidate.recovery ? hashCanonicalJson(candidate.recovery) : null;
+  candidate.authorityHash = implementationSliceAuthorityHashV2(candidate.authority);
+}
+
 describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, () => {
   it("accepts canonical graph assertion projection while preserving the original observable hash and content guards", async () => {
     const ordered = await stitchCompilerFixture("canonical");
@@ -1594,6 +1637,90 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     unrelatedDelta.recovery.expectedSourceDelta.changes.sort((left: any, right: any) =>
       left.pathRef.localeCompare(right.pathRef));
     assert.equal(rejectionCodes(unrelatedDelta).includes("SLICE_V2_CONTRACT_INVALID"), true);
+  });
+
+  it("mapped screen recovery compiles edited current bytes without rewriting sealed provenance", async () => {
+    const { input, prior, currentHash } = await mappedScreenRecoveryFixture();
+    const sealedMap = structuredClone(input.implementationSourceMap);
+    const result = compileImplementationSliceV2(input);
+    assert.equal(result.status, "compiled", JSON.stringify(result));
+    if (result.status !== "compiled") assert.fail("exact current-source recovery must compile an edited mapped screen");
+    assert.deepEqual(input.implementationSourceMap, sealedMap);
+    assert.deepEqual(result.slice.storySourceMap, prior.slice.storySourceMap);
+    assert.equal(result.slice.authority.storySourceMapHash, prior.slice.authority.storySourceMapHash);
+    assert.equal(result.slice.authority.implementationSourceMapV1Hash, prior.slice.authority.implementationSourceMapV1Hash);
+    assert.equal(result.slice.files.find(file => file.pathRef === "PATH_PLAY_PAGE")!.contentHash, currentHash);
+    assert.deepEqual(result.slice.recovery, input.recovery);
+    assert.equal(verifyImplementationSliceV2({ slice: result.slice, compilerInput: input }).status, "verified");
+  });
+
+  it("mapped screen recovery standalone schema accepts independently hashed current-source authority", async () => {
+    const { candidate, prior } = await mappedScreenRecoveryFixture();
+    assert.deepEqual(candidate.storySourceMap, prior.slice.storySourceMap);
+    const parsed = ImplementationSliceV2Schema.safeParse(candidate);
+    if (!parsed.success) {
+      assert.ok(parsed.error.issues.every(issue => issue.path.join("/").startsWith("storySourceMap/screens/")),
+        JSON.stringify(parsed.error.issues));
+    }
+    assert.equal(parsed.success, true, parsed.success ? "" : JSON.stringify(parsed.error.issues));
+  });
+
+  it("mapped screen recovery compiler refuses absent or crossed current-source authority", async () => {
+    const { input } = await mappedScreenRecoveryFixture();
+    const cases: ReadonlyArray<readonly [string, (value: any) => void]> = [
+      ["no recovery", value => { delete value.recovery; }],
+      ["exact mode stays strict", value => { value.recovery.expectedSourceDelta = {
+        schema: "setfarm.implementation-source-delta.v2",
+        changes: [{ ...value.recovery.expectedSourceDelta.changes[0],
+          after: { presence: "present", contentHash: sha("exact-mode-future-screen") } }],
+      }; }],
+      ["stale before hash", value => { value.recovery.expectedSourceDelta.changes[0].before.contentHash = sha("stale-before"); }],
+      ["wrong delta path", value => { value.recovery.expectedSourceDelta.changes[0].path = "src/not-the-screen.tsx"; }],
+      ["wrong delta path ref", value => { value.recovery.expectedSourceDelta.changes[0].pathRef = "PATH_SHARED_WRITE"; }],
+      ["forged locator hash", value => { value.recovery.findingSet.findings[0].sourceLocators[0].contentHash = sha("forged-locator"); }],
+      ["crossed source revision", value => { value.recovery.sourceRevision.sha = "9".repeat(40); }],
+      ["missing screen", value => { value.currentFiles = value.currentFiles.filter((file: any) => file.pathRef !== "PATH_PLAY_PAGE"); }],
+    ];
+    for (const [label, mutate] of cases) {
+      const forged = structuredClone(input);
+      mutate(forged);
+      if (forged.recovery) {
+        const set = forged.recovery.findingSet;
+        forged.recovery.findingSet = createFindingSetV1({
+          runId: set.runId, storyId: set.storyId, packetHash: set.packetHash,
+          sliceHash: set.sliceHash, sourceRevision: set.sourceRevision,
+          findings: set.findings.map(({ findingId: _id, ...draft }: any) => draft),
+        });
+      }
+      assert.equal(compileImplementationSliceV2(forged).status, "rejected", label);
+    }
+  });
+
+  it("mapped screen recovery standalone schema rejects rehashed authority forgeries", async () => {
+    const { candidate } = await mappedScreenRecoveryFixture();
+    const cases: ReadonlyArray<readonly [string, (value: any) => void]> = [
+      ["no recovery", value => { delete value.recovery; }],
+      ["exact mode stays strict", value => { value.recovery.expectedSourceDelta = {
+        schema: "setfarm.implementation-source-delta.v2",
+        changes: [{ ...value.recovery.expectedSourceDelta.changes[0],
+          after: { presence: "present", contentHash: sha("exact-mode-future-screen") } }],
+      }; }],
+      ["stale before hash", value => { value.recovery.expectedSourceDelta.changes[0].before.contentHash = sha("stale-before"); }],
+      ["wrong delta path", value => { value.recovery.expectedSourceDelta.changes[0].path = "src/not-the-screen.tsx"; }],
+      ["wrong delta path ref", value => { value.recovery.expectedSourceDelta.changes[0].pathRef = "PATH_SHARED_WRITE"; }],
+      ["forged locator hash", value => { value.recovery.findingSet.findings[0].sourceLocators[0].contentHash = sha("forged-locator"); }],
+      ["crossed source revision", value => { value.recovery.sourceRevision.sha = "9".repeat(40); }],
+      ["missing screen", value => { value.files = value.files.filter((file: any) => file.pathRef !== "PATH_PLAY_PAGE"); }],
+      ["readonly screen", value => { value.files.find((file: any) => file.pathRef === "PATH_PLAY_PAGE").role = "shared_readonly"; }],
+    ];
+    for (const [label, mutate] of cases) {
+      const forged = structuredClone(candidate);
+      mutate(forged);
+      rehashMappedRecoveryCandidate(forged);
+      assert.equal(forged.authority.filesHash, implementationFilesHashV2(forged.files));
+      assert.equal(forged.authority.recoveryHash, forged.recovery ? hashCanonicalJson(forged.recovery) : null);
+      assert.equal(ImplementationSliceV2Schema.safeParse(forged).success, false, label);
+    }
   });
 
   // Catches the exact-patch-only schema requiring fictional future byte hashes

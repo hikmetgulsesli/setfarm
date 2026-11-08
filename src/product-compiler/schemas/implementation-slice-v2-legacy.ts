@@ -701,6 +701,26 @@ export const ImplementationSliceV2Schema = z.object({
       });
     screens.forEach((screen, screenIndex) => {
       const file = fileByRef.get(screen.pathRef);
+      // The screen remains the sealed design witness. Only an exact generated
+      // repair may bind different current bytes for that same owned path.
+      const recovery = value.recovery;
+      const delta = recovery?.expectedSourceDelta;
+      const change = delta?.changes.find(candidate =>
+        candidate.pathRef === screen.pathRef && candidate.path === screen.path);
+      const currentRecoveryFile = Boolean(
+        file && recovery && delta && "mode" in delta && delta.mode === "generated_repair"
+        && delta.allowedPaths.includes(screen.path)
+        && change?.before.presence === "present" && change.before.contentHash === file.contentHash
+        && recovery.sourceRevision.sha === value.sourceRevision.sha
+        && recovery.sourceRevision.treeHash === value.sourceRevision.treeHash
+        && recovery.findingSet.packetHash === value.packetHash
+        && recovery.findingSet.storyId === value.storyId
+        && recovery.findingSet.sourceRevision.sha === value.sourceRevision.sha
+        && recovery.findingSet.sourceRevision.treeHash === value.sourceRevision.treeHash
+        && recovery.findingSet.findings.some(finding => finding.status === "open"
+          && finding.sourceLocators.some(locator =>
+            locator.path === screen.path && locator.contentHash === file.contentHash)),
+      );
       if (
         screen.storyId !== value.storyId
         || screen.ownerRef !== value.story.ownerRef
@@ -709,7 +729,7 @@ export const ImplementationSliceV2Schema = z.object({
         || file.role !== "owned"
         || file.path !== screen.path
         || file.presence !== "present"
-        || file.contentHash !== screen.contentHash
+        || (file.contentHash !== screen.contentHash && !currentRecoveryFile)
       ) {
         context.addIssue({
           code: "custom",
