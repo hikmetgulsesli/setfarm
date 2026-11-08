@@ -624,6 +624,8 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
           stableCheck();
           if (stopping || settled || performance.now() >= startupDeadline || performance.now() >= lifetimeDeadline
             || !tracker!.canSignal(observeProcessIdentity(child.pid!) ?? null)) refuse();
+          // OS identity observation may block past either original deadline.
+          if (performance.now() >= startupDeadline || performance.now() >= lifetimeDeadline) refuse();
           const frame = protocol!.waitForOwnerAdmission();
           const pending = new Promise<void>((resolve, reject) => {
             waitResolve = resolve; waitReject = () => reject(new Error('SUBSCRIPTION_CODING_WORKER_REFUSED'));
@@ -639,6 +641,8 @@ export async function launchSubscriptionCodingWorkerV1(input: Readonly<{
         try {
           stableCheck();
           if (stopping || settled || performance.now() >= startupDeadline || performance.now() >= lifetimeDeadline || !tracker!.canSignal(observeProcessIdentity(child.pid!) ?? null)) refuse();
+          // Recheck after the synchronous OS observation before renewing OPENED.
+          if (performance.now() >= startupDeadline || performance.now() >= lifetimeDeadline) refuse();
           const waiting = protocol!.state === 'admission-waiting';
           const frame = protocol!.openGate();
           if (waiting) {

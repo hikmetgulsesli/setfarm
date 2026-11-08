@@ -900,7 +900,7 @@ function actualWorkerClockRealm(seed = material()) {
     && node.declarationList.declarations.some(d => ['STARTUP_MS', 'OWNER_ADMISSION_MS', 'DRAIN_MS', 'OUTPUT_LIMIT', 'SANDBOX'].includes(d.name.getText(tree))))
     .map(node => node.getText(tree)).join('\n');
   const body = constants + '\n' + statements.slice(start, end + 1).map(node => node.getText(tree)).join('\n');
-  let now = 0, serial = 0, sdk = false, dead = false, stale = false, materialStale = false;
+  let now = 0, serial = 0, sdk = false, dead = false, stale = false, materialStale = false, observationDelay = 0;
   const timers = new Map<number, { due: number; call: () => void }>();
   const external = (call: () => void) => { try { call(); } catch (error) { if (!(error instanceof Error) || !/^INERT_EXIT_/.test(error.message)) throw error; } };
   const setTimer = (call: () => void, ms: number) => { const id = ++serial; timers.set(id, { due: now + ms, call: () => external(call) }); return id; };
@@ -971,7 +971,10 @@ function actualWorkerClockRealm(seed = material()) {
     publicPins: [], controlPins: [], publicAncestors: [],
     stableCheck: () => { if (materialStale) api!.subscriptionCodingWorkerRefusedV1(); },
     inspectSubscriptionCodingWorktreeV1() {}, randomBytes: () => Buffer.from('1'.repeat(64), 'hex'),
-    observeProcessIdentity: () => stale ? { ...identity, processStartedAt: '2026-11-05T00:00:00.000Z' } : identity,
+    observeProcessIdentity: () => {
+      now += observationDelay; observationDelay = 0;
+      return stale ? { ...identity, processStartedAt: '2026-11-05T00:00:00.000Z' } : identity;
+    },
     process: { kill: (_pid: number, signal: string) => { signals.push(signal); death(97); } },
     spawn: () => { void (runChild(...Object.values(childPorts)) as Promise<void>).then(() => { if (!dead) sdk = true; }).catch(() => {}); return child; },
     createSubscriptionCredentialRedactorV1: () => ({ discard() {}, push: (b: Buffer) => b, finish: () => Buffer.alloc(0) }),
@@ -983,6 +986,7 @@ function actualWorkerClockRealm(seed = material()) {
   async function flushClock() { for (let n = 0; n < 100; n++) await Promise.resolve(); }
   return { acquire, checked, exits, signals, outbound, parentFrames, proof, channel, connections,
     delayOpenedWrite: (ms: number) => { openedWriteDelay = ms; },
+    delayNextObservation: (ms: number) => { observationDelay = ms; },
     injectChild: (bytes: Buffer) => external(() => { channel.emit('data', bytes); }),
     injectEOF: () => external(() => { channel.emit('end'); }),
     holdProof: () => { holdProof = true; }, releaseProof: () => { held.splice(0).forEach(b => proof.emit('data', b)); },
@@ -1207,4 +1211,44 @@ test('actual child refuses queued or partial data after the direct OPENED transi
     const f = actualWorkerClockRealm(), worker = await f.acquire(); worker.openGate(); await f.flush();
     assert.equal(f.sdk(), true); f.injectChild(bytes); await f.flush(); assert.equal(f.dead(), true);
   }
+});
+
+
+test('actual waited OPEN refuses when synchronous process observation crosses parent admission deadline', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire();
+  try {
+    const waiting = worker.waitForOwnerAdmission();
+    // Parent emitted at t=0; child accepts at t=100, so its bound is still
+    // valid when observation later returns after the parent's t=120000 bound.
+    f.jump(100); await waiting;
+    f.jump(119990); f.delayNextObservation(30);
+    let refusal: unknown; try { worker.openGate(); } catch (error) { refusal = error; }
+    await f.flush();
+    assert.ok(refusal instanceof Error, 'late valid process observation must refuse before renewing the parent OPENED clock');
+    assert.equal(f.parentFrames.some(frame => frame.type === 'open'), false, 'expired parent admission cannot emit OPEN');
+    assert.equal(f.sdk(), false);
+  } finally { f.death(); await worker.originalClosed; }
+});
+
+test('actual wait request refuses when synchronous process observation crosses original startup deadline', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire();
+  try {
+    f.jump(9990); f.delayNextObservation(30);
+    const waiting = worker.waitForOwnerAdmission(); const refused = assert.rejects(waiting, /SUBSCRIPTION_CODING_WORKER_REFUSED/);
+    await f.flush(); await refused;
+    assert.equal(f.parentFrames.some(frame => frame.type === 'owner-admission-wait'), false, 'expired startup cannot emit owner wait');
+    assert.equal(f.sdk(), false);
+  } finally { f.death(); await worker.originalClosed; }
+});
+
+test('actual direct OPEN refuses when synchronous process observation crosses original startup deadline', async () => {
+  const f = actualWorkerClockRealm(), worker = await f.acquire();
+  try {
+    f.jump(9990); f.delayNextObservation(30);
+    let refusal: unknown; try { worker.openGate(); } catch (error) { refusal = error; }
+    await f.flush();
+    assert.ok(refusal instanceof Error, 'late valid process observation must refuse direct OPEN');
+    assert.equal(f.parentFrames.some(frame => frame.type === 'open'), false, 'expired direct path cannot emit OPEN');
+    assert.equal(f.sdk(), false);
+  } finally { f.death(); await worker.originalClosed; }
 });
