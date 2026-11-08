@@ -337,6 +337,25 @@ export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST = Object.freeze({
       "src/recovery/v3-recovery-claim-authority.ts",
     ]),
   }),
+  34: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v34-current-head" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v34-semantic-metadata-view" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v34-current-planner-port" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v34-predecessor-application" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v34-current-verification" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "fresh-installation-bootstrap-v1" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "fresh-installation-readonly-v1" }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/db/operational-failure-cause-authority-v4-migration.ts",
+      "src/execution/operational-failure-cause-authority-v4.ts",
+      "src/execution/operational-failure-cause-authority-v3.ts",
+      "src/db/operational-failure-cause-authority-v3-migration.ts",
+      "src/installation/fresh-installation-origin-v1.ts",
+      "src/installation/fresh-installation-owner-source-v1.ts",
+    ]),
+  }),
 } satisfies Readonly<Record<ContractSpineSemanticMigrationVersion, SemanticMigrationSourceManifest>>);
 
 function sha256(value: string): string {
@@ -401,7 +420,7 @@ export function computeContractSpineSemanticMigrationDigests(
   readSource: ContractSpineMigrationSourceReader,
 ): ContractSpineSemanticMigrationDigestMap {
   const computed = {} as Record<ContractSpineSemanticMigrationVersion, string>;
-  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33] as const) {
+  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34] as const) {
     const manifest = CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST[version];
     const regions = manifest.regions.map((item) => ({
       file: item.file,
@@ -429,7 +448,7 @@ export function assertContractSpineSemanticMigrationSourceIntegrity(
   readSource: ContractSpineMigrationSourceReader,
 ): ContractSpineSemanticMigrationDigestMap {
   const actual = computeContractSpineSemanticMigrationDigests(readSource);
-  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33] as const) {
+  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34] as const) {
     const expected = CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[version];
     if (actual[version] !== expected) {
       throw new Error(
@@ -471,6 +490,7 @@ export function renderContractSpineSemanticMigrationDigests(
     `  31: \"${digests[31]}\",`,
     `  32: \"${digests[32]}\",`,
     `  33: \"${digests[33]}\",`,
+    `  34: \"${digests[34]}\",`,
     "} as const);",
     "",
     "export type ContractSpineSemanticMigrationVersion =",

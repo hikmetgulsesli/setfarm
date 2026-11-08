@@ -99,9 +99,9 @@ async function requireConnectedJournal(
   const rows = await sql.unsafe<FreshJournalRowV1[]>(
     `SELECT version,name,checksum,state,release_sha,verified_release_sha,
        verified_at IS NOT NULL AS verified
-     FROM public.setfarm_schema_migrations ORDER BY version LIMIT 34`,
+     FROM public.setfarm_schema_migrations ORDER BY version LIMIT 35`,
   );
-  if (rows.length !== 33 || rows.some((row, index) => {
+  if (rows.length !== origin.migrations.length || rows.some((row, index) => {
     const expected = origin.migrations[index];
     return !expected || row.version !== expected.version || row.name !== expected.name
       || row.checksum !== expected.checksum || row.state !== "applied"
