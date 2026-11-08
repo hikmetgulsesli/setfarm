@@ -34,9 +34,9 @@ type AddedStates = 'admission-wait-sent' | 'admission-waiting';
 // Fixed frame types: 'owner-admission-wait' / 'owner-admission-waiting'.
 ```
 
-- [ ] Read spec, actual safe clock proof and relevant test-writing guidance. Verify the sole writer is clean before test edits. Do not dispatch subagents or perform Git/service/provider effects.
-- [ ] Extend the existing actual-body clock harness, keeping production protocol/callback/openGate/preload behavior as authority. External clocks/streams/process observation/FS may be inert explicit ports. Do not mirror production transitions in test-only code.
-- [ ] Add genuine delayed-owner RED: actual worker proof validates inside original startup bounds; genuine runtime worker-bound journal is recorded; owner admission completes at fake t=16000ms; no SDK execution occurs before publication; actual OPEN/OPENED must then succeed within fresh short bounds. Under old Source, assert the observed startup fault/refusal, not a missing proposed method.
+- [x] Read spec, actual safe clock proof and relevant test-writing guidance. Verify the sole writer is clean before test edits. Do not dispatch subagents or perform Git/service/provider effects.
+- [x] Extend the existing actual-body clock harness, keeping production protocol/callback/openGate/preload behavior as authority. External clocks/streams/process observation/FS may be inert explicit ports. Do not mirror production transitions in test-only code.
+- [x] Add genuine delayed-owner RED: actual worker proof validates inside original startup bounds; genuine runtime worker-bound journal is recorded; owner admission completes at fake t=16000ms; no SDK execution occurs before publication; actual OPEN/OPENED must then succeed within fresh short bounds. Under old Source, assert the observed startup fault/refusal, not a missing proposed method.
 
 ```ts
 await actualRuntimeAcquisitionThroughWorkerBound();
@@ -47,11 +47,11 @@ assert.equal(actualProtocolState(), 'open');
 assert.equal(originalCustodyFaults(), 0);
 ```
 
-- [ ] Preserve original RED argv/PID/exit/output before any source edit. If the fixture fails first, keep that capture distinct and repair only the fixture before genuine RED.
-- [ ] Implement exact wait request/ACK in the existing private protocol. Preserve strict schema/binding/byte limits; explicitly bound the optional frame sequence; reject duplicate/replay/foreign/out-of-order transitions and partial/queued data crossing outgoing transitions. Extend custody signalling states without broadening closure acceptance.
-- [ ] Implement the fixed preload's optional wait phase. Keep original proof deadline until the valid transition; fixed wait expiry and EOF close before SDK entry; OPEN starts its short acknowledgement phase and SDK remains gated through exact OPENED. Do not add listeners or permissions.
-- [ ] Implement the original-owned worker wait method. Validate identity/pins, anchor nonrenewable 120000ms wait at request emission, await exact ACK under current short deadline, then install that deadline while retaining the original whole lifetime. Check monotonic deadlines at request/ACK/OPEN/OPENED, so delayed callbacks cannot admit late events. Physical OPEN validates the wait/direct deadline, re-arms only the short OPENED clock, and refuses if originals closed or ownership changed. Fault/stop/finish must reject any pending wait.
-- [ ] Add the runtime call immediately after genuine worker validation and `journal.bindWorker(bound)`, before startupComplete/return. Race the native wait promise against existing closed/abort/lifetime; reject missing method, malformed promise, refusal or original closure while retaining original ownership.
+- [x] Preserve original RED argv/PID/exit/output before any source edit. If the fixture fails first, keep that capture distinct and repair only the fixture before genuine RED.
+- [x] Implement exact wait request/ACK in the existing private protocol. Preserve strict schema/binding/byte limits; explicitly bound the optional frame sequence; reject duplicate/replay/foreign/out-of-order transitions and partial/queued data crossing outgoing transitions. Extend custody signalling states without broadening closure acceptance.
+- [x] Implement the fixed preload's optional wait phase. Keep original proof deadline until the valid transition; fixed wait expiry and EOF close before SDK entry; OPEN starts its short acknowledgement phase and SDK remains gated through exact OPENED. Do not add listeners or permissions.
+- [x] Implement the original-owned worker wait method. Validate identity/pins, anchor nonrenewable 120000ms wait at request emission, await exact ACK under current short deadline, then install that deadline while retaining the original whole lifetime. Check monotonic deadlines at request/ACK/OPEN/OPENED, so delayed callbacks cannot admit late events. Physical OPEN validates the wait/direct deadline, re-arms only the short OPENED clock, and refuses if originals closed or ownership changed. Fault/stop/finish must reject any pending wait.
+- [x] Add the runtime call immediately after genuine worker validation and `journal.bindWorker(bound)`, before startupComplete/return. Race the native wait promise against existing closed/abort/lifetime; reject missing method, malformed promise, refusal or original closure while retaining original ownership.
 
 ```ts
 await journal.bindWorker(bound);
@@ -63,10 +63,10 @@ if (stopping) refuse();
 // Existing return/openGate and selected owner checks continue unchanged.
 ```
 
-- [ ] Same delayed-owner case GREEN, plus actual-body negatives: READY without wait; wait request without ACK; wait ACK without OPEN to fixed expiry; OPEN without OPENED; foreign/duplicate/replayed/malformed/out-of-order frames; EOF/death/abort; stale process/material; whole lifetime not reset. Direct non-wait path must retain its old short bounds.
-- [ ] Preserve old substantive assertions. Update existing physical-worker fixtures only for the now-required typed method; do not turn custody/admission tests into mocked PASS claims.
-- [ ] Run only `tests/execution-attempts/subscription-coding-worker-v1.test.ts`, `tests/execution-attempts/subscription-coding-runtime-v1.test.ts` and TypeScript no-emit using original capture wrappers. No full suite, SDK/probes/providers or live DB.
-- [ ] Self-review and freeze Source/test/doc diff hashes, genuine RED/GREEN/noEmit receipts, exact changed file list and limitations in the task report. Stop edits for Root packaging and independent review; no implementer Git delivery.
+- [x] Same delayed-owner case GREEN, plus actual-body negatives: READY without wait; wait request without ACK; wait ACK without OPEN to fixed expiry; OPEN without OPENED; foreign/duplicate/replayed/malformed/out-of-order frames; EOF/death/abort; stale process/material; whole lifetime not reset. Direct non-wait path must retain its old short bounds.
+- [x] Preserve old substantive assertions. Update existing physical-worker fixtures only for the now-required typed method; do not turn custody/admission tests into mocked PASS claims.
+- [x] Run only `tests/execution-attempts/subscription-coding-worker-v1.test.ts`, `tests/execution-attempts/subscription-coding-runtime-v1.test.ts` and TypeScript no-emit using original capture wrappers. No full suite, SDK/probes/providers or live DB.
+- [x] Self-review and freeze Source/test/doc diff hashes, genuine RED/GREEN/noEmit receipts, exact changed file list and limitations in the task report. Stop edits for Root packaging and independent review; no implementer Git delivery.
 
 ## Root review and delivery
 

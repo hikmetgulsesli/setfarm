@@ -332,6 +332,10 @@ export async function acquireSubscriptionCodingRuntimeV1(
       || !nativePromise(acquiredWorker.originalClosed) || typeof acquiredWorker.openGate !== 'function') refuse();
     workerValidated = true;
     await journal.bindWorker(bound);
+    if (stopping || typeof acquiredWorker.waitForOwnerAdmission !== 'function') refuse();
+    const pendingWait = acquiredWorker.waitForOwnerAdmission();
+    if (!nativePromise(pendingWait)) refuse();
+    await Promise.race([pendingWait, closed.then(() => { throw new SubscriptionCodingRuntimeStartupErrorV1(ownership); })]);
     if (stopping) refuse();
     startupComplete = true;
     return Object.freeze({ worker: acquiredWorker, attachmentHash: journal.attachmentHash, close, closed,

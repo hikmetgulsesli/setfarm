@@ -12,20 +12,23 @@ const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const exact = (value, keys) => value !== null && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).length === keys.length && Object.keys(value).every(key => keys.includes(key));
 const denial = error => error && (error.code === 'EPERM' || error.code === 'EACCES') ? error.code : 'ambiguous';
-const timer = setTimeout(fail, 9000);
+let deadline = performance.now() + 9000;
+let timer = setTimeout(fail, 9000);
+const timely = () => { if (performance.now() >= deadline) fail(); };
 const channel = new net.Socket({ fd: 3, readable: true, writable: false });
-let pending = Buffer.alloc(0), received = 0, waiting, queued = [], frames = 0, proofSent = false;
+let pending = Buffer.alloc(0), received = 0, waiting, queued = [], frames = 0, proofSent = false, openAccepted = false;
 channel.on('error', fail);
 // This remains active after the CLI gate: parent FD3 closure ends the worker.
 channel.on('end', fail);
 channel.on('close', fail);
 channel.on('data', chunk => {
+  if (openAccepted) fail();
   received += chunk.length;
   if (received > 16384) fail();
   pending = Buffer.concat([pending, chunk]);
   let newline;
   while ((newline = pending.indexOf(10)) !== -1) {
-    if (++frames > 2 || (frames === 2 && !proofSent)) fail();
+    if (++frames > 3 || (frames >= 2 && !proofSent)) fail();
     const bytes = pending.subarray(0, newline); pending = pending.subarray(newline + 1);
     let value;
     try { value = JSON.parse(bytes.toString('utf8')); } catch { fail(); }
@@ -80,6 +83,7 @@ function connect(host, port, positive) {
 }
 try {
   const challenge = await next();
+  timely();
   const bindingKeys = ['nonce', 'pid', 'identity', 'materialHash', 'policyHash', 'preloadHash'];
   if (!exact(challenge, ['schema', 'type', ...bindingKeys, 'profilePath', 'preloadPath', 'credentialProbePath', 'authorityProbePath', 'authorityProbeHash',
     'brokerPort', 'nodePath', 'argvHash', 'environmentHash', 'files'])
@@ -123,12 +127,30 @@ try {
   if (hash(fs.readFileSync(challenge.authorityProbePath)) !== challenge.authorityProbeHash) fail();
   if (results.brokerConnect !== 'connected' || Object.entries(results).some(([key, value]) =>
     key !== 'brokerConnect' && value !== 'EPERM' && value !== 'EACCES')) fail();
+  timely();
+  if (pending.length || queued.length) fail();
   write({ schema: 'setfarm.subscription-coding-probe.v1', type: 'proof', ...binding, results });
   proofSent = true;
-  const gate = await next();
+  let gate = await next();
+  timely();
+  if (pending.length || queued.length) fail();
+  if (JSON.stringify(gate) === JSON.stringify({
+    schema: 'setfarm.subscription-coding-gate.v1', type: 'owner-admission-wait', ...binding })) {
+    deadline = performance.now() + 120000;
+    clearTimeout(timer); timer = setTimeout(fail, 120000);
+    write({ schema: 'setfarm.subscription-coding-probe.v1', type: 'owner-admission-waiting', ...binding });
+    gate = await next();
+    timely();
+    // Only the optional authenticated wait starts a fresh short OPENED phase.
+    deadline = performance.now() + 9000;
+    clearTimeout(timer); timer = setTimeout(fail, 9000);
+  }
   if (pending.length || queued.length || JSON.stringify(gate) !== JSON.stringify({
     schema: 'setfarm.subscription-coding-gate.v1', type: 'open', ...binding })) fail();
+  timely();
+  openAccepted = true;
   write({ schema: 'setfarm.subscription-coding-probe.v1', type: 'opened', ...binding });
+  timely();
   clearTimeout(timer);
   // Lifetime EOF stays observed while CLI work is active, without keeping a
   // naturally completed CLI alive solely because its parent still owns FD3.
