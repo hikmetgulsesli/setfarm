@@ -35,7 +35,7 @@ it("ordinary finding reads keep their restricted SQL client", async () => {
 
 // Full compiled module bodies, with only external operational admission and the
 // SQL engine replaced at the boundary. These fixtures cannot admit production.
-async function component(relative: string, overrides: Record<string, unknown> = {}) {
+async function component(relative: string, overrides: Record<string, unknown> = {}, expose: readonly string[] = []) {
   const [{ readFileSync }, ts] = await Promise.all([import("node:fs"), import("typescript")]);
   const location = new URL(relative, import.meta.url);
   const source = readFileSync(location, "utf8");
@@ -53,7 +53,7 @@ async function component(relative: string, overrides: Record<string, unknown> = 
     module: ts.default.ModuleKind.CommonJS, target: ts.default.ScriptTarget.ES2022,
   } }).outputText;
   const module = { exports: {} as any };
-  new Function("require", "exports", "module", output)((name: string) => {
+  new Function("require", "exports", "module", output + expose.map(name => `\nexports.${name} = ${name};`).join(""))((name: string) => {
     if (!(name in dependencies)) throw Error("UNEXPECTED_COMPONENT_IMPORT:" + name);
     return dependencies[name];
   }, module.exports, module);
@@ -76,7 +76,9 @@ async function ownerRepositoryFixture(kind="lifecycle") {
   let sqlHook:((query:string,values:unknown[])=>unknown)|undefined;
   let probeClaimEntry = false, leaseCurrent = true;
   const value = findingSet();
-  const transaction = { unsafe: async (query: string, values: unknown[] = []) => {
+  const transaction: any = Object.assign(async (parts: TemplateStringsArray, ...values: unknown[]) =>
+    transaction.unsafe(parts.reduce((text, part, index) => text + (index ? `$${index}` : "") + part, ""), values),
+  { unsafe: async (query: string, values: unknown[] = []) => {
     const hooked=await sqlHook?.(query,values);if(hooked!==undefined)return hooked;
     if (query.startsWith("SET LOCAL ROLE")) { role = "sf_owner_fixture"; return []; }
     if (query.startsWith("SET LOCAL")) return [];
@@ -111,7 +113,7 @@ async function ownerRepositoryFixture(kind="lifecycle") {
     if (/^\s*INSERT INTO recovery_case_revisions/.test(query)) {writes++;return [];}
     if (/^\s*UPDATE recovery_cases/.test(query)) {writes++;casePending.current_revision_id=values[1];return []; }
     throw Error("UNEXPECTED_COMPONENT_SQL:" + query.slice(0, 100));
-  } };
+  } });
   const writer = { begin: async (body: (tx: unknown) => Promise<unknown>) => {
     role = "setrox"; pending = undefined;casePending=undefined;
     try { const result = await body(transaction); stored = pending ?? stored;caseStored=casePending??caseStored;commits++; return result; }
@@ -433,4 +435,209 @@ it("router refuses its pinned delivery lease lost before post-lock transaction c
   const f = await routedWorkOwnerFixture({ loseLeaseBeforeCommit: true });
   await assert.rejects(f.run(), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
   assert.equal(f.leaseChecks, 2);
+});
+
+// Mutation caught: publication drops the acquired owner's identity at its new
+// BEGIN, or skips revocation/lease checks before a real publication write/commit.
+// The complete publisher, canonical handoff checks and real owner WeakMaps run.
+// Only the external compiler admission, runtime storage and producer reservation
+// boundaries are inert: no PostgreSQL connection/installation is created here.
+async function recoveryPublicationOwnerFixture(options: {
+  ordinaryLockAllowed?: boolean; closeAtDispatchLock?: boolean;
+  closeAtPublicationInsert?: boolean; expireAtPublicationInsert?: boolean; runStopped?: boolean; closeAtRunRead?: boolean;
+} = {}) {
+  const { f, handoff } = await routedWorkOwnerFixture();
+  const d = handoff.directive, now = new Date("2026-11-07T00:00:00Z");
+  const chain: any = { dispatch_id: handoff.dispatchId, delivery_recovery_case_id: handoff.recoveryCaseId,
+    delivery_revision_id: handoff.revisionId, delivery_run_id: handoff.runId, delivery_story_id: handoff.storyId,
+    delivery_state: "leased", owner_instance_id: handoff.lease.ownerInstanceId, lease_token: handoff.lease.leaseToken,
+    lease_expires_at: handoff.lease.expiresAt, attempt_id: null, claim_id: null, execution_slice_hash: null,
+    case_run_id: handoff.runId, case_story_id: handoff.storyId, current_revision_id: handoff.revisionId,
+    case_status: "repairing", case_owner: handoff.recoveryOwner, revision_recovery_case_id: handoff.recoveryCaseId,
+    revision_run_id: handoff.runId, revision_story_id: handoff.storyId, recovery_owner: handoff.recoveryOwner,
+    revision_packet_hash: d.packetHash, revision_contract_slice_hash: d.contractSliceHash,
+    revision_source_sha: d.sourceRevision.sha, revision_source_tree_hash: d.sourceRevision.treeHash,
+    revision_finding_set_hash: d.findingSetHash, revision_finding_ids: d.findingIds,
+    revision_expected_delta: d.expectedDelta, revision_allowed_paths: d.allowedPaths,
+    revision_evidence_plan: d.evidencePlan, revision_evidence_plan_artifact_hash: null,
+    dispatch_recovery_case_id: handoff.recoveryCaseId, dispatch_revision_id: handoff.revisionId,
+    dispatch_class: handoff.dispatchClass, dispatch_packet_hash: d.packetHash,
+    dispatch_contract_slice_hash: d.contractSliceHash, dispatch_source_sha: d.sourceRevision.sha,
+    dispatch_source_tree_hash: d.sourceRevision.treeHash, dispatch_finding_set_hash: d.findingSetHash,
+    dispatch_finding_ids: d.findingIds, dispatch_evidence_plan: d.evidencePlan, dispatch_evidence_plan_artifact_hash: null };
+  const input = { runId: handoff.runId, stepDbId: "step-db", workflowStepId: "implement",
+    storyDbId: "story-db", storyId: handoff.storyId, claimAgentId: "feature-dev_developer", parallelLimit: 1,
+    recoveryHandoff: handoff, storyAdmissionProof: { schema: "setfarm.compiler-story-english-admission-claim-proof.v1",
+      receiptHash: "e".repeat(64), subjectHash: "f".repeat(64) },
+    runtimeIntent: { schema: "setfarm.runtime-claim-intent.v1", sessionId: "RTS_unit-publication-0001",
+      runtimeAgentId: "unit-agent", runtimeKind: "local_process", ownerInstanceId: "unit-spawner" } };
+  let committed: any, staged: any, claim: any, runtime: any, insertCount = 0;
+  const writeRoles: string[] = [], lockRoles: string[] = [];
+  const originalBegin = f.writer.begin;
+  f.writer.begin = async body => {
+    staged = undefined;
+    const result = await originalBegin(body);
+    committed = staged ?? committed;
+    return result;
+  };
+  f.setSqlHook((query, values) => {
+    if (query.includes("FROM internal_production_v3_recovery_claim_publications_v1")) {
+      lockRoles.push(f.role);
+      if (f.role !== "sf_owner_fixture" && !options.ordinaryLockAllowed)
+        throw Error("permission denied for table internal_production_v3_recovery_claim_publications_v1");
+      if (options.closeAtDispatchLock) f.authority.closeOwnerRecoveryAccessV1(f.access);
+      if (query.includes("WHERE dispatch_id=$1")) return [];
+      return committed || staged ? [{ ...chain, ...(staged ?? committed) }] : [];
+    }
+    if (/^\s*INSERT INTO internal_production_v3_recovery_claim_publications_v1/.test(query)) {
+      writeRoles.push(f.role);
+      if (f.role !== "sf_owner_fixture") throw Error("permission denied for table internal_production_v3_recovery_claim_publications_v1");
+      insertCount++;
+      const keys = "claim_id,runtime_session_id,run_id,step_db_id,workflow_step_id,story_db_id,story_id,story_index,recovery_case_id,revision_id,dispatch_id,status,handoff_canonical_json,handoff_hash,bound_at".split(",");
+      staged = Object.fromEntries(keys.map((key, i) => [key, values[i]]));
+      if (options.closeAtPublicationInsert) f.authority.closeOwnerRecoveryAccessV1(f.access);
+      if (options.expireAtPublicationInsert) f.expireLease();
+      return [];
+    }
+    if (query.includes("SELECT protocol FROM runs")) return [{ protocol: "v3" }];
+    if (query.includes("SELECT status, protocol, assigned_developer")) {
+      if (options.closeAtRunRead) f.authority.closeOwnerRecoveryAccessV1(f.access);
+      return [{ status: options.runStopped ? "failed" : "running", protocol: "v3", assigned_developer: null, packet_hash: d.packetHash }];
+    }
+    if (query.includes("FROM runtime_sessions WHERE session_id=$1") && query.includes("runtime_agent_id")) return committed ? [runtime] : [];
+    if (query.includes("FROM recovery_dispatch_deliveries delivery") && query.includes("delivery_recovery_case_id")) return [chain];
+    if (query.includes("SELECT 1 AS blocked") || query.includes("FROM v3_story_claim_runtime_bindings_v1") || query.includes("FROM v3_preparation_story_state") || query.includes("FROM v3_preparation_claim_publications_v2")) return [];
+    if (query.includes("SELECT session_id FROM runtime_sessions")) return [];
+    if (query.startsWith("SELECT status FROM steps")) return [{ status: "pending" }];
+    if (query.startsWith("SELECT status, story_id")) return [{ status: "failed", story_id: handoff.storyId, story_index: 0, claim_generation: 1, output: null, story_branch: null, retry_count: 0, max_retries: 2 }];
+    if (query.includes("SELECT COUNT(*)::integer AS count")) return [{ count: 0 }];
+    if (query.includes("nextval(pg_get_serial_sequence")) return [{ id: "10" }];
+    if (query.startsWith("SELECT id::text AS id FROM claim_log")) return committed ? [{ id: "10" }] : [];
+    if (query.includes("SELECT reservation_ref,reservation_hash,state")) return [{ reservation_ref: "fixture-ref", reservation_hash: "a".repeat(64), state: committed ? "bound" : "pending" }];
+    if (/^\s*UPDATE stories/.test(query)) return [{ claim_generation: 2 }];
+    if (/^\s*UPDATE steps/.test(query)) return [{ id: "step-db" }];
+    if (/^\s*INSERT INTO claim_log/.test(query)) {
+      claim = { id: "10", run_id: values[1], step_id: values[2], story_id: values[3], agent_id: values[4], claimed_at: values[5], outcome: null, abandoned_at: null, duration_ms: null, diagnostic: null };
+      return committed ? [] : [{ id: "10" }];
+    }
+    if (query.includes("SELECT id::text AS id,run_id,step_id,story_id")) return [claim];
+    if (query.startsWith("SELECT id FROM steps WHERE id=")) return [{ id: "step-db" }];
+    if (query.startsWith("SELECT claim_generation FROM stories")) return [{ claim_generation: 2 }];
+    if (query.startsWith("SELECT id::text AS id,claimed_at")) return [{ id: "10", claimed_at: now }];
+    if (query.startsWith("SELECT claim_id::text AS claim_id FROM runtime_sessions")) return [{ claim_id: "10" }];
+    if (query.includes("SELECT state") && query.includes("a-runtime-session-v1")) return [{ state: "bound" }];
+    return undefined;
+  });
+  const runtimeModule = await import("../../src/execution/runtime-session-repository.js");
+  const admission = await import("../../src/execution/compiler-story-english-admission-ledger-v1.js");
+  const native = await import("../../src/execution/v3-preparation-authority-v2-repository.js");
+  const publisher = await component("../../src/execution/claim-runtime-publication.ts", {
+    "../recovery/v3-owner-recovery-authority-v1.js": f.authority,
+    "../db-pg.js": {
+      beginOrAdoptInternalProductionOwnerReservationV1: async () => ({ reservationRef: "fixture-ref", reservationHash: "a".repeat(64) }),
+      bindInternalProductionOwnerReservationV1: async (_tx: unknown, value: any) => ({ ...value, ownerKey: "10" }),
+    },
+    "./compiler-story-english-admission-ledger-v1.js": { ...admission, lockAndAuthenticateCompilerStoryEnglishAdmissionClaimSubjectV1: async () => ({}) },
+    "./v3-story-claim-runtime-binding-v1.js": { insertV3StoryClaimRuntimeBindingV1: async () => ({ kind: "story_member", storyDbId: "story-db", storyId: "US-001", storyIndex: 0, storyClaimGeneration: 2 }), loadAndRevalidateV3StoryClaimRuntimeBindingV1: async () => undefined },
+    "./v3-preparation-authority-v2-repository.js": { ...native, readV3PreparationAuthorityByClaimV2: async () => undefined },
+    "./runtime-session-repository.js": { ...runtimeModule, reserveRuntimeSessionInTransaction: async (_tx: unknown, value: any) => {
+      runtime = { claim_id: "10", run_id: value.runId, step_db_id: value.stepDbId, workflow_step_id: value.workflowStepId,
+        story_db_id: value.storyDbId, story_id: value.storyId, claim_agent_id: value.claimAgentId,
+        runtime_agent_id: value.runtimeAgentId, runtime_kind: value.runtimeKind, owner_instance_id: value.ownerInstanceId,
+        session_key: null, worktree: null, runtime_path: null, transcript_path: null, state: "reserved", attempt_id: null };
+    } },
+  });
+  return { f, input, publisher, lockRoles, writeRoles, get committed() { return committed; }, get insertCount() { return insertCount; },
+    run: (access: unknown = f.access, value: any = input) => publisher.publishLoopClaimRuntime(f.restricted, value, access) };
+}
+
+it("recovery claim publication uses its real owner BEGIN for ledger lock and immutable INSERT", async () => {
+  const p = await recoveryPublicationOwnerFixture();
+  const result = await p.run();
+  assert.equal(result.claimId, 10); assert.equal(result.runtime.sessionId, "RTS_unit-publication-0001");
+  assert.equal(p.committed.claim_id, "10"); assert.equal(p.committed.dispatch_id, p.input.recoveryHandoff.dispatchId);
+  assert.deepEqual(p.writeRoles, ["sf_owner_fixture"]); assert.equal(p.f.role, "setrox");
+});
+
+it("ordinary recovery publication remains denied at its ledger lock and independently at INSERT", async () => {
+  for (const ordinaryLockAllowed of [false, true]) {
+    const p = await recoveryPublicationOwnerFixture({ ordinaryLockAllowed });
+    await assert.rejects(p.publisher.publishLoopClaimRuntime(p.f.restricted, p.input),
+      /permission denied for table internal_production_v3_recovery_claim_publications_v1/);
+    assert.equal(p.committed, undefined); assert.equal(p.f.commits, 0);
+    assert.deepEqual(p.lockRoles, ["sf_runtime_fixture"]);
+    assert.deepEqual(p.writeRoles, ordinaryLockAllowed ? ["sf_runtime_fixture"] : []);
+  }
+});
+
+it("recovery publication rejects forged, closed and non-recovery owner inputs before publication SQL", async () => {
+  const forged = await recoveryPublicationOwnerFixture();
+  await assert.rejects(forged.run({ writeSql: forged.f.writer, operation: Object.freeze({}) }), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  const closed = await recoveryPublicationOwnerFixture();
+  closed.f.authority.closeOwnerRecoveryAccessV1(closed.f.access);
+  await assert.rejects(closed.run(), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  const normal = await recoveryPublicationOwnerFixture();
+  await assert.rejects(normal.run(normal.f.access, { ...normal.input, recoveryHandoff: undefined }), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  for (const p of [forged, closed, normal]) {
+    assert.equal(p.f.commits, 0); assert.equal(p.committed, undefined); assert.deepEqual(p.lockRoles, []);
+  }
+});
+
+it("recovery publication rechecks owner closure after its dispatch lock before mutation", async () => {
+  const p = await recoveryPublicationOwnerFixture({ closeAtDispatchLock: true });
+  await assert.rejects(p.run(), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  assert.equal(p.insertCount, 0); assert.equal(p.f.commits, 0); assert.equal(p.committed, undefined);
+});
+
+it("recovery publication rolls back a completed INSERT if owner closes or pinned lease expires before commit", async () => {
+  for (const options of [{ closeAtPublicationInsert: true }, { expireAtPublicationInsert: true }]) {
+    const p = await recoveryPublicationOwnerFixture(options);
+    await assert.rejects(p.run(), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+    assert.equal(p.insertCount, 1); assert.equal(p.committed, undefined); assert.equal(p.f.commits, 0);
+    assert.equal(p.f.role, "setrox");
+  }
+});
+
+it("recovery publication early returns still cross the final owner fence while ordinary returns stay ordinary", async () => {
+  const p = await recoveryPublicationOwnerFixture({ runStopped: true, closeAtRunRead: true });
+  await assert.rejects(p.run(), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  assert.equal(p.f.commits, 0); assert.equal(p.insertCount, 0);
+  const ordinary = await recoveryPublicationOwnerFixture({ runStopped: true });
+  assert.equal(await ordinary.publisher.publishLoopClaimRuntime(ordinary.f.restricted, ordinary.input), undefined);
+  assert.equal(ordinary.f.commits, 0); assert.deepEqual(ordinary.lockRoles, []);
+});
+
+it("recovery publication replays exact stored authority without a second ledger INSERT", async () => {
+  const p = await recoveryPublicationOwnerFixture();
+  const first = await p.run(), replay = await p.run();
+  assert.equal(replay.claimId, first.claimId); assert.deepEqual(replay.runtime, first.runtime);
+  assert.deepEqual(replay.claimAuthority, first.claimAuthority); assert.equal(p.insertCount, 1);
+  p.f.expireLease();
+  await assert.rejects(p.run(), /RECOVERY_OWNER_AUTHORITY_REFUSED/);
+  assert.equal(p.f.commits, 2);
+});
+
+it("actual step publication routes only fresh recovery through its fixed owner facade", async () => {
+  const p = await recoveryPublicationOwnerFixture({ runStopped: true });
+  const selection = { freshInstallationSelectionV1: {} as unknown, selectedFreshInstallationRootV1: () => null };
+  let ownerCalls = 0;
+  const steps = await component("../../src/installer/step-ops.ts", {
+    "../installation/fresh-installation-selection-v1.js": selection,
+    "../db-pg.js": { getSql: () => p.f.restricted },
+    "../execution/claim-runtime-publication.js": p.publisher,
+    "../recovery/fresh-recovery-owner-operations-v1.js": { selectedFreshRecoveryOwnerOperationsV1: () => ({
+      publishRecoveryClaimRuntime: (input: unknown) => { ownerCalls++; return p.run(p.f.access, input); },
+    }) },
+  }, ["publishLoopClaimAndRuntime"]);
+  const invoke = (handoff: unknown) => steps.publishLoopClaimAndRuntime(
+    { run_id: p.input.runId, id: p.input.stepDbId, step_id: p.input.workflowStepId },
+    { id: p.input.storyDbId, story_id: p.input.storyId }, p.input.claimAgentId, undefined, 1,
+    p.input.runtimeIntent, handoff, undefined, p.input.storyAdmissionProof);
+  await invoke(p.input.recoveryHandoff);
+  assert.equal(ownerCalls, 1); assert.equal(p.f.commits, 1);
+  selection.freshInstallationSelectionV1 = null;
+  await invoke(p.input.recoveryHandoff);
+  selection.freshInstallationSelectionV1 = {};
+  await invoke(undefined);
+  assert.equal(ownerCalls, 1); assert.equal(p.f.commits, 1);
 });

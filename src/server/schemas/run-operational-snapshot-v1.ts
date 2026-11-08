@@ -626,7 +626,8 @@ export const OperationalRecoveryDispatchV1Schema = z.object({
     context.addIssue({ code: "custom", path: ["attemptRef"], message: "Delivery attempt and claim refs must be jointly present" });
   }
   const leaseFields = [value.leaseOwnerInstanceId, value.leaseExpiresAt].filter(Boolean).length;
-  if ((value.deliveryState === "authorized" && leaseFields !== 0) || (value.deliveryState !== "authorized" && leaseFields !== 2)) {
+  const activeLease = ["leased", "attempt_reserved", "running"].includes(value.deliveryState);
+  if (leaseFields === 1 || (value.deliveryState === "authorized" && leaseFields !== 0) || (activeLease && leaseFields !== 2)) {
     context.addIssue({ code: "custom", path: ["leaseOwnerInstanceId"], message: "Delivery lease projection must match its state" });
   }
   const requiresAttempt = ["attempt_reserved", "running", "succeeded", "failed"].includes(value.deliveryState);

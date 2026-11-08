@@ -1,3 +1,8 @@
+import {
+  assertOwnerRecoveryAccessV1, enterOwnerRecoveryTransactionV1,
+  assertOwnerRecoveryTransactionBeforeCommitV1, assertOwnerRecoveryMutationLiveIfOwnedV1,
+  pinOwnerRecoveryDeliveryLeaseV1, ownerRecoveryRefusedV1, type OwnerRecoveryAccessV1,
+} from "../recovery/v3-owner-recovery-authority-v1.js";
 import { V3PreparationClaimAuthorityError, v3PreparationStoryLockIdentity } from "./v3-preparation-claim-authority.js";
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import { hasPendingV3SinglePredecessorCompletionInTransactionV1 } from "./v3-predecessor-completion-claim-barrier-v1.js";
@@ -338,6 +343,7 @@ export async function prepareInternalProductionClaimBirthV1(
   if (existingClaims.length > 1 || (existingClaims[0] && existingClaims[0].id !== claimIdText)) {
     throw new Error("INTERNAL_PRODUCTION_CLAIM_ADOPTION_INVALID");
   }
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
   const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(sql, {
     producerImplementationId,
     ownerKey: claimIdText,
@@ -384,6 +390,7 @@ export async function insertAndBindInternalProductionClaimBirthV1(
     || !["pending", "bound"].includes(sidecar.state)
   ) throw new Error("INTERNAL_PRODUCTION_CLAIM_ADOPTION_INVALID");
 
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
   const inserted = await sql.unsafe<Array<{ id: string }>>(
     `INSERT INTO claim_log (id,run_id,step_id,story_id,agent_id,claimed_at)
      VALUES ($1::bigint,$2,$3,$4,$5,$6)
@@ -440,6 +447,7 @@ export async function insertAndBindInternalProductionClaimBirthV1(
     || stored.diagnostic !== null
   ) throw new Error("INTERNAL_PRODUCTION_CLAIM_ADOPTION_INVALID");
 
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(sql as TransactionSql);
   const bound = await bindInternalProductionOwnerReservationV1(sql, {
     reservationRef: birth.reservation.reservationRef,
     reservationHash: birth.reservation.reservationHash,
@@ -1187,6 +1195,7 @@ async function insertOrAdoptRecoveryClaimRuntimePublication(
     handoffHash: string;
   }>,
 ): Promise<void> {
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
   await transaction.unsafe(
     `INSERT INTO internal_production_v3_recovery_claim_publications_v1 (
        claim_id, runtime_session_id, run_id, step_db_id, workflow_step_id,
@@ -1745,6 +1754,11 @@ async function replayCommittedLoopClaimRuntimeInTransaction(
       "committed replay cannot be owned by recovery and preparation authority together",
     );
   }
+  if (canonicalRecoveryHandoff) await pinOwnerRecoveryDeliveryLeaseV1(transaction, {
+    dispatchId: canonicalRecoveryHandoff.dispatchId, revisionId: canonicalRecoveryHandoff.revisionId,
+    ownerInstanceId: canonicalRecoveryHandoff.lease.ownerInstanceId, leaseToken: canonicalRecoveryHandoff.lease.leaseToken,
+  });
+  await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
   const birth = await prepareInternalProductionClaimBirthV1(
     transaction as PgTransactionSql,
     "a-claim-loop-runtime-v1",
@@ -1851,6 +1865,7 @@ export async function publishLoopClaimRuntime(
     storyAdmissionProof?: CompilerStoryEnglishAdmissionClaimProofV1;
     now?: Date;
   }>,
+  ownerAccess?: OwnerRecoveryAccessV1,
 ): Promise<LoopClaimRuntimePublication | undefined> {
   validTime(rawInput.now);
   if (!Number.isSafeInteger(rawInput.parallelLimit)
@@ -1864,6 +1879,10 @@ export async function publishLoopClaimRuntime(
   const recoveryHandoff = rawInput.recoveryHandoff
     ? V3RecoveryClaimHandoffV1Schema.parse(rawInput.recoveryHandoff)
     : undefined;
+  if (ownerAccess) {
+    assertOwnerRecoveryAccessV1(ownerAccess);
+    if (!recoveryHandoff) ownerRecoveryRefusedV1();
+  }
   const recoveryHandoffCanonicalJson = recoveryHandoff
     ? canonicalJsonStringify(recoveryHandoff)
     : undefined;
@@ -1927,7 +1946,10 @@ export async function publishLoopClaimRuntime(
   const authenticatedNativePreparation = preparationAuthority
     ? await authenticateV3NativePreparation(sql, { readiness: preparationAuthority,
         nativeAuthority: nativePreparationAuthority, artifacts: rawInput.nativePreparationArtifacts }) : undefined;
-  return sql.begin(async (transaction) => {
+  return (ownerAccess?.writeSql ?? sql).begin(async (transaction) => {
+    const ownerFence = ownerAccess ? await enterOwnerRecoveryTransactionV1(transaction, ownerAccess) : undefined;
+    // Keep every existing early return/replay inside the final owner fence.
+    const result = await (async () => {
     // V3 recovery authorization takes this advisory lock before touching the
     // run row. Publication must use the same order or lease/publication can
     // deadlock while each side owns the other's lock.
@@ -2059,6 +2081,10 @@ export async function publishLoopClaimRuntime(
         const exactRecovery = await assertExactRecoveryPublicationHandoff(transaction, {
           handoff: recoveryHandoff,
           runPacketHash: run.packet_hash,
+        });
+        await pinOwnerRecoveryDeliveryLeaseV1(transaction, {
+          dispatchId: exactRecovery.handoff.dispatchId, revisionId: exactRecovery.handoff.revisionId,
+          ownerInstanceId: exactRecovery.handoff.lease.ownerInstanceId, leaseToken: exactRecovery.handoff.lease.leaseToken,
         });
         canonicalRecoveryPublication = {
           ...exactRecovery,
@@ -2281,6 +2307,7 @@ export async function publishLoopClaimRuntime(
           transaction,
           "CLAIM_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
         );
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
     const claimIdRows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
       SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
     `;
@@ -2295,6 +2322,7 @@ export async function publishLoopClaimRuntime(
         [rawInput.runId, rawInput.callerGatewayAgent, now],
       );
     }
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
     const updatedStories = await transaction.unsafe<Array<{ claim_generation: number }>>(
       `UPDATE stories
           SET status = 'running', claim_generation = COALESCE(claim_generation, 0) + 1,
@@ -2305,6 +2333,7 @@ export async function publishLoopClaimRuntime(
       [rawInput.storyDbId, rawInput.runId, now, rawInput.claimAgentId, requiredStoryStatus],
     );
     if (updatedStories.length !== 1) throw new Error("LOOP_STORY_CLAIM_CAS_LOST");
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
     const updatedSteps = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE steps
           SET status = 'running', current_story_id = $2,
@@ -2314,6 +2343,7 @@ export async function publishLoopClaimRuntime(
       [rawInput.stepDbId, rawInput.storyDbId, now, rawInput.runId],
     );
     if (updatedSteps.length !== 1) throw new Error("LOOP_STEP_CLAIM_CAS_LOST");
+    await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
     const claimId = await insertAndBindInternalProductionClaimBirthV1(
       transaction as PgTransactionSql,
       claimBirth,
@@ -2360,6 +2390,7 @@ export async function publishLoopClaimRuntime(
     let runtime: ClaimRuntimePublication["runtime"];
     let authenticatedStorySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
     if (runtimeIntent) {
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
       await reserveRuntimeSessionInTransaction(transaction, {
         sessionId: runtimeIntent.sessionId,
         runId: rawInput.runId,
@@ -2382,6 +2413,7 @@ export async function publishLoopClaimRuntime(
     }
     if (storyClaimAuthority) {
       if (!runtimeIntent) throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
+      await assertOwnerRecoveryMutationLiveIfOwnedV1(transaction);
       authenticatedStorySubject = await insertV3StoryClaimRuntimeBindingV1(transaction, {
         claimId,
         runtimeSessionId: runtimeIntent.sessionId,
@@ -2431,5 +2463,8 @@ export async function publishLoopClaimRuntime(
           }
         : {}),
     };
+    })();
+    if (ownerFence) await assertOwnerRecoveryTransactionBeforeCommitV1(transaction, ownerFence);
+    return result;
   }) as Promise<LoopClaimRuntimePublication | undefined>;
 }

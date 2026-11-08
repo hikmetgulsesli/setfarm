@@ -51,6 +51,7 @@ import {
   reduceRunOperationalLifecycle,
 } from "../src/server/run-operational-snapshot.js";
 import {
+  OperationalRecoveryDispatchV1Schema,
   OperationalTerminationRequestV1Schema,
   RunOperationalSnapshotV1Schema,
 } from "../src/server/schemas/run-operational-snapshot-v1.js";
@@ -1888,4 +1889,76 @@ describe("canonical run operational snapshot", () => {
       },
     }));
   });
+});
+
+// The public projection may retire a lease at canonical cancellation, while
+// ordinary terminal completion retains its complete prior lease projection.
+// Removing terminal0 admission or weakening active/partial-pair checks breaks
+// these real public-schema cases. Literal rows invoke no DB/projector/owner authority.
+function terminalDispatchProjectionFixture() {
+  return {
+    ref: "setfarm://recovery-dispatch/RDISP_" + "1".repeat(64),
+    dispatchId: "RDISP_" + "1".repeat(64),
+    recoveryCaseRef: "setfarm://recovery-case/RCV_" + "2".repeat(64),
+    recoveryCaseId: "RCV_" + "2".repeat(64),
+    revisionRef: "setfarm://recovery-revision/RREV_" + "3".repeat(64),
+    revisionId: "RREV_" + "3".repeat(64), revisionNumber: 1,
+    runRef: "setfarm://run/unit-terminal-run", storyRef: "setfarm://run/unit-terminal-run/story/US-001", storyId: "US-001",
+    findingSetRef: "setfarm://finding-set/FSET_" + "4".repeat(64), findingSetHash: "4".repeat(64),
+    dispatchClass: "product_implementation", packetHash: "5".repeat(64), sliceHash: "6".repeat(64),
+    sourceRevision: { sha: "a".repeat(40), treeHash: "b".repeat(40) }, findingIds: ["FIND_" + "7".repeat(64)],
+    deliveryState: "superseded", attemptRef: null, attemptId: null, claimRef: null, executionSliceHash: null,
+    attemptCount: 0, leaseOwnerInstanceId: null, leaseExpiresAt: null,
+    terminalReasonCode: "RUN_CANCELLED", authorizedAt: "2026-11-08T00:00:00.000Z", terminalAt: "2026-11-08T00:01:00.000Z",
+  };
+}
+
+it("public recovery dispatch accepts a superseded row after canonical cancellation clears both lease fields", () => {
+  const parsed = OperationalRecoveryDispatchV1Schema.safeParse(terminalDispatchProjectionFixture());
+  assert.equal(parsed.success, true, parsed.success ? undefined : JSON.stringify(parsed.error.issues));
+});
+
+const retainedDispatchLease = { leaseOwnerInstanceId: "unit-prior-owner", leaseExpiresAt: "2026-11-08T00:02:00.000Z" };
+const exactDispatchAttempt = { attemptRef: "setfarm://execution-attempt/ATT_unit-terminal-0001",
+  attemptId: "ATT_unit-terminal-0001", claimRef: "setfarm://claim-log/1", executionSliceHash: "8".repeat(64), attemptCount: 1 };
+
+it("public recovery dispatch accepts both complete terminal lease shapes for every terminal state", () => {
+  for (const deliveryState of ["succeeded", "failed", "blocked", "superseded"]) {
+    for (const lease of [{ leaseOwnerInstanceId: null, leaseExpiresAt: null }, retainedDispatchLease]) {
+      const row = { ...terminalDispatchProjectionFixture(), ...exactDispatchAttempt, deliveryState, ...lease };
+      assert.equal(OperationalRecoveryDispatchV1Schema.safeParse(row).success, true, deliveryState);
+    }
+  }
+});
+
+it("public recovery dispatch keeps authorized leases absent and every active lease complete", () => {
+  const authorized = { ...terminalDispatchProjectionFixture(), deliveryState: "authorized", terminalAt: null, terminalReasonCode: null };
+  assert.equal(OperationalRecoveryDispatchV1Schema.safeParse(authorized).success, true);
+  assert.equal(OperationalRecoveryDispatchV1Schema.safeParse({ ...authorized, ...retainedDispatchLease }).success, false);
+  for (const deliveryState of ["leased", "attempt_reserved", "running"]) {
+    const row = { ...authorized, ...exactDispatchAttempt, deliveryState };
+    assert.equal(OperationalRecoveryDispatchV1Schema.safeParse(row).success, false, deliveryState);
+    assert.equal(OperationalRecoveryDispatchV1Schema.safeParse({ ...row, ...retainedDispatchLease }).success, true, deliveryState);
+  }
+});
+
+it("public recovery dispatch rejects either partial lease projection in every delivery state", () => {
+  for (const deliveryState of ["authorized", "leased", "attempt_reserved", "running", "succeeded", "failed", "blocked", "superseded"]) {
+    const terminal = ["succeeded", "failed", "blocked", "superseded"].includes(deliveryState);
+    const row = { ...terminalDispatchProjectionFixture(), ...exactDispatchAttempt, deliveryState,
+      terminalAt: terminal ? "2026-11-08T00:01:00.000Z" : null, terminalReasonCode: terminal ? "RUN_CANCELLED" : null };
+    assert.equal(OperationalRecoveryDispatchV1Schema.safeParse({ ...row, leaseOwnerInstanceId: "unit-owner" }).success, false, deliveryState);
+    assert.equal(OperationalRecoveryDispatchV1Schema.safeParse({ ...row, leaseExpiresAt: "2026-11-08T00:02:00.000Z" }).success, false, deliveryState);
+  }
+});
+
+it("public recovery dispatch retains attempt slice timestamp reason and identity guards after lease retirement", () => {
+  const failed = { ...terminalDispatchProjectionFixture(), ...exactDispatchAttempt, deliveryState: "failed" };
+  assert.equal(OperationalRecoveryDispatchV1Schema.safeParse(failed).success, true);
+  for (const malformed of [{ attemptRef: null }, { attemptId: null }, { claimRef: null },
+    { executionSliceHash: null }, { terminalAt: null }, { dispatchId: "invalid" },
+    { terminal_result: { privatePriorOwner: "not-a-public-field" } }]) {
+    assert.equal(OperationalRecoveryDispatchV1Schema.safeParse({ ...failed, ...malformed }).success, false);
+  }
+  assert.equal(OperationalRecoveryDispatchV1Schema.safeParse({ ...failed, deliveryState: "running", ...retainedDispatchLease, terminalAt: null }).success, false);
 });
