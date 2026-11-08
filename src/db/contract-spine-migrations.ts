@@ -21597,7 +21597,10 @@ export async function applyContractSpineMigrationsIfNeeded(sql: Sql,options: Rea
       result = { schema: "setfarm.contract-spine-migration-apply.v1",applied: [],adopted: [],
         alreadyApplied: currentMigrationsV34.map(migration => migration.name),guardedPending: [] };
     }
-    const plan = await planContractSpineMigrationsOnConnectionV34(transaction);
+    const plan = await reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
+      transaction,
+      await planContractSpineMigrationsOnConnectionV34(transaction),
+    );
     if (plan.status !== "current") throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH","Migration 34 current source chain is incomplete or drifted");
     await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV34(transaction);
     if (options.releaseSha) await transaction.unsafe(
