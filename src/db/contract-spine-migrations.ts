@@ -6,7 +6,7 @@ import { createFreshInstallationApplicationV1, verifyFreshInstallationDatabaseId
   type FreshInstallationOriginV1, type FreshInstallationApplicationV1 } from "../installation/fresh-installation-origin-v1.js";
 
 import { computeContractSpineMigrationChecksumV1 } from "./contract-spine-migration-checksum.js";
-import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./contract-spine-migration-digests.generated.js";
+import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS as CURRENT_CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./contract-spine-migration-digests.generated.js";
 import { assertContractSpineSemanticMigrationSourceIntegrityWhenAvailable } from "./contract-spine-migration-source-integrity.js";
 import {
   BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
@@ -141,6 +141,25 @@ import {
   type OperationalEventDeliveryConsumerV1,
 } from "../execution/schemas/operational-event-v1.js";
 
+import {
+  OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V4_STATEMENTS,
+  detectOperationalFailureCauseAuthorityV4Constraint,
+  verifyOperationalFailureCauseAuthorityV4Constraint,
+  OperationalFailureCauseAuthorityV4MigrationError,
+} from "./operational-failure-cause-authority-v4-migration.js";
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-semantic-metadata-view:BEGIN
+// Historical registrations see exactly their original semantic metadata keys.
+const currentSemanticVersionsV34 = [8,11,12,23,24,25,26,27,28,29,30,31,32,33,34] as const;
+if (Reflect.ownKeys(CURRENT_CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS).length !== currentSemanticVersionsV34.length
+  || currentSemanticVersionsV34.some(version => !Object.hasOwn(CURRENT_CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS,version)
+    || !/^[a-f0-9]{64}$/.test(CURRENT_CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[version]))) {
+  throw new Error("CONTRACT_SPINE_V34_SEMANTIC_METADATA_INVALID");
+}
+const { 34: migration34SemanticDigest, ...historicalSemanticDigestsThrough33 } = CURRENT_CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS;
+const CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS = Object.freeze(historicalSemanticDigestsThrough33);
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-semantic-metadata-view:END
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
 type ReservedSql = postgres.ReservedSql;
@@ -16522,6 +16541,7 @@ async function planContractSpineMigrationsOnConnection(
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-blocked-successor-planner:END
 export { verifyV3RecoveryClaimRuntimePublicationV1 };
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-current-planner-port:BEGIN
 export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
   return sql.begin(async (transaction) => {
     await transaction.unsafe(
@@ -16529,7 +16549,7 @@ export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpi
     );
     return reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
       transaction,
-      await planContractSpineMigrationsOnConnection(transaction),
+      await planContractSpineMigrationsOnConnectionV34(transaction),
     );
   }) as Promise<ContractSpineMigrationPlan>;
 }
@@ -16541,11 +16561,11 @@ export function getContractSpineCurrentHeadJournalIdentitiesV1(): readonly Reado
   checksum: string;
   migrationClass: ContractSpineMigrationClass;
 }>[] {
-  if (completeMigrations.length !== 33
-    || completeMigrations.some((migration, index) => migration.version !== index + 1)) {
+  if (currentMigrationsV34.length !== 34
+    || currentMigrationsV34.some((migration, index) => migration.version !== index + 1)) {
     throw new Error("CONTRACT_SPINE_CURRENT_HEAD_SOURCE_IDENTITY_INVALID_V1");
   }
-  return Object.freeze(completeMigrations.map((migration) => Object.freeze({
+  return Object.freeze(currentMigrationsV34.map((migration) => Object.freeze({
     version: migration.version,
     name: migration.name,
     checksum: checksum(migration),
@@ -16553,6 +16573,7 @@ export function getContractSpineCurrentHeadJournalIdentitiesV1(): readonly Reado
   })));
 }
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-current-planner-port:END
 /** Narrow pre-startup journal inspection. Does not invoke migration detect/verify hooks. */
 export async function inspectContractSpineThrough33JournalReadOnlyV2(sql: Sql): Promise<Readonly<{
   schema: "setfarm.contract-spine-through33-journal-read-only.v2";
@@ -17753,7 +17774,8 @@ async function applyMigration33AfterEvolvedOwnerAdmissionHeadV1(
   };
 }
 
-export async function applyContractSpineMigrationsIfNeeded(
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-predecessor-application:BEGIN
+async function applyContractSpineMigrationsThrough33IfNeededV1(
   sql: Sql,
   options: Readonly<{
     lockTimeoutMs?: number;
@@ -17858,6 +17880,8 @@ export async function applyContractSpineMigrationsIfNeeded(
  * Roll migration 25 back only while no preparation authority provenance was
  * published. Once any authority exists the ledger must migrate forward.
  */
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-predecessor-application:END
+
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-rollback:BEGIN
 export async function rollbackPreparationAuthorityV2LedgerToV24(
   sql: Sql,
@@ -20916,6 +20940,7 @@ async function reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
   });
 }
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-current-verification:BEGIN
 export async function verifyContractSpineMigrations(
   sql: Sql,
   options: Readonly<{
@@ -20964,7 +20989,7 @@ export async function verifyContractSpineMigrations(
       }
       const plan = await reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
         transaction,
-        await planContractSpineMigrationsOnConnection(transaction),
+        await planContractSpineMigrationsOnConnectionV34(transaction),
       );
       const unexpected = plan.migrations.find((migration) => migration.state === "unexpected");
       if (unexpected) {
@@ -20995,8 +21020,8 @@ export async function verifyContractSpineMigrations(
           `Migration ${pending.version} is pending`,
         );
       }
-      for (const migration of completeMigrations) {
-        if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(
+      for (const migration of currentMigrationsV34) {
+        if (await detectRegisteredMigrationAtCurrentSupportedHeadV34(
           migration,
           transaction,
         ) !== "present") {
@@ -21005,12 +21030,12 @@ export async function verifyContractSpineMigrations(
             `Migration ${migration.version} journaled objects are not fully present`,
           );
         }
-        await verifyRegisteredMigrationAtCurrentSupportedHeadV31(
+        await verifyRegisteredMigrationAtCurrentSupportedHeadV34(
           migration,
           transaction,
         );
       }
-      await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(transaction);
+      await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV34(transaction);
       return {
         schema: "setfarm.contract-spine-migration-verify.v1" as const,
         status: "verified" as const,
@@ -21034,6 +21059,7 @@ export async function verifyContractSpineMigrations(
   }
 }
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-current-verification:END
 /** Canonical pre-32 identities only; never a migration or cutover authority. */
 export function contractSpinePre32SourceJournalIdentitiesV1(): readonly Readonly<{
   version: number; name: string; checksum: string;
@@ -21243,23 +21269,23 @@ async function verifyFreshApplicationOnConnectionV1(
 
 async function verifyFreshCompleteJournalV1(sql: Sql | TransactionSql, origin: FreshInstallationOriginV1, verifyCatalog = true): Promise<void> {
   const rows = await completeJournalRows(sql);
-  if (rows.length !== 33 || rows.some((row, index) => {
-    const expected = completeMigrations[index];
+  if (rows.length !== 34 || rows.some((row, index) => {
+    const expected = currentMigrationsV34[index];
     return !expected || row.version !== expected.version || row.name !== expected.name
       || row.checksum !== checksum(expected) || row.state !== "applied";
-  })) throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH", "Fresh installation requires all33 exact applied journal rows");
+  })) throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH", "Fresh installation requires all34 exact applied journal rows");
   const releases = await sql.unsafe<Array<{ count: number }>>(
     "SELECT count(*)::integer AS count FROM public.setfarm_schema_migrations WHERE release_sha IS DISTINCT FROM $1 OR verified_release_sha IS DISTINCT FROM $1 OR verified_at IS NULL",
     [origin.sourceSha],
   );
   if (releases[0]?.count !== 0) throw new Error("FRESH_INSTALLATION_RELEASE_ATTESTATION_INVALID");
-  for (const migration of verifyCatalog ? completeMigrations : []) {
-    if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(migration, sql) !== "present") {
+  for (const migration of verifyCatalog ? currentMigrationsV34 : []) {
+    if (await detectRegisteredMigrationAtCurrentSupportedHeadV34(migration, sql) !== "present") {
       throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH", `Fresh installation migration${migration.version} is incomplete`);
     }
-    await verifyRegisteredMigrationAtCurrentSupportedHeadV31(migration, sql);
+    await verifyRegisteredMigrationAtCurrentSupportedHeadV34(migration, sql);
   }
-  if (verifyCatalog) await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(sql);
+  if (verifyCatalog) await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV34(sql);
   await verifyExactContractSpineJournalAuthority(sql);
 }
 
@@ -21315,6 +21341,15 @@ export async function initializeFreshInstallationContractSpineV1(transaction: Tr
        VALUES (33,$1,$2,'applied',$3,$3,NOW())`,
     [migration33.name, checksum(migration33), origin.sourceSha],
   );
+  await verifyOperationalFailureCauseAuthorityV3Constraint(transaction);
+  for (const statement of migration34.statements) await transaction.unsafe(statement);
+  await verifyOperationalFailureCauseAuthorityV4Constraint(transaction);
+  await transaction.unsafe(
+    `INSERT INTO public.setfarm_schema_migrations
+       (version,name,checksum,state,release_sha,verified_release_sha,verified_at)
+       VALUES (34,$1,$2,'applied',$3,$3,NOW())`,
+    [migration34.name, checksum(migration34), origin.sourceSha],
+  );
   await verifyFreshCompleteJournalV1(transaction, origin);
   await verifyCurrentBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(transaction);
 }
@@ -21345,3 +21380,238 @@ export async function verifyFreshInstallationSchemaReadOnlyV1(sql: Sql, origin: 
   });
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:fresh-installation-readonly-v1:END
+
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-current-head:BEGIN
+const migration34: Migration = Object.freeze({
+  version: 34, name: "034_operational_failure_cause_authority_v4", migrationClass: "automatic" as const,
+  statements: OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V4_STATEMENTS, implementationDigest: migration34SemanticDigest,
+  detect: detectOperationalFailureCauseAuthorityV4Constraint, verify: verifyOperationalFailureCauseAuthorityV4Constraint,
+});
+const currentMigrationsV34: readonly Migration[] = Object.freeze([...completeMigrations,migration34]);
+if (currentMigrationsV34.length !== 34 || currentMigrationsV34.some((migration,index) =>
+  migration.version !== index+1 || migration.implementationDigest !== CURRENT_CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[
+    migration.version as keyof typeof CURRENT_CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS])
+  || Object.keys(CURRENT_CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS).some(version =>
+    !currentMigrationsV34.some(migration => migration.version === Number(version)))) {
+  throw new Error("CONTRACT_SPINE_V34_SOURCE_DEFINITION_INVALID");
+}
+
+async function detectRegisteredMigrationAtCurrentSupportedHeadV34(migration: Migration,sql: Sql | TransactionSql): Promise<"absent" | "present" | "partial"> {
+  if ([21,30,31].includes(migration.version) && await detectOperationalFailureCauseAuthorityV4Constraint(sql) === "present") return "present";
+  return detectRegisteredMigrationAtCurrentSupportedHeadV31(migration,sql);
+}
+async function verifyRegisteredMigrationAtCurrentSupportedHeadV34(migration: Migration,sql: Sql | TransactionSql): Promise<void> {
+  if ([21,30,31].includes(migration.version) && await detectOperationalFailureCauseAuthorityV4Constraint(sql) === "present") {
+    await verifyOperationalFailureCauseAuthorityV4Constraint(sql); return;
+  }
+  await verifyRegisteredMigrationAtCurrentSupportedHeadV31(migration,sql);
+}
+async function verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV34(sql: Sql | TransactionSql): Promise<void> {
+  const state = await detectOperationalFailureCauseAuthorityV4Constraint(sql);
+  if (state === "present") {
+    await verifyCurrentContractSpineObjectOwnershipAtV29Head(sql);
+    await verifyOperationalFailureCauseAuthorityV4Constraint(sql); return;
+  }
+  if (state === "partial") throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH","Current V4 authority is partial");
+  await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(sql);
+}
+
+async function planContractSpineMigrationsOnConnectionV34(
+  sql: Sql | TransactionSql,
+): Promise<ContractSpineMigrationPlan> {
+  const journal = await completeJournalRows(sql);
+  const rows = new Map(journal.map((row) => [row.version, row]));
+  const knownVersions = new Set(currentMigrationsV34.map((migration) => migration.version));
+  const planned: ContractSpineMigrationPlan["migrations"][number][] = [];
+  for (const migration of currentMigrationsV34) {
+    const expectedChecksum = checksum(migration);
+    const row = rows.get(migration.version);
+    let state: ContractSpineMigrationPlan["migrations"][number]["state"];
+    if (
+      (migration.version === 33 || migration.version === 34)
+      && !row
+      && !["applied","adopted"].includes(planned.find(candidate => candidate.version === migration.version - 1)?.state ?? "")
+    ) {
+      state = "blocked_by_guarded_predecessor";
+    } else if (!row) {
+      const detected = await migration.detect(sql);
+      if (detected === "absent") {
+        state = "pending";
+      } else if (migration.migrationClass === "guarded") {
+        state = "adoption_mismatch";
+      } else if (detected === "partial") {
+        state = "adoption_mismatch";
+      } else {
+        try {
+          await migration.verify(sql);
+          state = "adoptable";
+        } catch (error) {
+          if (
+            ((error instanceof ContractSpineMigrationError || error instanceof OperationalFailureCauseAuthorityV4MigrationError)
+              && error.code === "MIGRATION_ADOPTION_MISMATCH")
+            || error instanceof BootstrapMainClaimHandoffV1SchemaError
+          ) {
+            state = "adoption_mismatch";
+          } else {
+            throw error;
+          }
+        }
+      }
+    } else {
+      if (row.name !== migration.name || row.checksum !== expectedChecksum) {
+        state = "checksum_mismatch";
+      } else if (migration.migrationClass === "guarded" && row.state !== "applied") {
+        state = "adoption_mismatch";
+      } else if (await detectRegisteredMigrationAtCurrentSupportedHeadV34(
+        migration,
+        sql,
+      ) !== "present") {
+        state = "adoption_mismatch";
+      } else {
+          try {
+            if (migration.migrationClass === "guarded") {
+              await verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
+                sql,
+              );
+            }
+            await verifyRegisteredMigrationAtCurrentSupportedHeadV34(migration, sql);
+          state = row.state === "adopted" ? "adopted" : "applied";
+        } catch (error) {
+          if (
+            ((error instanceof ContractSpineMigrationError || error instanceof OperationalFailureCauseAuthorityV4MigrationError)
+              && error.code === "MIGRATION_ADOPTION_MISMATCH")
+            || error instanceof BootstrapMainClaimHandoffV1SchemaError
+          ) {
+            state = "adoption_mismatch";
+          } else {
+            throw error;
+          }
+        }
+      }
+    }
+    planned.push({
+      version: migration.version,
+      name: migration.name,
+      migrationClass: migration.migrationClass,
+      checksum: expectedChecksum,
+      state,
+    });
+  }
+  try {
+    await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV34(sql);
+  } catch (error) {
+    if (
+      (error instanceof ContractSpineMigrationError || error instanceof OperationalFailureCauseAuthorityV4MigrationError)
+      && error.code === "MIGRATION_ADOPTION_MISMATCH"
+    ) {
+      let index = planned.findIndex(migration => migration.version === 34 && migration.state !== "pending");
+      if (index < 0) index = planned.findIndex(migration => migration.version === 31 && migration.state !== "pending");
+      if (index < 0) {
+        index = planned.findIndex((migration) =>
+          migration.version === 30 && migration.state !== "pending");
+      }
+      if (index < 0) {
+        index = planned.findIndex((migration) =>
+          migration.version === 29 && migration.state !== "pending");
+      }
+      if (index < 0) {
+        index = planned.findIndex((migration) =>
+          migration.version === 28 && migration.state !== "pending");
+      }
+      if (index < 0) {
+        index = planned.findIndex((migration) =>
+          migration.version === 27 && migration.state !== "pending");
+      }
+      if (index < 0) {
+        index = planned.findIndex((migration) => migration.version === 23);
+      }
+      if (index >= 0) planned[index] = { ...planned[index]!, state: "adoption_mismatch" };
+    } else {
+      throw error;
+    }
+  }
+  for (const row of journal) {
+    if (knownVersions.has(row.version)) continue;
+    planned.push({
+      version: row.version,
+      name: row.name,
+      migrationClass: null,
+      checksum: row.checksum,
+      state: "unexpected",
+    });
+  }
+  planned.sort((left, right) => left.version - right.version);
+  const status = planned.some((item) =>
+    item.state === "checksum_mismatch"
+      || item.state === "adoption_mismatch"
+      || item.state === "unexpected")
+    ? "drift" as const
+    : planned.some((item) =>
+      item.state === "pending"
+      || item.state === "adoptable"
+      || item.state === "blocked_by_guarded_predecessor")
+      ? "pending" as const
+      : "current" as const;
+  return {
+    schema: "setfarm.contract-spine-migration-plan.v1",
+    status,
+    migrations: planned,
+  };
+}
+
+/** Ordinary additive migration 34, after the unchanged guarded predecessor lane. */
+export async function applyContractSpineMigrationsIfNeeded(sql: Sql,options: Readonly<{
+  lockTimeoutMs?: number; statementTimeoutMs?: number; releaseSha?: string;
+}> = {}): Promise<ContractSpineMigrationApplyResult> {
+  if (options.releaseSha !== undefined && !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.releaseSha))
+    throw new ContractSpineMigrationError("MIGRATION_RELEASE_INVALID","Migration release SHA must be a full lowercase Git object hash");
+  const lockMs = Math.max(1,Math.min(options.lockTimeoutMs ?? 5000,60000));
+  const statementMs = Math.max(lockMs,Math.min(options.statementTimeoutMs ?? 30000,300000));
+  try {
+    return await sql.begin(async transaction => {
+    await transaction.unsafe("SELECT set_config('lock_timeout',$1,true)",[`${lockMs}ms`]);
+    await transaction.unsafe("SELECT set_config('statement_timeout',$1,true)",[`${statementMs}ms`]);
+    await transaction.unsafe("SELECT set_config('search_path','public',true)");
+    await transaction.unsafe("SELECT pg_advisory_xact_lock($1)",[contractSpineMigrationLockKey]);
+    const before = await completeJournalRows(transaction);
+    let result: ContractSpineMigrationApplyResult;
+    if (!before.some(row => row.version === 34)) {
+      result = await applyContractSpineMigrationsThrough33IfNeededV1(createMigration33SavepointFacade(transaction),options);
+      if (result.guardedPending.length) return result;
+      const predecessor = await completeJournalRows(transaction);
+      if (predecessor.length !== 33 || predecessor.some((row,index) => {
+        const expected = completeMigrations[index];
+        return !expected || row.version !== expected.version || row.name !== expected.name || row.checksum !== checksum(expected)
+          || !["applied","adopted"].includes(row.state);
+      })) throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH","Migration 34 requires its exact through33 predecessor");
+      await verifyOperationalFailureCauseAuthorityV3Constraint(transaction);
+      for (const statement of migration34.statements) await transaction.unsafe(statement);
+      await verifyOperationalFailureCauseAuthorityV4Constraint(transaction);
+      await transaction.unsafe(`INSERT INTO public.setfarm_schema_migrations
+        (version,name,checksum,state,release_sha,verified_release_sha,verified_at)
+        VALUES (34,$1,$2,'applied',$3,$3,CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() END)`,
+        [migration34.name,checksum(migration34),options.releaseSha ?? null]);
+      result = { ...result,applied: [...result.applied,migration34.name] };
+    } else {
+      result = { schema: "setfarm.contract-spine-migration-apply.v1",applied: [],adopted: [],
+        alreadyApplied: currentMigrationsV34.map(migration => migration.name),guardedPending: [] };
+    }
+    const plan = await reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
+      transaction,
+      await planContractSpineMigrationsOnConnectionV34(transaction),
+    );
+    if (plan.status !== "current") throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH","Migration 34 current source chain is incomplete or drifted");
+    await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV34(transaction);
+    if (options.releaseSha) await transaction.unsafe(
+      "UPDATE public.setfarm_schema_migrations SET verified_release_sha=$1,verified_at=NOW()",[options.releaseSha]);
+    await verifyExactContractSpineJournalAuthority(transaction);
+    return result;
+    }) as ContractSpineMigrationApplyResult;
+  } catch (error) {
+    if (isLockTimeout(error)) throw new ContractSpineMigrationError("MIGRATION_LOCK_TIMEOUT",
+      `Contract spine migration lock was not acquired within ${lockMs}ms`, { cause: error });
+    throw error;
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v34-current-head:END

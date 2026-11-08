@@ -16,7 +16,7 @@ import {
   transitionRunToTerminal,
   type RunTerminalTransitionResult,
 } from "./run-terminal-transition.js";
-import { evaluateOperationalFailureCauseEvidenceAuthorityV3 } from "./operational-failure-cause-authority-v3.js";
+import { evaluateOperationalFailureCauseEvidenceAuthorityV4 } from "./operational-failure-cause-authority-v4.js";
 import {
   OPERATIONAL_FAILURE_CAUSE_EVIDENCE_KEY,
   OperationalFailureCauseV1Schema,
@@ -294,7 +294,7 @@ export async function requestRunTerminationInTransaction(
     throw new Error("RUN_TERMINATION_EVIDENCE_RESERVED_KEY");
   }
   if (input.failureCause) {
-    const authority = evaluateOperationalFailureCauseEvidenceAuthorityV3({
+    const authority = evaluateOperationalFailureCauseEvidenceAuthorityV4({
       requestedBy: input.requestedBy,
       cause: input.failureCause,
       evidence: input.evidence ?? {},

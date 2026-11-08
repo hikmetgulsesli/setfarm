@@ -44,14 +44,14 @@ export function parseFreshInstallationOriginV1(value: unknown): FreshInstallatio
     || typeof v.databaseOid !== "number" || !Number.isInteger(v.databaseOid)
     || v.databaseOid < 1 || v.databaseOid > 4294967295
     || typeof v.sourceSha !== "string" || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(v.sourceSha)
-    || !Array.isArray(v.migrations) || types.isProxy(v.migrations) || v.migrations.length !== 33) fail();
+    || !Array.isArray(v.migrations) || types.isProxy(v.migrations) || ![33,34].includes(v.migrations.length)) fail();
   const suffix = v.installationId.replaceAll("-", "");
   if (v.databaseName !== `setfarm_install_${suffix}` || v.ownerRole !== `sf_owner_${suffix}`
     || v.runtimeRole !== `sf_runtime_${suffix}`) fail();
   const entries = Object.getOwnPropertyDescriptors(v.migrations);
-  if (Object.getPrototypeOf(v.migrations) !== Array.prototype || Reflect.ownKeys(v.migrations).length !== 34) fail();
+  if (Object.getPrototypeOf(v.migrations) !== Array.prototype || Reflect.ownKeys(v.migrations).length !== v.migrations.length + 1) fail();
   const migrations: FreshInstallationOriginV1["migrations"][number][] = [];
-  for (let index = 0; index < 33; index += 1) {
+  for (let index = 0; index < v.migrations.length; index += 1) {
     const entry = entries[String(index)];
     if (!entry?.enumerable || !Object.hasOwn(entry, "value")) fail();
     const item: unknown = entry.value;

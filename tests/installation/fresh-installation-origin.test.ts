@@ -92,3 +92,19 @@ test("existing guarded32 application retains its exact schema and hash contract"
   assert.deepEqual(validateOwnerAdmissionMigrationApplicationV1(input, input.evidenceHash), input);
   assert.throws(() => validateOwnerAdmissionMigrationApplicationV1({ ...input, schema: "setfarm.fresh-installation-schema-application.v1" }, input.evidenceHash));
 });
+
+test("fresh origins preserve archived33 bytes and require a closed current34 chain", () => {
+  const current = application().origin;
+  assert.equal(current.migrations.length, 34);
+  assert.equal(current.migrations[33]!.name, "034_operational_failure_cause_authority_v4");
+  assert.deepEqual(parseFreshInstallationOriginV1(current), current);
+  const archived = { ...current, migrations: current.migrations.slice(0, 33) };
+  assert.deepEqual(parseFreshInstallationOriginV1(archived), archived);
+  assert.equal(hashCanonicalJson(parseFreshInstallationOriginV1(archived)), hashCanonicalJson(archived));
+  for (const migrations of [
+    current.migrations.slice(0, 32),
+    [...current.migrations, { ...current.migrations[33]!, version: 35 }],
+    [...current.migrations.slice(0, 33), { ...current.migrations[33]!, version: 35 }],
+    [...current.migrations.slice(0, 33), { ...current.migrations[33]!, migrationClass: "guarded" }],
+  ]) assert.throws(() => parseFreshInstallationOriginV1({ ...current, migrations }));
+});
