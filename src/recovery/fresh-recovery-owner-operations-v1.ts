@@ -20,6 +20,7 @@ import { createV3RecoveryOwnerLeaseRepository } from "./v3-recovery-owner-lease.
 import { createV3RecoveryLifecycleReconciler } from "./v3-recovery-lifecycle-reconciler.js";
 import { createV3EvidenceOnlyRecoveryWorker } from "./v3-evidence-only-worker.js";
 import { createV3EvidenceOnlyRuntimeDependencies } from "./v3-evidence-only-runtime.js";
+import { publishLoopClaimRuntime } from "../execution/claim-runtime-publication.js";
 import { reserveV3ImplementationAttempt } from "../execution/v3-implementation-attempt.js";
 import { createRuntimeSessionRepository } from "../execution/runtime-session-repository.js";
 import { createRunTerminationRepository } from "../execution/run-termination.js";
@@ -141,6 +142,10 @@ export async function prepareFreshRecoveryOwnerOperationsV1(held: FreshServiceCu
       },
       acquireRecoveryClaim(raw: Parameters<ReturnType<typeof createV3RecoveryClaimAuthority>["acquireRecoveryClaim"]>[0]) {
         return operation("claim", access => createV3RecoveryClaimAuthority(getSql(),access).acquireRecoveryClaim(raw));
+      },
+      publishRecoveryClaimRuntime(input: Parameters<typeof publishLoopClaimRuntime>[1]) {
+        if (!input.recoveryHandoff) refuse();
+        return operation("claim", access => publishLoopClaimRuntime(getSql(), input, access));
       },
       reserveRecoveryAttempt(input: Parameters<typeof reserveV3ImplementationAttempt>[0]) {
         if(!input.recoveryDelivery)refuse();

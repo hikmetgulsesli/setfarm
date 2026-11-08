@@ -5215,7 +5215,7 @@ async function publishLoopClaimAndRuntime(
   claimAuthority?: LoopClaimAuthorityPublication;
   storySubject?: V3StoryClaimRuntimeSubjectV1;
 }> | undefined> {
-  return publishLoopClaimRuntime(getSql(), {
+  const input: Parameters<typeof publishLoopClaimRuntime>[1] = {
     runId: step.run_id,
     stepDbId: step.id,
     workflowStepId: step.step_id,
@@ -5231,7 +5231,10 @@ async function publishLoopClaimAndRuntime(
     supervisorRetryPreparationSource,
     ...(nativePreparationAuthority ? { nativePreparationAuthority,
       nativePreparationArtifacts: { artifactRoot: resolveProductArtifactDir(), artifactLimits: resolveProductArtifactCapacity() } } : {}),
-  });
+  };
+  return freshInstallationSelectionV1 && recoveryHandoff
+    ? selectedFreshRecoveryOwnerOperationsV1().publishRecoveryClaimRuntime(input)
+    : publishLoopClaimRuntime(getSql(), input);
 }
 
 function recoveryBranchName(work: V3RecoveryRoutedWork): string {
