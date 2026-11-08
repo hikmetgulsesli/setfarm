@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
-import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { canonicalJsonBytes, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { compileDesignSourceSemanticRetryCorrectionsV1 } from "../../src/product-compiler/design-source-semantic-retry-corrections-v1.js";
+import { projectDesignSourceSemanticRetryEvidenceV1 } from "../../src/product-compiler/design-source-semantic-retry-evidence-v1.js";
 import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
 import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
 import { captureStitchRenderedSemanticsV2 } from "../../src/product-compiler/producers/stitch-rendered-semantics-v2.js";
@@ -44,6 +46,9 @@ type FixtureOptions = Readonly<{
   displayMarkup?: string;
   omitAction?: boolean;
   displayVisibleBefore?: boolean;
+  controlSurface?: "declared" | "nested" | "none";
+  duplicateControl?: boolean;
+  stageId?: string;
 }>;
 
 function generationTargets(options: FixtureOptions) {
@@ -101,12 +106,15 @@ async function fixture(options: FixtureOptions = {}) {
   const artifacts = variants.map((variant, index) => {
     const isHelper = variant === "helper";
     const inputRef = `${placement.actionRef}.${placement.inputFields[0]}`;
+    const control = options.omitAction ? "" : options.readonlyDisplay
+      ? `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`
+      : `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}" data-action-input="${inputRef}${options.duplicateInput ? ` ${inputRef}` : ""}">Start Game</button>`;
+    const controls = control.repeat(options.duplicateControl ? 2 : 1);
     const htmlBytes = validStitchHtml([
+      options.controlSurface === "none" ? controls : "",
       `<main data-surface-id="${target.surfaceRef}" data-variant="${variant}">`,
-      options.omitAction ? "" : options.readonlyDisplay
-        ? `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`
-        : `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}" data-action-input="${inputRef}${options.duplicateInput ? ` ${inputRef}` : ""}">Start Game</button>`,
-      `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
+      (options.controlSurface ?? "declared") === "declared" ? controls : "",
+      `<section data-surface-id="${canvasSurface}">${options.controlSurface === "nested" ? controls : ""}<canvas aria-label="Game canvas"></canvas></section>`,
       options.duplicateCanvas
         ? `<section data-surface-id="${canvasSurface}"><canvas></canvas></section>`
         : "",
@@ -134,7 +142,7 @@ async function fixture(options: FixtureOptions = {}) {
     schema: "setfarm.stitch-direct-response-evidence.v2",
     projectId: "selection-v2-test",
     batches: [{
-      stageId: "stage-selection-v2",
+      stageId: options.stageId ?? "stage-selection-v2",
       targetRefs: [target.targetId],
       source: "direct",
       candidates: artifacts.map((artifact) => ({
@@ -178,6 +186,109 @@ async function fixture(options: FixtureOptions = {}) {
 }
 
 describe("Stitch target candidate selection v2", { concurrency: 1 }, () => {
+  it("carries a rejected unique control's exact nearest-surface requirement into retry corrections", async () => {
+    const stageId = "DSGS_NEAREST_SURFACE";
+    const value = await fixture({ controlSurface: "nested", stageId });
+    assert.equal(value.placement.surfaceRef, "SURF_PLAY_PAGE");
+    assert.equal(value.canvasSurface, "SURF_GAME_CANVAS");
+    const control = value.renderedSemantics.candidates[0]!.elements.find((element) =>
+      element.dataControlSlot === value.placement.controlSlotRef)!;
+    assert.equal(control.nearestSurfaceRef, "SURF_GAME_CANVAS");
+    const result = selectStitchTargetCandidatesV2(value);
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    const evaluation = result.candidateSelection.selections[0]!.evaluations[0]!;
+    assert.ok(evaluation.rejectionCodes.includes("CANDIDATE_CONTROL_SLOT_SET_MISMATCH"));
+    const semanticRef = `${value.placement.controlSlotRef}@nearest_surface`;
+    assert.deepEqual(evaluation.semanticChecks.find((item) =>
+      item.kind === "control_contract" && item.semanticRef === semanticRef), {
+      kind: "control_contract",
+      semanticRef,
+      expectedCount: 1,
+      observedCount: 1,
+      expectedValue: "SURF_PLAY_PAGE",
+      observedValue: "SURF_GAME_CANVAS",
+      elementRefs: [control.elementRef],
+      disposition: "mismatch",
+    });
+
+    const candidateSelection = result.candidateSelection;
+    const evidence = projectDesignSourceSemanticRetryEvidenceV1({
+      candidateSelection,
+      candidateSelectionArtifact: {
+        area: "selection",
+        locator: "candidate-selection.json",
+        contentHash: hashCanonicalJson(candidateSelection),
+        byteLength: canonicalJsonBytes(candidateSelection).byteLength,
+      },
+    });
+    assert.ok(evidence);
+    const requirement = evidence.stages[0]!.targets[0]!.requirements.find((item) =>
+      item.kind === "control_contract" && item.semanticRef === semanticRef)!;
+    assert.equal(requirement.expectedValue, "SURF_PLAY_PAGE");
+    assert.deepEqual(requirement.observations, [{
+      disposition: "mismatch",
+      observedCount: 1,
+      observedValueHash: hashCanonicalJson({
+        schema: "setfarm.design-source-semantic-retry-observed-value.v1",
+        value: "SURF_GAME_CANVAS",
+      }),
+    }]);
+    const lines = compileDesignSourceSemanticRetryCorrectionsV1({
+      evidence,
+      stageId,
+      reasonCodes: evaluation.rejectionCodes,
+    });
+    const requirements = lines.filter((line) => line.startsWith("semantic_requirement: "))
+      .map((line) => JSON.parse(line.slice("semantic_requirement: ".length)));
+    assert.deepEqual(requirements.find((item) =>
+      item.kind === "control_contract" && item.semanticRef === semanticRef), {
+      expectedCount: 1,
+      expectedValue: "SURF_PLAY_PAGE",
+      kind: "control_contract",
+      semanticRef,
+      targetRef: value.target.targetId,
+    });
+    assert.ok(lines.some((line) => line.includes("same actionable element")
+      && line.includes("closest [data-surface-id]") && line.includes("owning_surface_ref")));
+  });
+
+  it("keeps a correctly placed control selected without a nearest-surface failure", async () => {
+    const value = await fixture({ controlSurface: "declared" });
+    const result = selectStitchTargetCandidatesV2(value);
+    assert.equal(result.status, "produced");
+    assert.equal(result.candidateSelection.selections[0]!.selectedScreenId, "screen-a");
+    assert.equal(result.candidateSelection.selections[0]!.evaluations[0]!.semanticChecks
+      .some((item) => item.semanticRef.endsWith("@nearest_surface")), false);
+  });
+
+  it("does not assign a unique nearest-surface diagnosis to duplicate slot controls", async () => {
+    const value = await fixture({ controlSurface: "nested", duplicateControl: true });
+    assert.equal(value.renderedSemantics.candidates[0]!.elements.filter((element) =>
+      element.dataControlSlot === value.placement.controlSlotRef).length, 2);
+    const result = selectStitchTargetCandidatesV2(value);
+    assert.equal(result.status, "rejected");
+    assert.equal(result.candidateSelection.selections[0]!.evaluations[0]!.semanticChecks
+      .some((item) => item.semanticRef.endsWith("@nearest_surface")), false);
+  });
+
+  it("omits observedValue when a unique slot control has no nearest surface", async () => {
+    const value = await fixture({ controlSurface: "none" });
+    const control = value.renderedSemantics.candidates[0]!.elements.find((element) =>
+      element.dataControlSlot === value.placement.controlSlotRef)!;
+    assert.equal(control.nearestSurfaceRef, null);
+    const result = selectStitchTargetCandidatesV2(value);
+    assert.equal(result.status, "rejected");
+    const diagnostic = result.candidateSelection.selections[0]!.evaluations[0]!.semanticChecks
+      .find((item) => item.kind === "control_contract"
+        && item.semanticRef === `${value.placement.controlSlotRef}@nearest_surface`);
+    assert.ok(diagnostic);
+    assert.equal(diagnostic.expectedValue, "SURF_PLAY_PAGE");
+    assert.equal(diagnostic.disposition, "missing");
+    assert.equal(Object.hasOwn(diagnostic, "observedValue"), false);
+    assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(diagnostic)), "observedValue"), false);
+  });
+
   it("regresses #2041, #2044, and #2045 through exact selection and response bindings v3", async () => {
     const value = await fixture({ variants: ["a", "b", "helper"] });
     const first = selectStitchTargetCandidatesV2(value);

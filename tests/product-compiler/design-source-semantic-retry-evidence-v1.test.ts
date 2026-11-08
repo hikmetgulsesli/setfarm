@@ -592,7 +592,7 @@ describe("design-source semantic retry evidence v1", () => {
     });
 
     assert.ok(lines.includes(
-      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element.",
+      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element. The actionable element's closest [data-surface-id] must equal owning_surface_ref.",
     ));
     assert.match(lines.join("\n"), /^semantic_requirement: \{"expectedCount":/m);
     assert.doesNotMatch(lines.join("\n"), /Settings|E[0-9]{6}|observedValue/);
@@ -646,7 +646,7 @@ describe("design-source semantic retry evidence v1", () => {
     assert.deepEqual(genericDesignSourceRetryCorrectionLinesV1(reasonCodes), [
       "Regenerate artifacts whose bytes exactly match their declared content hashes.",
       "Render only the declared action input contract with its exact expected binding.",
-      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element.",
+      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element. The actionable element's closest [data-surface-id] must equal owning_surface_ref.",
       "Return download receipts whose hashes and byte lengths exactly bind every accepted local artifact.",
       "Return complete download receipts for every accepted local artifact.",
       "Emit exactly one valid declared local HTML artifact for every requested screen.",
@@ -714,7 +714,7 @@ describe("design-source semantic retry evidence v1", () => {
     });
 
     assert.deepEqual(lines, [
-      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element.",
+      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element. The actionable element's closest [data-surface-id] must equal owning_surface_ref.",
     ]);
     assert.doesNotMatch(lines.join("\n"), /semantic_requirement:/);
   });
@@ -750,7 +750,7 @@ describe("design-source semantic retry evidence v1", () => {
     });
 
     assert.deepEqual(lines, [
-      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element.",
+      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element. The actionable element's closest [data-surface-id] must equal owning_surface_ref.",
     ]);
     assert.doesNotMatch(lines.join("\n"), /semantic_requirement:/);
   });
@@ -787,7 +787,7 @@ describe("design-source semantic retry evidence v1", () => {
     });
 
     assert.deepEqual(lines, [
-      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element.",
+      "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element. The actionable element's closest [data-surface-id] must equal owning_surface_ref.",
     ]);
     assert.doesNotMatch(lines.join("\n"), /semantic_requirement:/);
   });
