@@ -530,6 +530,19 @@ function semanticEvidence(
         elementRefs: invalidElements.map((element) => element.elementRef),
       }));
     }
+    if (allSlotElements.length === 1) {
+      const element = allSlotElements[0]!;
+      if (element.nearestSurfaceRef !== placement.surfaceRef) {
+        checks.push(check({
+          kind: "control_contract",
+          semanticRef: `${placement.controlSlotRef}@nearest_surface`,
+          expectedCount: 1,
+          elementRefs: [element.elementRef],
+          expectedValue: placement.surfaceRef,
+          ...(element.nearestSurfaceRef === null ? {} : { observedValue: element.nearestSurfaceRef }),
+        }));
+      }
+    }
   }
   for (const element of elements) {
     if (element.dataControlSlot && !placementBySlot.has(element.dataControlSlot)) {

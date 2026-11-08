@@ -11,7 +11,7 @@ const CORRECTION_BY_REASON_CODE = Object.freeze({
   CANDIDATE_ACTION_INPUT_SET_MISMATCH:
     "Render only the declared action input contract with its exact expected binding.",
   CANDIDATE_CONTROL_SLOT_SET_MISMATCH:
-    "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element.",
+    "Render every and only declared physical control slot with exact data-action and data-control-slot on the same actionable element. The actionable element's closest [data-surface-id] must equal owning_surface_ref.",
   CANDIDATE_DOWNLOAD_RECEIPT_MISMATCH:
     "Return download receipts whose hashes and byte lengths exactly bind every accepted local artifact.",
   CANDIDATE_DOWNLOAD_RECEIPT_MISSING:
