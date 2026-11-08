@@ -96,3 +96,257 @@ it("authenticated contract reader still refuses duplicate membership and forged 
   const valid=await authenticatedContractsFixture();
   await assert.rejects(valid.readForged(),/SUBSCRIPTION_SUPERVISE_CONTRACTS_REFUSED/);
 });
+
+/** Component boundary: genuine readers/schema/hash/plan, inert SQL and artifact
+ * storage. This proves projection integrity, not live database join authority. */
+export async function superviseEvidenceComponentFixture(native?:{slice:any;sliceHash:string}) {
+  const [{readFileSync},tsModule,crypto,canonical,bundles,plans,modelAuthority,promptContracts,contextOps]=await Promise.all([
+    import('node:fs'),import('typescript'),import('node:crypto'),import('../../src/product-compiler/canonical-json.js'),
+    import('../../src/evidence/evidence-bundle-v2.js'),import('../../src/evidence/evidence-plan-v1.js'),
+    import('../../src/recovery/v3-evidence-only-publication.js'),import('../../src/installer/prompt-contracts.js'),
+    import('../../src/installer/context-ops.js')]);
+  const digest=(text:string)=>crypto.createHash('sha256').update(text).digest('hex');
+  const f=fixture(),slice=native?.slice??f.contexts[0]!.slice,runId='run-supervise',attemptId='ATT_supervise-evidence-00001';
+  const sliceHash=native?.sliceHash??'a'.repeat(64),packetHash=slice.packetHash;
+  const plansV2=await import('../../src/evidence/evidence-plan-v2.js');
+  const evidencePlan=slice.schema==='setfarm.implementation-slice.v2'?plansV2.compileEvidencePlanV2({slice,sliceHash}):plans.compileEvidencePlanV1({slice,sliceHash});
+  const sourceBefore={sha:'1'.repeat(40),treeHash:'2'.repeat(40)},sourceAfter={sha:'3'.repeat(40),treeHash:'4'.repeat(40)};
+  const startedAt='2026-11-08T20:00:00.000Z',completedAt='2026-11-08T20:01:00.000Z';
+  const flowObservations=evidencePlan.flows.map(flow=>({kind:'control' as const,owner:'setfarm-orchestrator' as const,startedAt,completedAt,
+    actionRef:flow.actionRef,controlRef:flow.controlRef!,beforeArtifactHash:'b'.repeat(64),afterArtifactHash:'c'.repeat(64)}));
+  const commandObservations=evidencePlan.commands.map(command=>({kind:'command' as const,owner:'setfarm-orchestrator' as const,startedAt,completedAt,
+    commandRef:command.commandRef,exitCode:0,stdoutArtifactHash:'d'.repeat(64)}));
+  const required=slice.schema==='setfarm.implementation-slice.v2'?slice.contract.product.evidencePredicates.filter((p:any)=>p.required&&slice.story.evidenceRefs.includes(p.id)):slice.requiredEvidence;
+  const predicates=evidencePlan.predicateRefs.map(predicateRef=>{
+    const flows=evidencePlan.flows.filter(flow=>flow.predicateRefs.includes(predicateRef));
+    const actions=[...new Set(flows.map(flow=>flow.actionRef))],controls=[...new Set(flows.map(flow=>flow.controlRef))];
+    return {invariantRef:'INV_'+required.find((p:any)=>p.id===predicateRef).kind.toUpperCase(),predicateRef,
+      ...(actions.length===1?{actionRef:actions[0]}:{}),...(controls.length===1&&controls[0]?{controlRef:controls[0]}:{}),
+      required:true,verdict:'pass' as const,observationRefs:flows.map(flow=>bundles.computeObservationRef(flowObservations[evidencePlan.flows.indexOf(flow)]!))};
+  });
+  const commandPredicates=evidencePlan.commands.map((command,index)=>({invariantRef:'INV_COMMAND_'+command.kind.toUpperCase(),
+    predicateRef:'EVID_COMMAND_'+command.commandRef,required:true,verdict:'pass' as const,
+    observationRefs:[bundles.computeObservationRef(commandObservations[index]!)]}));
+  const bundle=bundles.createEvidenceBundleV2({runId,storyId:slice.storyId,packetHash,sliceHash,sourceRevision:sourceAfter,
+    attemptId,predicates:[...predicates,...commandPredicates],observations:[...flowObservations,...commandObservations],
+    artifacts:[{hash:'b'.repeat(64),mediaType:'image/png',locator:'evidence/before.png'},
+      {hash:'c'.repeat(64),mediaType:'image/png',locator:'evidence/after.png'},
+      ...(commandObservations.length?[{hash:'d'.repeat(64),mediaType:'text/plain',locator:'evidence/command.log'}]:[])],
+    runner:{id:'setfarm-owned-runner',version:'1',environmentHash:'d'.repeat(64)},startedAt,completedAt});
+  const bundleHash=bundles.computeEvidenceBundleHash(bundle),authorityHash='e'.repeat(64),custody='setfarm://native-git-custody-v1/'+'f'.repeat(64);
+  const evidenceRefs=[custody,`setfarm://preparation-authority-v2/${authorityHash}`,`setfarm://evidence-bundle/${bundleHash}`];
+  const output=JSON.stringify({schema:'setfarm.v3-implementation-agent-proposal.v1',disposition:'ready_for_evidence',
+    handoffHash:'0'.repeat(64),attemptId,packetHash,sliceHash,sourceBefore,summary:'Candidate',changes:[]});
+  const completionPlan={schema:'setfarm.runtime-completion-plan.v1',planVersion:1,requestId:'RCR_supervise-evidence-00001',
+    claimId:11,runId,stepDbId:'step-implement',workflowStepId:'implement',outputHash:digest(output),kind:'story_completion',
+    continuation:{type:'story_route_supervise'},subject:{storyId:slice.storyId,storyDbId:f.subject.storyDbId,sourceSha:sourceAfter.sha},
+    effects:[{effectKey:'continue/supervise',ordinal:0,effectType:'story.route.supervise',mandatory:true,payload:{}}],preparedAt:completedAt};
+  const model:any={attempt_id:attemptId,claim_id:'11',generation:1,slice_hash:sliceHash,compilation_report_hash:'7'.repeat(64),
+    branch:'fixture-branch',worktree:'/project/fixture',source_before_sha:sourceBefore.sha,source_before_tree_hash:sourceBefore.treeHash,
+    source_after_sha:sourceAfter.sha,source_after_tree_hash:sourceAfter.treeHash,output_hash:digest(output),output,
+    evidence_refs:JSON.stringify(evidenceRefs),completion_plan:completionPlan,completion_plan_hash:canonical.hashCanonicalJson(completionPlan),
+    request_id:completionPlan.requestId,step_db_id:completionPlan.stepDbId,story_db_id:f.subject.storyDbId,authority_hash:authorityHash,
+    initial_attempt_id:attemptId,initial_claim_id:'11',initial_branch:'fixture-branch',initial_worktree:'/project/fixture',
+    initial_sha:sourceBefore.sha,initial_tree_hash:sourceBefore.treeHash,initial_evidence_refs:JSON.stringify(evidenceRefs)};
+  const acceptance={schema:'setfarm.v3-story-acceptance-record.v1',storyId:slice.storyId,attemptId,packetHash,sliceHash,
+    sourceRevision:sourceAfter,evidenceBundleRef:`setfarm://evidence-bundle/${bundleHash}`,aggregateVerdict:'pass',
+    findingSetRef:null,failureClass:null,agentOutputHash:model.output_hash};
+  const attempt:any={attemptId,runId,storyId:slice.storyId,stepId:'implement',claimId:11,generation:1,disposition:'produced_delta',
+    attemptClass:'product_implementation',sourceBefore,sourceAfter,packetHash,sliceHash,outputHash:model.output_hash,evidenceRefs};
+  const member={story_db_id:f.subject.storyDbId,story_id:slice.storyId,story_claim_generation:4,attempt_id:attemptId};
+  const stored:any={evidence_bundle_hash:bundleHash,evidence_id:bundle.evidenceId,run_id:runId,story_id:slice.storyId,
+    attempt_id:attemptId,packet_hash:packetHash,slice_hash:sliceHash,source_sha:sourceAfter.sha,source_tree_hash:sourceAfter.treeHash,
+    aggregate_verdict:'pass',payload:bundle,story_db_id:f.subject.storyDbId,story_claim_generation:4,
+    story_output:canonical.canonicalJsonStringify(acceptance),claim_id:'11',generation:1};
+  const state={subject:f.subject as any,members:[member],bundles:[stored],model,attempt,acceptance,
+    rcrState:'accepted',applyPhase:'effects_committed',runtimeState:'released',compiled:{attempt,slice,sliceHash,packetHash,evidencePlan},
+    nativeRow:undefined as any,nativeSource:undefined as any,nativeCandidate:undefined as any};
+  const tx={unsafe:async(query:string,params:unknown[])=>{
+    if(query.includes('bundle.payload AS bundle_payload')&&query.includes('delivery.terminal_result'))return state.nativeRow?[state.nativeRow]:[];
+    if(query.includes('WITH RECURSIVE source_revision_history'))return state.nativeSource?[state.nativeSource]:[];
+    if(query.includes('initial.attempt_id AS initial_attempt_id')) {
+      assert.deepEqual(params.slice(0,4),[attemptId,runId,slice.storyId,packetHash]);
+      return state.rcrState==='accepted'&&state.applyPhase==='effects_committed'&&state.runtimeState==='released'?[state.model]:[];
+    }
+    if(query.includes('r.attempt_id\n      FROM v3_story_claim_runtime_bindings_v1'))return state.members;
+    if(query.includes('source_claim_id'))return state.nativeCandidate?[state.nativeCandidate]:[];
+    if(query.startsWith('SELECT id FROM stories'))return state.members.map(row=>({id:row.story_db_id}));
+    if(query.includes('FROM evidence_bundles'))return state.bundles;
+    throw Error('UNEXPECTED_EVIDENCE_COMPONENT_SQL:'+query);
+  }};
+  const ts=tsModule.default,source=readFileSync(new URL('../../src/execution/subscription-supervise-contracts-v1.ts',import.meta.url),'utf8');
+  const tree=ts.createSourceFile('contracts.ts',source,ts.ScriptTarget.ESNext,true);
+  const functions=tree.statements.filter(ts.isFunctionDeclaration).map(node=>node.getText(tree).replace(/^export\s+/, '')).join('\n');
+  const ports={getSql:()=>({begin:async(body:any)=>body(tx)}),loadAndRevalidateV3StoryClaimRuntimeBindingV1:async()=>state.subject,
+    loadV3ImplementationAttemptContext:async()=>state.compiled,...canonical,...bundles,...plans,...plansV2,
+    readNativeAcceptedModelSourceAuthority:modelAuthority.readNativeAcceptedModelSourceAuthority,
+    readNativeEvidenceOnlySuccessAuthority:modelAuthority.readNativeEvidenceOnlySuccessAuthority};
+  const compiled=ts.transpileModule(functions,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+  const readers=new Function(...Object.keys(ports),compiled+';return {contracts:readAuthenticatedSubscriptionSuperviseContractsV1,evidence:typeof readAuthenticatedSubscriptionSuperviseEvidenceV1 === "function" ? readAuthenticatedSubscriptionSuperviseEvidenceV1 : undefined};')(...Object.values(ports));
+  const envelope={protocol:'v3',workflowStepId:'supervise',claimId:21,runId,stepId:'step-supervise'};
+  async function enableNativeVerifier() {
+    const verifierId='ATT_native-supervise-verifier-00001',planArtifact='8'.repeat(64);
+    const {schema:_schema,evidenceId:_id,aggregateVerdict:_verdict,observations,...draft}=bundle;
+    const drafts=observations.map(({observationRef:_ref,...observation})=>observation);
+    const original=bundles.createEvidenceBundleV2({...draft,predicates:draft.predicates.map(p=>({...p,verdict:'inconclusive' as const})),observations:drafts});
+    const originalHash=bundles.computeEvidenceBundleHash(original);
+    const verified=bundles.createEvidenceBundleV2({...draft,attemptId:verifierId,observations:drafts});
+    const verifiedHash=bundles.computeEvidenceBundleHash(verified);
+    const findings=await import('../../src/findings/finding-set.js');
+    const findingSet=findings.createFindingSetV1({runId,storyId:slice.storyId,packetHash,sliceHash,sourceRevision:sourceAfter,
+      findings:[{origin:'runtime',classification:'structured',invariantRef:'INV_RUNTIME',expectedPredicateRef:evidencePlan.predicateRefs[0],
+        sourceLocators:[{path:'src/App.tsx',contentHash:'a'.repeat(64)}],observedEvidenceRefs:[originalHash],status:'open'}]});
+    state.model.evidence_refs=JSON.stringify([custody,`setfarm://preparation-authority-v2/${authorityHash}`,
+      `setfarm://evidence-bundle/${originalHash}`,`setfarm://artifact/${planArtifact}`]);
+    state.model.initial_evidence_refs=state.model.evidence_refs;
+    const refresh={kind:'native_evidence_refresh',sourceOwnerAttemptId:attemptId,sourceOwnerGeneration:1,
+      sourceOwnerOutputHash:model.output_hash,sourceOwnerClaimOutcome:'completed',initialAuthorityHash:authorityHash,
+      recoveryCaseId:'RCV_'+'1'.repeat(64),revisionId:'RREV_'+'2'.repeat(64),dispatchId:'RDISP_'+'3'.repeat(64),
+      evidencePlanArtifactHash:planArtifact,evidenceBundleHash:verifiedHash};
+    const nativeAcceptance={schema:'setfarm.v3-story-acceptance-record.v1',kind:'native_evidence_refresh',storyId:slice.storyId,
+      attemptId:verifierId,packetHash,sliceHash,sourceRevision:sourceAfter,evidenceBundleRef:`setfarm://evidence-bundle/${verifiedHash}`,
+      aggregateVerdict:'pass',findingSetRef:null,failureClass:null,sourceOwnerAttemptId:attemptId,agentOutputHash:model.output_hash,evidenceRefresh:refresh};
+    const storyOutput=canonical.canonicalJsonStringify(nativeAcceptance);
+    const eventHash=canonical.hashCanonicalJson({schema:'setfarm.v3-recovery-coordinator-event.v1',value:{kind:'recovery_evidence',
+      recoveryCaseId:refresh.recoveryCaseId,revisionId:refresh.revisionId,dispatchId:refresh.dispatchId,attemptId:verifierId,evidenceBundleHash:verifiedHash}});
+    const decisionRef=canonical.hashCanonicalJson({schema:'setfarm.recovery-delivery-decision.v1',value:{kind:'recovery_evidence_satisfied',coordinatorEventHash:eventHash}});
+    const verifierRefs=[custody,`setfarm://preparation-authority-v2/${authorityHash}`,`setfarm://artifact/${sliceHash}`,
+      `setfarm://artifact/${planArtifact}`,`setfarm://evidence-bundle/${verifiedHash}`];
+    state.nativeRow={attempt_id:verifierId,claim_id:'22',generation:2,slice_hash:sliceHash,output_hash:verifiedHash,
+      delivery_state:'succeeded',case_status:'resolved',fence_token:'fixture-native-fence',compilation_report_hash:model.compilation_report_hash,
+      branch:model.branch,worktree:model.worktree,evidence_refs:JSON.stringify(verifierRefs),source_sha:sourceAfter.sha,source_tree_hash:sourceAfter.treeHash,
+      recovery_case_id:refresh.recoveryCaseId,revision_id:refresh.revisionId,dispatch_id:refresh.dispatchId,finding_set_hash:findingSet.findingSetHash,
+      evidence_plan_artifact_hash:planArtifact,evidence_plan:[...evidencePlan.predicateRefs],bundle_payload:verified,
+      terminal_result:{schema:'setfarm.v3-recovery-coordinator-result.v1',eventHash,evidenceBundleHash:verifiedHash,attemptId:verifierId,verdict:'pass'},
+      case_terminal:{owner:'infrastructure',outcome:'resolved',reasonCode:'evidence_satisfied',evidenceBundleHashes:[verifiedHash]},decision_refs:[decisionRef],
+      source_owner_attempt_id:attemptId,source_owner_claim_id:'11',source_owner_generation:1,source_owner_output_hash:model.output_hash,
+      source_owner_output:model.output,source_owner_claim_outcome:'completed',source_owner_plan:model.completion_plan,
+      source_owner_plan_hash:model.completion_plan_hash,source_owner_request_id:model.request_id,source_owner_step_db_id:model.step_db_id,
+      original_bundle_hash:originalHash,original_bundle_payload:original,original_finding_payload:findingSet,
+      source_owner_before_sha:sourceBefore.sha,source_owner_before_tree_hash:sourceBefore.treeHash,
+      source_owner_evidence_refs:state.model.evidence_refs,authority_hash:authorityHash,
+      story_db_id:f.subject.storyDbId,story_status:'done',story_output:storyOutput,story_claim_generation:4};
+    state.nativeSource={attempt_id:attemptId,generation:1,authority_hash:authorityHash,compilation_report_hash:model.compilation_report_hash,
+      branch:model.branch,worktree:model.worktree,evidence_refs:model.evidence_refs,evidence_plan_artifact_hash:planArtifact};
+    state.nativeCandidate={story_db_id:f.subject.storyDbId,story_id:slice.storyId,story_claim_generation:4,
+      source_claim_id:'11',attempt_id:verifierId,packet_hash:packetHash};
+    state.compiled.attempt={...attempt,attemptId:verifierId,claimId:22,generation:2,disposition:'verified',attemptClass:'evidence_only',
+      sourceBefore:sourceAfter,outputHash:verifiedHash,evidenceRefs:verifierRefs};
+    state.bundles=[{...stored,evidence_bundle_hash:verifiedHash,evidence_id:verified.evidenceId,attempt_id:verifierId,
+      payload:verified,claim_id:'22',generation:2,story_output:storyOutput}];
+    return {verifierId,verifiedHash};
+  }
+  return {state,readers,envelope,enableNativeVerifier,read:()=>readers.evidence(envelope,'RTS_supervise-fixture'),bundle,bundleHash,completionPlan,sourceAfter,
+    canonical,bundles,ports,promptContracts,contextOps,ts};
+}
+
+it('authenticated evidence preserves actual bundle, accepted RCR, candidate tree and immutable own DATA',async()=>{
+  const f=await superviseEvidenceComponentFixture(),old=await f.readers.contracts(f.envelope,'RTS_supervise-fixture');
+  const oldSeal=f.canonical.hashCanonicalJson(old),data=await f.read();
+  assert.equal(data.members[0].evidenceBundleHash,f.bundleHash);
+  assert.equal(data.members[0].authority.requestId,'RCR_supervise-evidence-00001');
+  assert.equal(data.members[0].authority.kind,'accepted_model');
+  assert.deepEqual(data.members[0].bundle,f.bundle);
+  assert.deepEqual(data.members[0].bundle.sourceRevision,{sha:'3'.repeat(40),treeHash:'4'.repeat(40)});
+  assert.equal(data.members[0].storyClaimGeneration,4);
+  assert.equal(data.members[0].attemptGeneration,1);
+  assert.ok(Object.isFrozen(data)&&Object.isFrozen(data.members)&&Object.isFrozen(data.members[0].bundle.predicates));
+  assert.equal(f.canonical.hashCanonicalJson(await f.readers.contracts(f.envelope,'RTS_supervise-fixture')),oldSeal,'evidence read leaves original contract seal unchanged');
+  assert.doesNotMatch(f.canonical.canonicalJsonStringify(data),/Candidate|ready_for_evidence|completion_plan|stdout[^A]/);
+});
+
+it('authenticated evidence refuses absent duplicate crossed or tampered bundle and source bindings',async()=>{
+  const mutations:ReadonlyArray<readonly[string,(f:Awaited<ReturnType<typeof superviseEvidenceComponentFixture>>)=>void]>=[
+    ['missing bundle',f=>{f.state.bundles=[];}],['duplicate bundle',f=>{f.state.bundles.push({...f.state.bundles[0]});}],
+    ['crossed run',f=>{f.state.bundles[0].run_id='foreign-run';}],
+    ['crossed story',f=>{f.state.bundles[0].story_id='US-999';}],
+    ['crossed generation',f=>{f.state.bundles[0].story_claim_generation=5;}],
+    ['crossed attempt',f=>{f.state.bundles[0].attempt_id='ATT_foreign-attempt-00001';}],
+    ['crossed claim',f=>{f.state.bundles[0].claim_id='99';}],
+    ['crossed attempt generation',f=>{f.state.bundles[0].generation=8;}],
+    ['crossed packet',f=>{f.state.bundles[0].packet_hash='9'.repeat(64);}],
+    ['crossed slice',f=>{f.state.bundles[0].slice_hash='9'.repeat(64);}],
+    ['crossed source',f=>{f.state.bundles[0].source_sha='9'.repeat(40);}],
+    ['crossed tree',f=>{f.state.bundles[0].source_tree_hash='9'.repeat(40);}],
+    ['changed bundle hash',f=>{f.state.bundles[0].evidence_bundle_hash='9'.repeat(64);}],
+    ['tampered payload',f=>{f.state.bundles[0].payload={...f.bundle,runner:{...f.bundle.runner,version:'tampered'}};}],
+    ['crossed RCR',f=>{f.state.model.request_id='RCR_crossed-request-00001';}],
+    ['unaccepted RCR',f=>{f.state.rcrState='requested';}],
+    ['effects not committed',f=>{f.state.applyPhase='owner_committed';}],
+    ['runtime not released',f=>{f.state.runtimeState='drained';}],
+    ['contradictory acceptance',f=>{f.state.bundles[0].story_output=f.canonical.canonicalJsonStringify({...f.state.acceptance,evidenceBundleRef:'setfarm://evidence-bundle/'+'9'.repeat(64)});}],
+    ['missing required predicate',f=>{f.state.compiled.evidencePlan={...f.state.compiled.evidencePlan,predicateRefs:[...f.state.compiled.evidencePlan.predicateRefs,'EVID_MISSING']};}],
+  ];
+  for(const[label,mutate]of mutations){const f=await superviseEvidenceComponentFixture();mutate(f);await assert.rejects(f.read(),undefined,label);}
+});
+
+it('fail and inconclusive evidence cannot inherit PASS from accepted model custody',async()=>{
+  for(const verdict of ['fail','inconclusive'] as const){const f=await superviseEvidenceComponentFixture();
+    const {schema:_schema,evidenceId:_id,aggregateVerdict:_aggregate,observations,...draft}=f.bundle;
+    const bundle=f.bundles.createEvidenceBundleV2({...draft,predicates:draft.predicates.map(p=>({...p,verdict})),
+      observations:observations.map(({observationRef:_ref,...observation})=>observation)});
+    const hash=f.bundles.computeEvidenceBundleHash(bundle),ref=`setfarm://evidence-bundle/${hash}`;
+    Object.assign(f.state.bundles[0],{payload:bundle,evidence_bundle_hash:hash,evidence_id:bundle.evidenceId,aggregate_verdict:verdict,
+      story_output:f.canonical.canonicalJsonStringify({...f.state.acceptance,evidenceBundleRef:ref,aggregateVerdict:verdict})});
+    f.state.attempt.evidenceRefs=f.state.attempt.evidenceRefs.map((value:string)=>value.startsWith('setfarm://evidence-bundle/')?ref:value);
+    f.state.model.evidence_refs=JSON.stringify(f.state.attempt.evidenceRefs);
+    await assert.rejects(f.read(),/REFUSED|INVALID|MISMATCH/);
+  }
+});
+
+it('final product and story member use the same exact authenticated evidence membership',async()=>{
+  const f=await superviseEvidenceComponentFixture();f.state.subject={kind:'final_product'};
+  const data=await f.read();assert.deepEqual(data.subject,{kind:'final_product'});assert.equal(data.members.length,1);
+  f.state.members.push({...f.state.members[0]!});await assert.rejects(f.read(),/REFUSED/);
+});
+
+it('native evidence-only success projects its genuine verifier authority without inventing a model RCR',async()=>{
+  const f=await superviseEvidenceComponentFixture(),native=await f.enableNativeVerifier();
+  const data=await f.read(),member=data.members[0];
+  assert.equal(member.attemptId,'ATT_native-supervise-verifier-00001');
+  assert.equal(member.authority.kind,'native_evidence_refresh');
+  assert.equal(member.authority.claimId,22);assert.equal(member.authority.sourceOwnerClaimId,11);
+  assert.equal(member.evidenceBundleHash,native.verifiedHash);assert.equal(member.bundle.aggregateVerdict,'pass');
+  assert.equal(Object.hasOwn(member.authority,'requestId'),false);
+  f.state.nativeRow.delivery_state='running';await assert.rejects(f.read(),/V3_NATIVE_EVIDENCE_SUCCESS_MISSING/);
+});
+it('native evidence-only rejects crossed source owner and tampered terminal result',async()=>{
+  for(const mutate of [(f:any)=>{f.state.nativeRow.source_owner_attempt_id='ATT_crossed-native-owner-00001';},
+    (f:any)=>{f.state.nativeRow.terminal_result.verdict='fail';},(f:any)=>{f.state.nativeRow.source_tree_hash='9'.repeat(40);},
+    (f:any)=>{f.state.nativeRow.story_claim_generation=5;}]){
+    const f=await superviseEvidenceComponentFixture();await f.enableNativeVerifier();mutate(f);await assert.rejects(f.read(),/MISMATCH|REFUSED/);
+  }
+});
+it('native compiled multi-control plan retains aggregated predicate and required command coverage',async()=>{
+  const {nativeBrowserFixture}=await import('../evidence/native-packet-v3-evidence-fixture.js'),native=await nativeBrowserFixture({twoPlacements:true});
+  try{const f=await superviseEvidenceComponentFixture(native),data=await f.read();
+    assert.equal(data.members[0].bundle.aggregateVerdict,'pass');
+    assert.ok(data.members[0].bundle.predicates.some((p:any)=>p.invariantRef.startsWith('INV_COMMAND_')));
+    assert.ok(data.members[0].bundle.predicates.some((p:any)=>!p.invariantRef.startsWith('INV_COMMAND_')&&!p.controlRef));
+  }finally{(await import('node:fs')).rmSync(native.workdir,{recursive:true,force:true});}
+});
+
+it('canonical passing bundles cannot omit required coverage or cross predicate identities',async()=>{
+  for(const change of ['missing','optional','wrong invariant','wrong action','missing command'] as const){
+    const f=await superviseEvidenceComponentFixture();
+    const {schema:_schema,evidenceId:_id,aggregateVerdict:_aggregate,observations,...draft}=f.bundle;
+    const product=draft.predicates.find(p=>!p.invariantRef.startsWith('INV_COMMAND_'))!;
+    const predicates=draft.predicates.flatMap(p=>{
+      if(change==='missing command'&&p.invariantRef.startsWith('INV_COMMAND_'))return [];
+      if(p!==product)return [p];
+      if(change==='missing')return [];
+      if(change==='wrong action'){const {controlRef:_control,...rest}=p;return [{...rest,actionRef:'ACT_FOREIGN'}];}
+      return [{...p,...(change==='optional'?{required:false}:change==='wrong invariant'?{invariantRef:'INV_FOREIGN'}:{})}];
+    });
+    const refs=new Set(predicates.flatMap(p=>p.observationRefs));
+    const bundle=f.bundles.createEvidenceBundleV2({...draft,predicates,
+      observations:observations.filter(o=>refs.has(o.observationRef)).map(({observationRef:_ref,...o})=>o)});
+    assert.equal(bundle.aggregateVerdict,'pass','negative fixture remains schema-valid PASS before exact coverage check');
+    const hash=f.bundles.computeEvidenceBundleHash(bundle),ref=`setfarm://evidence-bundle/${hash}`;
+    Object.assign(f.state.bundles[0],{payload:bundle,evidence_bundle_hash:hash,evidence_id:bundle.evidenceId,
+      story_output:f.canonical.canonicalJsonStringify({...f.state.acceptance,evidenceBundleRef:ref})});
+    f.state.attempt.evidenceRefs=f.state.attempt.evidenceRefs.map((value:string)=>value.startsWith('setfarm://evidence-bundle/')?ref:value);
+    f.state.model.evidence_refs=JSON.stringify(f.state.attempt.evidenceRefs);
+    await assert.rejects(f.read(),/REFUSED/,change);
+  }
+});

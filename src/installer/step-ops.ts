@@ -1,6 +1,6 @@
 import {selectedFreshRecoveryOwnerOperationsV1} from "../recovery/fresh-recovery-owner-operations-v1.js";
 import {assertOwnerRecoveryAccessV1,type OwnerRecoveryAccessV1} from "../recovery/v3-owner-recovery-authority-v1.js";
-import {readAuthenticatedSubscriptionSuperviseContractsV1} from "../execution/subscription-supervise-contracts-v1.js";
+import {readAuthenticatedSubscriptionSuperviseContractsV1,readAuthenticatedSubscriptionSuperviseEvidenceV1} from "../execution/subscription-supervise-contracts-v1.js";
 import {currentRuntimeCompletionOwnerCapability} from "../execution/runtime-completion-owner-context.js";
 import {readDatabaseWallClock} from "../db/database-wall-clock.js";
 import { V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1 } from "../execution/v3-predecessor-completion-claim-barrier-v1.js";
@@ -7106,6 +7106,13 @@ async function claimSingleStep(
     logger.warn(`[step-module] buildPrompt failed (falling back to template): ${String(_pe).slice(0, 200)}`, { runId: step.run_id });
   }
   resolvedInput = applyEnglishOutputPolicyToResolvedPrompt(resolvedInput);
+  if (process.env.SETFARM_AGENT_RUNTIME === "subscription" && runProtocol?.protocol === "v3" && step.step_id === "supervise") {
+    if (!singleStepClaimEnvelope || !singleStepRuntime) throw new Error("SUBSCRIPTION_SUPERVISE_EVIDENCE_CLAIM_REQUIRED");
+    const evidence = await readAuthenticatedSubscriptionSuperviseEvidenceV1(singleStepClaimEnvelope, singleStepRuntime.sessionId);
+    resolvedInput += "\n\nSETFARM_ACCEPTED_IMPLEMENTATION_EVIDENCE\n"
+      + "Prior Setfarm-owned checks apply only to the listed candidate and predicates. Assess new findings independently.\n"
+      + canonicalJsonStringify(evidence);
+  }
 
   // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.
   // WAL race condition can cause false positives — one retry absorbs that.
