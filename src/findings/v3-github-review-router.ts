@@ -7,6 +7,7 @@ import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifac
 import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "../product-compiler/artifact-store-authority.js";
 import type { SemanticArtifactProducerV1 } from "../product-compiler/schemas/common-v1.js";
 import { ImplementationSliceV1Schema } from "../product-compiler/schemas/implementation-slice-v1.js";
+import { LegacyImplementationSliceV2Schema } from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import {
   resolveArtifactStorePublicationAuthorityMode,
   resolveProductArtifactCapacity,
@@ -301,7 +302,11 @@ async function loadDefaultImplementationAuthority(input: Readonly<{
   headSha: string;
   paths: readonly string[];
 }>): Promise<V3GithubReviewImplementationAuthority> {
-  const packet = await input.reader.readSealedPacket(input.runId);
+  const packet = await input.reader.readExactSealedPacket(input.runId);
+  const nativePacket = packet.packet.schema === "setfarm.product-build-packet.v3";
+  const sliceArtifactType = nativePacket
+    ? "setfarm.implementation-slice.v2"
+    : "setfarm.implementation-slice.v1";
   const rows = await input.sql.unsafe<ImplementationAuthorityRow[]>(
     `SELECT story.id AS story_db_id,
             story.status AS story_status,
@@ -351,7 +356,7 @@ async function loadDefaultImplementationAuthority(input: Readonly<{
   ]);
   if (
     !indexed
-    || indexed.artifactType !== "setfarm.implementation-slice.v1"
+    || indexed.artifactType !== sliceArtifactType
     || stored.envelope.artifactType !== indexed.artifactType
     || indexed.byteLength !== stored.bytes.byteLength
     || canonicalJsonStringify(indexed.producer) !== canonicalJsonStringify(packet.producer)
@@ -362,7 +367,9 @@ async function loadDefaultImplementationAuthority(input: Readonly<{
       "Terminal implementation slice differs between packet authority, index, and CAS",
     );
   }
-  const slice = ImplementationSliceV1Schema.parse(stored.envelope.payload);
+  const slice = nativePacket
+    ? LegacyImplementationSliceV2Schema.parse(stored.envelope.payload)
+    : ImplementationSliceV1Schema.parse(stored.envelope.payload);
   if (slice.packetHash !== packet.packetHash || slice.storyId !== input.storyId) {
     throw new V3GithubReviewRouterError(
       "V3_GITHUB_REVIEW_SLICE_IDENTITY_MISMATCH",
@@ -389,7 +396,9 @@ async function loadDefaultImplementationAuthority(input: Readonly<{
       sha: row.source_after_sha,
       treeHash: row.source_after_tree_hash,
     },
-    evidencePlan: slice.requiredEvidence.map((evidence) => evidence.id).sort(),
+    evidencePlan: (slice.schema === "setfarm.implementation-slice.v2"
+      ? slice.contract.product.evidencePredicates
+      : slice.requiredEvidence).map((evidence) => evidence.id).sort(),
   };
 }
 
