@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { readNativeOperationalSuccessAuthority } from "../execution/v3-native-operational-success-authority.js";
 
 import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-store.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -286,6 +287,9 @@ type ImplementationAuthorityRow = Readonly<{
   story_db_id: string;
   story_status: string;
   attempt_id: string;
+  attempt_class: string;
+  compilation_report_hash: string | null;
+  output_hash: string | null;
   packet_hash: string | null;
   slice_hash: string | null;
   source_after_sha: string | null;
@@ -311,6 +315,9 @@ async function loadDefaultImplementationAuthority(input: Readonly<{
     `SELECT story.id AS story_db_id,
             story.status AS story_status,
             attempt.attempt_id,
+            attempt.attempt_class,
+            attempt.compilation_report_hash,
+            attempt.output_hash,
             attempt.packet_hash,
             attempt.slice_hash,
             attempt.source_after_sha,
@@ -326,13 +333,14 @@ async function loadDefaultImplementationAuthority(input: Readonly<{
         AND story.story_id = $2
         AND attempt.step_id = 'implement'
         AND attempt.packet_hash = $3
-        AND attempt.attempt_class IN ('product_implementation', 'supervisor_repair')
+        AND (attempt.attempt_class IN ('product_implementation', 'supervisor_repair')
+          OR ($5::boolean AND attempt.attempt_class = 'infrastructure_retry'))
         AND attempt.disposition IN ('produced_delta', 'already_satisfied', 'verified')
         AND attempt.source_after_sha = $4
         AND attempt.source_after_tree_hash IS NOT NULL
       ORDER BY attempt.generation DESC, attempt.updated_at DESC
       LIMIT 2`,
-    [input.runId, input.storyId, packet.packetHash, input.headSha],
+    [input.runId, input.storyId, packet.packetHash, input.headSha, nativePacket],
   );
   const row = rows[0];
   if (
@@ -349,6 +357,29 @@ async function loadDefaultImplementationAuthority(input: Readonly<{
       "V3_GITHUB_REVIEW_IMPLEMENTATION_AUTHORITY_MISSING",
       "Review routing requires one exact done story and terminal implementation attempt at the PR head",
     );
+  }
+  if (row.attempt_class === "infrastructure_retry") {
+    const missing = new V3GithubReviewRouterError(
+      "V3_GITHUB_REVIEW_IMPLEMENTATION_AUTHORITY_MISSING",
+      "Native operational review requires the exact canonical accepted successor at the PR head",
+    );
+    if (!nativePacket || row.disposition !== "verified") throw missing;
+    const success = await readNativeOperationalSuccessAuthority(input.sql, {
+      runId: input.runId, stepId: "implement", storyId: input.storyId,
+      packetHash: packet.packetHash, attemptId: row.attempt_id,
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message === "V3_NATIVE_OPERATIONAL_SUCCESS_AUTHORITY_MISMATCH") {
+        throw missing;
+      }
+      throw error;
+    });
+    if (success.attemptId !== row.attempt_id || success.sliceHash !== row.slice_hash
+      || success.compilationReportHash !== row.compilation_report_hash
+      || success.outputHash !== row.output_hash
+      || success.sourceAfter.sha !== row.source_after_sha
+      || success.sourceAfter.treeHash !== row.source_after_tree_hash) {
+      throw missing;
+    }
   }
   const [indexed, stored] = await Promise.all([
     input.reader.index.getArtifact(row.slice_hash),

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +17,9 @@ import { compileImplementationSlice } from "../../src/product-compiler/slice-com
 import { compileLegacyImplementationSliceV2 } from "../../src/product-compiler/slice-compiler-v2-legacy.js";
 import { buildMinimalValidV3Contracts, buildMinimalValidV3PacketV2Contracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 import { nativeJoinPacket, nativeJoinEnvelope, NATIVE_JOIN_LIMITS, NATIVE_JOIN_PRODUCER } from "../execution-attempts/helpers/native-implementation-join-fixture.js";
+import { readNativeOperationalSuccessAuthority } from "../../src/execution/v3-native-operational-success-authority.js";
+import { V3ImplementationAgentOutputV1Schema } from "../../src/execution/v3-implementation-output.js";
+import { createEvidenceBundleV2, computeEvidenceBundleHash, computeObservationRef } from "../../src/evidence/evidence-bundle-v2.js";
 
 // Execute the actual private loader without importing the router's live DB and
 // service composition. Only its real imports are bound; no authority logic is
@@ -29,7 +33,8 @@ const declarations = ["V3GithubReviewRouterError", "loadDefaultImplementationAut
   assert.ok(declaration, `missing production declaration ${name}`);
   return declaration.getText(tree).replace(/^export /, "");
 }).join("\n");
-const ports = { canonicalJsonStringify, ImplementationSliceV1Schema, LegacyImplementationSliceV2Schema };
+const ports = { canonicalJsonStringify, ImplementationSliceV1Schema, LegacyImplementationSliceV2Schema,
+  readNativeOperationalSuccessAuthority };
 const loadAuthority = new Function(...Object.keys(ports), ts.transpileModule(declarations, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText + "; return loadDefaultImplementationAuthority;")(...Object.values(ports));
@@ -99,7 +104,8 @@ async function fixture(family: "native" | "legacy-v1" | "legacy-v2" = "native", 
   }
   assert.equal(compiled.status, "compiled", JSON.stringify(compiled.diagnostics));
   const sliceHash = (await put(compiled.envelope)).hash;
-  const row = { story_db_id: "story-db-test", story_status: "done", attempt_id: "attempt-test", packet_hash: packet.packetHash,
+  const row = { story_db_id: "story-db-test", story_status: "done", attempt_id: "attempt-test",
+    attempt_class: "product_implementation", packet_hash: packet.packetHash,
     slice_hash: sliceHash, source_after_sha: ACCEPTED.sha, source_after_tree_hash: ACCEPTED.treeHash,
     disposition: "verified", claim_outcome: "completed" };
   let rows = [row];
@@ -112,7 +118,9 @@ async function fixture(family: "native" | "legacy-v1" | "legacy-v2" = "native", 
     }
     if (query === "SELECT * FROM semantic_artifacts WHERE artifact_hash = $1") return artifacts.has(args[0]) ? [artifacts.get(args[0])] : [];
     if (query.includes("FROM stories story")) {
-      assert.deepEqual(args, [RUN, storyId, packet.packetHash, ACCEPTED.sha]);
+      assert.deepEqual(args.slice(0, 4), [RUN, storyId, packet.packetHash, ACCEPTED.sha]);
+      assert.ok(args.length === 4 || args.length === 5);
+      if (args.length === 5) assert.equal(args[4], family === "native");
       assert.match(query, /attempt\.step_id = 'implement'/);
       assert.match(query, /attempt\.attempt_class IN \('product_implementation', 'supervisor_repair'\)/);
       assert.match(query, /attempt\.disposition IN \('produced_delta', 'already_satisfied', 'verified'\)/);
@@ -125,7 +133,7 @@ async function fixture(family: "native" | "legacy-v1" | "legacy-v2" = "native", 
   const reader = createRuntimeArtifactReader({ sql: sql as any, artifactRoot: root, artifactLimits: NATIVE_JOIN_LIMITS, publicationAuthorityMode: "standalone" });
   const invoke = (paths = [shared ? "src/notes.ts" : compiled.slice.files[0].path], overrides = {}) =>
     loadAuthority({ sql, reader, runId: RUN, storyId, headSha: ACCEPTED.sha, paths, ...overrides });
-  return { invoke, reader, packet, slice: compiled.slice, row, artifacts, sliceHash, store, put,
+  return { invoke, reader, sql, packet, reportHash: refs.get("COMPILATION_REPORT")!, slice: compiled.slice, row, artifacts, sliceHash, store, put,
     setRows(value: typeof rows) { rows = value; } };
 }
 
@@ -140,6 +148,115 @@ it("loads native terminal authority at accepted head while the sealed slice reta
     sourceRevision: ACCEPTED, evidencePlan: [
       "EVID_INVOCATION_4860CC797DED4B82BCB3F584692A9A3056C5D7577F21E8560CCD8EFCD13C5781", "EVID_TASK_ADDED",
     ].sort() });
+});
+
+async function operationalFixture(family: "native" | "legacy-v1" = "native") {
+  const value = await fixture(family);
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+  const attemptId = "ATT_native-operational-review-0001";
+  const priorAttemptId = "ATT_native-operational-origin-001";
+  const authorityHash = hash("initial authority"), custodyHash = hash("original custody");
+  const directiveHash = hash("retry directive"), directiveArtifactHash = hash("retry artifact");
+  const planHash = hash("evidence plan"), stdoutHash = hash("owned stdout");
+  const time = "2026-11-09T00:00:00.000Z";
+  const observation = { kind: "command" as const, owner: "setfarm-orchestrator" as const,
+    commandRef: "CMD_TEST", exitCode: 0, stdoutArtifactHash: stdoutHash, startedAt: time, completedAt: time };
+  const bundle = createEvidenceBundleV2({ runId: RUN, storyId: "US-001", packetHash: value.packet.packetHash,
+    sliceHash: value.sliceHash, sourceRevision: ACCEPTED, attemptId,
+    predicates: [{ invariantRef: "INV_TEST", predicateRef: "EVID_TASK_ADDED", required: true,
+      verdict: "pass", observationRefs: [computeObservationRef(observation)] }],
+    observations: [observation], artifacts: [{ hash: stdoutHash, mediaType: "text/plain", locator: "evidence/test.stdout" }],
+    runner: { id: "native-review-fixture", version: "1", environmentHash: hash("environment") },
+    startedAt: time, completedAt: time });
+  const bundleHash = computeEvidenceBundleHash(bundle);
+  const output = canonicalJsonStringify(V3ImplementationAgentOutputV1Schema.parse({
+    schema: "setfarm.v3-implementation-agent-proposal.v1", disposition: "ready_for_evidence",
+    handoffHash: hash("handoff"), attemptId, packetHash: value.packet.packetHash, sliceHash: value.sliceHash,
+    sourceBefore: BASE, summary: "Candidate ready for platform evidence",
+    changes: [{ path: value.slice.files[0].path, summary: "Implementation delta" }] }));
+  const origin = `setfarm://preparation-authority-v2/${authorityHash}`;
+  const custody = `setfarm://native-git-custody-v1/${custodyHash}`;
+  const refs = [origin, custody, `setfarm://artifact/${value.sliceHash}`,
+    `setfarm://operational-retry/${directiveHash}`, `setfarm://operational-retry-artifact/${directiveArtifactHash}`,
+    `setfarm://artifact/${directiveArtifactHash}`, `setfarm://artifact/${planHash}`, `setfarm://evidence-bundle/${bundleHash}`];
+  const material = { attempt_id: attemptId, claim_id: "11", generation: 2, slice_hash: value.sliceHash,
+    output, output_hash: hash(output), compilation_report_hash: value.reportHash,
+    evidence_refs: JSON.stringify(refs), branch: "native-review-fallback", worktree: "/tmp/native-review-fallback",
+    source_before_sha: BASE.sha, source_before_tree_hash: BASE.treeHash,
+    source_after_sha: ACCEPTED.sha, source_after_tree_hash: ACCEPTED.treeHash,
+    prior_attempt_id: priorAttemptId, prior_claim_id: "10", prior_generation: 1,
+    prior_evidence_refs: JSON.stringify([origin, custody]), authority_hash: authorityHash,
+    story_output: canonicalJsonStringify({ schema: "setfarm.v3-story-acceptance-record.v1", storyId: "US-001",
+      attemptId, packetHash: value.packet.packetHash, sliceHash: value.sliceHash, sourceRevision: ACCEPTED,
+      evidenceBundleRef: `setfarm://evidence-bundle/${bundleHash}`, findingSetRef: null,
+      aggregateVerdict: "pass", failureClass: null, agentOutputHash: hash(output) }),
+    bundle_hash: bundleHash, bundle_payload: bundle };
+  const selected = { ...value.row, attempt_id: attemptId, attempt_class: "infrastructure_retry",
+    compilation_report_hash: value.reportHash, output_hash: material.output_hash };
+  const state = { canonicalAvailable: true, duplicate: false, readError: null as Error | null };
+  const sql = { async unsafe(query: string, args: any[]) {
+    if (query.includes("FROM stories story")) {
+      // Model the database class predicate; the old loader excludes this row.
+      if (!query.includes("'infrastructure_retry'") || args[4] !== true) return [];
+      return state.duplicate ? [selected, { ...selected, attempt_id: "ATT_another-native-success-0001" }] : [selected];
+    }
+    if (query.includes("bundle.payload AS bundle_payload")) {
+      assert.deepEqual(args, [attemptId, RUN, "implement", "US-001", value.packet.packetHash]);
+      if (state.readError) throw state.readError;
+      return state.canonicalAvailable ? [material] : [];
+    }
+    if (query.includes("SELECT a.artifact_hash,a.artifact_type FROM semantic_artifacts a")) {
+      assert.deepEqual(args.slice(0, 3), [directiveArtifactHash, RUN,
+        `OPERATIONAL_RETRY_${directiveHash.slice(0, 16).toUpperCase()}`]);
+      return [{ artifact_hash: directiveArtifactHash, artifact_type: "setfarm.operational-retry-directive.v1" },
+        { artifact_hash: planHash, artifact_type: "setfarm.evidence-plan.v2" }];
+    }
+    return value.sql.unsafe(query, args);
+  } };
+  const identity = { runId: RUN, stepId: "implement", storyId: "US-001", packetHash: value.packet.packetHash, attemptId };
+  return { ...value, material, selected, state, sql, identity,
+    invoke: (paths?: string[]) => value.invoke(paths, { sql }) };
+}
+
+it("loads a genuine canonical native operational successor as review authority", async () => {
+  const value = await operationalFixture();
+  // Prove the real canonical success reader accepts the fixture independently.
+  const success = await readNativeOperationalSuccessAuthority(value.sql as any, value.identity);
+  assert.equal(success.attemptId, "ATT_native-operational-review-0001");
+  assert.equal(success.generation, 2);
+  const authority = await value.invoke();
+  assert.equal(authority.attemptId, success.attemptId);
+  assert.equal(authority.contractSliceHash, value.sliceHash);
+  assert.deepEqual(authority.sourceRevision, ACCEPTED);
+});
+
+for (const fault of ["unaccepted", "output", "evidence", "custody", "head", "slice", "tree", "report", "selected-output", "duplicate"] as const) {
+  it(`refuses native operational successor ${fault} authority drift`, async () => {
+    const value = await operationalFixture();
+    if (fault === "unaccepted") value.state.canonicalAvailable = false;
+    if (fault === "output") value.material.output += " ";
+    if (fault === "evidence") value.material.bundle_hash = "f".repeat(64);
+    if (fault === "custody") value.material.prior_evidence_refs = JSON.stringify([]);
+    if (fault === "head") value.selected.source_after_sha = BASE.sha;
+    if (fault === "slice") value.selected.slice_hash = "e".repeat(64);
+    if (fault === "tree") value.selected.source_after_tree_hash = "e".repeat(40);
+    if (fault === "report") value.selected.compilation_report_hash = "e".repeat(64);
+    if (fault === "selected-output") value.selected.output_hash = "e".repeat(64);
+    if (fault === "duplicate") value.state.duplicate = true;
+    await assert.rejects(value.invoke(), { code: "V3_GITHUB_REVIEW_IMPLEMENTATION_AUTHORITY_MISSING" });
+  });
+}
+
+it("does not admit an operational retry through a historical packet", async () => {
+  const value = await operationalFixture("legacy-v1");
+  await assert.rejects(value.invoke(), { code: "V3_GITHUB_REVIEW_IMPLEMENTATION_AUTHORITY_MISSING" });
+});
+
+it("does not misclassify a canonical store read failure as missing review authority", async () => {
+  const value = await operationalFixture();
+  const failure = new Error("DATABASE_TEMPORARILY_UNAVAILABLE");
+  value.state.readError = failure;
+  await assert.rejects(value.invoke(), error => error === failure);
 });
 
 it("accepts the native slice family after an exact packet has already been authenticated", async () => {
