@@ -2721,12 +2721,13 @@ async function main() {
           '})(); "ok"'
         );
 
-        // Step 1: Detect interactivity + capture T0
+        // Step 1: Require an explicit keyboard affordance before probing input.
+        // A canvas or button-only Start/jump/duck instructions do not imply keyboard controls.
         const detectJson = abOk('eval',
           '(function() {' +
           '  var canvas = document.querySelector("canvas");' +
-          '  var hasKeyHint = document.body.innerText.match(/press (space|enter|any key|start)|arrow keys|wasd|jump|duck|space to/i);' +
-          '  if (!canvas && !hasKeyHint) return {skip: true, reason: "no canvas or keyboard hints"};' +
+          '  var hasKeyHint = document.body.innerText.match(/\\b(?:press\\s+(?:space(?:bar)?|enter|any\\s+key)|arrow\\s+keys|wasd|space\\s+to)\\b/i);' +
+          '  if (!hasKeyHint) return {skip: true, reason: "no explicit keyboard hints"};' +
           '  window.__p15_t0 = window.__p15h.snap();' +
           '  return {skip: false, hasCanvas: !!canvas, hasKeyHint: !!hasKeyHint, hasAdvanceTime: typeof window.advanceTime === "function"};' +
           '})()'
