@@ -177,6 +177,11 @@ function verifyDelayContextFixture() {
     logger: { info() {}, warn() {}, error() {} }, now: () => "2026-11-08T10:46:54.035Z",
     findLoopStep: async () => ({ id: "step-loop", loop_config: JSON.stringify({ verifyEach: true, verifyStep: "verify" }) }),
     autoVerifyDoneStories: async () => story,
+    pgGet: async (query: string, values: unknown[]) => {
+      assert.equal(query, "SELECT protocol FROM runs WHERE id = $1");
+      assert.deepEqual(values, [runId]); return { protocol: "v3" };
+    },
+    readSelectedFreshExecutionProfileV1: () => null,
     ensureStoryAuditWorkdir: () => "/inert/story-worktree",
     routeBlockingSupervisorEvidenceToImplement: async () => false,
     parseAcceptanceCriteria: (raw: string) => JSON.parse(raw), formatStoryForTemplate: () => "US-001: literal story",

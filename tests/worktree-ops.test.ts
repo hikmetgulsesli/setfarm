@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { PR_REVIEW_DELAY_MS } from "../src/installer/constants.js";
 import { inspectSubscriptionCodingWorktreeV1 } from "../src/execution/subscription-coding-worker-v1.js";
 
 import { ensureStoryBranchWorktree, saveAndRemoveWorktree, NativeImplementationAssetError, writeStoryScopeSnapshot, applyScopedRetryPatchForStory, copyStitchToWorktree, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
@@ -947,6 +948,188 @@ function actualAuditHelperForTest(): (...args: any[]) => string {
     "NativeImplementationAssetError", "logger", body + ";return ensureStoryAuditWorkdir;")(
       fs, os, path, execFileSync, ensureStoryBranchWorktree, NativeImplementationAssetError, logger);
 }
+
+// Execute actual injection and the complete review gate with real audit assets.
+// Only DB/profile/GitHub/evidence/display ports are inert; no selector is copied.
+function actualVerifyInjectionForTest(ports: Record<string, unknown>) {
+  const filename = path.join(process.cwd(), "src/installer/step-ops.ts");
+  const tree = ts.createSourceFile(filename, fs.readFileSync(filename, "utf8"), ts.ScriptTarget.Latest, true);
+  const declaration = (name: string) => {
+    const node = tree.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === name);
+    assert.ok(node, `actual production declaration required: ${name}`);
+    return node;
+  };
+  const claim = declaration("claimSingleStep") as ts.FunctionDeclaration;
+  assert.ok(claim.body);
+  const statements = claim.body.statements;
+  const index = statements.findIndex(n => ts.isVariableStatement(n) && n.declarationList.declarations.some(
+    d => ts.isIdentifier(d.name) && d.name.text === "reviewPrUrl"));
+  assert.ok(index >= 0 && ts.isIfStatement(statements[index + 1]));
+  const gate = [statements[index], statements[index + 1]].map(n => n.getText(tree)).join("\n")
+    .replaceAll('await import("./steps/07-verify/pr-comments.js")', "await githubReads");
+  const bodies = ["injectVerifyContext", "parseStoryIdSet", "isStorySupervised", "clearStoryFailureContext"]
+    .map(name => declaration(name).getText(tree)).join("\n")
+    + `\nasync function reviewGate() { ${gate}\nreturn { found: true }; }`;
+  const compiled = ts.transpileModule(bodies, { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext,
+  } }).outputText;
+  const bindings = { ...ports, ensureStoryAuditWorkdir: actualAuditHelperForTest(), PR_REVIEW_DELAY_MS,
+    SUPERVISED_STORY_IDS_CONTEXT_KEY: "supervised_story_ids" };
+  return new Function(...Object.keys(bindings), compiled + ";return { injectVerifyContext, reviewGate };")(
+    ...Object.values(bindings));
+}
+
+function verifyAuditFixture(protocol: "legacy" | "shadow" | "v3", provider: "kimi" | "minimax" | "codex" | null) {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-verify-audit-")));
+  const repo = path.join(tmp, "repo"), runId = "run-verify-audit";
+  fs.mkdirSync(repo);
+  git(repo, ["init", "--initial-branch=main"]);
+  git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+  git(repo, ["config", "user.name", "Setfarm Test"]);
+  fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\nreferences/\n.worktrees/\n.setfarm/\n");
+  fs.writeFileSync(path.join(repo, "app.txt"), "base\n");
+  git(repo, ["add", "."]); git(repo, ["commit", "-m", "base"]);
+  git(repo, ["checkout", "-b", "verify-story"]);
+  fs.writeFileSync(path.join(repo, "app.txt"), "completed story\n");
+  git(repo, ["add", "app.txt"]); git(repo, ["commit", "-m", "completed story"]);
+  const storySha = git(repo, ["rev-parse", "HEAD"]);
+  git(repo, ["checkout", "main"]);
+  fs.mkdirSync(path.join(repo, "node_modules", "tiny"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "node_modules", ".bin"));
+  const sourceFile = path.join(repo, "node_modules", "tiny", "index.cjs");
+  fs.writeFileSync(sourceFile, "module.exports = 'source';\n");
+  fs.symlinkSync("../tiny/index.cjs", path.join(repo, "node_modules", ".bin", "tiny"));
+  fs.mkdirSync(path.join(repo, "references"));
+  fs.writeFileSync(path.join(repo, "references", "manual.txt"), "external corpus\n");
+  const pr = "https://github.com/owned/fixture/pull/1";
+  const story = { id: "story-owned", run_id: runId, story_id: "US-001", story_index: 0,
+    title: "Owned story", description: "Literal fixture", acceptance_criteria: "[]", status: "done",
+    output: null, retry_count: 0, max_retries: 2, pr_url: pr, story_branch: "verify-story" };
+  const step = { id: "step-verify", run_id: runId, step_id: "verify", retry_count: 0 };
+  // Spoofed context must never override the literal selected DB protocol.
+  const context: Record<string, string> = { repo, protocol: "v3", supervised_story_ids: "US-001",
+    previous_failure: "stale implementation failure" };
+  let time = Date.parse("2026-11-09T10:00:00.000Z"), profileRefusal = false;
+  class FixedDate extends Date {
+    constructor(value?: string | number) { super(value === undefined ? time : value); }
+    static now() { return time; }
+  }
+  const handoffs: { outcome: string; diagnostic: string }[] = [];
+  const profile = provider === null ? null : Object.freeze({ schema: "setfarm.model-execution-profile.v1",
+    providerId: provider, modelId: provider === "kimi" ? "kimi/k2.5" : provider === "minimax" ? "minimax/MiniMax-M2.7" : "codex/gpt-6",
+    selection: "primary" });
+  const actual = actualVerifyInjectionForTest({
+    context, step, runProtocol: { protocol }, singleStepClaimId: 16, agentId: "", Date: FixedDate,
+    logger: { info() {}, warn() {}, error() {} }, now: () => new FixedDate().toISOString(),
+    findLoopStep: async (id: string) => {
+      assert.equal(id, runId);
+      return { id: "step-loop", loop_config: JSON.stringify({ verifyEach: true, verifyStep: "verify" }) };
+    },
+    autoVerifyDoneStories: async (id: string) => { assert.equal(id, runId); return story; },
+    pgGet: async (query: string, values: unknown[]) => {
+      assert.equal(query, "SELECT protocol FROM runs WHERE id = $1"); assert.deepEqual(values, [runId]);
+      return { protocol };
+    },
+    readSelectedFreshExecutionProfileV1: () => {
+      assert.equal(protocol, "v3", "legacy DB protocol must not read a selected V3 profile");
+      if (profileRefusal) throw new Error("FRESH_V3_EXECUTION_PROFILE_REFUSED");
+      return profile;
+    },
+    pgRun: async (query: string, values: unknown[]) => {
+      if (query === "UPDATE steps SET status = 'pending' WHERE id = $1") assert.deepEqual(values, [step.id]);
+      else {
+        assert.equal(query, "UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3");
+        assert.equal(values[2], runId);
+      }
+      return { changes: 1 };
+    },
+    updateRunContext: async (id: string) => { assert.equal(id, runId); },
+    routeBlockingSupervisorEvidenceToImplement: async () => false,
+    parseAcceptanceCriteria: JSON.parse, formatStoryForTemplate: () => "US-001: literal story",
+    resolveStoryScreens: async () => {},
+    routeExactV3GithubReviewBeforeVerifyAgent: async () => ({ blockAgent: false, result: { status: "clean" } }),
+    githubReads: { fetchPrState: async () => ({ comments: [], checksStatus: "passing", mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN", createdAt: "2026-11-09T09:00:00.000Z" }) },
+    closeSingleStepHandoff: async (outcome: string, diagnostic: string) => { handoffs.push({ outcome, diagnostic }); },
+    v3ReviewErrorCode: (error: unknown) => { throw error; },
+  });
+  return { repo, storySha, sourceFile, context, handoffs,
+    inject: () => actual.injectVerifyContext(step, context, {}, ""), reviewGate: actual.reviewGate,
+    elapseReviewDelay: () => { time += 300_000; }, refuseProfile: () => { profileRefusal = true; },
+    cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }) };
+}
+
+// Removing native selection at the actual VERIFY callsite recreates the strict
+// inspector refusal, before any reviewer can launch, for both subscription providers.
+for (const provider of ["kimi", "minimax"] as const) {
+  it(`actual V3 ${provider} VERIFY injection prepares owned assets before review deferral and reuses them later`, async () => {
+    const f = verifyAuditFixture("v3", provider);
+    try {
+      assert.equal(await f.inject(), true);
+      const workdir = f.context.story_workdir!;
+      assert.doesNotThrow(() => inspectSubscriptionCodingWorktreeV1(workdir, []));
+      assert.equal(fs.lstatSync(path.join(workdir, "node_modules")).isSymbolicLink(), false);
+      assert.equal(fs.existsSync(path.join(workdir, "references")), false, "uncommitted external corpus is not audit authority");
+      assert.equal(git(workdir, ["rev-parse", "HEAD"]), f.storySha);
+      assert.equal(fs.readFileSync(path.join(workdir, "app.txt"), "utf8"), "completed story\n");
+      const copied = path.join(workdir, "node_modules", "tiny", "index.cjs");
+      const inode = fs.statSync(copied).ino;
+      assert.notEqual(inode, fs.statSync(f.sourceFile).ino);
+      assert.equal(fs.statSync(copied).nlink, 1);
+      assert.deepEqual(await f.reviewGate(), { found: false });
+      assert.equal(f.context.verify_pending_since, "2026-11-09T10:00:00.000Z");
+      assert.deepEqual(f.handoffs, [{ outcome: "infra_retry", diagnostic: "PR review delay deferral; 300s remaining before agent spawn" }]);
+      f.elapseReviewDelay();
+      assert.equal(await f.inject(), true);
+      assert.equal(f.context.story_workdir, workdir);
+      assert.equal(fs.statSync(copied).ino, inode);
+      assert.doesNotThrow(() => inspectSubscriptionCodingWorktreeV1(workdir, []));
+      assert.deepEqual(await f.reviewGate(), { found: true });
+      assert.equal(f.context.verify_pending_since, undefined);
+      assert.equal(git(workdir, ["status", "--porcelain"]), "");
+    } finally { f.cleanup(); }
+  });
+}
+
+for (const [protocol, provider] of [["legacy", "kimi"], ["shadow", "minimax"], ["v3", "codex"], ["v3", null]] as const) {
+  it(`actual ${protocol}/${provider} VERIFY injection retains legacy aliases despite spoofed context`, async () => {
+    const f = verifyAuditFixture(protocol, provider);
+    try {
+      assert.equal(await f.inject(), true);
+      for (const name of ["node_modules", "references"]) {
+        assert.equal(fs.lstatSync(path.join(f.context.story_workdir!, name)).isSymbolicLink(), true);
+      }
+      assert.throws(() => inspectSubscriptionCodingWorktreeV1(f.context.story_workdir!, []));
+      assert.equal(git(f.context.story_workdir!, ["rev-parse", "HEAD"]), f.storySha);
+    } finally { f.cleanup(); }
+  });
+}
+
+it("actual V3 VERIFY profile refusal and native custody drift propagate without replacing audit material", async () => {
+  const f = verifyAuditFixture("v3", "kimi");
+  try {
+    await f.inject();
+    const workdir = f.context.story_workdir!, copied = path.join(workdir, "node_modules", "tiny", "index.cjs");
+    const inode = fs.statSync(copied).ino;
+    f.refuseProfile();
+    await assert.rejects(f.inject(), /FRESH_V3_EXECUTION_PROFILE_REFUSED/);
+    assert.equal(fs.statSync(copied).ino, inode);
+    assert.equal(fs.readFileSync(copied, "utf8"), "module.exports = 'source';\n");
+    assert.equal(f.context.story_workdir, workdir);
+  } finally { f.cleanup(); }
+  const custody = verifyAuditFixture("v3", "minimax");
+  try {
+    await custody.inject();
+    const workdir = custody.context.story_workdir!, copied = path.join(workdir, "node_modules", "tiny", "index.cjs");
+    fs.writeFileSync(copied, "private custody drift\n");
+    const inode = fs.statSync(copied).ino;
+    await assert.rejects(custody.inject(), NativeImplementationAssetError);
+    assert.equal(fs.statSync(copied).ino, inode);
+    assert.equal(fs.readFileSync(copied, "utf8"), "private custody drift\n");
+    assert.equal(fs.readFileSync(custody.sourceFile, "utf8"), "module.exports = 'source';\n");
+    assert.equal(git(workdir, ["rev-parse", "HEAD"]), custody.storySha);
+  } finally { custody.cleanup(); }
+});
 
 it("native audit helper prepares the current matching worktree and preserves typed custody refusal", () => {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-audit-helper-current-")));
