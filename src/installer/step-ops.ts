@@ -6,6 +6,7 @@ import {readDatabaseWallClock} from "../db/database-wall-clock.js";
 import { V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1 } from "../execution/v3-predecessor-completion-claim-barrier-v1.js";
 import { selectedFreshInstallationRootV1, freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
+import { readSelectedFreshExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
 import { getSql, pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import type { PgTransactionSql } from "../db-pg.js";
 import type { LoopConfig, Story } from "./types.js";
@@ -4969,7 +4970,12 @@ async function injectVerifyContext(
   context["current_story_id"] = nextUnverified.story_id;
   context["current_story_title"] = nextUnverified.title;
   if (nextUnverified.story_branch) {
-    const workdir = ensureStoryAuditWorkdir(context, nextUnverified.story_branch, agentId, step.run_id, nextUnverified.story_id, "verify_each");
+    const runProtocol = await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+      "SELECT protocol FROM runs WHERE id = $1", [step.run_id],
+    );
+    const profile = runProtocol?.protocol === "v3" ? readSelectedFreshExecutionProfileV1() : null;
+    const assets = profile?.providerId === "kimi" || profile?.providerId === "minimax" ? "native-audit" : undefined;
+    const workdir = ensureStoryAuditWorkdir(context, nextUnverified.story_branch, agentId, step.run_id, nextUnverified.story_id, "verify_each", assets);
     if (!workdir) {
       const failure = `PLATFORM_STORY_WORKTREE_MISSING: ${nextUnverified.story_id} has branch ${nextUnverified.story_branch}, but Setfarm could not prepare a story worktree for reviewer verification. Reviewer must not audit the main repo fallback.`;
       context["previous_failure"] = failure;
