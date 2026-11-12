@@ -123,6 +123,53 @@ describe("produced passes predicate semantics", () => {
     }), "fail");
   });
 
+  it("distinguishes an absent persisted zero from unchanged, wrong, or uninstrumented high scores", () => {
+    const spec = produced(
+      "Build a browser game. The player can start, move left and right, pause and resume, and restart. Track score and store high score in localStorage.",
+    );
+    const target = action(spec, "ACT_RECORD_HIGH_SCORE");
+    const initial = structuredClone(spec.states.find(state => state.id === "STATE_GAME_SESSION")!.initialValue) as Record<string, unknown>;
+    delete initial.highScore;
+    const after = { STATE_GAME_SESSION: { ...initial, highScore: 0 } };
+    const common = {
+      predicate: predicate(spec, target.id, "persistence_round_trip"),
+      action: target,
+      persistencePolicies: spec.persistencePolicies,
+      inputValues: { score: 0 },
+      stateBefore: { STATE_GAME_SESSION: initial },
+      stateAfterAction: after,
+      stateAfterReload: after,
+      actionPassed: true,
+      runtimeAdapter: "browser-service" as const,
+      reloadPassed: true,
+    };
+    assert.equal(evaluateProducedPredicateSemanticsV1(common), "pass", "absent to zero survives action and reload");
+    assert.equal(evaluateProducedPredicateSemanticsV1({
+      ...common,
+      stateBefore: { STATE_GAME_SESSION: { ...initial, highScore: 0 } },
+    }), "fail", "zero to zero is no change");
+    assert.equal(evaluateProducedPredicateSemanticsV1({
+      ...common,
+      stateAfterAction: { STATE_GAME_SESSION: { ...initial, highScore: 1 } },
+    }), "fail", "one does not satisfy the exact zero input");
+    assert.equal(evaluateProducedPredicateSemanticsV1({
+      ...common,
+      stateAfterAction: { STATE_GAME_SESSION: initial },
+    }), "inconclusive", "a missing after path cannot prove the write");
+    assert.equal(evaluateProducedPredicateSemanticsV1({
+      ...common,
+      stateAfterReload: { STATE_GAME_SESSION: initial },
+    }), "inconclusive", "a missing reload path cannot prove persistence");
+    assert.equal(evaluateProducedPredicateSemanticsV1({
+      ...common,
+      stateBefore: {},
+    }), "inconclusive", "a missing parent state is missing instrumentation");
+    assert.equal(evaluateProducedPredicateSemanticsV1({
+      ...common,
+      stateBefore: { STATE_GAME_SESSION: { ...initial, highScore: null } },
+    }), "pass", "null to zero is also a distinct valid change");
+  });
+
   it("proves game session semantics without inventing a reload and durable high score with one", () => {
     const spec = produced(
       "Build a browser game. The player can start, move left and right, pause and resume, and restart. Track score and store high score in localStorage.",

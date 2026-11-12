@@ -33,7 +33,8 @@ const sha = (bytes: string | Buffer) => createHash("sha256").update(bytes).diges
 const escape = (value: string) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 const converterPath = fileURLToPath(new URL("../../scripts/stitch-to-jsx.mjs", import.meta.url));
 
-export async function nativeBrowserFixture(options: { input?: "empty-string" | "boolean"; persistence?: boolean; prerequisite?: boolean; twoPlacements?: boolean; controlReload?: boolean; controlDisabledAfter?: boolean } = {}) {
+export async function nativeBrowserFixture(options: { input?: "empty-string" | "boolean"; persistence?: boolean; persistedZeroFromAbsent?: boolean; prerequisite?: boolean; twoPlacements?: boolean; controlReload?: boolean; controlDisabledAfter?: boolean } = {}) {
+  assert.ok(!options.persistedZeroFromAbsent || options.persistence, "persisted zero requires persistence");
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-browser-evidence-"));
   try {
     const proposal = containedGamePlanProposalV2();
@@ -64,6 +65,13 @@ export async function nativeBrowserFixture(options: { input?: "empty-string" | "
       });
       proposal.persistencePolicies = [{ key: "game_local", kind: "local_storage", entityKeys: [], rehydration: { kind: "initialization" }, requirementRefs: primary.requirementRefs }];
       primary.persistenceIntents = [{ policyKey: "game_local", operation: "write", stateDeltaKeys: ["start_phase"] }];
+      if (options.persistedZeroFromAbsent) {
+        primary.stateDeltas.push({
+          key: "persisted_zero", stateKey: "game_phase", operation: "set",
+          path: "/persisted_score", valueFrom: { kind: "literal", value: 0 },
+        });
+        primary.persistenceIntents[0].stateDeltaKeys = ["persisted_zero"];
+      }
       primary.observables.find((observable: { key: string }) => observable.key === "status_text").assertions.push({ phase: "reload", property: "visible_text", operator: "contains", expected: "Playing" });
     }
     if (options.prerequisite) {
