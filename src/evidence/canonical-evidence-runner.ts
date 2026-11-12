@@ -345,7 +345,7 @@ function evaluateActionStateDeltas(input: Readonly<{
       operationPassed = deepEqual(afterTarget, expectedAfter);
     }
     if (!operationPassed) return "fail";
-    if (!deepEqual(beforeTarget, afterTarget)) observedExactChange = true;
+    if (beforeTarget === undefined || !deepEqual(beforeTarget, afterTarget)) observedExactChange = true;
   }
   return observedExactChange ? "pass" : "fail";
 }

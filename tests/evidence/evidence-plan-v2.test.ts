@@ -83,6 +83,30 @@ describe("genuine native PacketV3 evidence plan", () => {
     } finally { value.cleanup(); }
   });
 
+  it("proves absent persisted zero through the genuine native browser bundle", async () => {
+    const value = await nativeBrowserFixture({ persistence: true, persistedZeroFromAbsent: true });
+    try {
+      writeNativeBrowserRuntime(value);
+      const result = await runNative(value, "absent-zero-001");
+      assert.equal(result.ok, true, nativeDiagnostic(result, value.workdir));
+      const bundle = assertExactNativePredicates(value, result);
+      assert.equal(bundle.aggregateVerdict, "pass");
+      const traceRef = bundle.artifacts.find(a => a.locator.endsWith("runtime-trace.json"))!;
+      const trace = JSON.parse(fs.readFileSync(path.join(value.workdir, traceRef.locator), "utf8"));
+      const flow = result.evidencePlan!.flows.find(f => f.actionRef === "ACT_START_GAME")!;
+      const actionTrace = trace.interactions.find((i: { request: { id: string } }) => i.request.id === flow.actionInteractionId);
+      const reloadTrace = trace.interactions.find((i: { request: { id: string } }) => i.request.id === flow.reloadInteractionId);
+      assert.equal(Object.hasOwn(actionTrace.before.stateBridge.states.STATE_GAME_PHASE, "persisted_score"), false);
+      assert.equal(actionTrace.after.stateBridge.states.STATE_GAME_PHASE.persisted_score, 0);
+      assert.equal(reloadTrace.after.stateBridge.states.STATE_GAME_PHASE.persisted_score, 0);
+      for (const kind of ["action_invocation", "persistence_round_trip"]) {
+        const required = value.slice.contract.product.evidencePredicates.filter(p => p.required && p.kind === kind);
+        assert.ok(required.length > 0);
+        assert.ok(required.every(p => bundle.predicates.find(b => b.predicateRef === p.id)?.verdict === "pass"));
+      }
+    } finally { value.cleanup(); }
+  });
+
   for (const [label, options] of [
     ["empty input and after/reload non-native value", { input: "empty-string", persistence: true }],
     ["boolean checked input", { input: "boolean" }],
