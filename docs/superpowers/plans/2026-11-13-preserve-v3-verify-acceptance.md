@@ -16,10 +16,11 @@ Single existing writer; preserve all evidence; no live DB/service/generated-proj
 
 ### Task 1: Preserve acceptance in the actual verification writer
 
-**Files:** Modify `src/installer/repo.ts`; test `tests/execution-attempts/native-implementation-join.integration.test.ts`. Existing legacy helper controls: `tests/steps/07-verify.test.ts`.
+**Files:** Modify `scripts/run-isolated-postgres-tests.ts` only to admit the fixed exact accepted fallback selector; add parser acceptance/near-miss tests in maintained seam. Modify `src/installer/repo.ts`; test `tests/execution-attempts/native-implementation-join.integration.test.ts`. Existing legacy helper controls: `tests/steps/07-verify.test.ts`.
 
 **Interfaces:** Existing `verifyStory(storyId: string, verificationOutput?: string): Promise<void>` signature unchanged; consumes actual persisted run.protocol. Produces verified status and unchanged V3 output, existing non-V3 replacement.
 
+- [ ] Establish closed exact selector `--test-name-pattern=^native Task11 accepted operational fallback remains the model source owner after cleanup$` on the existing native-implementation-join file, mirroring prior fixed selectors. Add only `src/installer/repo.ts` and `tests/execution-attempts/native-implementation-join.integration.test.ts` to `P3_TRACKED_SCOPE` so the actual edited bytes are pinned/projected; retain every existing scope/byte check. Root commits docs before invocation, so no doc allowlist additions are necessary. First test parser admission and rejection of near-miss/suffix/extra arguments; preserve all existing command grammar. This is necessary to execute the proportional regression, not a guard bypass.
 - [ ] Extend the maintained real native fallback scenario after genuine completion and worktree retirement. Save canonical output, call actual `verifyStory(id, "STATUS: done")`, assert status verified and exact original output, then reload actual native context/authority. Add a selected variant or extend existing case without duplicating full fixture. Add real non-V3 controls for verifier replacement/stale cleanup and V3 malformed output preservation/rejection where the existing seam permits.
 
 ```ts
