@@ -186,7 +186,7 @@ it("mandatory stage candidate commands remain owned with gate off and preserve d
       fs:{mkdirSync(){},writeFileSync:(_file:string,contents:string)=>artifacts.push(JSON.parse(contents))}};
     ports.currentVisualEvidenceResult=evaluate(declarations("installer/implement-evidence-writer.ts",["currentVisualEvidenceResult"]),ports,"currentVisualEvidenceResult");
     ports.writeImplementEvidenceArtifact=evaluate(declarations("installer/implement-evidence-writer.ts",["writeImplementEvidenceArtifact"]),ports,"writeImplementEvidenceArtifact");
-    const run=evaluate(declarations("installer/implement-evidence-runner.ts",["runImplementEvidenceIfRequested"]),ports,"runImplementEvidenceIfRequested");
+    const run=evaluate(declarations("installer/implement-evidence-runner.ts",["exactPlanInteractions","runImplementEvidenceIfRequested"]),ports,"runImplementEvidenceIfRequested");
     const result=await run({runId:envelope.runId,storyId:slice.storyId,workdir:"/product",v3:{slice,sliceHash,stageClaim,sourceRevision:stageClaim.sourceBefore}});
     assert.equal(result.attempted,true);assert.equal(result.ok,false);assert.ok(events.includes("owned-command"));
     assert.equal(artifacts[0].visualEvidence.status,visualGate==="off"?"disabled":"skipped");assert.equal(artifacts[0].visualEvidence.mode,visualGate);assert.equal(artifacts[0].visualEvidence.provider,"none");
