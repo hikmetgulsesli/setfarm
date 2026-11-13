@@ -30,7 +30,7 @@
 - Consumes the unchanged `reserveRecovery(raw)` input, current `owner` or `options.sql`, original recovery delivery and compiled slice.
 - Produces the unchanged `NativeImplementationContextV3` and existing refusal errors. No new production interface.
 
-- [ ] **Step 1: Add genuine transient and persistent head contention cases.**
+- [x] **Step 1: Add genuine transient and persistent head contention cases.**
 
 Extend the native repair review mode union with `transient_head_lock` and `persistent_head_lock`. Install the test-only forwarding decorator only around the genuine successor `claimStep`. Its transaction flag arms after this real existing query with the fixture run id:
 
@@ -67,11 +67,11 @@ assert.equal(fresh.leaseExpiresAt, originalDeliveryDeadline);
 
 Assert the original preparation observation still records reservation failure and published claim/runtime stay available for the existing lifecycle reconciler. Restore the original pool method and await every holder/call in finally. Do not create fake workers or terminal receipts.
 
-- [ ] **Step 2: Commit the test-only candidate and run the existing owned-PG full-file constructor.**
+- [x] **Step 2: Commit the test-only candidate and run the focused owned-PG constructor.**
 
 First run the genuine pure command-parser tests with the new literal-vector acceptance assertion and observe its refusal. Add exactly one fixed seven-cell command vector for the two new test names plus the existing `native review R2 reloads after real recovery renewal and refuses expired or crossed owners` test, anchored with `^(name1|name2|name3)$`. Require the pure tests to pass and all changed-cell/pattern/file/extra/no-separator cases to remain refused. Original six-cell grammar and every other command remain unchanged. Then use this code-owned exact three-case selection with the same native owned-PG constructor; no bypass. The previous full file took 2,132,895ms, so repeatedly running all unrelated cases is unnecessary. Record the original PID/session, private log and natural exit. Expected RED: transient successor `found` is false because current code exits after its first actual55P03. Persistent refusal remains fail-closed but its two-transaction assertion also exposes the missing retry. A precondition failure is not RED; preserve it separately.
 
-- [ ] **Step 3: Implement the local retry after the qualified RED.**
+- [x] **Step 3: Implement the local retry after the qualified RED.**
 
 Replace only the local reservation declaration/BEGIN assignment with this control flow, retaining the entire existing BEGIN callback unchanged:
 
@@ -135,3 +135,7 @@ Commit the clean test/code candidate required by the maintained native fixture, 
 - [ ] **Step 5: Independent review and ordinary delivery.**
 
 Review the whole diff and this task's explicit bounds independently. Root pushes only the scoped branch, obtains existing GitHub reviews/checks and performs normal protected PR delivery. Preserve old source and blocked-run evidence. Any clean-main build/installation/cutover and new software run uses existing separate reviewed operations and actual receipts.
+
+## Verification checkpoint
+
+The focused PostgreSQL RED run completed with three selected cases: existing R2 passed, transient contention failed on the actual missing successor, and persistent contention observed one real lock timeout instead of the required two. The owned cluster closed normally. TypeScript checking passed after the local retry implementation; focused GREEN and clean build remain pending.

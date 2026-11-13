@@ -799,7 +799,10 @@ export function createNativeV3ImplementationContextService(options: V3NativePrep
     }
     const published = await publisher.put(assembled.envelope);
     if (published.hash !== assembled.sliceHash) throw new Error("V3_NATIVE_SLICE_PUBLICATION_MISMATCH");
-    const reservation = await (owner?.writeSql ?? options.sql).begin(async transaction => {
+    let reservation: ExecutionAttemptV1;
+    for (let reservationTry = 0; ; reservationTry += 1) {
+      try {
+        reservation = await (owner?.writeSql ?? options.sql).begin(async transaction => {
 const ownerFence=owner?await enterOwnerRecoveryTransactionV1(transaction,owner):undefined;
 const ownerResult=await(async()=>{
 
@@ -837,7 +840,13 @@ await transaction.unsafe("INSERT INTO run_artifact_refs(run_id,ref_key,artifact_
 })();
 if(ownerFence)await assertOwnerRecoveryTransactionBeforeCommitV1(transaction,ownerFence);
 return ownerResult;
-});
+        });
+        break;
+      } catch (error) {
+        if (reservationTry !== 0 || error === null || typeof error !== "object"
+          || !("code" in error) || error.code !== "55P03") throw error;
+      }
+    }
     const compiled = await compileContext(await loadRecoveryPrepared(reservation));
     await publishContext(input, compiled);
     return loadAttemptContext({ runId: input.runId, storyId: input.storyId, attemptId: reservation.attemptId });
