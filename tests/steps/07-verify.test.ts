@@ -94,7 +94,7 @@ describe("07-verify step module", () => {
     assert.ok(verifyPromptSource.includes("git commit"));
     assert.ok(verifyPromptSource.includes("git push"));
     assert.ok(verifyPromptSource.includes("STATUS: retry"));
-    assert.ok(verifyPromptSource.includes("STATUS: done` is allowed only after the PR is actually `MERGED`"));
+    assert.ok(verifyPromptSource.includes("STATUS: done means review passed and hands control to Setfarm; it does not mean the PR is merged or the story is verified."));
     assert.ok(verifyPromptSource.includes("Do not dismiss them as \"pre-existing\""));
     assert.ok(verifyPromptSource.includes("required runtime/smoke evidence is clean"));
     assert.match(

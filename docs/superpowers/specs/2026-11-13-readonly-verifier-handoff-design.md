@@ -23,7 +23,10 @@ Current2e5 is retained, not repaired or replayed. Generic V3 text-retry authorit
 - workflows/feature-dev/agents/reviewer/AGENTS.md: only verify-specific guidance and precedence over generic tool examples; security/final-test behavior unchanged.
 - tests/steps/07-verify-readonly-handoff.test.ts: new actual buildPrompt/role-contract regression.
 - tests/steps/07-verify.test.ts: replace the existing wrong requirement that done requires an already merged PR, retaining unrelated assertions.
+- tests/execution-attempts/subscription-owned-stage-evidence-v1.test.ts: restore the missing real `exactPlanInteractions` declaration in the existing isolated production-body fixture; no production behavior or ports changed.
 
 ## Verification and delivery
 
 Genuine RED on the new contract tests before source edits; then focused GREEN for those and07-verify plus the existing executable subscription-owned-stage-evidence-v1 tests. That existing production-body seam must continue to reject failed tests, wrong checkout and head drift and pass the tested SHA into merge. Source changes are prompt assets only; no compiler/runtime code changes. Build once on clean committed source, independent task and whole review, normal PR delivery. A fresh bounded production case after guarded rollout must measure actual model behavior; local prompt assertions do not prove end-to-end success. Preserve all current records and historical scopes.
+
+The first focused run recorded 74/75 passing tests and one unchanged fixture ReferenceError: it extracted `runImplementEvidenceIfRequested` without its real `exactPlanInteractions` helper. Repair only that test realm and rerun the failed test by exact name; retain the original result and do not repeat the 74 passing tests. This test dependency is causally required to qualify the unchanged owned-stage boundary, not a production feature.

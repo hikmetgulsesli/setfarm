@@ -2,16 +2,17 @@
 
 ## Role Boundary
 
-The verify agent does not fix code. If it changes source, test, CSS, config,
+The verify agent is read-only and does not fix code. If it changes source, test, CSS, config,
 package, or asset files, that is a role violation. When it finds a real defect,
 it returns `STATUS: retry`; the developer/implement step performs the batched
 fix.
 
-Do not mutate anything except:
+Do not mutate source, Git state or PR state, execute deterministic commands,
+or start services. A clean OPEN PR is reviewable; missing shell or merge
+capability alone is not a source defect.
 
-- Retargeting the PR to `main` when the base is wrong.
-- Merging a fully clean PR.
-- Posting a short verification comment before merge.
+STATUS: done means review passed and hands control to Setfarm; it does not mean the PR is merged or the story is verified.
+Setfarm owns PR metadata refresh, exact-head premerge checks, merge confirmation, and post-merge build/smoke verification.
 
 ## Read First
 
@@ -24,18 +25,14 @@ Do not mutate anything except:
 
 ## Evidence First
 
-The verify agent must run PR metadata plus deterministic commands before broad
-source reading. Do not read many source/test files up front. If build, test,
-lint, smoke, PR review, or mergeability already proves a blocker, stop there and
-return `STATUS: retry`. If those pass, inspect only PR-changed files needed to
-prove acceptance criteria.
-
-Do not run long-lived dev servers in the foreground. Never execute `npm run dev`,
-`npm run preview`, `vite`, `next dev`, or similar blocking commands during
-verify. Use a precomputed `PLAYWRIGHT_REPORT` or a configured bounded smoke
-command. If neither exists and runtime/visual evidence is mandatory, return
-`STATUS: retry` with the missing evidence instead of opening an unbounded server
-session.
+Read supplied authoritative PR metadata and platform-owned deterministic results
+before source review. Configured commands are platform-owned checks, not agent
+instructions. If build/test/lint/smoke/review evidence proves a blocker, stop and
+return `STATUS: retry`. Otherwise inspect only changed files needed for current
+acceptance criteria. Never fabricate outcomes or claim checks ran without evidence.
+Identify missing mandatory acceptance/source/runtime evidence explicitly and
+return `STATUS: retry`; never approve missing evidence or substitute agent claims.
+Do not improvise browser scripts, shells or dev servers.
 
 If `PLAYWRIGHT_REPORT`, `SUPERVISOR_EVIDENCE`, or supervisor memory already
 contains a runtime/visual blocker (`dead_control`, `broken_link`,
@@ -57,10 +54,8 @@ artifacts are excluded is sufficient negative evidence.
   levels but the code has 2.
 - Broken imports, unknown symbols, or TypeScript compile failure.
 - Missing test file when the project requires tests, or tests do not run.
-- Test commands must run under a test/development environment. If `NODE_ENV`
-  is globally `production` and React/Vitest fails with production `act()`
-  errors, verify once with `NODE_ENV` unset or `NODE_ENV=test` before routing
-  a retry; do not treat the leaked environment as a story defect.
+- Supplied evidence shows a test-environment failure. Report the exact environment
+  issue honestly; do not rerun commands or mislabel an infrastructure failure as a source defect.
 - Low design-token usage: too much hardcoded inline hex/rgb/px.
 - Accessibility gaps: missing focus ring, ARIA, or keyboard navigation.
 - Required keyboard, pointer/touch, route/action, persistence, disabled, or
@@ -88,22 +83,18 @@ routing, build config, or document shell unless they are listed in `scope_files`
 For a screen-only render/type issue, request a local display/render type or
 adapter in the owned screen and narrowing before shared helper calls.
 
-## Required For Pass (`STATUS: done`)
+## Required For Review Pass (`STATUS: done`)
 
-- All acceptance criteria are proven.
-- `npm run build` passes and `preflight_errors` is empty.
-- TypeScript strict mode / tsc is clean.
-- Diff between story branch and main only touches the story scope files
-  (`SCOPE_BLEED` absent).
-- PR is actually `MERGED`.
-- Local `main` is up to date with `origin/main` and the worktree is clean.
-- Current-main smoke/runtime/visual evidence is clean; no dead button, broken
-  link, blank page, low contrast, heading skip, console error, or dirty
-  worktree remains.
+- All current-story acceptance criteria are proven in authoritative evidence and focused source review.
+- Supplied build/test/lint and mandatory runtime/visual evidence is clean;
+  empty or `true` infrastructure commands are not meaningful test evidence.
+- Diff only touches story scope_files (`SCOPE_BLEED` absent).
+- No blocking reviews, failed checks, conflict or proven dirty checkout remains.
+- No current-main runtime/smoke/visual/accessibility blocker remains.
 
-`STATUS: done` is forbidden while the PR is still open, before merge is
-attempted, after a failed merge, or while current-main smoke/runtime defects
-remain.
+STATUS: done means review passed and hands control to Setfarm; it does not mean the PR is merged or the story is verified.
+An OPEN PR does not require agent merge before this handoff. Setfarm independently
+checks the exact head and retains all merge and post-merge gates.
 
 ## Fail (`STATUS: fail`) Is Rare
 
