@@ -3,13 +3,41 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, fork, spawnSync } from "node:child_process";
+import vm from "node:vm";
+import ts from "typescript";
 import { setupRepoModule } from "../../src/installer/steps/04-setup-repo/module.js";
 import type { ParsedOutput } from "../../src/installer/steps/types.js";
 import {
   preClaim as preClaimSource,
   SetupRepoEnglishTextRequiredError,
 } from "../../src/installer/steps/04-setup-repo/preclaim.js";
+
+// Evaluate the actual generated config without requiring Vitest in Setfarm's dependencies.
+function loadScaffoldVitestConfig(nodeRuntime?: {
+  allowedNodeEnvironmentFlags?: { has(flag: string): boolean };
+}) {
+  const script = fs.readFileSync("scripts/setup-repo.sh", "utf8");
+  const match = script.match(/cat > vitest\.config\.ts <<'EOF'\n([\s\S]*?)\nEOF/);
+  assert.ok(match, "the Vite scaffold must emit a Vitest config");
+  const compiled = ts.transpileModule(match[1], {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const exports: { default?: { test: Record<string, unknown> } } = {};
+  vm.runInNewContext(compiled, {
+    exports,
+    process: nodeRuntime,
+    require(specifier: string) {
+      assert.equal(specifier, "vitest/config");
+      return { defineConfig: (config: unknown) => config };
+    },
+  });
+  assert.ok(exports.default);
+  // Normalize cross-realm objects for assertions and the child-process API.
+  return JSON.parse(JSON.stringify(exports.default)) as {
+    test: Record<string, unknown> & { poolOptions?: { forks: { execArgv: string[] } } };
+  };
+}
 
 describe("04-setup-repo step module", () => {
   it("module metadata is correct", () => {
@@ -186,6 +214,84 @@ describe("04-setup-repo step module", () => {
     assert.equal(script.includes("useNotes"), false);
     assert.equal(script.includes("NoteStatus"), false);
     assert.equal(script.includes("setfarm-notes"), false);
+  });
+
+  it("vite scaffold browser storage disables Node webstorage only in supported forks", () => {
+    const config = loadScaffoldVitestConfig({
+      allowedNodeEnvironmentFlags: new Set(["--no-experimental-webstorage"]),
+    });
+    assert.deepEqual(config, {
+      test: {
+        globals: true,
+        environment: "jsdom",
+        setupFiles: ["./src/test/setup.ts"],
+        include: ["src/**/*.{test,spec}.{ts,tsx}"],
+        pool: "forks",
+        poolOptions: { forks: { execArgv: ["--no-experimental-webstorage"] } },
+        maxWorkers: 1,
+        minWorkers: 1,
+        fileParallelism: false,
+        isolate: false,
+        teardownTimeout: 1000,
+      },
+    });
+  });
+
+  it("vite scaffold browser storage leaves unsupported or absent capabilities flag-free", () => {
+    for (const runtime of [
+      { allowedNodeEnvironmentFlags: new Set(["--trace-warnings"]) },
+      {},
+      undefined,
+    ]) {
+      assert.deepEqual(loadScaffoldVitestConfig(runtime).test.poolOptions, {
+        forks: { execArgv: [] },
+      });
+    }
+  });
+
+  it("vite scaffold browser storage arguments cross the real Node fork boundary", async (t) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-vitest-fork-"));
+    const probe = path.join(tmp, "probe.cjs");
+    fs.writeFileSync(probe, `process.send({
+      execArgv: process.execArgv,
+      localStorageOwned: Object.hasOwn(globalThis, 'localStorage'),
+      sessionStorageOwned: Object.hasOwn(globalThis, 'sessionStorage'),
+    });`);
+    const parentArgs = [...process.execArgv];
+    const parentOptions = process.env.NODE_OPTIONS;
+    try {
+      for (const runtime of [process, { allowedNodeEnvironmentFlags: new Set<string>() }]) {
+        const config = loadScaffoldVitestConfig(runtime);
+        assert.ok(config.test.poolOptions, "the generated config must specify fork arguments");
+        const { NODE_OPTIONS: _nodeOptions, ...env } = process.env;
+        const child = fork(probe, [], {
+          execArgv: config.test.poolOptions.forks.execArgv,
+          env,
+          silent: true,
+        });
+        let observed: unknown;
+        let stderr = "";
+        child.on("message", (message) => { observed = message; });
+        child.stderr!.on("data", (chunk) => { stderr += chunk; });
+        const exit = await new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
+          child.once("error", reject);
+          child.once("close", (code, signal) => resolve({ code, signal }));
+        });
+        t.diagnostic(JSON.stringify({ childPid: child.pid, ...exit, stderr, observed }));
+        assert.deepEqual(exit, { code: 0, signal: null }, stderr);
+        const supported = runtime === process && process.allowedNodeEnvironmentFlags.has("--no-experimental-webstorage");
+        assert.deepEqual((observed as { execArgv: string[] }).execArgv,
+          supported ? ["--no-experimental-webstorage"] : []);
+        if (supported) {
+          assert.equal((observed as { localStorageOwned: boolean }).localStorageOwned, false);
+          assert.equal((observed as { sessionStorageOwned: boolean }).sessionStorageOwned, false);
+        }
+      }
+      assert.deepEqual(process.execArgv, parentArgs);
+      assert.equal(process.env.NODE_OPTIONS, parentOptions);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("setup-repo.sh scaffolds static HTML without a framework package", () => {
