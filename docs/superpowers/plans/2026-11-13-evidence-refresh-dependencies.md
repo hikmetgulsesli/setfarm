@@ -47,6 +47,7 @@ if (lease.mode === "fresh_execution") {
 }
 ```
 
+- [ ] Commit the scoped production/test candidate locally before GREEN: the existing P3 constructor refuses dirty `src/recovery/v3-evidence-only-runtime.ts`. The first GREEN invocation was a pre-test projection refusal, not a test result. A local candidate commit is not delivery or a success claim.
 - [ ] Rerun the same 25-test native integration file. Require real evidence success and the same immutable candidate source. Run existing relevant private dependency-copy tests and TypeScript checking; widen only for a new failure or concrete review concern.
 - [ ] Review the complete source/test diff independently, fix actual findings, and commit conventionally on the scoped branch. Use the established clean-main build transition after reviewed merge; retain original process results. Do not build dirty or skip guards.
 - [ ] Push the scoped branch and deliver a reviewed PR. Record exact merged source/build identities. Continue the live software objective through its existing owner and service guards; do not replay attempts 16/17 or call the current game qualified from this regression alone.
