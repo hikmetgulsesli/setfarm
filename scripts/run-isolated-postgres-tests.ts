@@ -187,6 +187,15 @@ function commandArguments(): string[] {
     && command.every((cell, index) => cell === fixedNativeLineageCommand[index])) {
     return command;
   }
+  const fixedFinalCompilerCommand = [
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "--test-name-pattern=^final compiler",
+    "tests/execution-attempts/claim-runtime-publication.test.ts",
+  ] as const;
+  if (command.length === fixedFinalCompilerCommand.length
+    && command.every((cell, index) => cell === fixedFinalCompilerCommand[index])) {
+    return command;
+  }
   if (
     command.length !== 6
     || command[0] !== "node"
