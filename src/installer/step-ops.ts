@@ -5578,6 +5578,7 @@ type RunningSingleStepClaimReissueV1 = Readonly<
   | {
       status: "authenticated";
       claimId: number;
+      storySubject?: V3StoryClaimRuntimeSubjectV1;
       runtime?: RuntimeClaimOwnership & {
         state: "reserved" | "starting" | "running";
       };
@@ -6074,9 +6075,15 @@ async function authenticateRunningSingleStepOwnerSidecarsV1(
 async function authenticateRunningSingleStepClaimReissueV1(
   step: StepRow,
   agentId: string,
-  runtimeIntent?: RuntimeClaimIntentV1,
+  runtimeIntent: RuntimeClaimIntentV1 | undefined,
+  context: Record<string, string>,
 ): Promise<RunningSingleStepClaimReissueV1> {
   return pgBegin(async (sql) => {
+    // Match publication's run-before-claim lock order. A running subject comes
+    // from its authenticated binding, never the possibly stale story cursor.
+    const runs = await sql.unsafe<Array<{ protocol: string; context: string }>>(
+      "SELECT protocol, context FROM runs WHERE id = $1 FOR UPDATE", [step.run_id],
+    );
     const rows = await sql.unsafe<Array<{
       claim_id: string;
       open_claim_count: string;
@@ -6146,6 +6153,25 @@ async function authenticateRunningSingleStepClaimReissueV1(
       || observed.claim_agent_id !== agentId
       || Boolean(observed.session_id) !== Boolean(runtimeIntent)
     ) return { status: "refused" };
+    let storySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
+    if (runs[0]?.protocol === "v3" && step.step_id === "supervise") {
+      if (!runtimeIntent || observed.session_id !== runtimeIntent.sessionId) return { status: "refused" };
+      storySubject = await loadAndRevalidateV3StoryClaimRuntimeBindingV1(sql, {
+        claimId, runtimeSessionId: runtimeIntent.sessionId,
+        runId: step.run_id, stepDbId: step.id, workflowStepId: "supervise",
+      });
+      if (storySubject.kind === "final_product") {
+        const { worktree } = resolveV3DownstreamSourceContext(context);
+        let currentRepo: unknown;
+        try { currentRepo = JSON.parse(runs[0]!.context)["repo"]; }
+        catch { return { status: "refused" }; }
+        if (typeof currentRepo !== "string" || currentRepo.trim() !== worktree
+          || (runtimeIntent.worktree !== undefined && runtimeIntent.worktree !== worktree)) {
+          return { status: "refused" };
+        }
+        runtimeIntent = { ...runtimeIntent, worktree };
+      }
+    }
     if (runtimeIntent && (
       observed.runtime_claim_id !== observed.claim_id
       || observed.runtime_run_id !== step.run_id
@@ -6187,6 +6213,7 @@ async function authenticateRunningSingleStepClaimReissueV1(
     return {
       status: "authenticated",
       claimId,
+      ...(storySubject ? { storySubject } : {}),
       ...(runtimeIntent ? {
         runtime: {
           sessionId: runtimeIntent.sessionId,
@@ -6211,9 +6238,19 @@ async function claimSingleStep(
     [step.run_id],
   );
   const runningReissue = step.step_status === "running"
-    ? await authenticateRunningSingleStepClaimReissueV1(step, agentId, runtimeIntent)
+    ? await authenticateRunningSingleStepClaimReissueV1(step, agentId, runtimeIntent, context)
     : undefined;
   if (runningReissue?.status === "refused") return { found: false };
+  if (runtimeIntent && runProtocol?.protocol === "v3" && step.step_id === "supervise"
+    && (runningReissue?.status === "authenticated"
+      ? runningReissue.storySubject?.kind === "final_product"
+      : step.step_status !== "running" && !step.current_story_id)) {
+    const { worktree } = resolveV3DownstreamSourceContext(context);
+    if (runtimeIntent.worktree !== undefined && runtimeIntent.worktree !== worktree) {
+      throw new Error("V3_FINAL_SUPERVISE_BOUND_WORKTREE_MISMATCH");
+    }
+    runtimeIntent = { ...runtimeIntent, worktree };
+  }
   let v3StageRetrySource: V3StageRetrySourceV1 | undefined;
   let v3PriorStageRetryDedupeKeys: ReadonlySet<string> | undefined;
   if (runProtocol?.protocol === "v3" && step.retry_count > 0) {
@@ -6399,6 +6436,7 @@ async function claimSingleStep(
       step,
       agentId,
       runtimeIntent,
+      context,
     );
     if (
       fresh.status !== "authenticated"
@@ -6444,14 +6482,8 @@ async function claimSingleStep(
     singleStepRuntime = runningReissue.runtime;
     if (runProtocol?.protocol === "v3" && step.step_id === "supervise") {
       if (!singleStepRuntime) throw new Error("V3_SUPERVISE_RUNTIME_BINDING_REQUIRED");
-      authenticatedStorySubject = await getSql().begin((transaction) =>
-        loadAndRevalidateV3StoryClaimRuntimeBindingV1(transaction, {
-          claimId: singleStepClaimId!,
-          runtimeSessionId: singleStepRuntime!.sessionId,
-          runId: step.run_id,
-          stepDbId: step.id,
-          workflowStepId: "supervise",
-        })) as V3StoryClaimRuntimeSubjectV1;
+      authenticatedStorySubject = runningReissue.storySubject;
+      if (!authenticatedStorySubject) throw new Error("V3_SUPERVISE_RUNTIME_BINDING_REQUIRED");
     }
     logger.info(`[claim-idempotent] Re-issued running step ${step.step_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
   } else {
@@ -6604,7 +6636,10 @@ async function claimSingleStep(
         `AC_COVERAGE: ${finalSupervise.reason}`,
         "CHECKS: deterministic supervise-each final gate; no LLM supervisor spawned",
       ].join("\n");
-      if (singleStepClaimId === null || !singleStepRuntime) {
+      const finalCompilerWorktree = authenticatedStorySubject?.kind === "final_product"
+        ? runtimeIntent?.worktree : undefined;
+      if (singleStepClaimId === null || !singleStepRuntime
+        || (authenticatedStorySubject?.kind === "final_product" && !finalCompilerWorktree)) {
         throw new Error("V3_FINAL_PRODUCT_COMPILER_COMPLETION_RUNTIME_REQUIRED");
       }
       return {
@@ -6618,6 +6653,11 @@ async function claimSingleStep(
         runtimeSessionId: singleStepRuntime.sessionId,
         runtimeOwnerInstanceId: singleStepRuntime.ownerInstanceId,
         compilerCompletionOutput,
+        ...(finalCompilerWorktree ? { resolvedInput: canonicalJsonStringify({
+          schema: "setfarm.final-supervise-compiler-instruction.v1",
+          repo: finalCompilerWorktree,
+          instruction: "Audit the final integrated product with Setfarm-owned evidence under the authenticated final-product completion owner.",
+        }) } : {}),
       };
     }
     logger.info(`[supervise-each] Final supervisor remains agent-owned: ${finalSupervise.reason}`, { runId: step.run_id });

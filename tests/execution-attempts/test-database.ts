@@ -32,6 +32,7 @@ import {
 import {
   applyBootstrapMainClaimHandoffGuardedMigration32V1,
   applyContractSpineMigrations,
+  applyContractSpineMigrationsIfNeeded,
   auditAuthorityV3ContractSpineThroughMigration31V1,
   inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
   verifyContractSpineMigrations,
@@ -721,7 +722,7 @@ async function migrateP3TemplateV1(
 async function applyAndVerifyP3GenericSuccessorV1(
   db: typeof import("../../src/db-pg.js"),
 ): Promise<void> {
-  const automatic = await applyContractSpineMigrations(db.getSql());
+  const automatic = await applyContractSpineMigrationsIfNeeded(db.getSql());
   assert.deepEqual(automatic.guardedPending, []);
   assert.equal((await verifyContractSpineMigrations(db.getSql())).status, "verified");
 }

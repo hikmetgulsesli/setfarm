@@ -1,3 +1,12 @@
+import ts from "typescript";
+import crypto from "node:crypto";
+import * as ownerAdmission from "../../src/internal-production/owner-admission-v1.js";
+import { validateOwnerAdmissionMigrationApplicationV1 } from "../../src/internal-production/owner-admission-head-v1.js";
+import { assertClaimAuthority, parseClaimEnvelope } from "../../src/execution/claim-authority.js";
+import { ClaimMutationAuthorityError, acquireClaimMutationAuthorityInTransaction } from "../../src/execution/claim-mutation-authority.js";
+import { readDatabaseWallClock } from "../../src/db/database-wall-clock.js";
+import { currentRuntimeCompletionOwnerCapability } from "../../src/execution/runtime-completion-owner-context.js";
+import { loadAndRevalidateV3StoryClaimRuntimeBindingV1 } from "../../src/execution/v3-story-claim-runtime-binding-v1.js";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -3610,4 +3619,153 @@ describe("atomic claim and durable runtime publication", () => {
       await database.cleanup();
     }
   });
+});
+
+// Mutations caught: omit initial final worktree, omit returned compiler input,
+// accept stale context/NULL reissue, or loosen exact worktree/owner lease SQL.
+// Exact production declarations in a finite realm: no giant step-ops/spawner
+// import and no provider startup. Publication, subject, owner and lease SQL are real.
+function finalCompilerRealm(file: string, names: string[], ports: Record<string, any>) {
+  const source = fs.readFileSync(new URL("../../src/" + file, import.meta.url), "utf8");
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const declarations = names.map(name => {
+    const nodes = tree.statements.filter((node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === name);
+    assert.equal(nodes.length, 1, "unique real declaration: " + name);
+    return nodes[0]!.getText(tree).replace(/^export\s+/, "");
+  }).join("\n");
+  const code = ts.transpileModule(declarations, {compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext,
+  }}).outputText;
+  return new Function(...Object.keys(ports), code + ";return {" + names.join(",") + "};")(...Object.values(ports));
+}
+
+it("final compiler publication preserves repo and input through real spawner and owned lease", async () => {
+  const database = await createIsolatedTestDatabase();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-final-compiler-"));
+  const repo = path.join(root, "product"), scratch = path.join(root, "scratch");
+  fs.mkdirSync(repo); fs.mkdirSync(scratch);
+  const git = (args: string[]) => String(execFileSync("git", args, {cwd: repo, encoding: "utf8"})).trim();
+  git(["init", "-b", "main"]); git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"]);
+  try {
+    const runId = "run-final-compiler-binding";
+    const fixture = await seedV3LoopWithStoryAdmission(database, runId);
+    const stepDbId = runId + "-supervise-step";
+    await database.sql`UPDATE stories SET status='verified' WHERE run_id=${runId}`;
+    await database.sql`UPDATE steps SET status='done',current_story_id=NULL,
+      loop_config=${JSON.stringify({superviseEach: false, superviseStep: "supervise"})}
+      WHERE id=${fixture.stepDbId}`;
+    await database.sql`UPDATE steps SET status='pending',current_story_id=NULL WHERE id=${stepDbId}`;
+    const oldContext = JSON.parse((await database.sql`SELECT context FROM runs WHERE id=${runId}`)[0]!.context);
+    const context = {...oldContext, repo, branch: "main", story_workdir: scratch};
+    await database.sql`UPDATE runs SET context=${JSON.stringify(context)} WHERE id=${runId}`;
+    const query = (text: string, values: any[] = []) => database.sql.unsafe(text, values);
+    const ports: Record<string, any> = {
+      ...ownerAdmission, validateOwnerAdmissionMigrationApplicationV1,
+      crypto, fs, path, os, process, execFileSync, canonicalJsonStringify, hashCanonicalJson,
+      getSql: () => database.sql, pgBegin: (fn: any) => database.sql.begin(fn),
+      pgGet: async (text: string, values: any[]) => (await query(text, values))[0], pgQuery: query,
+      now: () => new Date().toISOString(), selectedFreshInstallationRootV1: () => null,
+      RUNNING_SINGLE_STEP_OWNER_SHA256_V1: /^[a-f0-9]{64}$/,
+      RUNNING_SINGLE_STEP_OWNER_REF_V1: /^setfarm:\/\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/,
+      loadAndRevalidateV3StoryClaimRuntimeBindingV1, publishSingleClaimRuntime,
+      // Finite presentation ports; none decides subject, publication or lease.
+      logger: {info(){},warn(){},error(){}}, OPTIONAL_TEMPLATE_VARS: [],
+      recordStepTransition: async () => {}, emitEvent(){}, getWorkflowId: async () => "feature-dev",
+      readProgressFile: async () => "", readProjectMemory: async () => "",
+      getStories: async () => [], updateRunContext: async () => {}, findOpenSupervisorStateIssues: () => [],
+    };
+    const ops = finalCompilerRealm("installer/step-ops.ts", [
+      "resolveV3DownstreamSourceContext", "publishSingleClaimAndRuntime",
+      "validateRunningSingleStepOwnerMigrationApplicationV1", "runningSingleStepOwnerAdmissionSuccessorV1",
+      "validateRunningSingleStepOwnerAncestryV1", "observeRunningSingleStepOwnerAncestryV1",
+      "authenticateRunningSingleStepOwnerSidecarsV1", "authenticateRunningSingleStepClaimReissueV1",
+      "injectSuperviseEachContext", "shouldAutoCompleteFinalSuperviseEachStep", "claimSingleStep",
+    ], ports);
+    const step = {...(await database.sql`SELECT * FROM steps WHERE id=${stepDbId}`)[0], step_status: "pending"};
+    const intent = runtimeIntent("RTS_final-compiler-binding", "supervisor");
+    const claim = await ops.claimSingleStep(step, "feature-dev_supervisor", {...context}, null, intent, fixture.storyAdmissionProof);
+    assert.equal(claim.found, true); assert.ok(claim.compilerCompletionOutput);
+    const spawner = finalCompilerRealm("spawner.ts", [
+      "safeAgentCwdFromCandidate", "safeAgentCwdFromRecord", "escapeForRegex", "safeAgentCwdFromTextLabels",
+      "safeAgentCwdFromStoryWorktreeMentions", "safeAgentCwdFromProjectRootMentions",
+      "safeAgentCwdFromClaimInput", "runtimeClaimEnvelope",
+    ], {fs, path, os, parseClaimEnvelope, SETFARM_SRC: process.cwd(), AGENT_SAFE_CWD: scratch,
+      STORY_WORKDIR_CANDIDATE_KEYS: ["story_workdir","STORY_WORKDIR","verify_workdir","VERIFY_WORKDIR","WORKDIR","workdir"],
+      REPO_CANDIDATE_KEYS: ["MAIN_REPO","repo","REPO"]});
+    const cwd = spawner.safeAgentCwdFromClaimInput(claim.resolvedInput);
+    const envelope = spawner.runtimeClaimEnvelope(claim, "supervisor", cwd);
+    const reserved = (await database.sql`SELECT * FROM runtime_sessions WHERE session_id=${intent.sessionId}`)[0]!;
+    console.log("final compiler handoff", JSON.stringify({worktree: reserved.worktree, cwd, input: claim.resolvedInput ?? null}));
+    assert.equal(reserved.state, "reserved");
+    assert.equal(reserved.pid, null); assert.equal(reserved.process_started_at, null);
+    assert.equal(reserved.started_at, null); assert.equal(reserved.runtime_path, null);
+    const reissueStep = {...step, step_status: "running"};
+    const reissue = () => ops.claimSingleStep(reissueStep, "feature-dev_supervisor", {...context}, null, intent, fixture.storyAdmissionProof);
+    const repeated = await reissue();
+    assert.equal(repeated.claimId, claim.claimId); assert.equal(repeated.resolvedInput, claim.resolvedInput);
+    const birthCounts = async () => (await database.sql`SELECT
+      (SELECT count(*)::text FROM claim_log WHERE run_id=${runId}) AS claims,
+      (SELECT count(*)::text FROM runtime_sessions WHERE run_id=${runId}) AS runtimes`)[0];
+    const beforeRefusal = await birthCounts();
+    const publication = (worktree: string) => publishSingleClaimRuntime(database.sql, {
+      runId, stepDbId, workflowStepId: "supervise", claimAgentId: "feature-dev_supervisor",
+      runtimeIntent: {...intent, sessionId: "RTS_final-refused-publication", worktree},
+      storyAdmissionProof: fixture.storyAdmissionProof, storySubject: {kind: "final_product"},
+    });
+    await assert.rejects(publication(scratch), /FINAL.*WORKTREE|FINAL.*SOURCE/);
+    await database.sql`UPDATE runs SET context=${JSON.stringify({...context, repo: scratch})} WHERE id=${runId}`;
+    await assert.rejects(publication(repo), /FINAL.*WORKTREE|FINAL.*SOURCE/);
+    assert.equal((await reissue()).found, false, "stale current repo refuses running reissue");
+    await database.sql`UPDATE runs SET context=${JSON.stringify(context)} WHERE id=${runId}`;
+    for (const invalidWorktree of [null, scratch]) {
+      await database.sql`UPDATE runtime_sessions SET worktree=${invalidWorktree} WHERE session_id=${intent.sessionId}`;
+      assert.equal((await reissue()).found, false, "NULL or mismatched binding is never repaired");
+      assert.equal((await database.sql`SELECT worktree FROM runtime_sessions WHERE session_id=${intent.sessionId}`)[0]!.worktree, invalidWorktree);
+    }
+    await database.sql`UPDATE runtime_sessions SET worktree=${repo} WHERE session_id=${intent.sessionId}`;
+    assert.deepEqual(await birthCounts(), beforeRefusal, "refusals publish no owners");
+    const requested = await requestRuntimeCompletion(database.sql, {envelope, output: claim.compilerCompletionOutput});
+    assert.equal(requested.status, "requested");
+    if (requested.status !== "requested") throw Error("completion missing");
+    const requestId = requested.request.requestId;
+    const completions = createRuntimeCompletionRepository(database.sql);
+    await completions.claim({requestId, ownerInstanceId: "spawner-test"});
+    await createRuntimeSessionRepository(database.sql).markDrained({sessionId: intent.sessionId, ownerInstanceId: "spawner-test", evidence: STORY_ADMISSION_DRAIN_EVIDENCE});
+    const processing = await completions.markProcessing({requestId, ownerInstanceId: "spawner-test"});
+    const cap = {requestId, ownerInstanceId: processing.ownerInstanceId!, leaseExpiresAt: processing.leaseExpiresAt!, ownerAttemptCount: processing.ownerAttemptCount};
+    let effects = 0, captures = 0;
+    const evidencePorts = {...ports, currentRuntimeCompletionOwnerCapability, acquireClaimMutationAuthorityInTransaction,
+      assertClaimAuthority, readDatabaseWallClock,
+      readAuthenticatedSubscriptionSuperviseContractsV1: async () => {effects++; return {subject: {kind: "final_product"}, contexts: []};},
+      assertExactGitBranchWorktree: (dir: string, branch: string) => {assert.equal(dir, repo); assert.equal(git(["branch","--show-current"]), branch);},
+      execPlatformGit: (args: string[], options: any) => {assert.equal(options.cwd, repo); return execFileSync("git", args, options);},
+      captureV3GitCommitRevision: ({repo: dir, commitSha}: any) => {assert.equal(dir, repo); if (++captures === 2) throw Error("FINAL_COMPILER_EVIDENCE_READY"); return {sha: commitSha, treeHash: git(["rev-parse", "HEAD^{tree}"])};},
+      parseGitStatusPaths: (status: string) => status.trim() ? [status] : [], isPlatformNonStoryCommitPath: () => false,
+    };
+    const evidence = finalCompilerRealm("installer/step-ops.ts", ["resolveV3DownstreamSourceContext", "runOwnedSuperviseStageEvidenceV1"], evidencePorts);
+    const execute = (owner = cap) => runWithRuntimeCompletionOwner(owner, () => evidence.runOwnedSuperviseStageEvidenceV1({
+      envelope, runtimeSessionId: intent.sessionId, boundSubject: {kind: "final_product"}, output: claim.compilerCompletionOutput, context,
+    }));
+    await assert.rejects(execute(), /FINAL_COMPILER_EVIDENCE_READY/);
+    assert.equal(reserved.worktree, repo); assert.equal(cwd, repo); assert.equal(envelope.repo, repo);
+    assert.equal(envelope.input, claim.resolvedInput);
+    assert.equal(claim.resolvedInput, canonicalJsonStringify({schema: "setfarm.final-supervise-compiler-instruction.v1", repo,
+      instruction: "Audit the final integrated product with Setfarm-owned evidence under the authenticated final-product completion owner."}));
+    assert.equal(effects, 1);
+    for (const invalidWorktree of [null, scratch]) {
+      await database.sql`UPDATE runtime_sessions SET worktree=${invalidWorktree} WHERE session_id=${intent.sessionId}`;
+      await assert.rejects(execute(), /SUPERVISOR_COMPLETION_LEASE_REFUSED/);
+    }
+    await database.sql`UPDATE runtime_sessions SET worktree=${repo} WHERE session_id=${intent.sessionId}`;
+    assert.equal(effects, 1, "exact owned lease predicate refuses NULL and mismatched worktrees before evidence");
+    const refusedOwner = (error: unknown) => error instanceof ClaimMutationAuthorityError
+      && error.code === "CLAIM_MUTATION_DURABLE_OWNER_ACTIVE" && error.ownerType === "runtime_completion";
+    await assert.rejects(execute({...cap, ownerInstanceId: "wrong-owner"}), refusedOwner);
+    await database.sql`UPDATE runtime_completion_requests SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE request_id=${requestId}`;
+    await assert.rejects(execute(), refusedOwner);
+    assert.equal(effects, 1, "refused owners never reach evidence");
+  } finally {
+    await database.cleanup(); fs.rmSync(root, {recursive: true, force: true});
+  }
 });

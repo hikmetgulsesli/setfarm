@@ -27,6 +27,7 @@ import {
 } from "../product-compiler/canonical-json.js";
 import {
   lockAndAuthenticateCompilerStoryEnglishAdmissionClaimSubjectV1,
+  inspectCompilerStoryEnglishAdmissionClaimAuthorityV1,
   type CompilerStoryEnglishAdmissionClaimAuthorityV1,
   type CompilerStoryEnglishAdmissionClaimProofV1,
   type CompilerStoryEnglishAdmissionClaimSubjectCandidateV1,
@@ -1481,6 +1482,16 @@ export async function publishSingleClaimRuntime(
     }
     if (run.protocol !== "legacy" && !runtimeIntent) {
       throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
+    }
+    if (storyClaimAuthority
+      && inspectCompilerStoryEnglishAdmissionClaimAuthorityV1(storyClaimAuthority).subject.kind === "final_product") {
+      let currentRepo: unknown;
+      try { currentRepo = JSON.parse(run.context)["repo"]; }
+      catch { throw new Error("V3_FINAL_SUPERVISE_SOURCE_CONTEXT_INVALID"); }
+      if (typeof currentRepo !== "string" || !currentRepo.trim()
+        || runtimeIntent?.worktree !== currentRepo.trim()) {
+        throw new Error("V3_FINAL_SUPERVISE_BOUND_WORKTREE_MISMATCH");
+      }
     }
     if (runtimeIntent) {
       const replay = await replayCommittedSingleClaimRuntimeInTransaction(transaction, {
