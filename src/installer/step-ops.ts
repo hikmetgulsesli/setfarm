@@ -15245,7 +15245,8 @@ async function handleVerifyEachCompletion(
             category:"PREMERGE_VERIFICATION_FAILED",suggestion:"Repair the exact configured build/test/lint failure before merge."});
           await setStepStatus(verifyStep.id,"waiting");return{advanced:false,runCompleted:false};
         }
-        const merged = tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id, testedHeadSha);
+        const merged = tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id, testedHeadSha,
+          verifyRunProtocol?.protocol === "v3" ? "preserve-ancestry" : "legacy-squash");
         if (merged) {
           invalidatePRStateCache(verifiedRow.pr_url);
           prState = await fetchFreshPrStateName(verifiedRow.pr_url, verifiedStoryId, context, verifyStep.run_id, verifyStep.step_id);

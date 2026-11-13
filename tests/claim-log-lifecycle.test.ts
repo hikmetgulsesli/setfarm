@@ -1682,7 +1682,7 @@ describe("single-step claim_log lifecycle", () => {
     const mutableState = passedSource.indexOf("let prState = await fetchFreshPrStateName(verifiedRow.pr_url");
     const openGuard = passedSource.indexOf("if (prState === \"OPEN\")", mutableState);
     const settleGate = passedSource.indexOf("prReviewSettleComplete(context)", openGuard);
-    const autoMerge = passedSource.indexOf("tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id, testedHeadSha)", settleGate);
+    const autoMerge = passedSource.indexOf("tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id, testedHeadSha,", settleGate);
     const invalidate = passedSource.indexOf("invalidatePRStateCache(verifiedRow.pr_url)", autoMerge);
     const recheck = passedSource.indexOf("prState = await fetchFreshPrStateName(verifiedRow.pr_url", invalidate);
     const notMergedGuard = passedSource.indexOf("if (prState !== \"MERGED\")", recheck);
