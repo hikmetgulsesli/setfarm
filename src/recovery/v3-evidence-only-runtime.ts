@@ -10,6 +10,7 @@ import type {NativeImplementationContextV3} from "../execution/v3-native-impleme
 
 import { getSql } from "../db-pg.js";
 import { runImplementEvidenceIfRequested } from "../installer/implement-evidence-runner.js";
+import { prepareNativeImplementationDependencies } from "../installer/worktree-ops.js";
 import { captureShadowSourceRevision } from "../execution/shadow-attempt-recorder.js";
 import {
   loadV3ImplementationAttemptContext,
@@ -224,6 +225,9 @@ export function createV3EvidenceOnlyRuntimeDependencies(
       if(packets[0]?.artifact_type==="setfarm.product-build-packet.v3") {
         const custody=await ensureNativeEvidenceOnlyWorktree(sql,publicationLease(lease));
         nativeWorktrees.set(lease.dispatchId,custody);
+        if (lease.mode === "fresh_execution") {
+          prepareNativeImplementationDependencies(custody.repo, custody.worktree);
+        }
       }
       if (lease.mode === "fresh_execution") {
         const owner = await resolveExactPriorSourceOwner(sql, lease);

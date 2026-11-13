@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, realpath, rm, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -1047,6 +1048,18 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
 
   async function runNativeRefreshReviewScenario(mode:"control"|"dependent_repair"|"later_refresh") {
     const value = await fixture(mode === "control" ? "task11-native-evidence-only" : `task11-review-${mode}`, true, false, true, true);
+    const dependencyTool = "node_modules/.bin/native-refresh-build";
+    if (mode === "control") {
+      // Build dependencies are ignored execution assets, not candidate source.
+      await mkdir(path.join(value.repo, "node_modules/.bin"), { recursive: true });
+      await writeFile(path.join(value.repo, dependencyTool),
+        '#!/usr/bin/env node\nprocess.stdout.write("native dependency available\\n");\n', { mode: 0o700 });
+      const exclude = execFileSync("git", ["rev-parse", "--git-path", "info/exclude"], {
+        cwd: value.repo, encoding: "utf8", stdio: "pipe", timeout: 5000,
+      }).trim();
+      const excludePath = path.resolve(value.repo, exclude);
+      await writeFile(excludePath, (await readFile(excludePath, "utf8")) + "\n/.setfarm/\n");
+    }
     if(mode !== "control") await database.sql`INSERT INTO steps (
       id,run_id,step_id,agent_id,step_index,input_template,expects,status,type,retry_count,max_retries
     ) VALUES (${`${value.runId}-supervise-step`},${value.runId},'supervise','feature-dev_supervisor',5,
@@ -1100,7 +1113,26 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     await writeFile(value.evidencePreload, "// owned evidence infrastructure restored\n", { flag: "wx" });
     const { createV3EvidenceOnlyRecoveryWorker } = await import("../../src/recovery/v3-evidence-only-worker.js");
     const { createV3EvidenceOnlyRuntimeDependencies } = await import("../../src/recovery/v3-evidence-only-runtime.js");
-    const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, createV3EvidenceOnlyRuntimeDependencies(database.sql));
+    const runtime = createV3EvidenceOnlyRuntimeDependencies(database.sql);
+    let restoredDependency = "not observed";
+    const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, {
+      ...runtime,
+      async executeEvidence(input) {
+        if (mode === "control") {
+          const executable = path.join(input.context.workdir, dependencyTool);
+          restoredDependency = "missing";
+          if (existsSync(executable)) {
+            assert.equal(await realpath(executable), executable, "refresh tools must remain inside the owned worktree");
+            assert.notEqual((await stat(executable)).ino, (await stat(path.join(value.repo, dependencyTool))).ino,
+              "refresh dependencies must be a private copy");
+            restoredDependency = execFileSync(executable, [], {
+              cwd: input.context.workdir, encoding: "utf8", stdio: "pipe", timeout: 5000,
+            }).trim();
+          }
+        }
+        return runtime.executeEvidence(input);
+      },
+    });
     const lease = await worker.acquireNext({ workflowId: "feature-dev",
       ownerInstanceId: "native-task11-nonmodel-evidence-owner", leaseMs: 30_000 });
     assert.ok(lease);
@@ -1129,6 +1161,8 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
       }));
       throw error;
     }
+    if (mode === "control") assert.equal(restoredDependency, "native dependency available",
+      "restored native refresh must execute its private ignored build dependencies before evidence commands");
     assert.equal(result.execution, "executed");
     assert.equal(result.coordinator.status, "resolved");
     await assert.rejects(stat(value.worktree), { code: "ENOENT" },

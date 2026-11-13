@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -199,7 +199,7 @@ export function nativeJoinRuntimeSessionId(suffix: string): string {
 export async function nativeJoinSourceFixture(runnableCli = false, runnableApi = false, linkedStory = false) {
   assert.ok(!(runnableCli && runnableApi));
   const runnable = runnableCli || runnableApi;
-  const root = await mkdtemp(path.join(tmpdir(), "setfarm-native-implementation-join-"));
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "setfarm-native-implementation-join-")));
   const worktree = path.join(root, "worktree");
   await mkdir(path.join(worktree, "src"), { recursive: true });
   await writeFile(path.join(worktree, "src/index.ts"), runnableCli ? NATIVE_JOIN_CLI_SOURCE : runnableApi ? NATIVE_JOIN_API_SOURCE : NATIVE_JOIN_SOURCE);
