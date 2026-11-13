@@ -12,12 +12,12 @@ This causal root fix is necessary to the authorized working Setfarm objective, n
 
 ## Acceptance
 
-Actual persisted V3 accepted native fallback output survives `verifyStory(id, nonemptyReport)` and native authority remains readable after normal worktree cleanup. Story status becomes verified. Non-V3 replacement and stale cleanup continue. Protocol routing uses actual SQL, not a mocked protocol. An invalid V3 output stays unchanged and rejected. Focused real Postgres regression must fail on old writer and pass on the small fix, plus legacy controls/typecheck and clean build. Independent reviews before delivery; no full-workflow PASS from these local tests.
+A canonical acceptance text fixture persisted under an actual V3 run survives `verifyStory(id, nonemptyReport)` byte-for-byte. This writer test establishes preservation, not acceptance authenticity; existing strict reader tests separately retain canonical authority acceptance/output-drift rejection. Story status becomes verified. Non-V3 replacement and stale cleanup continue. Protocol routing uses actual SQL, not a mocked protocol. An invalid V3 output stays unchanged and rejected. Focused real Postgres regression must fail on old writer and pass on the small fix, plus legacy controls/typecheck and clean build. Independent reviews before delivery; no full-workflow PASS from these local tests.
 
 ## File Map
 
-- `scripts/run-isolated-postgres-tests.ts`: one exact closed selector for the existing accepted native fallback scenario and exact two-file source-scope additions (`src/installer/repo.ts`, existing native integration test) necessary to project current edited bytes; existing six-cell grammar/security checks unchanged. Add focused parser acceptance/near-miss rejection coverage in `scripts/__tests__/isolated-postgres-command.test.js` (existing private pure parser seam).
+- `scripts/run-isolated-postgres-tests.ts`: one exact closed selector for the dedicated real-SQL verification writer scenario and exact two-file source-scope additions (`src/installer/repo.ts`, existing native integration test) necessary to project current edited bytes; existing six-cell grammar/security checks unchanged. Add focused parser acceptance/near-miss rejection coverage in `scripts/__tests__/isolated-postgres-command.test.js` (existing private pure parser seam).
 - `src/installer/repo.ts`: protocol-aware verification writer only.
-- `tests/execution-attempts/native-implementation-join.integration.test.ts`: actual persisted writer/native authority regression and legacy controls in maintained fixture.
+- `tests/execution-attempts/native-implementation-join.integration.test.ts`: dedicated actual persisted writer regression and legacy controls, without running unrelated full implementation lifecycle in maintained fixture.
 - `tests/steps/07-verify.test.ts`: existing pure legacy controls, unchanged unless necessary.
 - This spec and its plan: bounded requirements and verification record.

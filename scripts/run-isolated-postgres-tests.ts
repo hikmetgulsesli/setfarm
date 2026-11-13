@@ -191,7 +191,7 @@ function commandArguments(): string[] {
   }
   const fixedNativeFallbackVerificationCommand = [
     "node", "--import", "tsx", "--test", "--test-concurrency=1",
-    "--test-name-pattern=^native Task11 accepted operational fallback remains the model source owner after cleanup$",
+    "--test-name-pattern=^native VERIFY preserves V3 story acceptance using persisted protocol$",
     "tests/execution-attempts/native-implementation-join.integration.test.ts",
   ] as const;
   if (command.length === fixedNativeFallbackVerificationCommand.length

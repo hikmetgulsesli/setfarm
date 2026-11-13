@@ -178,7 +178,7 @@ test('final compiler selector rejects changed patterns files cells and additiona
   assert.throws(()=>command(FINAL_COMPILER,{separator:false}),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
 });
 
-const NATIVE_VERIFY=Object.freeze([...PREFIX,'--test-name-pattern=^native Task11 accepted operational fallback remains the model source owner after cleanup$',
+const NATIVE_VERIFY=Object.freeze([...PREFIX,'--test-name-pattern=^native VERIFY preserves V3 story acceptance using persisted protocol$',
   'tests/execution-attempts/native-implementation-join.integration.test.ts']);
 test('native verify preservation selector accepts only the exact maintained command',()=>{
   assert.deepEqual(command(NATIVE_VERIFY),Array.from(NATIVE_VERIFY));
@@ -187,7 +187,7 @@ test('native verify preservation selector accepts only the exact maintained comm
   const variants=NATIVE_VERIFY.map((cell,index)=>NATIVE_VERIFY.map((value,i)=>i===index?cell+' changed':value));
   variants.push([...NATIVE_VERIFY,'extra'],NATIVE_VERIFY.slice(0,-1),
     [...PREFIX,NATIVE_VERIFY[5].slice(0,-1),NATIVE_VERIFY.at(-1)],
-    [...PREFIX,NATIVE_VERIFY[5].replace('cleanup$','cleanup suffix$'),NATIVE_VERIFY.at(-1)],
+    [...PREFIX,NATIVE_VERIFY[5].replace('protocol$','protocol suffix$'),NATIVE_VERIFY.at(-1)],
     [...PREFIX,NATIVE_VERIFY[5],'tests/findings/repository.test.ts']);
   for(const value of variants)assert.throws(()=>command(value),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
   assert.throws(()=>command(NATIVE_VERIFY,{separator:false}),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
