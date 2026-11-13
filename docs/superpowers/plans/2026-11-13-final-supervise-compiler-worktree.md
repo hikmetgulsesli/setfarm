@@ -23,6 +23,7 @@
 - Modify src/execution/claim-runtime-publication.ts: compare final-product runtime worktree against locked current run context after real subject authentication and before birth/replay; reject conflicting or missing canonical source without producing an owner.
 - Modify src/spawner.ts only if a regression proves existing JSON cwd/envelope behavior requires a correction; otherwise consume it unchanged.
 - Modify tests/execution-attempts/claim-runtime-publication.test.ts: compose the regression with its existing authenticated seedV3LoopWithStoryAdmission fixture, real publication/lifecycle/lease SQL and finite peripheral ports. Reuse the admission fixture instead of duplicating its setup in a new test file.
+- Modify tests/execution-attempts/test-database.ts only in applyAndVerifyP3GenericSuccessorV1: consume the existing applyContractSpineMigrationsIfNeeded current-head API after unchanged guarded32 admission. The historical through33 API followed by the current verifier failed setup with migration34 pending. Preserve historical helpers, production migration source and every guard.
 - Update existing affected fixture setup only when its actual final-product context must now contain the required canonical repository; preserve its prior assertions.
 
 ### Task 1: Bind the compiler final-supervision handoff
