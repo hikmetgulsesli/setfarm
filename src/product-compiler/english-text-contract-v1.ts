@@ -100,6 +100,7 @@ const ALLOWED_ENGLISH_TYPOGRAPHY_V1 = new Set([
   0x201c,
   0x201d,
   0x2026,
+  0x2022,
 ]);
 
 function containsUnsupportedLocalizedLexemeV1(value: string): boolean {
