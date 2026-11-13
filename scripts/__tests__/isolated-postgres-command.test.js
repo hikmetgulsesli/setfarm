@@ -151,3 +151,29 @@ test('native lineage review rejects caller variants files extra flags and multip
   for(const value of variants)assert.throws(()=>command(value),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
   assert.throws(()=>command(NATIVE_LINEAGE,{separator:false}),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
 });
+
+// Mutation: admitting a changed pattern/file or dropping one actual command cell
+// must fail; this closed selector confers no database/runtime authority.
+const FINAL_COMPILER=Object.freeze([...PREFIX,'--test-name-pattern=^final compiler',
+  'tests/execution-attempts/claim-runtime-publication.test.ts']);
+test('final compiler selector accepts exactly the maintained seven-cell command',()=>{
+  const actual=command(FINAL_COMPILER);
+  assert.deepEqual(actual,Array.from(FINAL_COMPILER));
+  assert.equal(actual.length,7);
+  assert.deepEqual(shards(actual),[undefined]);
+  assert.deepEqual(command([...PREFIX,FINAL_COMPILER.at(-1)]),[...PREFIX,FINAL_COMPILER.at(-1)]);
+});
+test('final compiler selector rejects changed patterns files cells and additional arguments',()=>{
+  const variants=FINAL_COMPILER.map((cell,index)=>FINAL_COMPILER.map((value,i)=>i===index?cell+' changed':value));
+  variants.push([...FINAL_COMPILER,'extra'],FINAL_COMPILER.slice(0,-1),
+    [...PREFIX,'--test-name-pattern=.*',FINAL_COMPILER.at(-1)],
+    [...PREFIX,'--test-name-pattern=final compiler',FINAL_COMPILER.at(-1)],
+    [...PREFIX,'--test-name-pattern=^final compiler$',FINAL_COMPILER.at(-1)],
+    [...PREFIX,FINAL_COMPILER[5],'tests/findings/repository.test.ts'],
+    [...FINAL_COMPILER,'tests/findings/repository.test.ts'],
+    [...PREFIX,'--test-only',FINAL_COMPILER[5],FINAL_COMPILER.at(-1)],
+    [...PREFIX,FINAL_COMPILER[5],FINAL_COMPILER[5],FINAL_COMPILER.at(-1)],
+    [...PREFIX,FINAL_COMPILER.at(-1),FINAL_COMPILER[5]]);
+  for(const value of variants)assert.throws(()=>command(value),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
+  assert.throws(()=>command(FINAL_COMPILER,{separator:false}),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
+});
