@@ -192,3 +192,26 @@ test('native verify preservation selector accepts only the exact maintained comm
   for(const value of variants)assert.throws(()=>command(value),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
   assert.throws(()=>command(NATIVE_VERIFY,{separator:false}),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
 });
+
+// This exact vector adds only the two reservation regressions and the existing
+// expired/crossed-owner control. No caller-supplied regex becomes admissible.
+const NATIVE_RESERVATION_RETRY=Object.freeze([...PREFIX,
+  '--test-name-pattern=^(native recovery reservation retries one rolled-back PostgreSQL admission-head lock timeout|native recovery reservation refuses persistent PostgreSQL admission-head contention without attempt birth|native review R2 reloads after real recovery renewal and refuses expired or crossed owners)$',
+  'tests/execution-attempts/native-implementation-join.integration.test.ts']);
+test('native reservation retry selector admits only its exact bounded three-case command',()=>{
+  assert.deepEqual(command(NATIVE_RESERVATION_RETRY),Array.from(NATIVE_RESERVATION_RETRY));
+  assert.deepEqual(shards(command(NATIVE_RESERVATION_RETRY)),[undefined]);
+  assert.deepEqual(command([...PREFIX,NATIVE_RESERVATION_RETRY.at(-1)]),[...PREFIX,NATIVE_RESERVATION_RETRY.at(-1)]);
+});
+test('native reservation retry selector refuses altered patterns cells paths and extra arguments',()=>{
+  const variants=NATIVE_RESERVATION_RETRY.map((cell,index)=>NATIVE_RESERVATION_RETRY.map((value,i)=>i===index?cell+' changed':value));
+  variants.push([...NATIVE_RESERVATION_RETRY,'extra'],NATIVE_RESERVATION_RETRY.slice(0,-1),
+    [...PREFIX,'--test-name-pattern=.*',NATIVE_RESERVATION_RETRY.at(-1)],
+    [...PREFIX,'--test-name-pattern=^native recovery reservation',NATIVE_RESERVATION_RETRY.at(-1)],
+    [...PREFIX,NATIVE_RESERVATION_RETRY[5],'tests/findings/repository.test.ts'],
+    [...PREFIX,'--test-only',NATIVE_RESERVATION_RETRY[5],NATIVE_RESERVATION_RETRY.at(-1)],
+    [...PREFIX,NATIVE_RESERVATION_RETRY[5],NATIVE_RESERVATION_RETRY[5],NATIVE_RESERVATION_RETRY.at(-1)],
+    [...PREFIX,NATIVE_RESERVATION_RETRY.at(-1),NATIVE_RESERVATION_RETRY[5]]);
+  for(const value of variants)assert.throws(()=>command(value),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
+  assert.throws(()=>command(NATIVE_RESERVATION_RETRY,{separator:false}),/ISOLATED_TEST_COMMAND_MUST_BE_ONE_NODE_TEST_FILE/);
+});

@@ -22,6 +22,7 @@ A lock-order change requires the competing path, which current evidence does not
 
 - `src/execution/v3-native-implementation-attempt.ts`: one local bounded retry around native recovery reservation BEGIN; all existing callback statements remain in the same order.
 - `tests/execution-attempts/native-implementation-join.integration.test.ts`: two real PostgreSQL head-contention cases using the existing native repair fixture and genuine successor claim path.
+- `scripts/run-isolated-postgres-tests.ts` and `scripts/__tests__/isolated-postgres-command.test.js`: one literal seven-cell selector for the two new cases and the existing R2 expired/crossed-owner case; original six-cell grammar and all other selectors remain unchanged.
 - This spec and its implementation plan: scope, verification and delivery boundaries.
 
 ## Verification
@@ -32,7 +33,7 @@ Use a test-only forwarding transaction decorator around the existing serial nati
 
 Assert exactly two reservation transactions on successful recovery, one committed successor attempt, original claim/dispatch/source/slice bindings and unchanged delivery lease deadline. Persistent contention must leave no attempt, no bound delivery and the normal preparation refusal. Forward every real SQL call; do not fabricate query rows or verdicts. The existing native replay, expired/crossed owner and lease renewal cases remain required.
 
-Run the existing complete native integration file through its maintained owned-PG command, then TypeScript checking and a clean stock build as applicable. Do not run unrelated suites or provider probes.
+The previous complete native file took 2,132,895ms. Register the exact closed three-case vector with positive/negative parser tests, then run that owned-PG selection for RED and GREEN, followed by TypeScript checking and a clean stock build as applicable. No arbitrary pattern, file, extra flag or bypass becomes accepted. Do not run unrelated suites or provider probes.
 
 ## Delivery and limits
 

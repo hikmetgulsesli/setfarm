@@ -24,6 +24,7 @@
 **Files:**
 - Modify: `src/execution/v3-native-implementation-attempt.ts`, local `reserveRecovery` reservation transaction.
 - Modify: `tests/execution-attempts/native-implementation-join.integration.test.ts`, existing `runNativeRepairReviewScenario` and two new cases.
+- Modify: `scripts/run-isolated-postgres-tests.ts` and `scripts/__tests__/isolated-postgres-command.test.js`, literal bounded three-case selector registration and its positive/negative tests.
 
 **Interfaces:**
 - Consumes the unchanged `reserveRecovery(raw)` input, current `owner` or `options.sql`, original recovery delivery and compiled slice.
@@ -68,7 +69,7 @@ Assert the original preparation observation still records reservation failure an
 
 - [ ] **Step 2: Commit the test-only candidate and run the existing owned-PG full-file constructor.**
 
-Use the established native integration file command with no new selector, bypass or changed constructor. Record the original PID/session, private log and natural exit. Expected RED: transient successor `found` is false because current code exits after its first actual55P03. Persistent refusal remains fail-closed but its two-transaction assertion also exposes the missing retry. A precondition failure is not RED; preserve it separately.
+First run the genuine pure command-parser tests with the new literal-vector acceptance assertion and observe its refusal. Add exactly one fixed seven-cell command vector for the two new test names plus the existing `native review R2 reloads after real recovery renewal and refuses expired or crossed owners` test, anchored with `^(name1|name2|name3)$`. Require the pure tests to pass and all changed-cell/pattern/file/extra/no-separator cases to remain refused. Original six-cell grammar and every other command remain unchanged. Then use this code-owned exact three-case selection with the same native owned-PG constructor; no bypass. The previous full file took 2,132,895ms, so repeatedly running all unrelated cases is unnecessary. Record the original PID/session, private log and natural exit. Expected RED: transient successor `found` is false because current code exits after its first actual55P03. Persistent refusal remains fail-closed but its two-transaction assertion also exposes the missing retry. A precondition failure is not RED; preserve it separately.
 
 - [ ] **Step 3: Implement the local retry after the qualified RED.**
 
@@ -129,7 +130,7 @@ The callback above is copied from the current production source without changing
 
 - [ ] **Step 4: Verify GREEN, type checking and scope.**
 
-Commit the clean test/code candidate required by the maintained native fixture, run the same owned-PG full integration file once, and require all cases to pass. Verify actual2/1 and2/2 transaction/timeout counts and atomicity/binding/lease assertions. Run `npx tsc --noEmit` for touched TypeScript. Build only from a clean allowed source as required; preserve original process results, never replay because of stream/capacity failure.
+Commit the clean test/code candidate required by the maintained native fixture, run the same owned-PG exact three-case selection once, and require all three selected cases to pass. Verify actual2/1 and2/2 transaction/timeout counts and atomicity/binding/lease assertions. Run `npx tsc --noEmit` for touched TypeScript. Build only from a clean allowed source as required; preserve original process results, never replay because of stream/capacity failure.
 
 - [ ] **Step 5: Independent review and ordinary delivery.**
 

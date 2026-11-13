@@ -189,6 +189,15 @@ function commandArguments(): string[] {
     && command.every((cell, index) => cell === fixedNativeLineageCommand[index])) {
     return command;
   }
+  const fixedNativeReservationLockRetryCommand = [
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "--test-name-pattern=^(native recovery reservation retries one rolled-back PostgreSQL admission-head lock timeout|native recovery reservation refuses persistent PostgreSQL admission-head contention without attempt birth|native review R2 reloads after real recovery renewal and refuses expired or crossed owners)$",
+    "tests/execution-attempts/native-implementation-join.integration.test.ts",
+  ] as const;
+  if (command.length === fixedNativeReservationLockRetryCommand.length
+    && command.every((cell, index) => cell === fixedNativeReservationLockRetryCommand[index])) {
+    return command;
+  }
   const fixedNativeFallbackVerificationCommand = [
     "node", "--import", "tsx", "--test", "--test-concurrency=1",
     "--test-name-pattern=^native VERIFY preserves V3 story acceptance using persisted protocol$",
