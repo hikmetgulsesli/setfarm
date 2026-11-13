@@ -31,7 +31,7 @@
 - Consumes the unchanged PR URL, story/run identity and authenticated tested SHA, plus the explicit optional merge mode.
 - Produces the existing boolean result; false retains the existing pending-verification behavior.
 
-- [ ] **Step 1: Add the failing caller and local Git regressions.**
+- [x] **Step 1: Add the failing caller and local Git regressions.**
 
 Extend the existing source-data verify fixture with the persisted protocol port. Require its actual merge clause to pass:
 

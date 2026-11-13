@@ -52,13 +52,13 @@ function openMergeClause(){const file="installer/step-ops.ts",text=source(file),
   const owners=tree.statements.filter((node):node is ts.FunctionDeclaration=>ts.isFunctionDeclaration(node)&&node.name?.text==="handleVerifyEachCompletion");
   assert.equal(owners.length,1,"actual handleVerifyEachCompletion must remain unique");
   visit(owners[0]!);assert.equal(rows.length,1,"actual verify OPEN merge clause must remain unique inside handleVerifyEachCompletion");return rows[0]!.getText(tree);}
-function verify(failCommand?:string,options:{driftAfterTest?:boolean;storyTestFails?:boolean}={}){
+function verify(failCommand?:string,options:{driftAfterTest?:boolean;storyTestFails?:boolean;protocol?:"v3"|"legacy"}={}){
   const events:string[]=[],repos:string[]=[],mergeArguments:unknown[][]=[];let head="1".repeat(40);
   const context:Record<string,string>={repo:"/product-base",story_workdir:"/product-story",build_cmd:"npm run build",test_cmd:"npm test",lint_cmd:"npm run lint"};
   const ports:Record<string,any>={path,context,verifiedStoryId:"US-001",verifiedRow:{id:"story-db-1",pr_url:"https://example.invalid/pr/1",story_branch:"story-1"},
-    verifyStep:{id:"step-db",run_id:"run-verify",step_id:"verify",step_index:6},
+    verifyStep:{id:"step-db",run_id:"run-verify",step_id:"verify",step_index:6},verifyRunProtocol:{protocol:options.protocol??"v3"},
     prReviewSettleComplete:()=>true,logger:{info(){},warn(){}},
-    claimEnvelope:{schema:"setfarm.claim-envelope.v1",protocol:"v3",issuedAt:"2026-11-04T12:00:00.000Z",runId:"run-verify",stepId:"step-db",workflowStepId:"verify",
+    claimEnvelope:{schema:"setfarm.claim-envelope.v1",protocol:options.protocol??"v3",issuedAt:"2026-11-04T12:00:00.000Z",runId:"run-verify",stepId:"step-db",workflowStepId:"verify",
       claimId:902,claimAgentId:"feature-dev_reviewer",runtimeAgentId:"reviewer",workdir:"/product-story"},
     reviewedHeadSha:"1".repeat(40),getPRHeadBranch:()=>"story-1",
     fs:{existsSync:()=>true},execFileSync:(_command:string,args:string[],opts:any)=>{
@@ -94,9 +94,13 @@ it("a changed reviewed story head during configured checks refuses merge",async(
   const f=verify(undefined,{driftAfterTest:true});await f.route();
   assert.equal(f.events.includes("merge"),false);assert.match(f.context.previous_failure||"",/HEAD|SOURCE|CHANGED|MISMATCH/);
 });
-it("actual verify caller passes the authenticated tested source SHA into merge",async()=>{
+it("actual V3 verify caller passes tested SHA and ancestry mode from persisted protocol",async()=>{
   const f=verify();await f.route();
-  assert.deepEqual(f.mergeArguments,[["https://example.invalid/pr/1","US-001","run-verify","1".repeat(40)]]);
+  assert.deepEqual(f.mergeArguments,[["https://example.invalid/pr/1","US-001","run-verify","1".repeat(40),"preserve-ancestry"]]);
+});
+it("actual legacy verify caller retains explicit legacy squash mode",async()=>{
+  const f=verify(undefined,{protocol:"legacy"});await f.route();
+  assert.deepEqual(f.mergeArguments,[["https://example.invalid/pr/1","US-001","run-verify","1".repeat(40),"legacy-squash"]]);
 });
 function mergeFixture(options:{protectionOnce?:boolean;headMismatch?:boolean;capturedHead?:string}={}){
   const url="https://example.invalid/pr/1",sha="1".repeat(40),calls:Array<{command:string;args:string[];options:unknown}>=[];
@@ -137,6 +141,23 @@ it("legacy merge captures current head once then pins that same head in both att
   ]);
   const missing=mergeFixture({capturedHead:""});assert.equal(missing.merge(missing.url,"US-001","run-legacy"),false);
   assert.equal(missing.calls.length,1);assert.equal(missing.calls[0]!.args[1],"view");
+});
+it("native merge protection refusal has one exact-head merge and no admin or squash fallback",()=>{
+  const f=mergeFixture({protectionOnce:true});
+  assert.equal(f.merge(f.url,"US-001","run-native",f.sha,"preserve-ancestry"),false);
+  assert.deepEqual(f.calls,[{command:"gh",args:["pr","merge",f.url,"--merge","--delete-branch","--match-head-commit",f.sha],options:{timeout:37001,stdio:"pipe"}}]);
+  assert.equal(f.invalidated(),0);
+});
+it("native merge requires explicit full tested head before any command",()=>{
+  for(const head of [undefined,"","not-a-full-sha"]){
+    const f=mergeFixture();assert.equal(f.merge(f.url,"US-001","run-native",head,"preserve-ancestry"),false);
+    assert.deepEqual(f.calls,[]);assert.equal(f.invalidated(),0);
+  }
+});
+it("native exact-head mismatch never falls back",()=>{
+  const f=mergeFixture({headMismatch:true});assert.equal(f.merge(f.url,"US-001","run-native",f.sha,"preserve-ancestry"),false);
+  assert.deepEqual(f.calls,[{command:"gh",args:["pr","merge",f.url,"--merge","--delete-branch","--match-head-commit",f.sha],options:{timeout:37001,stdio:"pipe"}}]);
+  assert.equal(f.invalidated(),0);
 });
 function supervisorStageCandidate(subject:"story_member"|"final_product"){
   const envelope={schema:"setfarm.claim-envelope.v1",protocol:"v3",issuedAt:"2026-11-04T12:00:00.000Z",runId:"run-stage",stepId:"step-supervise",workflowStepId:"supervise",
