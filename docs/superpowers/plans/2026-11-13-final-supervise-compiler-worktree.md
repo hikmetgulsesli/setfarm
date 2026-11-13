@@ -22,7 +22,7 @@
 - Modify src/installer/step-ops.ts: derive canonical final intent before fresh/reissued claim authentication; return meaningful canonical compiler JSON input bound to the reserved final repository; revalidate reissue without backfill.
 - Modify src/execution/claim-runtime-publication.ts: compare final-product runtime worktree against locked current run context after real subject authentication and before birth/replay; reject conflicting or missing canonical source without producing an owner.
 - Modify src/spawner.ts only if a regression proves existing JSON cwd/envelope behavior requires a correction; otherwise consume it unchanged.
-- Create tests/execution-attempts/final-supervise-compiler-worktree.integration.test.ts: one composed regression fixture with real publication/lifecycle/lease SQL and finite peripheral ports.
+- Modify tests/execution-attempts/claim-runtime-publication.test.ts: compose the regression with its existing authenticated seedV3LoopWithStoryAdmission fixture, real publication/lifecycle/lease SQL and finite peripheral ports. Reuse the admission fixture instead of duplicating its setup in a new test file.
 - Update existing affected fixture setup only when its actual final-product context must now contain the required canonical repository; preserve its prior assertions.
 
 ### Task 1: Bind the compiler final-supervision handoff
