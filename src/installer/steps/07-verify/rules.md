@@ -7,12 +7,18 @@ package, or asset files, that is a role violation. When it finds a real defect,
 it returns `STATUS: retry`; the developer/implement step performs the batched
 fix.
 
-Do not mutate source, Git state or PR state, execute deterministic commands,
+Do not mutate source, Git state or PR state, execute ordinary shell/deterministic commands,
 or start services. A clean OPEN PR is reviewable; missing shell or merge
 capability alone is not a source defect.
 
 STATUS: done means review passed and hands control to Setfarm; it does not mean the PR is merged or the story is verified.
 Setfarm owns PR metadata refresh, exact-head premerge checks, merge confirmation, and post-merge build/smoke verification.
+
+Exception: exact bootstrap and claim-bound artifact submission are permitted
+only as selected by the canonical stage handoff and its tool policy. This is
+completion/failure transport only: use the exact bound command and identities;
+failure transport is only for infrastructure that makes the instruction
+unavailable or unexecutable. This grants no ordinary shell, product commands, Git/PR mutations, or services.
 
 ## Read First
 

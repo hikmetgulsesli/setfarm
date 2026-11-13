@@ -41,3 +41,13 @@ test("verify precedence overrides generic tools and claim summaries without chan
   assert.match(verifyRole, /canonical stage handoff\/instruction/i);
   assert.match(verifyRole, /claim.summary.*(?:not|never).*override/is);
 });
+
+test("read-only handoff preserves only canonical claim transport exceptions", () => {
+  for (const text of [instruction, rules, verifyRole]) {
+    assert.match(text, /exact bootstrap and claim-bound artifact submission/i);
+    assert.match(text, /canonical stage handoff.*tool policy/is);
+    assert.match(text, /completion\/failure transport/i);
+    assert.match(text, /no ordinary shell, product commands, Git\/PR mutations, or services/i);
+  }
+  assert.match(role.slice(0, role.indexOf("## Tools Available")), /except.*canonical.*transport/is);
+});

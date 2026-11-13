@@ -10,6 +10,8 @@ Align the existing verify prompt, appended rules and verify-specific reviewer gu
 
 An OPEN PR alone and lack of agent shell/Git/GitHub mutation capability are not product defects. The reviewer must not claim unavailable checks ran. Missing required acceptance/source/runtime evidence must still be reported explicitly and must never be treated as a pass. Real product defects remain retry findings, never automatically promoted to done.
 
+The ordinary command prohibition excludes only the exact bootstrap and claim-bound artifact submission selected by the canonical stage handoff and its tool policy. It does not grant ordinary shell, product command, Git, PR or service authority. Infrastructure-only failure transport retains its existing narrow conditions. This exception must remain explicit in the rendered instruction, appended rules and verify-specific role guidance.
+
 Alternatives rejected: granting the reviewer exec/Git/merge permissions violates the immutable tool boundary; interpreting historical retry prose as pass invents a successful verdict. No status parser, classifier, preparation owner guard, DB mutation, merge implementation or tool-policy change is part of this fix.
 
 ## Limits

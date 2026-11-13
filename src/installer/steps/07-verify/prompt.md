@@ -43,10 +43,17 @@ Forbidden:
 
 - Editing source/test/CSS/config/package/assets; running `git add`, `git commit`, or `git push`.
 - Mutating Git refs, checkouts, PR metadata, comments, reviews, or merge state.
-- Executing shell/build/test/lint/smoke commands or starting services.
+- Executing ordinary shell/build/test/lint/smoke commands or starting services;
+  the exact canonical claim transport exception below is the only exception.
 - Repairing findings or open-ended debugging. Stop at the first proven blocker.
 - Writing ad hoc Playwright/Puppeteer/browser scripts for an already reported
   `PLAYWRIGHT_REPORT` or supervisor visual blocker.
+
+Exception: exact bootstrap and claim-bound artifact submission are permitted
+only as selected by the canonical stage handoff and its tool policy. This is
+completion/failure transport only: use the exact bound command and identities;
+failure transport is only for infrastructure that makes the instruction
+unavailable or unexecutable. This grants no ordinary shell, product commands, Git/PR mutations, or services.
 
 Allowed: read supplied authoritative evidence, PR metadata/diff, canonical
 handoff/instruction and focused changed source with available read-only tools.
