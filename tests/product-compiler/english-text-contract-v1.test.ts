@@ -17,6 +17,52 @@ describe("English text contract v1", () => {
     assert.equal(inspectEnglishTextV1("Ready preference\nSave settings\t/status\r\n"), undefined);
   });
 
+  it("accepts English bullet typography without masking rejected content", () => {
+    const bullet = String.fromCodePoint(0x2022);
+    const foreignLetter = String.fromCodePoint(0x0416);
+    const zeroWidth = String.fromCodePoint(0x200b);
+    const control = String.fromCodePoint(0x0001);
+    const localizedWord = asciiText([71, 117, 97, 114, 100, 97, 114]);
+
+    assert.equal(inspectEnglishTextV1(`Ready ${bullet} Score`), undefined);
+    assert.equal(
+      inspectEnglishTextV1(`<main><p>Ready ${bullet} Score</p></main>`),
+      undefined,
+    );
+    assert.deepEqual(inspectEnglishTextTreeV1({ label: `Ready ${bullet} Score` }), []);
+
+    for (const [value, code, codeUnit] of [
+      [`Ready ${bullet} ${foreignLetter}`, "ENGLISH_TEXT_NON_ASCII", 0x0416],
+      [`Ready ${bullet} ${zeroWidth}`, "ENGLISH_TEXT_NON_ASCII", 0x200b],
+      [`Ready ${bullet} ${control}`, "ENGLISH_TEXT_CONTROL_CHARACTER", 0x0001],
+    ] as const) {
+      const issue = inspectEnglishTextV1(value);
+      assert.equal(issue?.code, code);
+      assert.equal(issue?.codeUnit, codeUnit);
+    }
+
+    assert.equal(
+      inspectEnglishTextV1(`Ready ${bullet} ${localizedWord}`)?.code,
+      "ENGLISH_TEXT_UNSUPPORTED_LEXEME",
+    );
+    assert.equal(
+      inspectEnglishTextV1(`Ready ${bullet}`, `Ready ${bullet}`.length - 1)?.code,
+      "ENGLISH_TEXT_VALUE_LIMIT_EXCEEDED",
+    );
+    assert.equal(
+      inspectEnglishTextTreeV1({ label: `Ready ${bullet}` }, {
+        maxTotalCodeUnits: `labelReady ${bullet}`.length - 1,
+      })[0]?.code,
+      "ENGLISH_TEXT_TREE_LIMIT_EXCEEDED",
+    );
+    assert.equal(
+      inspectEnglishTextTreeV1({ label: `Ready ${bullet}` }, {
+        maxCodeUnitsPerValue: `Ready ${bullet}`.length - 1,
+      })[0]?.code,
+      "ENGLISH_TEXT_VALUE_LIMIT_EXCEEDED",
+    );
+  });
+
   it("rejects a non-English marker suffix without reproducing it", () => {
     const markerBypass = `English marker ${String.fromCodePoint(0x0416)}`;
     const issue = inspectEnglishTextV1(markerBypass);
