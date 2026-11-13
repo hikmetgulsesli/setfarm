@@ -25,11 +25,11 @@ One existing writer, branch `fix/evidence-refresh-dependencies-20261113`, base `
 
 - [ ] Seed a fixture-owned executable at `value.repo/node_modules/.bin/native-refresh-build` in the control scenario. Use mode `0700` and a Node shebang that prints `native dependency available`. Add `/.setfarm/` to that owned repository's Git info exclude so the existing dependency-custody control path has its required ignored status; do not change the candidate's tracked source.
 - [ ] Observe the actual restored execution context by wrapping only the existing real dependency object's `executeEvidence`: record whether this tool exists, execute it if present, check that its resolved path is inside the restored worktree and its inode differs from the canonical copy, then delegate to the original real `executeEvidence`. After the worker finishes, assert the tool was available. Keep every existing real evidence, source-revision, branch, publication and cleanup assertion.
-- [ ] Run only the existing control test, named `native Task11 real evidence-plane unavailability resolves through one unchanged-source non-model lease`. Capture the actual command, PID, exit and output. The expected RED is the missing private tool assertion, not an import/setup error.
+- [ ] Extend the existing control test, named `native Task11 real evidence-plane unavailability resolves through one unchanged-source non-model lease`. Capture the actual command, PID, exit and output. The expected RED is the missing private tool assertion, not an import/setup error. The existing constructor does not admit a new selector for this test; run its 25-test file through the existing six-cell grammar without changing that guard. The initial rejected command is retained as a pre-test invocation refusal.
 Run:
 
 ```bash
-node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 --test-name-pattern='native Task11 real evidence-plane unavailability resolves through one unchanged-source non-model lease' tests/execution-attempts/native-implementation-join.integration.test.ts
+node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 tests/execution-attempts/native-implementation-join.integration.test.ts
 ```
 
 - [ ] Add the production import:
@@ -46,8 +46,8 @@ if (lease.mode === "fresh_execution") {
 }
 ```
 
-- [ ] Rerun the same focused control. Require real evidence success and the same immutable candidate source. Run existing relevant private dependency-copy tests and TypeScript checking; widen only for a new failure or concrete review concern.
-- [ ] Review the complete source/test diff independently, fix actual findings, and commit conventionally on the scoped branch. Run one normal build from that clean committed worktree; retain original process results. Do not build dirty or skip guards.
+- [ ] Rerun the same 25-test native integration file. Require real evidence success and the same immutable candidate source. Run existing relevant private dependency-copy tests and TypeScript checking; widen only for a new failure or concrete review concern.
+- [ ] Review the complete source/test diff independently, fix actual findings, and commit conventionally on the scoped branch. Use the established clean-main build transition after reviewed merge; retain original process results. Do not build dirty or skip guards.
 - [ ] Push the scoped branch and deliver a reviewed PR. Record exact merged source/build identities. Continue the live software objective through its existing owner and service guards; do not replay attempts 16/17 or call the current game qualified from this regression alone.
 
 ## Self-review
