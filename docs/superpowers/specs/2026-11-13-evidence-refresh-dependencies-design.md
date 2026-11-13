@@ -18,9 +18,12 @@ This approach restores the same execution assets used by normal native implement
 
 - `src/recovery/v3-evidence-only-runtime.ts`: prepare authenticated private dependency assets before fresh native refresh execution.
 - `tests/execution-attempts/native-implementation-join.integration.test.ts`: extend the real existing control refresh scenario with an ignored fixture-owned build tool, observe its private availability before real evidence commands, and retain all existing source, lease, branch and cleanup assertions.
+- `tests/execution-attempts/helpers/native-implementation-join-fixture.ts`: canonicalize the owned temporary root with `realpath`; actual preexisting fixture cases were refused by the correct directory-alias guard on macOS.
 - This specification and the matching implementation plan record the root cause and finite verification scope.
 
 ## Acceptance and limits
+
+The original 25-test RED completed naturally with 13 passes and 12 failures. The new control failed exactly with `missing` versus `native dependency available`. Separate preexisting fixture failures included `NATIVE_IMPLEMENTATION_ASSETS_REFUSED:directory alias` and mismatched worktree paths; their original details remain retained. Normalize the temporary fixture root rather than accepting aliases in production.
 
 The control scenario must genuinely fail on the old production code because its restored worktree lacks the ignored executable. With the fix, that exact candidate must execute the privately copied tool, complete real native evidence, and preserve its source revision, retained branch and normal owned cleanup.
 

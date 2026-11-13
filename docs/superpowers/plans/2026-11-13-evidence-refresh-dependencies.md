@@ -19,26 +19,27 @@ One existing writer, branch `fix/evidence-refresh-dependencies-20261113`, base `
 **Files:**
 
 - Modify `tests/execution-attempts/native-implementation-join.integration.test.ts`, existing `runNativeRefreshReviewScenario("control")`.
+- Modify `tests/execution-attempts/helpers/native-implementation-join-fixture.ts`: use `await realpath(await mkdtemp(...))` for the owned fixture root; keep runtime alias rejection unchanged.
 - Modify `src/recovery/v3-evidence-only-runtime.ts`, native packet branch in `loadOrReserveAttempt`.
 
 **Interfaces:** Consume the existing authenticated custody `{repo, worktree}` and `prepareNativeImplementationDependencies(repo: string, worktree: string): void`. Keep the existing runtime dependency and worker interfaces.
 
-- [ ] Seed a fixture-owned executable at `value.repo/node_modules/.bin/native-refresh-build` in the control scenario. Use mode `0700` and a Node shebang that prints `native dependency available`. Add `/.setfarm/` to that owned repository's Git info exclude so the existing dependency-custody control path has its required ignored status; do not change the candidate's tracked source.
-- [ ] Observe the actual restored execution context by wrapping only the existing real dependency object's `executeEvidence`: record whether this tool exists, execute it if present, check that its resolved path is inside the restored worktree and its inode differs from the canonical copy, then delegate to the original real `executeEvidence`. After the worker finishes, assert the tool was available. Keep every existing real evidence, source-revision, branch, publication and cleanup assertion.
-- [ ] Extend the existing control test, named `native Task11 real evidence-plane unavailability resolves through one unchanged-source non-model lease`. Capture the actual command, PID, exit and output. The expected RED is the missing private tool assertion, not an import/setup error. The existing constructor does not admit a new selector for this test; run its 25-test file through the existing six-cell grammar without changing that guard. The initial rejected command is retained as a pre-test invocation refusal.
+- [x] Seed a fixture-owned executable at `value.repo/node_modules/.bin/native-refresh-build` in the control scenario. Use mode `0700` and a Node shebang that prints `native dependency available`. Add `/.setfarm/` to that owned repository's Git info exclude so the existing dependency-custody control path has its required ignored status; do not change the candidate's tracked source.
+- [x] Observe the actual restored execution context by wrapping only the existing real dependency object's `executeEvidence`: record whether this tool exists, execute it if present, check that its resolved path is inside the restored worktree and its inode differs from the canonical copy, then delegate to the original real `executeEvidence`. After the worker finishes, assert the tool was available. Keep every existing real evidence, source-revision, branch, publication and cleanup assertion.
+- [x] Extend the existing control test, named `native Task11 real evidence-plane unavailability resolves through one unchanged-source non-model lease`. Capture the actual command, PID, exit and output. The expected RED is the missing private tool assertion, not an import/setup error. The existing constructor does not admit a new selector for this test; run its 25-test file through the existing six-cell grammar without changing that guard. Initial grammar/admin-URL/dirty-doc refusals are retained as pre-test invocation refusals. The original `red-2` then completed with the exact missing-tool assertion (13 pass, 12 fail); normalize the independently diagnosed fixture root aliases before GREEN.
 Run:
 
 ```bash
 node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 tests/execution-attempts/native-implementation-join.integration.test.ts
 ```
 
-- [ ] Add the production import:
+- [x] Add the production import:
 
 ```ts
 import { prepareNativeImplementationDependencies } from "../installer/worktree-ops.js";
 ```
 
-- [ ] Immediately after the existing `nativeWorktrees.set(lease.dispatchId, custody)` add:
+- [x] Immediately after the existing `nativeWorktrees.set(lease.dispatchId, custody)` add:
 
 ```ts
 if (lease.mode === "fresh_execution") {
