@@ -53,7 +53,7 @@ assert.equal(spawnSync("git", ["merge-base", "--is-ancestor", candidate, "HEAD"]
 
 The old helper ignores the new argument and creates a same-tree sibling, so this must fail on ancestry. Retain an explicit legacy squash control. The existing command fixture also verifies native protection failure returns false after one call, native missing tested SHA returns false with no calls, and native head mismatch has no fallback. Preserve existing legacy tests.
 
-- [ ] **Step 2: Commit the test-only candidate, then run qualified RED.**
+- [x] **Step 2: Commit the test-only candidate, then run qualified RED.**
 
 ```bash
 node --import tsx scripts/run-execution-attempt-tests.ts tests/execution-attempts/subscription-owned-stage-evidence-v1.test.ts tests/execution-attempts/native-pr-merge-ancestry.test.ts
@@ -61,7 +61,7 @@ node --import tsx scripts/run-execution-attempt-tests.ts tests/execution-attempt
 
 Commit and freeze the test-only candidate before execution; confirm both production files are byte-identical to F31. Retain the actual process, output and exit. Require the real Git ancestry assertion and caller/native refusal assertions to expose the missing behavior. A fixture/precondition error is not RED. Never repeat because a stream result is missing.
 
-- [ ] **Step 3: Implement the explicit merge mode.**
+- [x] **Step 3: Implement the explicit merge mode.**
 
 Add the optional literal union parameter from the spec. Before legacy head capture, refuse missing expected head in ancestry mode. Build the attempts with:
 
@@ -94,3 +94,7 @@ Require the real native local merge to preserve C's ancestry, legacy behavior to
 - [ ] **Step 5: Independently review and deliver the bounded fix.**
 
 Review task bounds and the whole diff. Root pushes the scoped branch, reads actual GitHub checks/reviews and performs a normal exact-head protected merge. Record actual clean-main build and guarded service transition receipts before live activation. Preserve the failed case; later validation uses a clean native run and its real QA/repair evidence.
+
+## Verification checkpoint
+
+The maintained two-file RED completed with 19 tests: 13 passed and six expected assertions failed. The actual production helper returned success after creating a real same-tree squash sibling; the accepted candidate was not an ancestor. The legacy real-Git control passed. The two-file implementation is in place; focused GREEN remains pending.

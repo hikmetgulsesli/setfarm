@@ -80,10 +80,12 @@ export function tryReopenPR(prUrl: string, storyId: string, runId: string): bool
 // ── Auto-Merge OPEN PR ──────────────────────────────────────────────
 
 /**
- * Attempt to squash-merge an OPEN PR. Returns true if successful.
+ * Merge an OPEN PR using the caller's integration mode. Returns true if successful.
  */
-export function tryAutoMergePR(prUrl: string, storyId: string, runId: string, expectedHeadSha?: string): boolean {
+export function tryAutoMergePR(prUrl: string, storyId: string, runId: string, expectedHeadSha?: string,
+  mergeMode: "legacy-squash" | "preserve-ancestry" = "legacy-squash"): boolean {
   let head=expectedHeadSha;
+  if(mergeMode==="preserve-ancestry"&&head===undefined)return false;
   if(head===undefined){
     // Legacy mechanical merge callers have no checked-code authority. Capture
     // one actual head only to fence both existing merge attempts against drift.
@@ -92,11 +94,10 @@ export function tryAutoMergePR(prUrl: string, storyId: string, runId: string, ex
     catch{return false;}
   }
   if(typeof head!=="string"||!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head))return false;
-  // Try squash merge first, then admin override if branch protection blocks it
-  for (const args of [
-    ["pr", "merge", prUrl, "--squash", "--delete-branch", "--match-head-commit", head],
-    ["pr", "merge", prUrl, "--squash", "--delete-branch", "--match-head-commit", head, "--admin"],
-  ]) {
+  const mergeArgs = ["pr", "merge", prUrl, mergeMode === "preserve-ancestry" ? "--merge" : "--squash",
+    "--delete-branch", "--match-head-commit", head];
+  const attempts = mergeMode === "preserve-ancestry" ? [mergeArgs] : [mergeArgs, [...mergeArgs, "--admin"]];
+  for (const args of attempts) {
     try {
       execFileSync("gh", args, {
         timeout: GH_MERGE_TIMEOUT, stdio: "pipe"
@@ -106,8 +107,8 @@ export function tryAutoMergePR(prUrl: string, storyId: string, runId: string, ex
       return true;
     } catch (err) {
       const errStr = String(err);
-      // If it's not a protection/check error, don't retry with --admin
-      if (!errStr.includes("required status check") && !errStr.includes("review is required") && !errStr.includes("branch protection")) {
+      // Native merges never override protection. Legacy retries only protection/check errors.
+      if (mergeMode === "preserve-ancestry" || (!errStr.includes("required status check") && !errStr.includes("review is required") && !errStr.includes("branch protection"))) {
         logger.warn(`[pr-state] Auto-merge failed for ${prUrl}: ${errStr}`, { runId });
         return false;
       }
