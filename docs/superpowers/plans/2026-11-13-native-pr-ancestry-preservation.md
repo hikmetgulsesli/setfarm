@@ -26,6 +26,7 @@
 - Modify: `src/installer/step-ops.ts`, the exact-tested-head call inside `handleVerifyEachCompletion`.
 - Modify: `tests/execution-attempts/subscription-owned-stage-evidence-v1.test.ts`.
 - Create: `tests/execution-attempts/native-pr-merge-ancestry.test.ts`.
+- Modify: `tests/claim-log-lifecycle.test.ts`, the existing review-settle/merge/cache/recheck source-order locator.
 
 **Interfaces:**
 - Consumes the unchanged PR URL, story/run identity and authenticated tested SHA, plus the explicit optional merge mode.
@@ -81,13 +82,15 @@ verifyRunProtocol?.protocol === "v3" ? "preserve-ancestry" : "legacy-squash"
 
 Keep the existing configured checks, exact tested head and all source/ownership guards. Do not add a separate history-repair or alternate-source protocol.
 
-- [ ] **Step 4: Verify GREEN and TypeScript.**
+- [x] **Step 4: Verify GREEN and TypeScript.**
 
 Run the exact same two-file maintained command once, then:
 
 ```bash
 npx tsc --noEmit
 ```
+
+The independent whole-diff review found the existing four-argument source-order locator also needs the explicit merge-mode comma. Update that locator without changing its ordering assertions, then run `node --import tsx --test tests/claim-log-lifecycle.test.ts` as a separate focused regression check.
 
 Require the real native local merge to preserve C's ancestry, legacy behavior to remain covered and native refusal boundaries to hold. No unrelated suite or provider probe is required. Build only from clean main after ordinary reviewed merge, preserving the known main-only build guard.
 
@@ -97,4 +100,4 @@ Review task bounds and the whole diff. Root pushes the scoped branch, reads actu
 
 ## Verification checkpoint
 
-The maintained two-file RED completed with 19 tests: 13 passed and six expected assertions failed. The actual production helper returned success after creating a real same-tree squash sibling; the accepted candidate was not an ancestor. The legacy real-Git control passed. The two-file implementation is in place; focused GREEN remains pending.
+The maintained two-file RED completed with 19 tests: 13 passed and six expected assertions failed. The actual production helper returned success after creating a real same-tree squash sibling; the accepted candidate was not an ancestor. The legacy real-Git control passed. On candidate58095718, the same command completed GREEN with 19/19 passing, zero failures/cancellations/skips (original PID40685, exit0). TypeScript completed with exit0 (original session3161). Production code is unchanged during the narrow source-order test correction. Its actual full source-test file completed with 100 tests: 99 passed, including the affected review/merge ordering assertion, and one pre-existing unrelated idempotent-claim source-regex failure. F31 has byte-identical claimSingleStep source and the same stale three-argument regex while the actual call has four arguments; no fix to that unrelated assertion is included. This bounded change does not claim the whole file passes.

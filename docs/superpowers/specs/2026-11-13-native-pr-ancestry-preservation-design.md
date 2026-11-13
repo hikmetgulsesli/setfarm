@@ -32,9 +32,10 @@ Preserving the candidate through a normal merge fits the current commit-identity
 - `src/installer/step-ops.ts`: select that mode only for the persisted V3 verify protocol.
 - `tests/execution-attempts/subscription-owned-stage-evidence-v1.test.ts`: actual caller-mode contract and native refusal boundaries in the existing finite source-data realm.
 - `tests/execution-attempts/native-pr-merge-ancestry.test.ts`: execute the actual production merge function body against an owned local Git fixture; the command port performs real Git merges and never calls GitHub.
+- `tests/claim-log-lifecycle.test.ts`: retain the existing review-settle, merge, cache and recheck source-order assertions with the explicit merge-mode argument.
 
 ## Verification and delivery
 
 First commit tests without production changes. A real local Git regression must show the old helper returning success while the accepted candidate is not an ancestor of the squash target. A valid normal merge must preserve ancestry. Also verify the V3 caller forwards the tested SHA and mode, native protection refusal performs no admin retry, and native mode cannot capture an unchecked head. Existing legacy and head-mismatch tests remain required.
 
-Use the maintained execution-test runner for exactly the two named files, then TypeScript checking. No PG cluster, browser, provider call or new test selector is needed. Root remains the sole delivery owner; use independent review, a scoped PR and ordinary protected merge. The clean-main build and existing guarded rollout follow actual merge. A new clean run, rather than rearming the failed run, supplies later live qualification.
+Use the maintained execution-test runner for exactly the two named files, then TypeScript checking. Check the affected source-order test with `node --import tsx --test tests/claim-log-lifecycle.test.ts`. No PG cluster, browser, provider call or new test selector is needed. Root remains the sole delivery owner; use independent review, a scoped PR and ordinary protected merge. The clean-main build and existing guarded rollout follow actual merge. A new clean run, rather than rearming the failed run, supplies later live qualification.
