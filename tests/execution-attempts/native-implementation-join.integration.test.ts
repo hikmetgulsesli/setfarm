@@ -1585,7 +1585,7 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(refreshed.attempt.generation,repairContext.attempt.generation+1);
   }
 
-  async function runNativeRepairReviewScenario(mode:"control"|"renewed_lease"|"repair_final") {
+  async function runNativeRepairReviewScenario(mode:"control"|"renewed_lease"|"repair_final"|"transient_head_lock"|"persistent_head_lock") {
     const value = await fixture(mode === "control" ? "task11-owned-repair" : `task11-review-${mode}`, false, true, true);
     // This probe accepts the repaired story, not the entire product. Seed the
     // actual downstream workflow shape before publishing any implementation
@@ -1649,11 +1649,144 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
     assert.equal(getAgentWorkspacePath("feature-dev_developer"), ownedAgentWorkspace);
     assert.equal(await realpath(resolveWorktreeBaseDir(value.repo, "feature-dev_developer")),
       path.join(ownedAgentWorkspace, "story-worktrees"), "actual recovery destination must be fixture-owned before claimStep");
-    const successor = await claimStep("feature-dev_developer", value.input.callerGatewayAgent, {
+    const contention = mode === "transient_head_lock" || mode === "persistent_head_lock";
+    let reservationTransactions = 0, lockTimeouts = 0;
+    let originalReservationLease: number | undefined;
+    const reservationClaimIds: string[] = [];
+    const attemptCountBefore = await database.sql<Array<{ count: number }>>`
+      SELECT count(*)::integer AS count FROM execution_attempts WHERE run_id=${value.runId}`;
+    const invokeSuccessor = async () => {
+      return claimStep("feature-dev_developer", value.input.callerGatewayAgent, {
       schema: "setfarm.runtime-claim-intent.v1", sessionId: mode === "control" ? "RTS_native-task11-real-recovery-successor" : nativeJoinRuntimeSessionId(`task11-recovery-${mode}`),
       runtimeAgentId: "native-task11-repair-runtime", runtimeKind: "local_process",
       ownerInstanceId: "native-task11-live-repair-owner",
     }, { workflowId: "feature-dev", recoveryDispatchClass: "product_implementation" });
+    };
+    const pool = productionDb!.getSql();
+    const originalBegin = pool.begin;
+    let releaseHolder: (() => void) | undefined;
+    let holder: Promise<unknown> | undefined;
+    let restoreBegin: (() => void) | undefined;
+    if (contention) {
+      // Forward actual SQL. Arm only once this BEGIN reaches the attempt
+      // reservation lock, after genuine claim/runtime publication head locks.
+      const replacement = mock.method(pool, "begin", ((...args: any[]) => {
+        const callbackIndex = args.length - 1;
+        const callback = args[callbackIndex];
+        let reservation = false;
+        args[callbackIndex] = async (tx: any) => {
+          const unsafe = tx.unsafe.bind(tx);
+          const forwarded = new Proxy(tx, {
+            get(target, key) {
+              if (key === "unsafe") return async (query: string, values?: unknown[]) => {
+                const result = await unsafe(query, values);
+                if (!reservation && query.replace(/\s+/g, " ").trim()
+                  === "SELECT status, protocol FROM runs WHERE id = $1 LIMIT 1 FOR KEY SHARE"
+                  && values?.[0] === value.runId) {
+                  reservation = true;
+                  reservationTransactions += 1;
+                  const rows = await unsafe(`SELECT c.id::text AS claim_id,d.lease_expires_at
+                    FROM claim_log c JOIN recovery_dispatch_deliveries d ON d.run_id=c.run_id
+                      AND d.story_id=c.story_id
+                    WHERE c.run_id=$1 AND c.outcome IS NULL AND d.dispatch_id=$2`,
+                  [value.runId, dispatch.dispatchId]);
+                  assert.equal(rows.length, 1);
+                  reservationClaimIds.push(rows[0].claim_id);
+                  const deadline = new Date(rows[0].lease_expires_at).getTime();
+                  if (originalReservationLease === undefined) originalReservationLease = deadline;
+                  assert.equal(deadline, originalReservationLease, "retry must not extend its original delivery lease");
+                }
+                return result;
+              };
+              const member = Reflect.get(target, key);
+              return typeof member === "function" ? member.bind(target) : member;
+            },
+            apply(target, thisArg, queryArgs) {
+              const parts = queryArgs[0] as TemplateStringsArray;
+              const text = Array.isArray(parts) ? parts.join(" ").replace(/\s+/g, " ") : "";
+              if (!reservation || !text.includes("FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE FOR UPDATE")) {
+                return Reflect.apply(target, thisArg, queryArgs);
+              }
+              return (async () => {
+                if (!holder) {
+                  let acquired!: () => void, acquisitionFailed!: (error: unknown) => void;
+                  const ready = new Promise<void>((resolve, reject) => { acquired = resolve; acquisitionFailed = reject; });
+                  const gate = new Promise<void>(resolve => { releaseHolder = resolve; });
+                  holder = database.sql.begin(async held => {
+                    await held.unsafe("SELECT singleton FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE FOR UPDATE");
+                    acquired();
+                    await gate;
+                  });
+                  // Observe acquisition errors without replacing the real result.
+                  void holder.catch(acquisitionFailed);
+                  await ready;
+                }
+                await unsafe("SET LOCAL lock_timeout='100ms'");
+                return Reflect.apply(target, thisArg, queryArgs);
+              })();
+            },
+          });
+          return callback(forwarded);
+        };
+        return Reflect.apply(originalBegin, pool, args).catch(async (error: unknown) => {
+          // postgres.js rejects begin only after rollback. Release contention
+          // here, never in the failed transaction callback or by fake SQL.
+          if (reservation && (error as { code?: string })?.code === "55P03") {
+            lockTimeouts += 1;
+            if (mode === "transient_head_lock" && lockTimeouts === 1) {
+              releaseHolder?.();
+              await holder;
+            }
+          }
+          throw error;
+        });
+      }) as typeof pool.begin);
+      restoreBegin = () => replacement.mock.restore();
+    }
+    let successor: Awaited<ReturnType<typeof claimStep>>;
+    try {
+      successor = await invokeSuccessor();
+    } finally {
+      restoreBegin?.();
+      releaseHolder?.();
+      await holder;
+    }
+    if (contention) {
+      if (mode === "transient_head_lock") assert.equal(successor.found, true,
+        "the genuine successor must survive one rolled-back PostgreSQL lock timeout");
+      assert.equal(lockTimeouts, mode === "transient_head_lock" ? 1 : 2,
+        "contention must produce actual PostgreSQL SQLSTATE 55P03 after rollback");
+      assert.equal(reservationTransactions, 2, "one real lock timeout permits only one additional reservation BEGIN");
+      assert.equal(new Set(reservationClaimIds).size, 1, "both reservation transactions must retain the exact published claim");
+      const afterDelivery = await deliveries.findDelivery(dispatch.dispatchId);
+      assert.equal(new Date(afterDelivery!.leaseExpiresAt!).getTime(), originalReservationLease);
+      assert.equal(afterDelivery!.dispatchId, dispatch.dispatchId);
+      assert.equal(afterDelivery!.revisionId, revision.revisionId);
+      const born = await database.sql<Array<{ attempt_id: string; claim_id: string; slice_hash: string }>>`
+        SELECT attempt_id,claim_id::text,slice_hash FROM execution_attempts
+        WHERE run_id=${value.runId} AND recovery_dispatch_id=${dispatch.dispatchId}`;
+      const attemptCountAfter = await database.sql<Array<{ count: number }>>`
+        SELECT count(*)::integer AS count FROM execution_attempts WHERE run_id=${value.runId}`;
+      assert.equal(attemptCountAfter[0]!.count - attemptCountBefore[0]!.count, mode === "persistent_head_lock" ? 0 : 1);
+      if (mode === "persistent_head_lock") {
+        assert.equal(successor.found, false);
+        assert.equal(born.length, 0);
+        assert.equal(afterDelivery!.attemptId, undefined);
+        const refusal = await database.sql<Array<{ code: string; state: string; pid: number | null }>>`
+          SELECT o.evidence::jsonb->>'code' AS code,r.state,r.pid FROM run_observations o
+          JOIN runtime_sessions r ON r.run_id=o.run_id AND r.claim_id=${Number(reservationClaimIds[0])}
+          WHERE o.run_id=${value.runId} AND o.phase='v3-recovery-claim'
+            AND o.evidence::jsonb->>'code'='V3_RECOVERY_ATTEMPT_RESERVATION_FAILED'`;
+        assert.equal(refusal.length, 1);
+        assert.equal(refusal[0]!.state, "reserved");
+        assert.equal(refusal[0]!.pid, null);
+        return;
+      }
+      assert.equal(born.length, 1);
+      assert.equal(born[0]!.claim_id, reservationClaimIds[0]);
+      assert.equal(born[0]!.attempt_id, successor.attempt!.attemptId);
+      assert.equal(born[0]!.slice_hash, afterDelivery!.executionSliceHash);
+    }
     const recoveryStories = await database.sql<Array<{ story_branch: string | null }>>`
       SELECT story_branch FROM stories WHERE run_id=${value.runId} AND story_id='US-001'`;
     const recoveryBranch = recoveryStories[0]?.story_branch;
@@ -2428,5 +2561,14 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
   it("native review R2 reloads after real recovery renewal and refuses expired or crossed owners", async () => {
     await runNativeRepairReviewScenario("renewed_lease");
   });
+
+  it("native recovery reservation retries one rolled-back PostgreSQL admission-head lock timeout", async () => {
+    await runNativeRepairReviewScenario("transient_head_lock");
+  });
+
+  it("native recovery reservation refuses persistent PostgreSQL admission-head contention without attempt birth", async () => {
+    await runNativeRepairReviewScenario("persistent_head_lock");
+  });
+
 
 });
