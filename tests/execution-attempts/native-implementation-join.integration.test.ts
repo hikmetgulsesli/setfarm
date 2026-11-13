@@ -9,7 +9,7 @@ import { createArtifactIndex } from "../../src/product-compiler/artifact-index.j
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
 import { IndexedArtifactPublisher, bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
 import { createRuntimeArtifactReader } from "../../src/product-compiler/runtime-artifact-reader.js";
-import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
 import { createV3PreparationBlockRepository } from "../../src/execution/v3-preparation-block-repository.js";
 import { createV3PreparationClaimAuthorityV2 } from "../../src/execution/v3-preparation-claim-authority-v2.js";
@@ -92,6 +92,47 @@ describe("inactive native implementation preparation join", { concurrency: 1 }, 
           for (const [key, value] of Object.entries(previousEnvironment)) {
             if (value === undefined) delete process.env[key]; else process.env[key] = value;
           }
+        }
+      }
+    }
+  });
+
+  it("native VERIFY preserves V3 story acceptance using persisted protocol", async () => {
+    const { verifyStory } = await import("../../src/installer/repo.js");
+    // This is a writer fixture, not authenticated implementation acceptance.
+    // The bytes have the native record shape; no producer/claim is manufactured.
+    const canonical = canonicalJsonStringify({ schema: "setfarm.v3-story-acceptance-record.v1", storyId: "US-001",
+      attemptId: "ATT_verify-writer", packetHash: "a".repeat(64), sliceHash: "b".repeat(64),
+      sourceRevision: { sha: "c".repeat(40), treeHash: "d".repeat(40) },
+      evidenceBundleRef: `setfarm://evidence-bundle/${"e".repeat(64)}`, findingSetRef: null,
+      aggregateVerdict: "pass", failureClass: null, agentOutputHash: "f".repeat(64) });
+    const releaseSha = NATIVE_JOIN_PRODUCER.codeSha;
+    const admissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+    for (const protocol of ["v3", "legacy", "shadow"]) {
+      const runId = `run-verify-writer-${protocol}`;
+      await database.sql`INSERT INTO runs (id,workflow_id,task,status,protocol,compiler_release_sha,
+        activation_preflight_hash,release_admission_hash)
+        VALUES (${runId},'feature-dev','verify writer fixture','completed',${protocol},${releaseSha},
+          ${protocol !== "legacy" ? "a".repeat(64) : null},${protocol === "v3" ? admissionHash : null})`;
+      const cases = protocol === "v3"
+        ? [canonical, "not acceptance JSON", null, "STATUS: retry"]
+        : [canonical, "STATUS: retry", "ordinary implementation output"];
+      for (const [index, output] of cases.entries()) {
+        const storyId = `${runId}-${index}`;
+        await database.sql`INSERT INTO stories (id,run_id,story_index,story_id,title,output)
+          VALUES (${storyId},${runId},${index},${`US-${index + 1}`},'verify writer fixture',${output})`;
+        const report = (protocol === "v3" && index !== 3) || index === 0 ? "STATUS: done" : undefined;
+        await verifyStory(storyId, report);
+        const rows = await database.sql`SELECT status,output FROM stories WHERE id=${storyId}`;
+        assert.equal(rows[0]?.status, "verified");
+        if (protocol === "v3") {
+          assert.equal(rows[0]?.output, output, "VERIFY must preserve all persisted V3 output bytes");
+        } else if (index === 0) {
+          assert.equal(rows[0]?.output, "STATUS: done", "persisted protocol wins over acceptance-looking bytes");
+        } else if (index === 1) {
+          assert.equal(rows[0]?.output, "STATUS: verified\nVERIFICATION_SUMMARY: Story verified by Setfarm gates; stale failure output cleared.");
+        } else {
+          assert.equal(rows[0]?.output, output);
         }
       }
     }

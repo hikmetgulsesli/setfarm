@@ -161,8 +161,9 @@ export function verifiedStoryOutput(existingOutput: string | null | undefined, v
 }
 
 export async function verifyStory(storyId: string, verificationOutput?: string): Promise<void> {
-  const row = await pgGet<{ run_id: string; output: string | null }>("SELECT run_id, output FROM stories WHERE id = $1", [storyId]);
-  const replacementOutput = verifiedStoryOutput(row?.output, verificationOutput);
+  const row = await pgGet<{ run_id: string; output: string | null; protocol: string }>(
+    "SELECT s.run_id, s.output, r.protocol FROM stories s JOIN runs r ON r.id = s.run_id WHERE s.id = $1", [storyId]);
+  const replacementOutput = row?.protocol === "v3" ? null : verifiedStoryOutput(row?.output, verificationOutput);
   if (replacementOutput !== null) {
     await pgRun("UPDATE stories SET status = 'verified', output = $1, updated_at = $2 WHERE id = $3",
       [replacementOutput, now(), storyId]);
