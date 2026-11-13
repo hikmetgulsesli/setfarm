@@ -46,6 +46,8 @@ const P3_RECOVERY_LIFECYCLE_TEST_FILE_V1 = "tests/findings/v3-recovery-lifecycle
 const P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1 = Object.freeze(["0/3", "1/3", "2/3"] as const);
 const P3_TRACKED_SCOPE = new Set([
   "scripts/run-isolated-postgres-tests.ts",
+  "src/installer/repo.ts",
+  "tests/execution-attempts/native-implementation-join.integration.test.ts",
   "src/db-pg.ts",
   "src/db/contract-spine-migrations.ts",
   "src/db/contract-spine-migration-source-integrity.ts",
@@ -185,6 +187,15 @@ function commandArguments(): string[] {
   ] as const;
   if (command.length === fixedNativeLineageCommand.length
     && command.every((cell, index) => cell === fixedNativeLineageCommand[index])) {
+    return command;
+  }
+  const fixedNativeFallbackVerificationCommand = [
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "--test-name-pattern=^native Task11 accepted operational fallback remains the model source owner after cleanup$",
+    "tests/execution-attempts/native-implementation-join.integration.test.ts",
+  ] as const;
+  if (command.length === fixedNativeFallbackVerificationCommand.length
+    && command.every((cell, index) => cell === fixedNativeFallbackVerificationCommand[index])) {
     return command;
   }
   const fixedFinalCompilerCommand = [

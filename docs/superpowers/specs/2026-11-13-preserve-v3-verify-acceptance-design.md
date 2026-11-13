@@ -16,7 +16,7 @@ Actual persisted V3 accepted native fallback output survives `verifyStory(id, no
 
 ## File Map
 
-- `scripts/run-isolated-postgres-tests.ts`: one exact closed selector for the existing accepted native fallback scenario and exact two-file source-scope additions (`src/installer/repo.ts`, existing native integration test) necessary to project current edited bytes; existing six-cell grammar/security checks unchanged. Add focused parser acceptance/near-miss rejection coverage in its maintained test seam.
+- `scripts/run-isolated-postgres-tests.ts`: one exact closed selector for the existing accepted native fallback scenario and exact two-file source-scope additions (`src/installer/repo.ts`, existing native integration test) necessary to project current edited bytes; existing six-cell grammar/security checks unchanged. Add focused parser acceptance/near-miss rejection coverage in `scripts/__tests__/isolated-postgres-command.test.js` (existing private pure parser seam).
 - `src/installer/repo.ts`: protocol-aware verification writer only.
 - `tests/execution-attempts/native-implementation-join.integration.test.ts`: actual persisted writer/native authority regression and legacy controls in maintained fixture.
 - `tests/steps/07-verify.test.ts`: existing pure legacy controls, unchanged unless necessary.

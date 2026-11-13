@@ -16,7 +16,7 @@ Single existing writer; preserve all evidence; no live DB/service/generated-proj
 
 ### Task 1: Preserve acceptance in the actual verification writer
 
-**Files:** Modify `scripts/run-isolated-postgres-tests.ts` only to admit the fixed exact accepted fallback selector; add parser acceptance/near-miss tests in maintained seam. Modify `src/installer/repo.ts`; test `tests/execution-attempts/native-implementation-join.integration.test.ts`. Existing legacy helper controls: `tests/steps/07-verify.test.ts`.
+**Files:** Modify `scripts/run-isolated-postgres-tests.ts` only to admit the fixed exact accepted fallback selector; add parser acceptance/near-miss tests in `scripts/__tests__/isolated-postgres-command.test.js`. Root commits these harness changes before the real SQL test, leaving only allowlisted native test and writer dirty. Modify `src/installer/repo.ts`; test `tests/execution-attempts/native-implementation-join.integration.test.ts`. Existing legacy helper controls: `tests/steps/07-verify.test.ts`.
 
 **Interfaces:** Existing `verifyStory(storyId: string, verificationOutput?: string): Promise<void>` signature unchanged; consumes actual persisted run.protocol. Produces verified status and unchanged V3 output, existing non-V3 replacement.
 
@@ -32,7 +32,7 @@ assert.equal(after[0]?.output, before[0]?.output);
 assert.deepEqual(await loadV3ImplementationAttemptContext(acceptedLocator), acceptedContext);
 ```
 
-- [ ] Run only the selected regression through the maintained isolated PostgreSQL runner, save exact command/result privately. Genuine RED must show output clobber, not fixture/setup failure. Inspect existing runner allowlist/selector before running; do not weaken guards or run the whole integration file.
+- [ ] Use a private copy of prior `E7/task-1-pg-capture.mjs`, rebound only to this evidence directory and exact selector/file, to create an owned local ephemeral PostgreSQL cluster, redact its fresh random password and close it normally. Run only the selected regression through the maintained isolated PostgreSQL runner, save exact command/result privately. Genuine RED must show output clobber, not fixture/setup failure. Inspect existing runner allowlist/selector before running; do not weaken guards or run the whole integration file.
 - [ ] Minimal writer: query story joined to runs for persisted protocol, then bypass textual replacement for V3.
 
 ```ts
