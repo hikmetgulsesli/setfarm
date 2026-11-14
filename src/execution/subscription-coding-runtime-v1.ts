@@ -5,7 +5,7 @@ import type { SubscriptionAttemptBrokerV1, SubscriptionAttemptBrokerStopV1,
 import type { SubscriptionAttemptIdentityV1 } from './subscription-attempt-launch-material-v1.js';
 import { SubscriptionCodingWorkerStartupErrorV1, type SubscriptionCodingOwnedWorkerV1, type SubscriptionCodingPartialOwnedWorkerV1,
   type SubscriptionCodingWorkerOutputV1 } from './subscription-coding-worker-v1.js';
-import { buildSubscriptionCodingMaterialV1, SUBSCRIPTION_CODING_LIMITS_V1,
+import { buildSubscriptionCodingMaterialV1, SUBSCRIPTION_CODING_LIMITS_V1, subscriptionCodingLimitsV1,
   type SubscriptionCodingMaterialV1 } from './subscription-coding-policy-v1.js';
 import { narrowSubscriptionCodingWorkerMaterialV1, type SubscriptionCodingWriteGrantV1 } from './subscription-coding-worker-policy-v1.js';
 import { createSubscriptionRuntimeAttachmentV1, isSubscriptionRuntimeCanonicalPathV1,
@@ -307,7 +307,8 @@ export async function acquireSubscriptionCodingRuntimeV1(
   }
   try {
     if (stopping) refuse();
-    const acquiredBroker = await duringAcquisition(acquisition.acquireBroker({ identity, limits: SUBSCRIPTION_CODING_LIMITS_V1, signal: input.signal }), retainBroker);
+    const acquiredBroker = await duringAcquisition(acquisition.acquireBroker({ identity,
+      limits: subscriptionCodingLimitsV1(identity.modelRef, input.requestProfile), signal: input.signal }), retainBroker);
     // The launch builder immediately below validates all ten broker-worker
     // fields, including the exact three-field identity projection.
     if (stopping) refuse();
