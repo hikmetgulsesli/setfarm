@@ -3,11 +3,11 @@
 ## Objective and evidence
 
 Run the same reviewed playable game task through the existing annual MiniMax
-primary profile after the current Kimi case repeatedly fails in transport.
+primary profile after the current Kimi case repeatedly has infrastructure retries under the local request deadline.
 Run `cd7728be-59bf-48c6-9d5e-28d447148405` has four infrastructure retries;
 their original broker records identify `REQUEST_TIMEOUT`. The local 120-second
 per-exchange deadline is proven; the underlying provider/network/request phase
-is unknown. This change does not claim to repair that transport failure.
+is unknown. This change does not claim to repair that request failure.
 
 Existing selected profiles already support MiniMax primary with Kimi fallback.
 PLAN continues to use its selected primary profile. The fixed recipe selects
@@ -21,7 +21,7 @@ suite's existing game holdout slot, assigning the existing MiniMax execution
 profile. Preserve the other seven cases, suite identity, configuration and
 budgets. The task and oracle must match across the two suites.
 
-Continuing Kimi remains possible, but repeated transport failures have not
+Continuing Kimi remains possible, but repeated infrastructure retries have not
 produced a product plan. Changing a captured live profile or making PLAN use a
 fallback would change runtime policy. A clean selected MiniMax primary run uses
 the current supported contracts and tests the same product requirement.
