@@ -16,7 +16,7 @@ const Positive = Count.refine(value => value > 0);
 const Time = z.string().datetime().refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value);
 const Absolute = z.string().min(1).max(4096).refine(value => path.isAbsolute(value) && path.normalize(value) === value && !/[\u0000-\u001f\u007f]/.test(value));
 const RunId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/);
-const CatalogCaseId = z.enum(["utility-status-baseline", "utility-preference-compositional", "operations-work-baseline", "operations-queue-paraphrase", "game-start-baseline", "game-restart-compositional", "negative-ambiguous-product", "negative-unsupported-kernel"]);
+const CatalogCaseId = z.enum(["utility-status-baseline", "utility-preference-compositional", "operations-work-baseline", "operations-queue-paraphrase", "game-start-baseline", "game-restart-compositional", "game-playable-compositional-v2", "negative-ambiguous-product", "negative-unsupported-kernel"]);
 const CaseId = z.string().refine(value => CatalogCaseId.safeParse(value).success);
 const Phase = z.enum(["starting", "acquired", "preflight", "admission", "case_start", "case_running", "case_collect", "publishing", "finalizing", "settling", "released", "closed", "ownership_unknown"]);
 const FatalCode = z.enum(["CONTROL_CHANNEL_INVALID", "CONTROL_CHANNEL_UNAVAILABLE", "CONTROL_JOURNAL_FAILED", "CONTROL_CUSTODY_UNCERTAIN", "CONTROL_BINDING_FAILED", "CONTROL_START_UNRESOLVED", "CONTROL_PROMOTION_UNCERTAIN", "CONTROL_SETTLEMENT_UNCERTAIN"]);
