@@ -82,10 +82,13 @@ function buildV3Prompt(ctx: PromptContext): string {
     "",
     "## Proposal rules",
     "- Choose exactly one decision: proposal or typed rejection.",
-    `- For a proposal, emit exactly one ${proposalFence} JSON fence. Pretty or unsorted JSON is allowed.`,
+    `- For a proposal, emit exactly one ${proposalFence} JSON fence. ${atomicBuildProposal
+      ? "Use compact JSON without indentation or extra whitespace; keys may be unsorted."
+      : "Pretty or unsorted JSON is allowed."}`,
     ...(atomicBuildProposal
       ? [
           "- The envelope schema is setfarm.plan-product-build-proposal.v1. Put the complete PlanSemanticProposalV2 under semantics and the complete setfarm.plan-runtime-behavior-proposal.v1 under runtimeBehavior; never emit either half as a separate fence.",
+          "- Use the smallest proposal that fully preserves the task: concise statements and independently necessary observables. Reference existing declarations by their local keys while keeping distinct semantic nodes distinct. Preserve every requirement and classification, required schema field, per-action after assertion, durable-write reload witness, invariant binding, and the complete runtimeBehavior half. Omit explanatory narrative and redundant confirmations; finish the single complete envelope.",
           "- Bind every semantics.states[].invariants occurrence exactly once by stateKey plus zero-based invariantOrdinal. Use runtime_assertions for executable state predicates, structured_semantic_coverage only when an exact declared delta/precondition/observable/persistence intent already enforces it, and non_runtime_requirement only for constraint/non-goal requirements with exact local evidence refs.",
           "- Runtime assertion subjects are relative to their owning state; do not repeat a state key inside the subject. Use only the code-owned predicate operators and checkpoints admitted by the schema.",
           "- runtime_assertions must hold in the declared initial state and at every initial, after_action, and after_rehydration checkpoint. A value that becomes true only after an action is not an unconditional runtime invariant.",
