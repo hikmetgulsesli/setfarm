@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { evaluateTaskIntentOracleTaskBindingV1 } from "../../src/evals/task-intent-oracle.js";
 import { ProductConvergenceSuiteV1Schema } from "../../src/evals/suite-schema.js";
 
-test("subscription convergence suite preserves all original case and oracle contracts under a distinct model identity", () => {
+test("MiniMax fixed suite preserves the seven unchanged cases and suite configuration", () => {
   const read = (name: string) => JSON.parse(readFileSync(new URL(`../../evals/suites/${name}.json`, import.meta.url), "utf8"));
   const original = ProductConvergenceSuiteV1Schema.parse(read("product-convergence-v1"));
   const subscription = ProductConvergenceSuiteV1Schema.parse(read("product-convergence-minimax-m31-flash-v1"));
@@ -15,30 +15,35 @@ test("subscription convergence suite preserves all original case and oracle cont
   }
   const withoutIdentity = ({ suiteId: _suiteId, cases, ...rest }: typeof original) => ({
     ...rest,
-    cases: cases.map(({ executionProfile: _executionProfile, ...entry }) => entry),
+    cases: cases.filter(entry => !["game-restart-compositional", "game-playable-compositional-v2"].includes(entry.caseId))
+      .map(({ executionProfile: _executionProfile, ...entry }) => entry),
   });
   assert.deepEqual(withoutIdentity(subscription), withoutIdentity(original));
 });
 
-test("Kimi fixed suite preserves seven cases while exercising the playable holdout contract", () => {
+for (const [model, suiteName, profile] of [
+  ["Kimi", "product-convergence-kimi-k31-pro-v1", { providerId: "kimi", modelId: "kimi/k3.1-pro" }],
+  ["MiniMax", "product-convergence-minimax-m31-flash-v1", { providerId: "minimax", modelId: "minimax/MiniMax-M3.1-Flash" }],
+] as const) {
+test(`${model} fixed suite preserves seven cases while exercising the playable holdout contract`, () => {
   const read = (name: string) => JSON.parse(readFileSync(new URL(`../../evals/suites/${name}.json`, import.meta.url), "utf8"));
-  const baseline = ProductConvergenceSuiteV1Schema.parse(read("product-convergence-minimax-m31-flash-v1"));
-  const kimi = ProductConvergenceSuiteV1Schema.parse(read("product-convergence-kimi-k31-pro-v1"));
-  const game = kimi.cases.find(entry => entry.caseId === "game-playable-compositional-v2");
+  const baseline = ProductConvergenceSuiteV1Schema.parse(read("product-convergence-v1"));
+  const suite = ProductConvergenceSuiteV1Schema.parse(read(suiteName));
+  const game = suite.cases.find(entry => entry.caseId === "game-playable-compositional-v2");
   assert.ok(game, "reviewed playable game holdout is missing");
-  assert.equal(kimi.cases.length, 8);
-  const contracts = (cases: typeof kimi.cases) => cases.map(({ executionProfile: _profile, ...entry }) => entry);
-  assert.deepEqual(contracts(kimi.cases.filter(entry => entry !== game)),
+  assert.equal(suite.cases.length, 8);
+  const contracts = (cases: typeof suite.cases) => cases.map(({ executionProfile: _profile, ...entry }) => entry);
+  assert.deepEqual(contracts(suite.cases.filter(entry => entry !== game)),
     contracts(baseline.cases.filter(entry => entry.caseId !== "game-restart-compositional")));
   const { cases: _baselineCases, suiteId: _baselineId, ...baselineConfig } = baseline;
-  const { cases: _kimiCases, suiteId: _kimiId, ...kimiConfig } = kimi;
-  assert.deepEqual(kimiConfig, baselineConfig);
-  for (const entry of kimi.cases) assert.deepEqual(entry.executionProfile, { providerId: "kimi", modelId: "kimi/k3.1-pro" });
+  const { cases: _suiteCases, suiteId: _suiteId, ...suiteConfig } = suite;
+  assert.deepEqual(suiteConfig, baselineConfig);
+  for (const entry of suite.cases) assert.deepEqual(entry.executionProfile, profile);
   assert.equal(game.oracle.cohort, "holdout");
   assert.equal(game.oracle.variant, "compositional");
   assert.deepEqual(evaluateTaskIntentOracleTaskBindingV1(game.task, game.oracle).mismatchCodes, []);
   // A copied oracle must not silently authorize a changed task.
-  assert.equal(ProductConvergenceSuiteV1Schema.safeParse({ ...kimi, cases: kimi.cases.map(entry => entry === game
+  assert.equal(ProductConvergenceSuiteV1Schema.safeParse({ ...suite, cases: suite.cases.map(entry => entry === game
     ? { ...game, task: game.task.replace("one point", "two points") } : entry) }).success, false);
   const actions = game.oracle.expectations.filter(entry => entry.kind === "action");
   assert.deepEqual(actions.map(entry => entry.control.label?.expected).sort(),
@@ -54,4 +59,16 @@ test("Kimi fixed suite preserves seven cases while exercising the playable holdo
   assert.ok(collect.observableAssertions.some(assertion => assertion.phase === "reload" && assertion.property === "visible_text" && assertion.expected === "High score: 1"));
   assert.ok(game.oracle.expectations.some(entry => entry.kind === "surface" && entry.surfaceKind === "canvas" && entry.routePath === "/play"));
   assert.ok(game.oracle.expectations.some(entry => entry.kind === "surface" && entry.surfaceKind === "overlay"));
+});
+}
+
+test("both selected model recipes expose the identical playable task and oracle", () => {
+  const games = ["product-convergence-kimi-k31-pro-v1", "product-convergence-minimax-m31-flash-v1"].map(name => {
+    const suite = ProductConvergenceSuiteV1Schema.parse(JSON.parse(readFileSync(new URL(`../../evals/suites/${name}.json`, import.meta.url), "utf8")));
+    const game = suite.cases.find(entry => entry.caseId === "game-playable-compositional-v2");
+    assert.ok(game, "reviewed playable game holdout is missing");
+    const { executionProfile: _profile, ...contract } = game;
+    return contract;
+  });
+  assert.deepEqual(games[0], games[1]);
 });
