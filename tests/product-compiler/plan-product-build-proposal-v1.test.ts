@@ -6,6 +6,7 @@ import {
   compilePlanProductBuildProposalV1,
   verifyPlanProductBuildAuthorityV1,
 } from "../../src/product-compiler/producers/plan-product-build-proposal-v1.js";
+import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import {
   evaluateProductRuntimeBehaviorContractV1,
 } from "../../src/product-compiler/product-runtime-behavior-contract-v1.js";
@@ -18,6 +19,7 @@ import {
 import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
+  containedGamePlanProductBuildProposalV1,
 } from "./fixtures/product-semantics-v2.js";
 
 function structuredEnvelope(): PlanProductBuildProposalV1 {
@@ -120,6 +122,37 @@ function assertRecursivelyFrozen(value: unknown): void {
 }
 
 describe("PlanProductBuildProposalV1", () => {
+  it("admits a surface-bound rendering constraint without introducing a timer action", () => {
+    const task = CONTAINED_GAME_TASK + "\nUse an internal requestAnimationFrame loop only to paint the game canvas while playing, without invoking a product action or changing declared application or domain state.";
+    const ledger = extractTaskRequirementLedgerV1(task);
+    const envelope = containedGamePlanProductBuildProposalV1();
+    const requirement = ledger.requirements.at(-1)!;
+    envelope.semantics.sourceTaskHash = ledger.sourceHash;
+    envelope.semantics.requirements.push({
+      id: requirement.id,
+      classification: "constraint",
+      expectedSemanticKinds: ["surface"],
+    });
+    envelope.semantics.surfaces.find(surface => surface.key === "game_canvas")!.requirementRefs.push(requirement.id);
+    const result = compilePlanProductBuildProposalV1({ task, proposal: envelope });
+    assert.equal(result.status, "shadow_compiled", result.status === "rejected" ? JSON.stringify(result.diagnostics) : undefined);
+    if (result.status !== "shadow_compiled") throw new Error("Expected admitted rendering constraint");
+    assert.equal(result.productSpec.requirements?.find(entry => entry.id === requirement.id)?.classification, "constraint");
+    assert.ok(result.productSpec.traceability?.bindings.some(binding => binding.semanticKind === "surface"
+      && binding.semanticRef === "SURF_GAME_CANVAS" && binding.requirementRefs.includes(requirement.id)));
+    assert.equal(result.productSpec.actions.length, 1);
+    assert.equal(result.productSpec.actions[0]!.trigger.kind, "user");
+    assert.equal(result.productSpec.actions[0]!.invocationInterface.kind, "rendered_control");
+
+    // Scheduling is not authority for a semantic timer trigger.
+    const invalid = structuredClone(envelope);
+    invalid.semantics.actions[0]!.trigger = { kind: "timer" };
+    const rejected = compilePlanProductBuildProposalV1({ task, proposal: invalid });
+    assert.equal(rejected.status, "rejected");
+    if (rejected.status !== "rejected") throw new Error("Timer action must remain unsupported");
+    assert.ok(rejected.diagnostics.some(diagnostic => diagnostic.message.includes("INVOCATION_INTERFACE_RENDERED_TRIGGER_MISMATCH")));
+  });
+
   it("atomically compiles semantic and behavior authority through one local-key map", () => {
     const envelope = structuredEnvelope();
     const result = compileOrThrow(envelope);
