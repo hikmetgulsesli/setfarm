@@ -64,7 +64,7 @@ test('MiniMax PLAN allocates complete-report capacity while preserving other lau
   const plan=build({...input,requestProfile:'plan-report-v1'} as never);
   assert.deepEqual(plan.argv,[...normal.argv,'--thinking','low']);
   const config=JSON.parse(plan.files[0].contents);
-  assert.equal(config.models.providers.minimax.models[0].maxTokens,16384);
+  assert.equal(config.models.providers.minimax.models[0].maxTokens,32768);
   assert.deepEqual(validateSubscriptionCodingWorkerMaterialV1(plan).material,plan);
   config.models.providers.minimax.models[0].maxTokens=8192;
   assert.deepEqual({...plan,argv:normal.argv,files:plan.files.map((file,index)=>index===0
@@ -78,7 +78,7 @@ test('MiniMax PLAN allocates complete-report capacity while preserving other lau
 test('worker refuses a default MiniMax material forged with PLAN output capacity',()=>{
   const tampered=JSON.parse(JSON.stringify(build(fixture('minimax/MiniMax-M3.1-Flash'))));
   const config=JSON.parse(tampered.files[0].contents);
-  config.models.providers.minimax.models[0].maxTokens=16384;
+  config.models.providers.minimax.models[0].maxTokens=32768;
   tampered.files[0].contents=JSON.stringify(config,null,2)+'\n';
   assert.throws(()=>validateSubscriptionCodingWorkerMaterialV1(tampered),
     {message:'SUBSCRIPTION_CODING_WORKER_REFUSED'});

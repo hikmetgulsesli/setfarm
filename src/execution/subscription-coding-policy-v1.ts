@@ -11,7 +11,7 @@ export const SUBSCRIPTION_CODING_LIMITS_V1: SubscriptionAttemptBrokerLimitsV1 = 
   maxSseEventBytes: 262144, attemptMs: 1800000, requestMs: 120000, idleMs: 60000,
 });
 const MINIMAX_PLAN_CODING_LIMITS_V1: SubscriptionAttemptBrokerLimitsV1 = Object.freeze({
-  ...SUBSCRIPTION_CODING_LIMITS_V1, maxOutputTokens: 16384,
+  ...SUBSCRIPTION_CODING_LIMITS_V1, maxOutputTokens: 32768, requestMs: 240000,
 });
 /** Fixed DATA allocation only; selected runtime admission owns PLAN provenance. */
 export function subscriptionCodingLimitsV1(
