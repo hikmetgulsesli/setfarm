@@ -22,7 +22,7 @@ No new timer/system invocation ABI, automatic state source, animation proof clai
 
 - [x] Capture actual e2fc model-authored clarification and distinguish infrastructure retries; preserve failed run and all closed observer originals.
 - [x] Run a bounded pre-edit real compiler experiment with an added renderer constraint: accepted shadow_compiled; timer-trigger mutation rejected by existing rendered-trigger mismatch. This is characterization, not a compiler RED.
-- [ ] Add the characterization to the existing atomic compiler file, checking source-bound constraint and exact user invocation, then mutate trigger to timer and assert rejection.
+- [x] Add the characterization to the existing atomic compiler file, checking source-bound constraint and exact user invocation, then mutate trigger to timer and assert rejection.
 
 ```ts
 const task = CONTAINED_GAME_TASK + '\nUse an internal requestAnimationFrame loop only to paint the game canvas while playing, without invoking a product action or changing declared application or domain state.';
@@ -39,7 +39,11 @@ invalid.semantics.actions[0]!.trigger = { kind: 'timer' };
 assert.equal(compilePlanProductBuildProposalV1({ task, proposal: invalid }).status, 'rejected');
 ```
 
-- [ ] Add the precise native prompt paragraph: rendered scheduling reads declared state and paints presentation; it is not a timer/system product action unless it invokes product behavior or changes application/domain state. Keep exact constraint/surface provenance and require typed refusal for unsupported automatic gameplay state sources.
-- [ ] Run `node --import tsx --test tests/product-compiler/plan-product-build-proposal-v1.test.ts` and `npx tsc --noEmit -p tsconfig.json`; retain actual results. No broad database suite or prompt-wording mirror test.
+- [x] Add the precise native prompt paragraph: rendered scheduling reads declared state and paints presentation; it is not a timer/system product action unless it invokes product behavior or changes any declared semantic state, including UI/session state. Keep exact constraint/surface provenance and require typed refusal for unsupported automatic gameplay state sources.
+- [x] Run `node --import tsx --test tests/product-compiler/plan-product-build-proposal-v1.test.ts` and `npx tsc --noEmit -p tsconfig.json`; retain actual results. No broad database suite or prompt-wording mirror test.
 - [ ] Obtain independent scope/whole-diff reviews, commit/push the scoped branch and inspect GitHub exact-head review before protected normal merge.
 - [ ] Build clean canonical main, preserve nineteen existing run histories and use the existing guarded rollout. Admit one new clean unchanged playable-v2 task only after actual service identity/preflight. Inspect the actual result before claiming improved planning or playable software.
+
+## Actual validation
+
+The real atomic compiler file passed 10/10 both before and after the prompt paragraph. TypeScript session79618 closed exit0 with empty output. Task and whole-diff reviews found no material source issues; the final typecheck exit is recorded in private source-verification-v1.json. This qualifies unchanged compiler boundaries and compilation, not improved model behavior or gameplay.

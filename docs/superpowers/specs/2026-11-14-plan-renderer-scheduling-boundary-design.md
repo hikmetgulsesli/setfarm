@@ -8,7 +8,7 @@ Deployed source already restricts invocation interfaces per product action. It c
 
 ## Decision
 
-Add one precise PLAN prompt paragraph adjacent to the existing invocation rule. The unsupported timer/system boundary applies to semantic product action invocation. Internal renderer scheduling may paint or animate presentation while reading already declared state, without mutating application/domain state or invoking product actions. Represent a task-required rendering mechanism as a constraint with exact surface requirement refs; do not invent a timer/system action or claim that constraint traceability proves animation. Automatic gameplay state mutations still require a supported event-source contract or typed refusal.
+Add one precise PLAN prompt paragraph adjacent to the existing invocation rule. The unsupported timer/system boundary applies to semantic product action invocation. Internal renderer scheduling may paint or animate presentation while reading already declared state, without mutating any declared semantic state (including UI/session state) or invoking product actions. Represent a task-required rendering mechanism as a constraint with exact surface requirement refs; do not invent a timer/system action or claim that constraint traceability proves animation. Automatic gameplay state mutations still require a supported event-source contract or typed refusal.
 
 Alternative task-only clarification would leave the generic boundary ambiguous; a timer ABI would be a wider feature and is unnecessary for this case. Do not add either. QA, evidence ownership, schemas, release/runtime guards, retries, providers and budgets remain unchanged.
 
