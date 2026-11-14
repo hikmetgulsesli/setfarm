@@ -122,6 +122,68 @@ function assertRecursivelyFrozen(value: unknown): void {
 }
 
 describe("PlanProductBuildProposalV1", () => {
+  it("inherits the complete owning-state requirement set for every invariant binding", () => {
+    const envelope = structuredEnvelope();
+    const requirements = envelope.semantics.states[0]!.requirementRefs;
+    assert.equal(requirements.length, 2);
+    const result = compileOrThrow(envelope);
+    assert.deepEqual(
+      [...result.runtimeBehaviorContract.invariantBindings[0]!.requirementRefs].sort(),
+      [...requirements].sort(),
+    );
+  });
+
+  it("requires each structured coverage owner to carry the full inherited requirement set", () => {
+    const envelope = structuredEnvelope();
+    const requirements = envelope.semantics.states[0]!.requirementRefs;
+    const action = envelope.semantics.actions[0]!;
+    const first = action.observables[0]!;
+    const second = action.observables[1]!;
+    envelope.runtimeBehavior.invariantBindings[0]!.disposition = {
+      kind: "structured_semantic_coverage",
+      coverageRefs: [first, second].map(observable => ({
+        kind: "action_observable" as const,
+        actionKey: action.key,
+        observableKey: observable.key,
+      })),
+    };
+    const complete = compileOrThrow(envelope);
+    const disposition = complete.runtimeBehaviorContract.invariantBindings[0]!.disposition;
+    if (disposition.kind !== "structured_semantic_coverage") throw new Error("Expected structured coverage");
+    const observableRefs = new Map(complete.referenceMap.actions[0]!.observables.map(observable =>
+      [observable.observableKey, observable.observableRef]));
+    const missingByRef = new Map([
+      [observableRefs.get(first.key)!, requirements[1]!],
+      [observableRefs.get(second.key)!, requirements[0]!],
+    ]);
+
+    // The union still covers both requirements. Each selected owner must do so
+    // independently; the third observable remains fully traced throughout.
+    first.requirementRefs = [requirements[0]!];
+    second.requirementRefs = [requirements[1]!];
+    const rejected = compilePlanProductBuildProposalV1({
+      task: CONTAINED_GAME_TASK,
+      proposal: envelope,
+    });
+    assert.equal(rejected.status, "rejected");
+    if (rejected.status !== "rejected") throw new Error("Incomplete coverage must be rejected");
+    for (const [index, reference] of disposition.coverageRefs.entries()) {
+      if (reference.kind !== "action_observable") throw new Error("Expected observable coverage");
+      const missing = missingByRef.get(reference.observableRef)!;
+      assert.ok(missing);
+      assert.ok(rejected.diagnostics.some(diagnostic =>
+        diagnostic.code === "PLAN_PRODUCT_BUILD_V1_RUNTIME_BEHAVIOR_REJECTED"
+        && diagnostic.path === `/proposal/runtimeBehavior/proposal/invariantBindings/0/disposition/coverageRefs/${index}`
+        && diagnostic.reference === missing
+        && diagnostic.message === `Structured semantic ref does not carry invariant requirement ${missing}`),
+      JSON.stringify(rejected.diagnostics));
+    }
+
+    first.requirementRefs = [...requirements];
+    second.requirementRefs = [...requirements];
+    compileOrThrow(envelope);
+  });
+
   it("admits a surface-bound rendering constraint without introducing a timer action", () => {
     const task = CONTAINED_GAME_TASK + "\nUse an internal requestAnimationFrame loop only to paint the game canvas while playing, without invoking a product action or changing declared application or domain state.";
     const ledger = extractTaskRequirementLedgerV1(task);
