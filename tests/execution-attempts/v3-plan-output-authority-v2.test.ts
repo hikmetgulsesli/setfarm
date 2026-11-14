@@ -63,6 +63,30 @@ function entityFieldBuildProposal() {
 }
 
 describe("PLAN v3 product semantics v2 output authority", () => {
+  it("admits compact complete atomic reports with the same authority as formatted reports", () => {
+    const proposal = containedGamePlanProductBuildProposalV1();
+    const admit = (value: unknown, indentation?: number) => {
+      const prd = `\`\`\`plan-product-build-proposal-v1\n${JSON.stringify(value, null, indentation)}\n\`\`\``;
+      return resolveV3PlanOutputAuthorityV2({
+        task: CONTAINED_GAME_TASK, parsed: { status: "done", prd },
+        rawOutput: `STATUS: done\nPRD:\n${prd}`,
+      });
+    };
+    const compact = admit(proposal), formatted = admit(proposal, 2);
+    assert.equal(compact.status, "proposal");
+    assert.equal(formatted.status, "proposal");
+    if (compact.status !== "proposal" || formatted.status !== "proposal") throw new Error("Expected atomic authority");
+    assert.equal(compact.sourceTransport, "product_build_proposal_v1");
+    assert.equal(compact.productSpec.actions.length, 1);
+    assert.equal(compact.runtimeBehaviorProposal.invariantBindings.length, 1);
+    assert.equal(compact.canonicalBytes, formatted.canonicalBytes);
+    assert.equal(compact.runtimeBehaviorCanonicalBytes, formatted.runtimeBehaviorCanonicalBytes);
+    assert.deepEqual(compact.planProductBuildAuthority, formatted.planProductBuildAuthority);
+
+    const { runtimeBehavior: _requiredRuntimeHalf, ...incomplete } = proposal;
+    assert.throws(() => admit(incomplete), /V3_PLAN_V2_PRODUCT_BUILD_PROPOSAL_INVALID/u);
+  });
+
   for (const transport of ["atomic", "semantic compatibility"] as const) {
     it(`rejects valid shadow entity-field authority at native PLAN admission: ${transport}`, () => {
       const proposal = entityFieldBuildProposal();
