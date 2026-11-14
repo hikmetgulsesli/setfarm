@@ -59,14 +59,29 @@ test('worker reconstruction accepts emitted Kimi material and refuses disabled t
     { message: 'SUBSCRIPTION_CODING_WORKER_REFUSED' });
 });
 
-test('fixed PLAN report DATA profile requests low thinking without changing model, limits or other launch material', () => {
+test('MiniMax PLAN allocates complete-report capacity while preserving other launch material and default capacity', () => {
   const input=fixture('minimax/MiniMax-M3.1-Flash'),normal=build(input);
   const plan=build({...input,requestProfile:'plan-report-v1'} as never);
   assert.deepEqual(plan.argv,[...normal.argv,'--thinking','low']);
-  assert.deepEqual({...plan,argv:normal.argv},normal);
-  assert.equal(JSON.parse(plan.files[0].contents).models.providers.minimax.models[0].maxTokens,8192);
+  const config=JSON.parse(plan.files[0].contents);
+  assert.equal(config.models.providers.minimax.models[0].maxTokens,16384);
+  assert.deepEqual(validateSubscriptionCodingWorkerMaterialV1(plan).material,plan);
+  config.models.providers.minimax.models[0].maxTokens=8192;
+  assert.deepEqual({...plan,argv:normal.argv,files:plan.files.map((file,index)=>index===0
+    ? {...file,contents:JSON.stringify(config,null,2)+'\n'}:file)},normal);
+  const kimi=build({...fixture(),requestProfile:'plan-report-v1'} as never);
+  assert.equal(JSON.parse(kimi.files[0].contents).models.providers.kimi.models[0].maxTokens,8192);
   assert.equal(SUBSCRIPTION_CODING_LIMITS_V1?.maxOutputTokens,8192);frozen(plan);
   assert.deepEqual(build(input),normal,'omitted profile preserves the existing coding defaults');
+});
+
+test('worker refuses a default MiniMax material forged with PLAN output capacity',()=>{
+  const tampered=JSON.parse(JSON.stringify(build(fixture('minimax/MiniMax-M3.1-Flash'))));
+  const config=JSON.parse(tampered.files[0].contents);
+  config.models.providers.minimax.models[0].maxTokens=16384;
+  tampered.files[0].contents=JSON.stringify(config,null,2)+'\n';
+  assert.throws(()=>validateSubscriptionCodingWorkerMaterialV1(tampered),
+    {message:'SUBSCRIPTION_CODING_WORKER_REFUSED'});
 });
 
 test('PLAN request profile accepts no arbitrary thinking, model, or caller-controlled value', () => {

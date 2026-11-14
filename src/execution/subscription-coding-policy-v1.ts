@@ -10,6 +10,16 @@ export const SUBSCRIPTION_CODING_LIMITS_V1: SubscriptionAttemptBrokerLimitsV1 = 
   maxRequestBytes: 2097152, maxResponseBytes: 8388608, maxTotalResponseBytes: 67108864,
   maxSseEventBytes: 262144, attemptMs: 1800000, requestMs: 120000, idleMs: 60000,
 });
+const MINIMAX_PLAN_CODING_LIMITS_V1: SubscriptionAttemptBrokerLimitsV1 = Object.freeze({
+  ...SUBSCRIPTION_CODING_LIMITS_V1, maxOutputTokens: 16384,
+});
+/** Fixed DATA allocation only; selected runtime admission owns PLAN provenance. */
+export function subscriptionCodingLimitsV1(
+  modelRef: SubscriptionModelRefV1, requestProfile?: 'plan-report-v1',
+): SubscriptionAttemptBrokerLimitsV1 {
+  return modelRef === 'minimax/MiniMax-M3.1-Flash' && requestProfile === 'plan-report-v1'
+    ? MINIMAX_PLAN_CODING_LIMITS_V1 : SUBSCRIPTION_CODING_LIMITS_V1;
+}
 export type SubscriptionCodingMaterialV1 = Omit<SubscriptionAttemptLaunchMaterialV1, 'profile'>
   & Readonly<{ profile: 'subscription-coding-files-v1' }>;
 
@@ -71,7 +81,8 @@ export function buildSubscriptionCodingMaterialV1(
     config.agents.defaults.workspace = worktree;
     config.agents.list[0].workspace = worktree;
     config.agents.defaults.timeoutSeconds = 1800;
-    config.models.providers[base.identity.modelRef === 'kimi/k3.1-pro' ? 'kimi' : 'minimax'].models[0].maxTokens = 8192;
+    config.models.providers[base.identity.modelRef === 'kimi/k3.1-pro' ? 'kimi' : 'minimax'].models[0].maxTokens
+      = subscriptionCodingLimitsV1(base.identity.modelRef, value.requestProfile as 'plan-report-v1' | undefined).maxOutputTokens;
     config.tools.allow = ['read', 'write', 'edit'];
     const argv = [...base.argv];
     argv[argv.length - 1] = '1800';

@@ -113,16 +113,28 @@ test('joint owner publishes preparation before acquisition and binds original pr
   } finally { f.cleanup(); }
 });
 
-test('inert runtime propagates the fixed PLAN DATA profile into the actual hashed worker material',async()=>{
+test('inert runtime gives MiniMax PLAN matching broker and worker capacity within unchanged aggregate limits',async()=>{
   const f=fixture('stage-claim');try{
+    const acquire=f.port.acquireBroker;
+    let limits:unknown;
+    const port={...f.port,async acquireBroker(request:{limits:unknown}){
+      limits=request.limits;
+      return acquire();
+    }};
     const launch=f.port.launchWorker;
-    f.port.launchWorker=async request=>{
+    let workerCapacity:unknown;
+    port.launchWorker=async request=>{
       assert.deepEqual(request.material.argv.slice(-2),['--thinking','low']);
-      assert.equal(JSON.parse(request.material.files[0].contents).models.providers.minimax.models[0].maxTokens,8192);
+      workerCapacity=JSON.parse(request.material.files[0].contents).models.providers.minimax.models[0].maxTokens;
       return launch(request);
     };
-    const owner=await required().acquireSubscriptionCodingRuntimeV1({...f.input,requestProfile:'plan-report-v1'} as never,f.port);
+    const owner=await required().acquireSubscriptionCodingRuntimeV1({...f.input,requestProfile:'plan-report-v1'} as never,port);
     f.finish();assert.equal((await owner.close('completed')).status,'closed');
+    assert.deepEqual(limits,{maxRequests:128,maxOutputTokens:16384,maxTotalOutputTokens:524288,
+      maxRequestBytes:2097152,maxResponseBytes:8388608,maxTotalResponseBytes:67108864,
+      maxSseEventBytes:262144,attemptMs:1800000,requestMs:120000,idleMs:60000});
+    assert.ok(Object.isFrozen(limits));
+    assert.equal(workerCapacity,16384);
     assert.equal(f.events.filter(event=>event==='launch-worker').length,1);
   }finally{f.cleanup();}
 });
