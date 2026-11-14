@@ -130,11 +130,11 @@ test('inert runtime gives MiniMax PLAN matching broker and worker capacity withi
     };
     const owner=await required().acquireSubscriptionCodingRuntimeV1({...f.input,requestProfile:'plan-report-v1'} as never,port);
     f.finish();assert.equal((await owner.close('completed')).status,'closed');
-    assert.deepEqual(limits,{maxRequests:128,maxOutputTokens:16384,maxTotalOutputTokens:524288,
+    assert.deepEqual(limits,{maxRequests:128,maxOutputTokens:32768,maxTotalOutputTokens:524288,
       maxRequestBytes:2097152,maxResponseBytes:8388608,maxTotalResponseBytes:67108864,
-      maxSseEventBytes:262144,attemptMs:1800000,requestMs:120000,idleMs:60000});
+      maxSseEventBytes:262144,attemptMs:1800000,requestMs:240000,idleMs:60000});
     assert.ok(Object.isFrozen(limits));
-    assert.equal(workerCapacity,16384);
+    assert.equal(workerCapacity,32768);
     assert.equal(f.events.filter(event=>event==='launch-worker').length,1);
   }finally{f.cleanup();}
 });
