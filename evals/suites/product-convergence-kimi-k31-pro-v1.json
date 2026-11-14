@@ -805,12 +805,12 @@
       }
     },
     {
-      "caseId": "game-restart-compositional",
+      "caseId": "game-playable-compositional-v2",
       "productClass": "game",
-      "task": "Build a browser canvas game arena at /arena that combines a Restart Round button with score persistence: activating the button sets application state to playing, writes the high score to local storage across reloads, displays Round restarted and the value 0, keeps the control visible and enabled, and stays on /arena",
+      "task": "Build a playable single-round three-lane star collection browser game at /play with a required game scene and a full viewport root frame using relative, min-h-screen, w-full and overflow-hidden classes\nApplication state initially has phase ready, player lane 0, star lane 1, score 0, collected false and settings closed, and high score is 0 when no saved high score exists\nRender the player and star in their actual lanes and use a real internal requestAnimationFrame or setInterval loop calling update to visibly animate the scene while playing and freeze animation while paused or ready, without changing score or lane state from that animation loop\nThe Start button is enabled only in ready phase and sets phase to playing, shows Playing and begins scene animation while keeping the current round state and remaining on /play\nThe Left button is enabled only while playing and selects player lane 0, moves the visible player to that lane and shows Lane 0 while remaining on /play\nThe Center button is enabled only while playing and selects player lane 1, moves the visible player to that lane and shows Lane 1 while remaining on /play\nThe Right button is enabled only while playing and selects player lane 2, moves the visible player to that lane and shows Lane 2 while remaining on /play\nThe Collect button is enabled only while playing in player lane 1 with collected false, collects the one star for exactly one point by setting score and high score to 1 and collected to true, hides the star, shows Star collected and Score: 1, writes high score 1 to local storage and displays High score: 1 after reloading /play, and stays disabled when paused, in another lane or already collected\nThe Settings button is enabled only while playing and opens a visible settings overlay over the still mounted game scene, changes phase to paused, shows Paused and disables Left, Center, Right and Collect while remaining on /play\nThe Resume button in the settings overlay is enabled only while paused and closes that overlay, changes phase to playing, shows Playing and restores lane controls and scene animation while preserving score, high score, lane and collection state and remaining on /play\nThe Restart button is always visible and enabled and resets phase to ready, player lane to 0, star lane to 1, score to 0, collected to false and settings to closed, shows Ready, preserves the saved high score and remains on /play",
       "oracle": {
         "schema": "setfarm.task-intent-oracle.v1",
-        "oracleId": "game-restart-compositional",
+        "oracleId": "game-playable-compositional-v2",
         "oracleVersion": 1,
         "locale": "en",
         "cohort": "holdout",
@@ -827,62 +827,374 @@
         },
         "clauses": [
           {
-            "clauseId": "game-restart-round-contract",
+            "clauseId": "playfield",
             "source": {
               "startOffset": 0,
-              "endOffset": 317,
-              "normalizedClause": "Build a browser canvas game arena at /arena that combines a Restart Round button with score persistence: activating the button sets application state to playing, writes the high score to local storage across reloads, displays Round restarted and the value 0, keeps the control visible and enabled, and stays on /arena"
+              "endOffset": 201,
+              "normalizedClause": "Build a playable single-round three-lane star collection browser game at /play with a required game scene and a full viewport root frame using relative, min-h-screen, w-full and overflow-hidden classes"
+            },
+            "requiredSemanticKinds": [
+              "route",
+              "surface"
+            ]
+          },
+          {
+            "clauseId": "initial-state",
+            "source": {
+              "startOffset": 202,
+              "endOffset": 372,
+              "normalizedClause": "Application state initially has phase ready, player lane 0, star lane 1, score 0, collected false and settings closed, and high score is 0 when no saved high score exists"
             },
             "requiredSemanticKinds": [
               "state",
-              "persistence",
-              "route",
-              "surface",
+              "persistence"
+            ]
+          },
+          {
+            "clauseId": "animation",
+            "source": {
+              "startOffset": 373,
+              "endOffset": 651,
+              "normalizedClause": "Render the player and star in their actual lanes and use a real internal requestAnimationFrame or setInterval loop calling update to visibly animate the scene while playing and freeze animation while paused or ready, without changing score or lane state from that animation loop"
+            },
+            "requiredSemanticKinds": [
+              "surface"
+            ]
+          },
+          {
+            "clauseId": "start",
+            "source": {
+              "startOffset": 652,
+              "endOffset": 828,
+              "normalizedClause": "The Start button is enabled only in ready phase and sets phase to playing, shows Playing and begins scene animation while keeping the current round state and remaining on /play"
+            },
+            "requiredSemanticKinds": [
               "action",
+              "state",
+              "observable"
+            ]
+          },
+          {
+            "clauseId": "left",
+            "source": {
+              "startOffset": 829,
+              "endOffset": 981,
+              "normalizedClause": "The Left button is enabled only while playing and selects player lane 0, moves the visible player to that lane and shows Lane 0 while remaining on /play"
+            },
+            "requiredSemanticKinds": [
+              "action",
+              "state",
+              "observable"
+            ]
+          },
+          {
+            "clauseId": "center",
+            "source": {
+              "startOffset": 982,
+              "endOffset": 1136,
+              "normalizedClause": "The Center button is enabled only while playing and selects player lane 1, moves the visible player to that lane and shows Lane 1 while remaining on /play"
+            },
+            "requiredSemanticKinds": [
+              "action",
+              "state",
+              "observable"
+            ]
+          },
+          {
+            "clauseId": "right",
+            "source": {
+              "startOffset": 1137,
+              "endOffset": 1290,
+              "normalizedClause": "The Right button is enabled only while playing and selects player lane 2, moves the visible player to that lane and shows Lane 2 while remaining on /play"
+            },
+            "requiredSemanticKinds": [
+              "action",
+              "state",
+              "observable"
+            ]
+          },
+          {
+            "clauseId": "collect",
+            "source": {
+              "startOffset": 1291,
+              "endOffset": 1689,
+              "normalizedClause": "The Collect button is enabled only while playing in player lane 1 with collected false, collects the one star for exactly one point by setting score and high score to 1 and collected to true, hides the star, shows Star collected and Score: 1, writes high score 1 to local storage and displays High score: 1 after reloading /play, and stays disabled when paused, in another lane or already collected"
+            },
+            "requiredSemanticKinds": [
+              "action",
+              "state",
+              "persistence",
+              "observable"
+            ]
+          },
+          {
+            "clauseId": "settings",
+            "source": {
+              "startOffset": 1690,
+              "endOffset": 1919,
+              "normalizedClause": "The Settings button is enabled only while playing and opens a visible settings overlay over the still mounted game scene, changes phase to paused, shows Paused and disables Left, Center, Right and Collect while remaining on /play"
+            },
+            "requiredSemanticKinds": [
+              "action",
+              "state",
+              "surface",
+              "observable"
+            ]
+          },
+          {
+            "clauseId": "resume",
+            "source": {
+              "startOffset": 1920,
+              "endOffset": 2187,
+              "normalizedClause": "The Resume button in the settings overlay is enabled only while paused and closes that overlay, changes phase to playing, shows Playing and restores lane controls and scene animation while preserving score, high score, lane and collection state and remaining on /play"
+            },
+            "requiredSemanticKinds": [
+              "action",
+              "state",
+              "observable"
+            ]
+          },
+          {
+            "clauseId": "restart",
+            "source": {
+              "startOffset": 2188,
+              "endOffset": 2417,
+              "normalizedClause": "The Restart button is always visible and enabled and resets phase to ready, player lane to 0, star lane to 1, score to 0, collected to false and settings to closed, shows Ready, preserves the saved high score and remains on /play"
+            },
+            "requiredSemanticKinds": [
+              "action",
+              "state",
               "observable"
             ]
           }
         ],
         "expectations": [
           {
-            "intentId": "arena-game-state",
+            "intentId": "game-route",
+            "kind": "route",
+            "clauseRefs": [
+              "playfield"
+            ],
+            "path": "/play"
+          },
+          {
+            "intentId": "game-scene",
+            "kind": "surface",
+            "clauseRefs": [
+              "playfield",
+              "animation"
+            ],
+            "surfaceKind": "canvas",
+            "routePath": "/play"
+          },
+          {
+            "intentId": "game-state",
             "kind": "state",
             "clauseRefs": [
-              "game-restart-round-contract"
+              "initial-state"
             ],
             "stateKind": "application"
           },
           {
-            "intentId": "arena-score-storage",
+            "intentId": "game-score-storage",
             "kind": "persistence",
             "clauseRefs": [
-              "game-restart-round-contract"
+              "initial-state",
+              "collect"
             ],
             "policyKind": "local_storage",
             "durability": "reload"
           },
           {
-            "intentId": "arena-route",
-            "kind": "route",
-            "clauseRefs": [
-              "game-restart-round-contract"
-            ],
-            "path": "/arena"
-          },
-          {
-            "intentId": "arena-canvas",
+            "intentId": "game-settings-overlay",
             "kind": "surface",
             "clauseRefs": [
-              "game-restart-round-contract"
+              "settings"
             ],
-            "surfaceKind": "canvas",
-            "routePath": "/arena"
+            "surfaceKind": "overlay",
+            "routePath": "/play"
           },
           {
-            "intentId": "restart-round-action",
+            "intentId": "game-start",
             "kind": "action",
             "clauseRefs": [
-              "game-restart-round-contract"
+              "start"
+            ],
+            "triggerKind": "user",
+            "surfaceKinds": [
+              "page"
+            ],
+            "stateEffects": [
+              {
+                "operation": "set",
+                "stateKind": "application"
+              }
+            ],
+            "persistenceEffects": [],
+            "navigation": {
+              "kind": "stay"
+            },
+            "control": {
+              "kinds": [
+                "button"
+              ],
+              "label": {
+                "operator": "equals",
+                "expected": "Start"
+              }
+            },
+            "observableAssertions": [
+              {
+                "phase": "after",
+                "property": "visible_text",
+                "operator": "equals",
+                "expected": "Playing"
+              },
+              {
+                "phase": "after",
+                "property": "route",
+                "operator": "equals",
+                "expected": "/play"
+              }
+            ]
+          },
+          {
+            "intentId": "game-left",
+            "kind": "action",
+            "clauseRefs": [
+              "left"
+            ],
+            "triggerKind": "user",
+            "surfaceKinds": [
+              "canvas"
+            ],
+            "stateEffects": [
+              {
+                "operation": "set",
+                "stateKind": "application"
+              }
+            ],
+            "persistenceEffects": [],
+            "navigation": {
+              "kind": "stay"
+            },
+            "control": {
+              "kinds": [
+                "button"
+              ],
+              "label": {
+                "operator": "equals",
+                "expected": "Left"
+              }
+            },
+            "observableAssertions": [
+              {
+                "phase": "after",
+                "property": "visible_text",
+                "operator": "equals",
+                "expected": "Lane 0"
+              },
+              {
+                "phase": "after",
+                "property": "route",
+                "operator": "equals",
+                "expected": "/play"
+              }
+            ]
+          },
+          {
+            "intentId": "game-center",
+            "kind": "action",
+            "clauseRefs": [
+              "center"
+            ],
+            "triggerKind": "user",
+            "surfaceKinds": [
+              "canvas"
+            ],
+            "stateEffects": [
+              {
+                "operation": "set",
+                "stateKind": "application"
+              }
+            ],
+            "persistenceEffects": [],
+            "navigation": {
+              "kind": "stay"
+            },
+            "control": {
+              "kinds": [
+                "button"
+              ],
+              "label": {
+                "operator": "equals",
+                "expected": "Center"
+              }
+            },
+            "observableAssertions": [
+              {
+                "phase": "after",
+                "property": "visible_text",
+                "operator": "equals",
+                "expected": "Lane 1"
+              },
+              {
+                "phase": "after",
+                "property": "route",
+                "operator": "equals",
+                "expected": "/play"
+              }
+            ]
+          },
+          {
+            "intentId": "game-right",
+            "kind": "action",
+            "clauseRefs": [
+              "right"
+            ],
+            "triggerKind": "user",
+            "surfaceKinds": [
+              "canvas"
+            ],
+            "stateEffects": [
+              {
+                "operation": "set",
+                "stateKind": "application"
+              }
+            ],
+            "persistenceEffects": [],
+            "navigation": {
+              "kind": "stay"
+            },
+            "control": {
+              "kinds": [
+                "button"
+              ],
+              "label": {
+                "operator": "equals",
+                "expected": "Right"
+              }
+            },
+            "observableAssertions": [
+              {
+                "phase": "after",
+                "property": "visible_text",
+                "operator": "equals",
+                "expected": "Lane 2"
+              },
+              {
+                "phase": "after",
+                "property": "route",
+                "operator": "equals",
+                "expected": "/play"
+              }
+            ]
+          },
+          {
+            "intentId": "game-collect",
+            "kind": "action",
+            "clauseRefs": [
+              "collect"
             ],
             "triggerKind": "user",
             "surfaceKinds": [
@@ -910,7 +1222,7 @@
               ],
               "label": {
                 "operator": "equals",
-                "expected": "Restart Round"
+                "expected": "Collect"
               }
             },
             "observableAssertions": [
@@ -918,37 +1230,151 @@
                 "phase": "after",
                 "property": "visible_text",
                 "operator": "equals",
-                "expected": "Round restarted"
-              },
-              {
-                "phase": "after",
-                "property": "value",
-                "operator": "equals",
-                "expected": 0
-              },
-              {
-                "phase": "after",
-                "property": "visibility",
-                "operator": "equals",
-                "expected": true
-              },
-              {
-                "phase": "after",
-                "property": "enabled",
-                "operator": "equals",
-                "expected": true
+                "expected": "Star collected"
               },
               {
                 "phase": "after",
                 "property": "route",
                 "operator": "equals",
-                "expected": "/arena"
+                "expected": "/play"
               },
               {
                 "phase": "reload",
-                "property": "value",
+                "property": "visible_text",
                 "operator": "equals",
-                "expected": 0
+                "expected": "High score: 1"
+              }
+            ]
+          },
+          {
+            "intentId": "game-settings",
+            "kind": "action",
+            "clauseRefs": [
+              "settings"
+            ],
+            "triggerKind": "user",
+            "surfaceKinds": [
+              "page"
+            ],
+            "stateEffects": [
+              {
+                "operation": "set",
+                "stateKind": "application"
+              }
+            ],
+            "persistenceEffects": [],
+            "navigation": {
+              "kind": "stay"
+            },
+            "control": {
+              "kinds": [
+                "button"
+              ],
+              "label": {
+                "operator": "equals",
+                "expected": "Settings"
+              }
+            },
+            "observableAssertions": [
+              {
+                "phase": "after",
+                "property": "visible_text",
+                "operator": "equals",
+                "expected": "Paused"
+              },
+              {
+                "phase": "after",
+                "property": "route",
+                "operator": "equals",
+                "expected": "/play"
+              }
+            ]
+          },
+          {
+            "intentId": "game-resume",
+            "kind": "action",
+            "clauseRefs": [
+              "resume"
+            ],
+            "triggerKind": "user",
+            "surfaceKinds": [
+              "overlay"
+            ],
+            "stateEffects": [
+              {
+                "operation": "set",
+                "stateKind": "application"
+              }
+            ],
+            "persistenceEffects": [],
+            "navigation": {
+              "kind": "stay"
+            },
+            "control": {
+              "kinds": [
+                "button"
+              ],
+              "label": {
+                "operator": "equals",
+                "expected": "Resume"
+              }
+            },
+            "observableAssertions": [
+              {
+                "phase": "after",
+                "property": "visible_text",
+                "operator": "equals",
+                "expected": "Playing"
+              },
+              {
+                "phase": "after",
+                "property": "route",
+                "operator": "equals",
+                "expected": "/play"
+              }
+            ]
+          },
+          {
+            "intentId": "game-restart",
+            "kind": "action",
+            "clauseRefs": [
+              "restart"
+            ],
+            "triggerKind": "user",
+            "surfaceKinds": [
+              "page"
+            ],
+            "stateEffects": [
+              {
+                "operation": "set",
+                "stateKind": "application"
+              }
+            ],
+            "persistenceEffects": [],
+            "navigation": {
+              "kind": "stay"
+            },
+            "control": {
+              "kinds": [
+                "button"
+              ],
+              "label": {
+                "operator": "equals",
+                "expected": "Restart"
+              }
+            },
+            "observableAssertions": [
+              {
+                "phase": "after",
+                "property": "visible_text",
+                "operator": "equals",
+                "expected": "Ready"
+              },
+              {
+                "phase": "after",
+                "property": "route",
+                "operator": "equals",
+                "expected": "/play"
               }
             ]
           }

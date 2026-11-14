@@ -258,3 +258,16 @@ test("acknowledged receipt retained for continuity cannot be mutated by its cons
     assert.equal(Object.isFrozen(receipt), true);
     assert.equal(Object.isFrozen(receipt.reportRefs), true);
 });
+
+// The selected fixed suite must be representable without admitting arbitrary IDs.
+test("signed progress accepts the reviewed playable case and rejects an unreviewed case", () => {
+    const progress = { type: "progress" as const, journal: null, phase: "case_running" as const,
+        currentCaseId: "game-playable-compositional-v2" as const, ownedRunId: null, completedCases: 0, code: null };
+    for (const currentCaseId of [progress.currentCaseId, "game-start-baseline", "game-restart-compositional"] as const) {
+        const frame = signWorkerChannelFrameV1({ binding, direction: "worker_to_broker", sequence: 1,
+            body: { ...progress, currentCaseId }, nonce });
+        assert.equal(verifyWorkerChannelFrameV1({ frame, binding, direction: "worker_to_broker", nonce }).body.type, "progress");
+    }
+    assert.throws(() => signWorkerChannelFrameV1({ binding, direction: "worker_to_broker", sequence: 1,
+        body: { ...progress, currentCaseId: "unreviewed-game-case" as typeof progress.currentCaseId }, nonce }), ControlWorkerFatalErrorV1);
+});
